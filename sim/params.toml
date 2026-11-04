@@ -1,0 +1,75 @@
+# AniStock simulation parameters. Currency unit is the abstract in-game "币".
+# Every number here is a design knob; the point of the sim is to tune them.
+
+seed = 42
+
+[window]
+start = "2026-10-01"          # must not precede the earliest season fully loaded in the DB
+end = ""                      # empty = last complete day in the data
+
+[universe]
+formats = ["TV", "TV_SHORT", "ONA"]
+min_popularity = 3000         # AniList popularity (list adds) at the end of the window
+ipo_lead_days = 21            # list this many days before the first episode airs
+
+[economy]
+players = 60
+initial_cash = 100000         # per player
+
+[revenue]
+# attention_i,day = w_in_progress * inProgress/7 + w_new_adds * Δpopularity + w_trending * trending
+# inProgress is a stock full of stale lists (One Piece: 485k "watching" vs ~29k weekly activity),
+# so active watching is measured by trending (daily list activity) instead
+w_in_progress = 0.0
+w_new_adds = 2.0
+w_trending = 1.0
+score_ref = 70                # AniList averageScore that gets multiplier 1.0
+score_power = 2.0
+score_mult_min = 0.7
+score_mult_max = 1.4
+# total external demand per week = base * (total attention / attention at window start) ^ elasticity
+demand_base_week = 120000
+demand_elasticity = 0.5
+
+[company]
+shares = 10000
+ipo_discount = 0.10           # IPO priced at fundamental value minus this (classic IPO underpricing)
+ipo_price_min = 0.1
+production_fee_ratio = 0.8    # share of the IPO raise paid out as production fee (to households)
+corp_tax = 0.25
+payout_ratio = 0.6            # dividends paid weekly out of after-tax profit
+dividend_tax = 0.10           # effective average of the holding-period schedule
+
+[valuation]
+equity_premium = 0.08         # annual, added to the policy rate for discounting
+post_finale_decay = 0.85      # weekly revenue decay after the last episode
+long_runner_decay = 0.995     # weekly decay for long-runners (first aired > long_runner_years ago)
+long_runner_years = 2
+default_episodes = 13         # assumed length when AniList has no episode count yet
+min_remaining_weeks = 4       # unknown-length shows still airing are assumed to run at least this long
+preair_attention_per_user = 0.3  # expected weekly attention per AniList list entry once airing (薬屋3 0.27, Edgerunners2 0.32)
+
+[market]
+# daily: p += kappa*(V-p) + mu*(p-p_prev) + sigma*p*eps, capped at ±limit
+kappa = 0.15
+mu = 0.30
+sigma = 0.03
+limit = 0.10
+daily_turnover = 0.02         # share of market cap traded per day
+stamp_duty = 0.0005
+
+[government]
+transfer_ratio = 0.5          # share of weekly tax receipts paid back to households
+
+[central_bank]
+r_neutral = 0.03              # annual
+r_min = 0.0
+r_max = 0.20
+k_money = 0.5                 # rate response to (M2 growth - target)
+m2_growth_target = 0.20       # annualised
+max_step = 0.0025             # per weekly decision
+deposit_spread = 0.01         # deposits earn policy rate minus this
+bill_share_base = 0.10        # share of household liquid wealth held in central bank bills at r_neutral
+bill_share_slope = 4.0        # extra bill share per unit of (r - r_neutral)
+bill_share_max = 0.6
+bill_adjust_speed = 0.1       # fraction of the gap closed per day

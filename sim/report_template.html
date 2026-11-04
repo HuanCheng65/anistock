@@ -1,0 +1,456 @@
+<title>AniStock 经济仿真</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+SC:wght@600;900&display=swap">
+<style>
+/* Layout: an after-hours research note — one reading column, a quote strip above each chart,
+   numbers set in mono so columns of prices line up like a trading terminal. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --ink: #141821;
+  --ink-2: #474e5e;
+  --muted: #737a8a;
+  --rule: #dde1e8;
+  --accent: #2b5fd9;
+  --up: #d23c32;
+  --down: #12854f;
+  --notice-bg: #fdf3df;
+  --notice-ink: #5f4300;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --font-display: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  --font-body: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101217; --surface: #171a21; --ink: #eceef3; --ink-2: #b6bbc7; --muted: #8b91a0;
+    --rule: #2a2f3a; --accent: #7099f3; --up: #f0574c; --down: #2fb574;
+    --notice-bg: #2a2313; --notice-ink: #efd396;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101217; --surface: #171a21; --ink: #eceef3; --ink-2: #b6bbc7; --muted: #8b91a0;
+  --rule: #2a2f3a; --accent: #7099f3; --up: #f0574c; --down: #2fb574;
+  --notice-bg: #2a2313; --notice-ink: #efd396;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body);
+  font-size: 15px; line-height: 1.7;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.25; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 900; letter-spacing: 0.01em; }
+h2 { font-size: 22px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font-size: 12px; letter-spacing: 0.12em; color: var(--muted); text-transform: uppercase; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.section-head { display: flex; flex-direction: column; gap: 6px; }
+.section-head p { color: var(--ink-2); }
+
+header { display: flex; flex-direction: column; gap: 12px; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--ink-2); font-size: 14px; }
+.meta-row b { font-weight: 500; color: var(--ink); }
+
+.notice {
+  background: var(--notice-bg); color: var(--notice-ink); border-radius: 6px;
+  padding: 14px 18px; font-size: 14px; display: flex; flex-direction: column; gap: 4px;
+}
+.notice strong { font-weight: 600; }
+.notice ul { margin: 0; padding-left: 1.2em; }
+
+/* stock picker */
+.picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.picker button {
+  font: inherit; font-size: 13px; color: var(--ink-2); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.picker button:hover { border-color: var(--muted); color: var(--ink); }
+.picker button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.quote { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; }
+.quote .name { font-family: var(--font-display); font-weight: 600; font-size: 18px; min-width: 0; overflow-wrap: anywhere; }
+.quote .price { font-size: 26px; font-weight: 500; }
+.chg.up { color: var(--up); } .chg.down { color: var(--down); }
+.kv { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 13px; color: var(--ink-2); }
+.kv span b { font-family: var(--font-num); font-weight: 500; color: var(--ink); }
+.readout { font-size: 12px; color: var(--muted); min-height: 1.6em; font-family: var(--font-num); }
+.chart { width: 100%; height: 360px; }
+.chart.small { height: 220px; }
+.key { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); }
+.key i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+.key i.dash { border-top-style: dashed; }
+.key i.box { height: 10px; border: 1.5px solid; border-radius: 2px; width: 10px; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 16px; }
+.panel h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.panel .sub { font-size: 12px; color: var(--muted); }
+
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 760px; }
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-weight: 500; color: var(--muted); font-size: 12px; position: sticky; top: 0; background: var(--surface); }
+th:first-child, td:first-child { text-align: left; white-space: normal; min-width: 220px; }
+tr:last-child td { border-bottom: none; }
+td.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+.findings { display: flex; flex-direction: column; gap: 20px; }
+.finding { display: grid; grid-template-columns: 2.2em 1fr; gap: 4px 12px; }
+.finding .idx { font-family: var(--font-num); color: var(--muted); font-size: 13px; padding-top: 3px; }
+.finding h3 { margin: 0; font-size: 16px; font-weight: 600; grid-column: 2; }
+.finding p { grid-column: 2; color: var(--ink-2); }
+
+details { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 500; }
+details pre { font-family: var(--font-num); font-size: 12px; overflow-x: auto; color: var(--ink-2); margin: 12px 0 0; }
+footer { color: var(--muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">AniStock · 仿真 v1 · 盘后报告</div>
+    <h1>秋季番市场仿真</h1>
+    <div class="meta-row" id="meta-row"></div>
+  </header>
+
+  <div class="notice" role="note">
+    <strong>这一版能说明什么、不能说明什么</strong>
+    <ul id="scope"></ul>
+  </div>
+
+  <section aria-labelledby="h-stock">
+    <div class="section-head">
+      <h2 id="h-stock">个股走势</h2>
+      <p>K 线是模拟出来的市场价格，虚线是按分红折现算出的基本面价值。红色空心为涨，绿色实心为跌。价格被基本面拉着走，但会因为追涨杀跌和随机冲击偏离它，单日涨跌幅上限 10%。</p>
+    </div>
+    <div class="picker" id="picker" role="group" aria-label="选择股票"></div>
+    <div class="panel">
+      <div class="quote" id="quote"></div>
+      <div class="kv" id="quote-kv"></div>
+      <div class="chart" id="chart-stock" role="img" aria-label="所选股票的日 K 线和基本面价值"></div>
+      <div class="key">
+        <span><i class="box" style="border-color: var(--up)"></i>上涨</span>
+        <span><i class="box" style="border-color: var(--down); background: var(--down)"></i>下跌</span>
+        <span><i class="dash" style="border-color: var(--accent)"></i>基本面价值</span>
+      </div>
+      <div class="readout" id="readout-stock">把指针移到图上查看当日数据</div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-share">
+    <div class="section-head">
+      <h2 id="h-share">营收份额</h2>
+      <p>每周外部需求按“注意力”分给各部番。注意力 = AniList 当日活跃度 + 2 × 新增收藏人数，再乘以评分溢价（0.7–1.4 倍）。下图是近一周营收最高的 8 部番每周拿到的份额。</p>
+    </div>
+    <div class="panel">
+      <div class="chart" id="chart-share" role="img" aria-label="营收前八的番剧每周营收份额"></div>
+      <div class="key" id="share-key"></div>
+      <div class="readout" id="readout-share">把指针移到图上查看当周份额</div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-macro">
+    <div class="section-head">
+      <h2 id="h-macro">宏观</h2>
+      <p>钱只有两个来源：外部营收（真实观众的注意力），以及央行支付的利息。税收、转移支付、IPO 和买卖股票只是让钱在部门之间流动。每天都会核对一次总量守恒。</p>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h3>货币存量</h3>
+        <div class="sub">M2 = 家庭存款 + 企业现金。央票和财政余额不计入 M2。</div>
+        <div class="chart small" id="chart-money"></div>
+        <div class="key">
+          <span><i style="border-color: var(--s1)"></i>M2</span>
+          <span><i style="border-color: var(--s2)"></i>央票</span>
+          <span><i style="border-color: var(--s3)"></i>财政余额</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>M2 年化增速</h3>
+        <div class="sub">按过去 28 天折算成年化增速，虚线是央行目标。</div>
+        <div class="chart small" id="chart-growth"></div>
+        <div class="key">
+          <span><i style="border-color: var(--s1)"></i>M2 年化增速</span>
+          <span><i class="dash" style="border-color: var(--muted)"></i>目标</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>政策利率</h3>
+        <div class="sub">每周日决议一次。对照组允许每次调 1%，基准组只能调 0.25%。</div>
+        <div class="chart small" id="chart-rate"></div>
+        <div class="key">
+          <span><i style="border-color: var(--s1)"></i>基准：每次 ±0.25%</span>
+          <span><i style="border-color: var(--s2)"></i>对照：每次 ±1%</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>每周资金流</h3>
+        <div class="sub">外部营收注入，以及政府的收入和支出。</div>
+        <div class="chart small" id="chart-flows"></div>
+        <div class="key">
+          <span><i style="border-color: var(--s1)"></i>外部营收</span>
+          <span><i style="border-color: var(--s2)"></i>税收合计</span>
+          <span><i style="border-color: var(--s3)"></i>转移支付</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-table">
+    <div class="section-head">
+      <h2 id="h-table">营收前 20</h2>
+      <p>按近 7 天营收排序。价格单位为“币”，每家公司 1 万股。</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th scope="col">作品</th><th scope="col">上市日</th><th scope="col">发行价</th><th scope="col">现价</th>
+          <th scope="col">基本面</th><th scope="col">现价/基本面</th><th scope="col">周分红/股</th>
+          <th scope="col">营收份额</th><th scope="col">已播</th>
+        </tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-find">
+    <div class="section-head">
+      <h2 id="h-find">发现与待定问题</h2>
+    </div>
+    <div class="findings" id="findings"></div>
+  </section>
+
+  <details>
+    <summary>本次运行的全部参数</summary>
+    <pre id="params"></pre>
+  </details>
+
+  <footer id="footer"></footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const DATA = /*__DATA__*/null;
+const S = DATA.stats;
+const fmt = (v, d = 2) => v == null ? "–" : Number(v).toLocaleString("zh-CN", { minimumFractionDigits: d, maximumFractionDigits: d });
+const big = v => v == null ? "–" : Math.round(v).toLocaleString("zh-CN");
+const pct = (v, d = 1) => v == null ? "–" : (v * 100).toFixed(d) + "%";
+const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); Object.assign(e, attrs); if (text != null) e.textContent = text; return e; };
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+/* ---------- header ---------- */
+document.getElementById("meta-row").append(
+  ...[["窗口", `${S.start} – ${S.end}（${S.days} 天）`], ["上市公司", `${S.listed} 家`], ["数据源", "AniList 每日 trends"]]
+    .map(([k, v]) => { const s = el("span"); s.append(k + " ", el("b", {}, v)); return s; })
+);
+const scope = [
+  "只用了 AniList（欧美市场）的数据。Bangumi 和 Annict 现在只有一天的快照，还没法回放历史，等数据攒够了再并入。",
+  `窗口只有 ${S.days} 天，央行一共只做了 ${S.decisions} 次决议，宏观曲线还看不出长期趋势。等夏季番数据回填完成，窗口会往前延到 7 月 1 日。`,
+  "市场价格由一条简单的规则生成（向基本面回归 + 追涨 + 随机冲击），还没有模拟真人和 NPC 交易者。",
+  "所有金额都是游戏内的“币”，和真实货币没有任何对应关系。",
+];
+scope.forEach(t => document.getElementById("scope").append(el("li", {}, t)));
+
+/* ---------- chart helpers ---------- */
+const charts = [];
+function baseOptions() {
+  return {
+    autoSize: true,
+    layout: { background: { type: "solid", color: css("--surface") }, textColor: css("--muted"),
+              fontFamily: css("--font-num"), fontSize: 11 },
+    grid: { vertLines: { visible: false }, horzLines: { color: css("--rule") } },
+    rightPriceScale: { borderVisible: false },
+    timeScale: { borderVisible: false, fixLeftEdge: true, fixRightEdge: true },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal,
+                 vertLine: { color: css("--muted"), labelBackgroundColor: css("--ink-2") },
+                 horzLine: { color: css("--muted"), labelBackgroundColor: css("--ink-2") } },
+    localization: { locale: "zh-CN" },
+    handleScroll: { vertTouchDrag: false },
+  };
+}
+function makeChart(id) {
+  const c = LightweightCharts.createChart(document.getElementById(id), baseOptions());
+  const entry = { chart: c, series: [] };
+  charts.push(entry);
+  return entry;
+}
+function addLine(entry, colorVar, data, opts = {}) {
+  const s = entry.chart.addLineSeries({ color: css(colorVar), lineWidth: 2, priceLineVisible: false,
+    lastValueVisible: false, crosshairMarkerRadius: 4, ...opts });
+  s.setData(data);
+  entry.series.push({ s, colorVar, kind: "line" });
+  return s;
+}
+function retheme() {
+  for (const e of charts) {
+    e.chart.applyOptions(baseOptions());
+    for (const { s, colorVar, kind } of e.series) {
+      if (kind === "line") s.applyOptions({ color: css(colorVar) });
+      if (kind === "candle") s.applyOptions(candleColors());
+    }
+  }
+}
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
+new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+/* ---------- stock chart ---------- */
+function candleColors() {
+  const up = css("--up"), down = css("--down");
+  return { upColor: "rgba(0,0,0,0)", borderUpColor: up, wickUpColor: up,
+           downColor: down, borderDownColor: down, wickDownColor: down };
+}
+const stockChart = makeChart("chart-stock");
+const candle = stockChart.chart.addCandlestickSeries({ ...candleColors(), priceLineVisible: false,
+  priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
+stockChart.series.push({ s: candle, kind: "candle" });
+const valueLine = addLine(stockChart, "--accent", [], { lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 2 });
+let current = null;
+
+function showStock(f) {
+  current = f;
+  candle.setData(f.candles.map(r => ({ time: r.d, open: r.o, high: r.h, low: r.l, close: r.c })));
+  valueLine.setData(f.candles.map(r => ({ time: r.d, value: r.v })));
+  stockChart.chart.timeScale().fitContent();
+  const chg = f.price / f.ipo - 1;
+  const q = document.getElementById("quote");
+  q.replaceChildren(
+    el("span", { className: "name" }, f.title),
+    el("span", { className: "price num" }, fmt(f.price)),
+    el("span", { className: "chg num " + (chg >= 0 ? "up" : "down") }, `${chg >= 0 ? "▲" : "▼"} ${(Math.abs(chg) * 100).toFixed(1)}% 较发行价`)
+  );
+  const kv = document.getElementById("quote-kv");
+  kv.replaceChildren(...[
+    ["发行价", fmt(f.ipo)], ["基本面", fmt(f.value)], ["周分红/股", fmt(f.div_w, 3)],
+    ["营收份额", f.share.toFixed(1) + "%"], ["已播", f.episodes ? `${f.aired}/${f.episodes} 集` : `${f.aired} 集（长篇）`],
+    ["制作", f.studio || "–"], ["上市", f.list_day],
+  ].map(([k, v]) => { const s = el("span"); s.append(k + " ", el("b", {}, v)); return s; }));
+  document.querySelectorAll("#picker button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === f.id)));
+  document.getElementById("readout-stock").textContent = "把指针移到图上查看当日数据";
+}
+const picker = document.getElementById("picker");
+DATA.featured.forEach(f => {
+  const b = el("button", { type: "button", title: f.title_en || f.title }, f.title);
+  b.dataset.id = f.id;
+  b.addEventListener("click", () => showStock(f));
+  picker.append(b);
+});
+stockChart.chart.subscribeCrosshairMove(p => {
+  const out = document.getElementById("readout-stock");
+  if (!p.time || !current) { out.textContent = "把指针移到图上查看当日数据"; return; }
+  const r = current.candles.find(x => x.d === p.time);
+  if (!r) return;
+  out.textContent = `${r.d}　开 ${fmt(r.o)}　高 ${fmt(r.h)}　低 ${fmt(r.l)}　收 ${fmt(r.c)}　基本面 ${fmt(r.v)}　当日营收 ${big(r.rev)}　已播 ${r.aired} 集`;
+});
+showStock(DATA.featured[0]);
+
+/* ---------- revenue share ---------- */
+const shareChart = makeChart("chart-share");
+shareChart.chart.applyOptions({ localization: { locale: "zh-CN", priceFormatter: v => v.toFixed(1) + "%" } });
+const shareKey = document.getElementById("share-key");
+const shareSeries = DATA.share.map((sr, i) => {
+  const v = `--s${i + 1}`;
+  const s = addLine(shareChart, v, sr.points, { title: "" });
+  const k = el("span"); const sw = el("i"); sw.style.borderColor = `var(${v})`;
+  k.append(sw, sr.title); shareKey.append(k);
+  return { s, title: sr.title };
+});
+shareChart.chart.timeScale().fitContent();
+shareChart.chart.subscribeCrosshairMove(p => {
+  const out = document.getElementById("readout-share");
+  if (!p.time) { out.textContent = "把指针移到图上查看当周份额"; return; }
+  const parts = shareSeries.map(({ s, title }) => {
+    const d = p.seriesData.get(s); return d ? `${title.slice(0, 10)} ${d.value.toFixed(1)}%` : null;
+  }).filter(Boolean);
+  out.textContent = `截至 ${p.time} 的一周　` + parts.join("　");
+});
+
+/* ---------- macro ---------- */
+const M = DATA.macro, A = DATA.alt_macro;
+const money = makeChart("chart-money");
+money.chart.applyOptions({ localization: { locale: "zh-CN", priceFormatter: v => (v / 10000).toFixed(0) + "万" } });
+addLine(money, "--s1", M.map(r => ({ time: r.d, value: r.m2 })));
+addLine(money, "--s2", M.map(r => ({ time: r.d, value: r.bills })));
+addLine(money, "--s3", M.map(r => ({ time: r.d, value: r.gov })));
+money.chart.timeScale().fitContent();
+
+const growth = makeChart("chart-growth");
+growth.chart.applyOptions({ localization: { locale: "zh-CN", priceFormatter: v => v.toFixed(0) + "%" } });
+const gData = M.filter(r => r.m2_growth_ann != null).map(r => ({ time: r.d, value: r.m2_growth_ann * 100 }));
+addLine(growth, "--s1", gData);
+addLine(growth, "--muted", M.map(r => ({ time: r.d, value: S.params.central_bank.m2_growth_target * 100 })),
+  { lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 1, crosshairMarkerVisible: false });
+growth.chart.timeScale().fitContent();
+
+const rate = makeChart("chart-rate");
+rate.chart.applyOptions({ localization: { locale: "zh-CN", priceFormatter: v => v.toFixed(2) + "%" } });
+addLine(rate, "--s1", M.map(r => ({ time: r.d, value: r.rate * 100 })), { lineType: LightweightCharts.LineType.WithSteps });
+if (A) addLine(rate, "--s2", A.map(r => ({ time: r.d, value: r.rate * 100 })), { lineType: LightweightCharts.LineType.WithSteps });
+rate.chart.timeScale().fitContent();
+
+const flows = makeChart("chart-flows");
+flows.chart.applyOptions({ localization: { locale: "zh-CN", priceFormatter: v => (v / 10000).toFixed(1) + "万" } });
+const F = DATA.flows;
+addLine(flows, "--s1", F.map(r => ({ time: r.d, value: r.injected })));
+addLine(flows, "--s2", F.map(r => ({ time: r.d, value: r.tax })));
+addLine(flows, "--s3", F.map(r => ({ time: r.d, value: r.transfer })));
+flows.chart.timeScale().fitContent();
+
+/* ---------- table ---------- */
+const tb = document.getElementById("table-body");
+DATA.table.forEach(r => {
+  const tr = el("tr");
+  const ratio = r.price / r.value;
+  [[r.title], [r.list_day, true], [fmt(r.ipo), true], [fmt(r.price), true], [fmt(r.value), true],
+   [ratio.toFixed(2), true], [fmt(r.div_w, 3), true], [r.share.toFixed(1) + "%", true],
+   [r.episodes ? `${r.aired}/${r.episodes}` : `${r.aired}`, true]]
+    .forEach(([v, n]) => tr.append(el("td", { className: n ? "num" : "" }, v)));
+  tb.append(tr);
+});
+
+/* ---------- findings ---------- */
+const P = S.params;
+const weeklyInjection = S.injected_total / S.days * 7;
+const findings = [
+  ["长篇连载的“在看”人数不能直接当营收",
+   `AniList 上把海贼王标成“在看”的有 48.5 万人，是药屋第三季的 9 倍，但每周真正更新进度的人数两部几乎一样（约 2.9 万）。营收改成按活跃度和新增收藏计算之后，海贼王的营收份额从 22% 降到 ${S.op_share != null ? S.op_share.toFixed(1) + "%" : "–"}，和它在两个平台上的实际热度对得上。`],
+  ["上市前不起眼的番，可能成为黑马",
+   `${S.sleeper.title} 以 ${fmt(S.sleeper.ipo)} 币发行，开播后营收爆发，现价 ${fmt(S.sleeper.price)}，是发行价的 ${S.sleeper.mult.toFixed(1)} 倍。上市前的定价只能靠 AniList 的预约人数估计，信息不足，这正是玩家靠眼光赚钱的空间。`],
+  ["新番股和长寿股对利率的敏感度天差地别",
+   `一季番剩下的现金流只有几周，折现率变一点影响很小。海贼王这种长寿股相当于永续经营，估值会被利率明显左右。这和现实中的“久期”是同一个道理：加息时先跌的是长寿蓝筹，而不是新番。`],
+  ["外部注入的钱相对 M2 偏大",
+   `每周外部营收约 ${big(weeklyInjection)} 币，约占初始 M2 的 ${pct(weeklyInjection / S.m2_start)}。如果不加回收，一年下来 M2 会翻一倍多。目前主要靠企业所得税（${pct(P.company.corp_tax, 0)}）和央票在回收，财政只把 ${pct(P.government.transfer_ratio, 0)} 的税收返还给家庭，其余沉淀下来。`],
+  ["央行调得太慢",
+   `基准组每次最多调 0.25%，${S.decisions} 次决议后利率从 ${pct(S.rate_start, 2)} 变到 ${pct(S.rate_end, 2)}。对照组每次可以调 1%，最后是 ${S.alt_rate_end != null ? pct(S.alt_rate_end, 2) : "–"}。游戏里的钱每周就要变化百分之几，现实央行那种 0.25% 的步子可能太小了，需要在更长的窗口里验证。`],
+  ["待定：完结后的营收衰减速度",
+   `估值里假设完结后每周营收衰减到上周的 ${P.valuation.post_finale_decay}，约 4 周减半。但已完结的《赛博朋克：边缘行者 2》周活跃度依然排在前列，说明一次性上线的网飞番，或真正的热门作，长尾可能比这个假设长得多。等夏季番数据进来之后，要用实际完结曲线来校准这个参数，可能需要按作品分别拟合。`],
+];
+const fwrap = document.getElementById("findings");
+findings.forEach(([h, p], i) => {
+  const d = el("div", { className: "finding" });
+  d.append(el("span", { className: "idx" }, String(i + 1).padStart(2, "0")), el("h3", {}, h), el("p", {}, p));
+  fwrap.append(d);
+});
+
+document.getElementById("params").textContent = JSON.stringify(P, null, 2);
+document.getElementById("footer").textContent =
+  `生成于 ${DATA.generated_at.replace("T", " ").replace("+00:00", " UTC")}。数据来自 AniList 公开 API 的聚合统计。`;
+</script>

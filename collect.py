@@ -319,11 +319,12 @@ MEDIA_FIELDS = """
 """
 
 PAGE_QUERY = """
-query ($page: Int, $season: MediaSeason, $year: Int, $status: MediaStatus, $popGt: Int, $ids: [Int]) {
+query ($page: Int, $season: MediaSeason, $year: Int, $status: MediaStatus, $popGt: Int, $ids: [Int],
+       $formats: [MediaFormat]) {
   Page(page: $page, perPage: 50) {
     pageInfo { hasNextPage }
     media(type: ANIME, season: $season, seasonYear: $year, status: $status,
-          popularity_greater: $popGt, id_in: $ids, sort: POPULARITY_DESC) {
+          popularity_greater: $popGt, id_in: $ids, format_in: $formats, sort: POPULARITY_DESC) {
       %s
       recent: trends(sort: DATE_DESC, perPage: 10) {
         nodes { date episode averageScore popularity inProgress trending releasing }
@@ -355,6 +356,53 @@ def _anilist_pages(http: Http, variables: dict) -> list[dict]:
         page += 1
 
 
+def _backfill_trends(http: Http, store: Store, media_ids: list[int], since: date) -> int:
+    """Page through each media's daily trends (newest first) until older than `since`."""
+    cutoff = int(datetime.combine(since, datetime.min.time(), timezone.utc).timestamp())
+    filled = 0
+    for mid in media_ids:
+        page = 1
+        while True:
+            t = http.graphql(ANILIST, TRENDS_QUERY, {"id": mid, "page": page})["Media"]["trends"]
+            for node in t["nodes"]:
+                store.trend(mid, node)
+                filled += 1
+            store.commit()
+            oldest = min((n["date"] for n in t["nodes"]), default=0)
+            if not t["pageInfo"]["hasNextPage"] or oldest < cutoff:
+                break
+            page += 1
+        log.info("anilist backfill media %s done", mid)
+    return filled
+
+
+def collect_anilist_season(store: Store, spec: str) -> str:
+    """One-off: register a past season's shows (e.g. 2026-summer) and backfill their trends.
+
+    Finished shows drop out of the daily RELEASING listing, so a season that already ended
+    is only reachable this way. Once registered they get the normal 180-day tracking.
+    """
+    year_s, _, season = spec.partition("-")
+    year = int(year_s)
+    if season not in ("winter", "spring", "summer", "autumn"):
+        raise ValueError(f"bad season {spec!r}, expected e.g. 2026-summer")
+    http = Http(min_interval=2.1, remaining_header="x-ratelimit-remaining",
+                reset_header="x-ratelimit-reset")
+    media = _anilist_pages(http, {"season": season.upper().replace("AUTUMN", "FALL"), "year": year,
+                                  "popGt": MIN_ANILIST_POPULARITY, "formats": ["TV", "TV_SHORT", "ONA"]})
+    for m in media:
+        store.register("anilist", m["id"], m["title"].get("native") or m["title"].get("romaji"), m.get("idMal"))
+        recent = m.pop("recent", {}).get("nodes", [])
+        store.snapshot("anilist", "media", m["id"], m)
+        for node in recent:
+            store.trend(m["id"], node)
+    store.commit()
+    # start two months before the season so pre-air hype is included
+    filled = _backfill_trends(http, store, [m["id"] for m in media],
+                              season_start(year, season) - timedelta(days=60))
+    return f"season={spec} media={len(media)} backfilled_trend_rows={filled}"
+
+
 def collect_anilist(store: Store, backfill: bool) -> str:
     # AniList allows 30 req/min right now; 2.1s spacing keeps us under it
     http = Http(min_interval=2.1, remaining_header="x-ratelimit-remaining",
@@ -384,21 +432,7 @@ def collect_anilist(store: Store, backfill: bool) -> str:
 
     filled = 0
     if backfill:
-        cutoff = int(datetime.combine(season_start(*previous_season(year, season)),
-                                      datetime.min.time(), timezone.utc).timestamp())
-        for mid in found:
-            page = 1
-            while True:
-                t = http.graphql(ANILIST, TRENDS_QUERY, {"id": mid, "page": page})["Media"]["trends"]
-                for node in t["nodes"]:
-                    store.trend(mid, node)
-                    filled += 1
-                store.commit()
-                oldest = min((n["date"] for n in t["nodes"]), default=0)
-                if not t["pageInfo"]["hasNextPage"] or oldest < cutoff:
-                    break
-                page += 1
-            log.info("anilist backfill media %s done", mid)
+        filled = _backfill_trends(http, store, list(found), season_start(*previous_season(year, season)))
     return f"media={len(found)} missing_refetched={len(missing)} backfilled_trend_rows={filled}"
 
 
@@ -510,6 +544,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", choices=["bgm", "anilist", "annict", "all"], default="all")
     ap.add_argument("--backfill", action="store_true", help="backfill AniList trends history")
+    ap.add_argument("--season", metavar="YYYY-season",
+                    help="one-off: add a past AniList season (e.g. 2026-summer) and backfill its trends")
     ap.add_argument("--db", default=os.environ.get("ANISTOCK_DB", str(Path(__file__).parent / "data" / "anistock.db")))
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -522,6 +558,18 @@ def main() -> int:
     if args.stats:
         print_stats(store)
         return 0
+
+    if args.season:
+        run_id = store.run_start("anilist")
+        try:
+            detail = collect_anilist_season(store, args.season)
+            store.run_end(run_id, "ok", detail)
+            log.info("anilist season ok: %s", detail)
+            return 0
+        except Exception as e:
+            store.run_end(run_id, "failed", repr(e))
+            log.exception("anilist season failed")
+            return 1
 
     jobs = {
         "bgm": lambda: collect_bangumi(store),
