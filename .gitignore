@@ -6,3 +6,4 @@ data/
 .env
 
 __pycache__/
+collect.log

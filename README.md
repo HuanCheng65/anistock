@@ -17,33 +17,45 @@
 
 ## 部署（Ubuntu + uv）
 
+用自己的账户部署即可，全程不需要 sudo。
+
 ```bash
-sudo useradd -r -m -d /srv/anistock anistock      # 或者用你自己的用户
-sudo cp collect.py .env.example /srv/anistock/
-sudo cp .env.example /srv/anistock/.env && sudo chmod 600 /srv/anistock/.env
-sudo -e /srv/anistock/.env                        # 填入 ANNICT_TOKEN 和代理地址
-sudo chown -R anistock: /srv/anistock
+git clone https://github.com/HuanCheng65/anistock.git ~/anistock
+cd ~/anistock
+cp .env.example .env && chmod 600 .env
+nano .env                                         # 填入 ANNICT_TOKEN 和代理地址
 
-# 先手动跑一次，顺便回填 AniList 历史数据（大约 10 多分钟）
-sudo -u anistock bash -c 'cd /srv/anistock && set -a && . ./.env && set +a && uv run collect.py --backfill'
-sudo -u anistock bash -c 'cd /srv/anistock && uv run collect.py --stats'
-
-# 定时任务：每天 06:00（北京时间）
-which uv                                          # 如果不是 /usr/local/bin/uv，修改 service 文件
-sudo cp deploy/anistock-collect.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now anistock-collect.timer
-systemctl list-timers anistock-collect.timer      # 查看下次运行时间
-journalctl -u anistock-collect -n 50              # 查看日志
+# 先手动跑一次，顺便回填 AniList 历史数据（大约 40 分钟，建议在 tmux 里跑）
+set -a && . ./.env && set +a && uv run collect.py --backfill
+uv run collect.py --stats
 ```
 
-用 cron 也可以：
+### 定时任务：每天 06:00（北京时间）
+
+**方式 A：systemd 用户定时器（推荐，错过的运行会在开机后补跑）**
+
+```bash
+which uv                                          # 如果不是 ~/.local/bin/uv，修改 deploy/anistock-collect.service
+mkdir -p ~/.config/systemd/user
+cp deploy/anistock-collect.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now anistock-collect.timer
+loginctl enable-linger "$USER"                    # 让定时器在你没登录 SSH 时也照常运行
+systemctl --user list-timers                      # 查看下次运行时间
+journalctl --user -u anistock-collect -n 50       # 查看日志
+```
+
+如果 `loginctl enable-linger` 提示权限不足，就让管理员执行一次 `sudo loginctl enable-linger 你的用户名`，或者改用方式 B。
+
+**方式 B：cron（最简单）**
+
+`crontab -e`，加入一行（`uv` 换成 `which uv` 的完整路径）：
 
 ```
-0 6 * * * cd /srv/anistock && set -a && . ./.env && set +a && uv run collect.py >> collect.log 2>&1
+0 6 * * * cd $HOME/anistock && set -a && . ./.env && set +a && $HOME/.local/bin/uv run collect.py >> collect.log 2>&1
 ```
 
-（cron 按服务器本地时区执行，要确认服务器时区是 Asia/Shanghai。）
+cron 按服务器本地时区执行，先用 `timedatectl` 确认时区是 Asia/Shanghai，不是的话换算一下时间。
 
 ## 代理
 

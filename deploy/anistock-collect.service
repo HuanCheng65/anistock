@@ -1,13 +1,11 @@
 [Unit]
 Description=AniStock daily data collector
-Wants=network-online.target
-After=network-online.target
 
 [Service]
 Type=oneshot
-# change these two paths / the user to match your server
-User=anistock
-WorkingDirectory=/srv/anistock
-EnvironmentFile=/srv/anistock/.env
-ExecStart=/usr/local/bin/uv run /srv/anistock/collect.py
+# %h = your home directory; assumes the repo is cloned to ~/anistock
+WorkingDirectory=%h/anistock
+EnvironmentFile=%h/anistock/.env
+# systemd does not use your shell PATH; `which uv` and put the full path here if it differs
+ExecStart=%h/.local/bin/uv run %h/anistock/collect.py
 TimeoutStartSec=1h
