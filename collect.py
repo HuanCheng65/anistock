@@ -86,6 +86,7 @@ class Http:
         self._last = 0.0
 
     def request(self, method: str, url: str, **kw) -> httpx.Response:
+        last = "no attempt made"
         for attempt in range(6):
             wait = self.min_interval - (time.monotonic() - self._last)
             if wait > 0:
@@ -94,10 +95,13 @@ class Http:
             try:
                 r = self.client.request(method, url, **kw)
             except httpx.TransportError as e:
+                last = f"{type(e).__name__}: {e}"
                 backoff = 2 ** attempt * 2
-                log.warning("transport error %s on %s, retry in %ss", e, url, backoff)
+                log.warning("%s on %s, retry in %ss", last, url, backoff)
                 time.sleep(backoff)
                 continue
+            if r.status_code == 429 or r.status_code >= 500:
+                last = f"HTTP {r.status_code}: {r.text[:200]!r}"
             if r.status_code == 429:
                 ra = r.headers.get("retry-after")
                 backoff = int(ra) + 1 if ra and ra.isdigit() else 60
@@ -111,7 +115,7 @@ class Http:
                 continue
             self._pace(r)
             return r
-        raise RuntimeError(f"giving up on {method} {url}")
+        raise RuntimeError(f"giving up on {method} {url} after 6 attempts, last error: {last}")
 
     def _pace(self, r: httpx.Response) -> None:
         if not self.remaining_header:
