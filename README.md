@@ -93,3 +93,20 @@ FROM snapshots WHERE source='bgm' AND kind='subject' AND external_id='418229' OR
 
 Annict API 条款第 6 条：**不能把抓到的原始数据放在公开仓库或公开链接里**。`data/` 和 `*.db` 已经写进 `.gitignore`。
 游戏网站展示算出来的统计结果（营收、股价）没问题；不要提供原始数据下载。
+
+## 仿真（sim/）
+
+用采集到的数据回放一个番剧股票经济：三个市场的营收、分红估值、股价、税收、央行利率。参数集中在 `sim/params.toml`。
+
+```bash
+uv run sim/match.py --search             # 跨平台作品匹配 -> sim/matches.json（手工修正写在 manual 里）
+uv run sim/reconstruct.py airtimes       # Annict 每集播出时间（约 10 次请求）
+uv run sim/reconstruct.py calibrate      # 累积曲线（一次性，约 160 次请求，需要 ANNICT_TOKEN）
+uv run sim/reconstruct.py build          # 重建中国/日本市场的每日序列
+uv run sim/simulate.py                   # -> sim/out/result.json
+uv run sim/report.py                     # -> sim/out/report.html
+```
+
+- 换参数跑对照方案：`uv run sim/simulate.py --set central_bank.max_step=0.01 --out sim/out/result_fastcb.json`
+- `data/derived/` 和 `sim/out/` 是本地生成的，不进 git
+- `sim/reconstruct.py check` 会把重建结果和 AniList 做交叉验证
