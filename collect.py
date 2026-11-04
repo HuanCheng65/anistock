@@ -219,6 +219,9 @@ class Store:
         return r[0]
 
     def run_start(self, source: str) -> int:
+        # runs killed mid-way (reboot, Ctrl-C) never get a status; close them out
+        stale = (now_local() - timedelta(hours=2)).isoformat(timespec="seconds")
+        self.db.execute("UPDATE runs SET status='aborted' WHERE status IS NULL AND started_at < ?", (stale,))
         cur = self.db.execute("INSERT INTO runs(source, started_at) VALUES (?,?)",
                               (source, now_local().isoformat(timespec="seconds")))
         self.db.commit()
@@ -482,7 +485,7 @@ def print_stats(store: Store) -> None:
     print(f"anilist_trends: rows={r[0]} media={r[1]} range={r[2]}..{r[3]}")
     print("last runs:")
     for row in q("SELECT source, started_at, status, detail FROM runs ORDER BY id DESC LIMIT 6"):
-        print(f"  {row[0]:8} {row[1]} {row[2]:7} {row[3]}")
+        print(f"  {row[0]:8} {row[1]} {row[2] or 'running':7} {row[3] or ''}")
 
 
 def main() -> int:
