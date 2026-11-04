@@ -43,6 +43,7 @@ demand_elasticity = 0.5
 shares = 10000
 ipo_discount = 0.10           # IPO priced at fundamental value minus this (classic IPO underpricing)
 ipo_price_min = 0.1
+ipo_float = 0.25              # share of the company sold for cash at IPO (A-share minimum public float)
 production_fee_ratio = 0.8    # share of the IPO raise paid out as production fee (to households)
 corp_tax = 0.25
 payout_ratio = 0.6            # dividends paid weekly out of after-tax profit
@@ -59,7 +60,16 @@ long_runner_decay = 0.995     # weekly decay for long-runners (first aired > lon
 long_runner_years = 2
 default_episodes = 13         # assumed length when AniList has no episode count yet
 min_remaining_weeks = 4       # unknown-length shows still airing are assumed to run at least this long
-preair_attention_per_user = 0.3  # expected weekly attention per AniList list entry once airing (薬屋3 0.27, Edgerunners2 0.32)
+# pre-air expectation per market = per-member rate x audience (weekly attention once airing)
+preair_attention_per_user = 1.09 # AniList list entries the day before premiere -> weekly attention in weeks 2-3 (median of 123 shows; lists double in the first 3 weeks)
+preair_cn_per_member = 0.0156    # Bangumi 想看+在看+看过 -> weekly episode comments (median of 77 airing shows)
+preair_jp_per_member = 0.226     # Annict watchers -> weekly watch logs (median of 66 airing shows)
+# audiences come from today's snapshot: in the replay this peeks at the future (flagged in the report);
+# in the live game the same numbers are observed every day before airing
+# in-season decay (measured): Annict ep1->2 0.95, later 0.98/ep; Bangumi comments ep1->2 0.78, later flat
+premiere_drop = 0.85
+in_season_retention = 0.98
+min_days_after_premiere = 2      # keep the pre-air estimate until this many days of real revenue exist
 
 [market]
 # daily: p += kappa*(V-p) + mu*(p-p_prev) + sigma*p*eps, capped at ±limit
@@ -67,6 +77,9 @@ kappa = 0.15
 mu = 0.30
 sigma = 0.03
 limit = 0.10
+gap_sigma = 0.01              # overnight gap: open = previous close x (1 + noise)
+ipo_free_days = 5             # A-share registration rule: no price limit for the first 5 trading days
+airing_free_days = 0          # game-rule option: no price limit for N days after the first episode (off)
 daily_turnover = 0.02         # share of market cap traded per day
 stamp_duty = 0.0005
 
