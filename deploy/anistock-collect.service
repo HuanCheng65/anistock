@@ -1,0 +1,13 @@
+[Unit]
+Description=AniStock daily data collector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# change these two paths / the user to match your server
+User=anistock
+WorkingDirectory=/srv/anistock
+EnvironmentFile=/srv/anistock/.env
+ExecStart=/usr/local/bin/uv run /srv/anistock/collect.py
+TimeoutStartSec=1h
