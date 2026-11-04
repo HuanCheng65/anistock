@@ -46,6 +46,19 @@ log = logging.getLogger("collect")
 
 # ---------------------------------------------------------------- utilities
 
+def load_dotenv(path: Path) -> None:
+    """Minimal .env loader (KEY=VALUE lines, # comments). Real env vars win."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.split(" #", 1)[0].strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
+
 def now_local() -> datetime:
     return datetime.now(TZ)
 
@@ -493,6 +506,7 @@ def print_stats(store: Store) -> None:
 
 
 def main() -> int:
+    load_dotenv(Path(__file__).parent / ".env")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", choices=["bgm", "anilist", "annict", "all"], default="all")
     ap.add_argument("--backfill", action="store_true", help="backfill AniList trends history")

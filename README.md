@@ -26,7 +26,7 @@ cp .env.example .env && chmod 600 .env
 nano .env                                         # 填入 ANNICT_TOKEN 和代理地址
 
 # 先手动跑一次，顺便回填 AniList 历史数据（大约 40 分钟，建议在 tmux 里跑）
-set -a && . ./.env && set +a && uv run collect.py --backfill
+uv run collect.py --backfill                      # 脚本会自动读取同目录下的 .env
 uv run collect.py --stats
 ```
 
@@ -52,14 +52,14 @@ journalctl --user -u anistock-collect -n 50       # 查看日志
 `crontab -e`，加入一行（`uv` 换成 `which uv` 的完整路径）：
 
 ```
-0 6 * * * cd $HOME/anistock && set -a && . ./.env && set +a && $HOME/.local/bin/uv run collect.py >> collect.log 2>&1
+0 6 * * * cd $HOME/anistock && $HOME/.local/bin/uv run collect.py >> collect.log 2>&1
 ```
 
 cron 按服务器本地时区执行，先用 `timedatectl` 确认时区是 Asia/Shanghai，不是的话换算一下时间。
 
 ## 代理
 
-- AniList、Annict 在海外，走 `HTTPS_PROXY`；Bangumi 在国内，放进 `NO_PROXY` 直连
+- 三个来源都走 `HTTPS_PROXY`（国内服务器直连 api.bgm.tv 也不稳定）。`.env` 会被脚本自动读取，fish、bash 等 shell 都能直接 `uv run collect.py`
 - 第一次运行 uv 需要从 PyPI 下载 httpx。如果很慢，在 `.env` 里设置 `UV_INDEX_URL` 使用清华镜像
 - 代理是 socks5 也可以（已包含 `httpx[socks]`），例如 `HTTPS_PROXY=socks5://127.0.0.1:7891`
 
