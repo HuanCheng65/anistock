@@ -4,13 +4,21 @@
 seed = 42
 
 [window]
-start = "2026-10-01"          # must not precede the earliest season fully loaded in the DB
+start = "2026-07-01"          # must not precede the earliest season fully loaded in the DB
 end = ""                      # empty = last complete day in the data
 
 [universe]
 formats = ["TV", "TV_SHORT", "ONA"]
 min_popularity = 3000         # AniList popularity (list adds) at the end of the window
 ipo_lead_days = 21            # list this many days before the first episode airs
+
+[markets]
+# revenue_i = demand * Σ weight_m * share_i,m ; share is within each market's own universe.
+# us = AniList (daily, observed), cn = Bangumi episode comments, jp = Annict episode watch logs
+# (cn/jp rebuilt weekly from per-episode snapshots, see sim/reconstruct.py)
+us = 0.3
+cn = 0.5
+jp = 0.2
 
 [economy]
 players = 60
@@ -42,7 +50,11 @@ dividend_tax = 0.10           # effective average of the holding-period schedule
 
 [valuation]
 equity_premium = 0.08         # annual, added to the policy rate for discounting
-post_finale_decay = 0.85      # weekly revenue decay after the last episode
+# weekly revenue after the last episode, as a multiple of a typical airing week.
+# Measured on 30 finished Summer 2026 TV shows (AniList trending, median): the old single
+# decay of 0.85/week implied ~5.7 weeks of tail; the data says ~1.7.
+post_finale_profile = [0.40, 0.30, 0.22, 0.16, 0.14]
+post_finale_tail_decay = 0.78  # per week after the profile runs out
 long_runner_decay = 0.995     # weekly decay for long-runners (first aired > long_runner_years ago)
 long_runner_years = 2
 default_episodes = 13         # assumed length when AniList has no episode count yet

@@ -160,6 +160,28 @@ def attention(s: Show, d: date, r: dict) -> float:
     return a * score_mult(s.score[i], r)
 
 
+MARKETS = ("us", "cn", "jp")
+
+
+def market_att(s: Show, d: date, r: dict, markets: dict) -> dict[str, float]:
+    """Attention of one show on one day in each market. us = AniList (observed daily);
+    cn/jp = rebuilt weekly series from sim/reconstruct.py. Score premium (AniList) applies to all."""
+    a = {"us": attention(s, d, r)}
+    row = markets.get(s.id, {}).get(d.isoformat(), {})
+    mult = score_mult(at(s, s.score, d, None), r)
+    a["cn"] = row.get("cn", 0.0) * mult
+    a["jp"] = row.get("jp", 0.0) * mult
+    return a
+
+
+def blended_share(own: dict[str, float], totals: dict[str, float], weights: dict) -> tuple[float, dict]:
+    """Σ_m w_m * own_m/T_m, renormalised over markets that have any data. Returns (share, per-market part)."""
+    live = [m for m in MARKETS if totals[m] > 0]
+    wsum = sum(weights[m] for m in live) or 1.0
+    parts = {m: (weights[m] / wsum) * own[m] / totals[m] if m in live else 0.0 for m in MARKETS}
+    return sum(parts.values()), parts
+
+
 def fundamental(s: Show, d: date, weekly_div: float, book: float, rate: float, p: dict,
                 preair_div: float) -> float:
     """Per-share value: discounted expected dividends + book value per share."""
@@ -175,19 +197,23 @@ def fundamental(s: Show, d: date, weekly_div: float, book: float, rate: float, p
         remaining = max(0, s.episodes - aired)
         if not s.episodes_known and aired > 0:
             remaining = max(remaining, v["min_remaining_weeks"])
-        # airing weeks at the current run-rate, then geometric decay after the finale
+        # airing weeks at the current run-rate, then the measured post-finale profile, then a geometric tail
         pv = div * sum(disc ** k for k in range(1, remaining + 1))
-        lam = v["post_finale_decay"]
-        pv += div * (disc ** remaining) * (lam * disc) / (1 - lam * disc)
+        prof, tail = v["post_finale_profile"], v["post_finale_tail_decay"]
+        for j, f in enumerate(prof, start=1):
+            pv += div * f * disc ** (remaining + j)
+        n = remaining + len(prof)
+        pv += div * prof[-1] * (disc ** n) * (tail * disc) / (1 - tail * disc)
     return pv + book
 
 
 # ---------------------------------------------------------------- simulation
 
-def simulate(shows: list[Show], start: date, end: date, p: dict) -> dict:
+def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict) -> dict:
     rng = random.Random(p["seed"])
     rv, co, gv, cb, mk, val = (p["revenue"], p["company"], p["government"],
                                p["central_bank"], p["market"], p["valuation"])
+    weights = p["markets"]
     shares = co["shares"]
 
     hh_cash = p["economy"]["players"] * p["economy"]["initial_cash"]
@@ -197,6 +223,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict) -> dict:
     co_cash = {s.id: 0.0 for s in shows}
     profit_week = {s.id: 0.0 for s in shows}
     revenue_hist = {s.id: [] for s in shows}     # daily revenue, for trailing 7-day run-rate
+    rev_by_market = {s.id: {m: 0.0 for m in MARKETS} for s in shows}  # today's revenue split
     price = {}
     prev_price = {}
     listed: set[int] = set()
@@ -221,16 +248,26 @@ def simulate(shows: list[Show], start: date, end: date, p: dict) -> dict:
         # 1. IPOs, priced at fundamental value minus the IPO discount
         # denominator = trailing-week attention of everything that will be listed after today's IPOs,
         # measured the same way as the newcomer's own attention (otherwise same-day listers misprice)
-        def trailing(x):
-            return sum(attention(x, d - timedelta(days=k), rv) for k in range(1, 8)) / 7
         listing_today = [x for x in shows if x.list_day == d and x.id not in listed]
-        tot_prev = sum(trailing(x) for x in shows if x.id in listed or x in listing_today) or a_ref
+        if listing_today:
+            def trailing(x):
+                acc = {m: 0.0 for m in MARKETS}
+                for k in range(1, 8):
+                    for m, v in market_att(x, d - timedelta(days=k), rv, markets).items():
+                        acc[m] += v / 7
+                return acc
+            trail = {x.id: trailing(x) for x in shows if x.id in listed or x in listing_today}
+            tot_prev = {m: sum(t[m] for t in trail.values()) for m in MARKETS}
+            if tot_prev["us"] <= 0:
+                tot_prev["us"] = a_ref
         for s in shows:
             if s.list_day == d and s.id not in listed:
-                pre_att = val["preair_attention_per_user"] * at(s, s.popularity, d) / 7
-                own_att = trailing(s)
-                basis = own_att if at(s, s.aired, d, 0) > 0 else max(pre_att, own_att)
-                exp_rev = rv["demand_base_week"] * basis / tot_prev
+                own_share, _ = blended_share(trail[s.id], tot_prev, weights)
+                if at(s, s.aired, d, 0) == 0:
+                    # not aired yet: hype is global, so the AniList planning crowd stands in for all markets
+                    pre_att = val["preair_attention_per_user"] * at(s, s.popularity, d) / 7
+                    own_share = max(own_share, pre_att / tot_prev["us"])
+                exp_rev = rv["demand_base_week"] * own_share
                 exp_div = exp_rev * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
                 v0 = fundamental(s, d, exp_div, 0.0, rate, p, exp_div)
                 ipo_price = max(co["ipo_price_min"], v0 * (1 - co["ipo_discount"]))
@@ -243,11 +280,14 @@ def simulate(shows: list[Show], start: date, end: date, p: dict) -> dict:
                 price[s.id] = prev_price[s.id] = ipo_price
 
         # 2. external revenue, split by attention share
-        att = {s.id: attention(s, d, rv) for s in shows if s.id in listed}
-        tot = sum(att.values())
+        att = {s.id: market_att(s, d, rv, markets) for s in shows if s.id in listed}
+        totals = {m: sum(a[m] for a in att.values()) for m in MARKETS}
+        tot = totals["us"]   # the demand index uses AniList only: the markets' units are not comparable
         demand_day = rv["demand_base_week"] / 7 * ((tot / a_ref) ** rv["demand_elasticity"] if tot > 0 else 0)
         for sid, a in att.items():
-            rev = demand_day * a / tot if tot > 0 else 0.0
+            share, parts = blended_share(a, totals, weights)
+            rev = demand_day * share
+            rev_by_market[sid] = {m: demand_day * parts[m] for m in MARKETS}
             injected += rev
             tax = rev * co["corp_tax"]
             co_cash[sid] += rev - tax
@@ -311,6 +351,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict) -> dict:
                 "d": d.isoformat(), "o": round(p0, 4), "h": round(hi, 4), "l": round(lo, 4),
                 "c": round(new, 4), "v": round(V, 4), "rev": round(revenue_hist[s.id][-1], 2),
                 "div_w": round(weekly_div, 4), "aired": at(s, s.aired, d, 0),
+                "rm": [round(rev_by_market[s.id][m], 2) for m in MARKETS],
             })
 
         # 7. stamp duty on daily turnover (sellers are households)
@@ -382,7 +423,14 @@ def main() -> None:
     start = date.fromisoformat(p["window"]["start"])
     end = date.fromisoformat(p["window"]["end"]) if p["window"]["end"] else None
     shows, end = load_shows(Path(args.db), p, start, end)
-    res = simulate(shows, start, end, p)
+    markets = {}
+    mpath = ROOT / "data" / "derived" / "markets.json"
+    if mpath.exists():
+        markets = {int(k): v for k, v in json.loads(mpath.read_text(encoding="utf-8"))["series"].items()}
+    else:
+        print("data/derived/markets.json missing: running AniList-only (run sim/reconstruct.py build)")
+    res = simulate(shows, start, end, p, markets)
+    res["markets_loaded"] = bool(markets)
     res["params"] = p
     res["window"] = {"start": start.isoformat(), "end": end.isoformat()}
     res["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")

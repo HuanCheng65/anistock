@@ -1,0 +1,1765 @@
+{
+ "note": "id pairs only. Put corrections under 'manual' keyed by AniList id, e.g. {\"12345\": {\"bgm\": 678}}",
+ "manual": {
+  "21": {
+   "bgm": 602059,
+   "bgm_confidence": 1.0,
+   "via": "manual: Bangumi splits the 2026 arc (エルバフ編) into its own subject"
+  }
+ },
+ "matches": {
+  "101184": {
+   "anilist": 101184,
+   "title": "Fate/Grand Order CMs"
+  },
+  "103303": {
+   "anilist": 103303,
+   "title": "二十世紀電氣目録-ユーレカ・エヴリカ-",
+   "annict": 6187,
+   "bgm": 255209,
+   "bgm_confidence": 1.0
+  },
+  "108992": {
+   "anilist": 108992,
+   "title": "メビウス・ダスト",
+   "annict": 6528,
+   "bgm": 276787,
+   "bgm_confidence": 1.0
+  },
+  "112936": {
+   "anilist": 112936,
+   "title": "○○交配"
+  },
+  "113947": {
+   "anilist": 113947,
+   "title": "初めてのヒトヅマ"
+  },
+  "118123": {
+   "anilist": 118123,
+   "title": "ホロのぐらふぃてぃ",
+   "bgm": 282233,
+   "bgm_confidence": 1.0
+  },
+  "119080": {
+   "anilist": 119080,
+   "title": "アークナイツ アニメPVs"
+  },
+  "1199": {
+   "anilist": 1199,
+   "title": "忍たま乱太郎"
+  },
+  "124082": {
+   "anilist": 124082,
+   "title": "アズールレーン アニメPVs"
+  },
+  "128757": {
+   "anilist": 128757,
+   "title": "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",
+   "annict": 7915,
+   "bgm": 325767,
+   "bgm_confidence": 1.0
+  },
+  "129963": {
+   "anilist": 129963,
+   "title": "『ホロライブ・オルタナティブ』 ティザーPVs",
+   "bgm": 443557,
+   "bgm_confidence": 0.6
+  },
+  "132203": {
+   "anilist": 132203,
+   "title": "今泉ん家はどうやらギャルの溜まり場になってるらしい"
+  },
+  "134469": {
+   "anilist": 134469,
+   "title": "思春期のお勉強"
+  },
+  "135865": {
+   "anilist": 135865,
+   "title": "幼女戦記Ⅱ",
+   "annict": 8632,
+   "bgm": 339515,
+   "bgm_confidence": 1.0
+  },
+  "136862": {
+   "anilist": 136862,
+   "title": "逆天至尊"
+  },
+  "137653": {
+   "anilist": 137653,
+   "title": "仙逆",
+   "bgm": 345802,
+   "bgm_confidence": 1.0
+  },
+  "137671": {
+   "anilist": 137671,
+   "title": "遮天"
+  },
+  "137683": {
+   "anilist": 137683,
+   "title": "斗罗大陆2绝世唐门",
+   "bgm": 345803,
+   "bgm_confidence": 1.0
+  },
+  "138416": {
+   "anilist": 138416,
+   "title": "ブルーアーカイブ アニメPVs"
+  },
+  "140842": {
+   "anilist": 140842,
+   "title": "ちいかわ",
+   "bgm": 354700,
+   "bgm_confidence": 1.0
+  },
+  "142229": {
+   "anilist": 142229,
+   "title": "エロリーマン"
+  },
+  "142274": {
+   "anilist": 142274,
+   "title": "ニンジャラ"
+  },
+  "143103": {
+   "anilist": 143103,
+   "title": "魔法使いの夜",
+   "annict": 9236
+  },
+  "144779": {
+   "anilist": 144779,
+   "title": "ヤマトよ永遠に REBEL3199"
+  },
+  "146004": {
+   "anilist": 146004,
+   "title": "ギリギリわるくないわため"
+  },
+  "148148": {
+   "anilist": 148148,
+   "title": "SUMMER ～田舎の性活～"
+  },
+  "152677": {
+   "anilist": 152677,
+   "title": "探偵はもう、死んでいる。Season2",
+   "annict": 9753,
+   "bgm": 393010,
+   "bgm_confidence": 1.0
+  },
+  "154887": {
+   "anilist": 154887,
+   "title": "異世界来たのでスケベスキルで全力謳歌しようと思う THE ANIMATION"
+  },
+  "155154": {
+   "anilist": 155154,
+   "title": "妻を同窓会にいかせたら"
+  },
+  "157330": {
+   "anilist": 157330,
+   "title": "楽園追放 心のレゾナンス",
+   "annict": 12473
+  },
+  "158871": {
+   "anilist": 158871,
+   "title": "ポケットモンスター (2023)",
+   "bgm": 411247,
+   "bgm_confidence": 1.0
+  },
+  "159042": {
+   "anilist": 159042,
+   "title": "転生したら剣でした 第2期",
+   "annict": 10258,
+   "bgm": 412008,
+   "bgm_confidence": 0.8
+  },
+  "159309": {
+   "anilist": 159309,
+   "title": "乙女ゲー世界はモブに厳しい世界です2",
+   "annict": 10352,
+   "bgm": 412144,
+   "bgm_confidence": 1.0
+  },
+  "159454": {
+   "anilist": 159454,
+   "title": "とむとじぇりーごっこ"
+  },
+  "160275": {
+   "anilist": 160275,
+   "title": "メイドインアビス 目覚める神秘",
+   "annict": 10404,
+   "bgm": 415482,
+   "bgm_confidence": 1.0
+  },
+  "160701": {
+   "anilist": 160701,
+   "title": "告白……"
+  },
+  "160803": {
+   "anilist": 160803,
+   "title": "魔法少女育成計画 restart",
+   "annict": 14903,
+   "bgm": 418229,
+   "bgm_confidence": 1.0
+  },
+  "161680": {
+   "anilist": 161680,
+   "title": "1LDK＋J系 いきなり同居？密着！？初エッチ！！？"
+  },
+  "164239": {
+   "anilist": 164239,
+   "title": "so_low"
+  },
+  "164240": {
+   "anilist": 164240,
+   "title": "くノ一○○伝　紫陽花"
+  },
+  "165159": {
+   "anilist": 165159,
+   "title": "BEYBLADE X",
+   "bgm": 418599,
+   "bgm_confidence": 1.0
+  },
+  "165524": {
+   "anilist": 165524,
+   "title": "炼气十万年"
+  },
+  "166219": {
+   "anilist": 166219,
+   "title": "吞噬星空 第四季"
+  },
+  "166444": {
+   "anilist": 166444,
+   "title": "成也萧河"
+  },
+  "166461": {
+   "anilist": 166461,
+   "title": "子作り妊活部！"
+  },
+  "168946": {
+   "anilist": 168946,
+   "title": "Sweet and Hot"
+  },
+  "169080": {
+   "anilist": 169080,
+   "title": "アズールレーン びそくぜんしんっ！にっ！！",
+   "annict": 11119,
+   "bgm": 454083,
+   "bgm_confidence": 1.0
+  },
+  "169581": {
+   "anilist": 169581,
+   "title": "マジカル★エクスプローラー　エロゲの友人キャラに転生したけど、ゲーム知識使って自由に生きる",
+   "annict": 11196,
+   "bgm": 456078,
+   "bgm_confidence": 0.8
+  },
+  "169582": {
+   "anilist": 169582,
+   "title": "最強出涸らし皇子の暗躍帝位争い 無能を演じるSSランク皇子は皇位継承戦を影から支配する",
+   "annict": 11195,
+   "bgm": 456081,
+   "bgm_confidence": 1.0
+  },
+  "169583": {
+   "anilist": 169583,
+   "title": "転校先の清楚可憐な美少女が、昔男子と思って一緒に遊んだ幼馴染だった件",
+   "annict": 11193,
+   "bgm": 456080,
+   "bgm_confidence": 1.0
+  },
+  "172192": {
+   "anilist": 172192,
+   "title": "帰還者の魔法は特別です 第2期",
+   "annict": 12204,
+   "bgm": 471844,
+   "bgm_confidence": 1.0
+  },
+  "172218": {
+   "anilist": 172218,
+   "title": "夢見ル乙女"
+  },
+  "174181": {
+   "anilist": 174181,
+   "title": "サキュバス★コネクト！"
+  },
+  "174184": {
+   "anilist": 174184,
+   "title": "ディアレストブルー"
+  },
+  "174634": {
+   "anilist": 174634,
+   "title": "セックスが好きで好きで大好きなクラスメイトのあの娘"
+  },
+  "176314": {
+   "anilist": 176314,
+   "title": "佐々木とピーちゃん シーズン２",
+   "annict": 12849,
+   "bgm": 486456,
+   "bgm_confidence": 1.0
+  },
+  "176907": {
+   "anilist": 176907,
+   "title": "糸を撚る"
+  },
+  "177149": {
+   "anilist": 177149,
+   "title": "バブルdeハウスde〇〇〇 〜お風呂メーカーのショールームがシェアハウスで…〜 The Animation"
+  },
+  "177637": {
+   "anilist": 177637,
+   "title": "さよならララ",
+   "annict": 13010,
+   "bgm": 495291,
+   "bgm_confidence": 1.0
+  },
+  "177699": {
+   "anilist": 177699,
+   "title": "攻殻機動隊 THE GHOST IN THE SHELL",
+   "annict": 13052,
+   "bgm": 496276,
+   "bgm_confidence": 1.0
+  },
+  "178083": {
+   "anilist": 178083,
+   "title": "東京リベンジャーズ 三天戦争編",
+   "annict": 13286,
+   "bgm": 499474,
+   "bgm_confidence": 1.0
+  },
+  "178445": {
+   "anilist": 178445,
+   "title": "ボクの理想の異世界生活"
+  },
+  "178789": {
+   "anilist": 178789,
+   "title": "無職転生Ⅲ ～異世界行ったら本気だす～",
+   "annict": 13582,
+   "bgm": 501963,
+   "bgm_confidence": 1.0
+  },
+  "178868": {
+   "anilist": 178868,
+   "title": "魔法騎士レイアース (2026)",
+   "annict": 13592,
+   "bgm": 502123,
+   "bgm_confidence": 0.6
+  },
+  "178972": {
+   "anilist": 178972,
+   "title": "GROTESQQQUE-グロテスク-",
+   "annict": 16294
+  },
+  "179823": {
+   "anilist": 179823,
+   "title": "入り浸りギャルにま〇こ使わせて貰う話 Animation"
+  },
+  "179876": {
+   "anilist": 179876,
+   "title": "DARK MACHINE -The Animation-",
+   "annict": 13731,
+   "bgm": 505550,
+   "bgm_confidence": 1.0
+  },
+  "180136": {
+   "anilist": 180136,
+   "title": "追放された転生重騎士はゲーム知識で無双する",
+   "annict": 13889,
+   "bgm": 511177,
+   "bgm_confidence": 1.0
+  },
+  "180704": {
+   "anilist": 180704,
+   "title": "エルフに淫紋を付ける本 The Animation"
+  },
+  "180832": {
+   "anilist": 180832,
+   "title": "おにちちハーレム"
+  },
+  "180894": {
+   "anilist": 180894,
+   "title": "ロメリア戦記 〜魔王を倒した後も人類やばそうだから軍隊組織した〜",
+   "annict": 13957,
+   "bgm": 511936,
+   "bgm_confidence": 1.0
+  },
+  "182616": {
+   "anilist": 182616,
+   "title": "逃げ上手の若君 第二期",
+   "annict": 14132,
+   "bgm": 517106,
+   "bgm_confidence": 1.0
+  },
+  "183231": {
+   "anilist": 183231,
+   "title": "リラックマ"
+  },
+  "183742": {
+   "anilist": 183742,
+   "title": "亜人がお好きなんですね♡"
+  },
+  "184810": {
+   "anilist": 184810,
+   "title": "インモラルーティーン The Animation"
+  },
+  "185001": {
+   "anilist": 185001,
+   "title": "知らないこと知りたいの？ The Animation"
+  },
+  "185506": {
+   "anilist": 185506,
+   "title": "野々原柚花のヒミツのハイシン"
+  },
+  "185542": {
+   "anilist": 185542,
+   "title": "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
+   "annict": 14929,
+   "bgm": 528828,
+   "bgm_confidence": 1.0
+  },
+  "185646": {
+   "anilist": 185646,
+   "title": "コウペンちゃん",
+   "bgm": 529143,
+   "bgm_confidence": 1.0
+  },
+  "185692": {
+   "anilist": 185692,
+   "title": "株式会社マジルミエ 第2期",
+   "annict": 14969,
+   "bgm": 529723,
+   "bgm_confidence": 1.0
+  },
+  "185756": {
+   "anilist": 185756,
+   "title": "転生貴族、鑑定スキルで成り上がる 第3期",
+   "annict": 14998,
+   "bgm": 530104,
+   "bgm_confidence": 1.0
+  },
+  "185874": {
+   "anilist": 185874,
+   "title": "BLEACH 千年血戦篇-禍進譚-",
+   "annict": 15035,
+   "bgm": 530725,
+   "bgm_confidence": 1.0
+  },
+  "185875": {
+   "anilist": 185875,
+   "title": "魔法少女リリカルなのは EXCEEDS Gun Blaze Vengeance",
+   "annict": 15036,
+   "bgm": 530729,
+   "bgm_confidence": 1.0
+  },
+  "186058": {
+   "anilist": 186058,
+   "title": "黒ギャルアラカルト"
+  },
+  "186151": {
+   "anilist": 186151,
+   "title": "Yu-Gi-Oh! CARD GAME: THE CHRONICLES",
+   "bgm": 529751,
+   "bgm_confidence": 1.0
+  },
+  "186495": {
+   "anilist": 186495,
+   "title": "ミルグラム 第三審"
+  },
+  "186541": {
+   "anilist": 186541,
+   "title": "目覚めたら最強装備と宇宙船持ちだったので、一戸建て目指して傭兵として自由に生きたい",
+   "annict": 15285,
+   "bgm": 536270,
+   "bgm_confidence": 1.0
+  },
+  "186742": {
+   "anilist": 186742,
+   "title": "とある暗部の少女共棲",
+   "annict": 15391,
+   "bgm": 537738,
+   "bgm_confidence": 1.0
+  },
+  "186827": {
+   "anilist": 186827,
+   "title": "風紀委員とフーゾク活動"
+  },
+  "186837": {
+   "anilist": 186837,
+   "title": "天官賜福 短片"
+  },
+  "186863": {
+   "anilist": 186863,
+   "title": "猫と竜",
+   "annict": 15481,
+   "bgm": 538760,
+   "bgm_confidence": 0.8
+  },
+  "187260": {
+   "anilist": 187260,
+   "title": "きみが死ぬまで恋をしたい",
+   "annict": 15557,
+   "bgm": 541285,
+   "bgm_confidence": 1.0
+  },
+  "187316": {
+   "anilist": 187316,
+   "title": "幻想水滸伝",
+   "annict": 15574,
+   "bgm": 541538,
+   "bgm_confidence": 1.0
+  },
+  "187402": {
+   "anilist": 187402,
+   "title": "転生した大聖女は、聖女であることをひた隠す",
+   "annict": 15600,
+   "bgm": 542007,
+   "bgm_confidence": 1.0
+  },
+  "187538": {
+   "anilist": 187538,
+   "title": "BLACK TORCH",
+   "annict": 15623,
+   "bgm": 542603,
+   "bgm_confidence": 1.0
+  },
+  "187990": {
+   "anilist": 187990,
+   "title": "Battle Spirits [Re] 絶界の空",
+   "annict": 15716,
+   "bgm": 544378,
+   "bgm_confidence": 1.0
+  },
+  "188034": {
+   "anilist": 188034,
+   "title": "ガールズ＆パンツァー もっとらぶらぶ作戦です！",
+   "annict": 17851
+  },
+  "188139": {
+   "anilist": 188139,
+   "title": "ふつつかな悪女ではございますが ~雛宮蝶鼠とりかえ伝~",
+   "annict": 15724,
+   "bgm": 545008,
+   "bgm_confidence": 1.0
+  },
+  "188525": {
+   "anilist": 188525,
+   "title": "これ描いて死ね",
+   "annict": 15751,
+   "bgm": 545917,
+   "bgm_confidence": 1.0
+  },
+  "188928": {
+   "anilist": 188928,
+   "title": "夏と箱"
+  },
+  "189123": {
+   "anilist": 189123,
+   "title": "アオのハコ Season２",
+   "annict": 15795,
+   "bgm": 548156,
+   "bgm_confidence": 1.0
+  },
+  "190054": {
+   "anilist": 190054,
+   "title": "わたしの幸せな結婚 特別篇",
+   "annict": 15872,
+   "bgm": 551304,
+   "bgm_confidence": 1.0
+  },
+  "190569": {
+   "anilist": 190569,
+   "title": "天幕のジャードゥーガル",
+   "annict": 15881,
+   "bgm": 552533,
+   "bgm_confidence": 1.0
+  },
+  "191452": {
+   "anilist": 191452,
+   "title": "淫モラル・ゲームマスター THE ANIMATION"
+  },
+  "191656": {
+   "anilist": 191656,
+   "title": "生徒会にも穴はある！",
+   "annict": 15941,
+   "bgm": 554779,
+   "bgm_confidence": 1.0
+  },
+  "191788": {
+   "anilist": 191788,
+   "title": "アオアシ 第2期",
+   "annict": 15978,
+   "bgm": 555605,
+   "bgm_confidence": 1.0
+  },
+  "192800": {
+   "anilist": 192800,
+   "title": "ヒロイン？聖女？いいえ、オールワークスメイドです（誇）！",
+   "annict": 16023,
+   "bgm": 558064,
+   "bgm_confidence": 0.8
+  },
+  "194207": {
+   "anilist": 194207,
+   "title": "パンどろぼう",
+   "annict": 16335,
+   "bgm": 563508,
+   "bgm_confidence": 1.0
+  },
+  "194219": {
+   "anilist": 194219,
+   "title": "鬼の花嫁",
+   "annict": 16132,
+   "bgm": 563745,
+   "bgm_confidence": 1.0
+  },
+  "194353": {
+   "anilist": 194353,
+   "title": "ちょろ・めす・でいず"
+  },
+  "194829": {
+   "anilist": 194829,
+   "title": "片田舎のおっさん、剣聖になるII",
+   "annict": 16248,
+   "bgm": 565701,
+   "bgm_confidence": 1.0
+  },
+  "195516": {
+   "anilist": 195516,
+   "title": "薬屋のひとりごと 第3期",
+   "annict": 16290,
+   "bgm": 568244,
+   "bgm_confidence": 1.0
+  },
+  "195539": {
+   "anilist": 195539,
+   "title": "サイバーパンク: エッジランナーズ2",
+   "annict": 14032,
+   "bgm": 513878,
+   "bgm_confidence": 1.0
+  },
+  "195571": {
+   "anilist": 195571,
+   "title": "朱色の仮面",
+   "annict": 16295,
+   "bgm": 568525,
+   "bgm_confidence": 1.0
+  },
+  "195604": {
+   "anilist": 195604,
+   "title": "ブラッククローバー 第2期",
+   "annict": 16301,
+   "bgm": 567896,
+   "bgm_confidence": 1.0
+  },
+  "195833": {
+   "anilist": 195833,
+   "title": "炎の闘球女 ドッジ弾子",
+   "annict": 16328
+  },
+  "1960": {
+   "anilist": 1960,
+   "title": "それいけ!アンパンマン"
+  },
+  "196017": {
+   "anilist": 196017,
+   "title": "グロウアップショウ ～ひまわりのサーカス団～",
+   "annict": 16339,
+   "bgm": 570583,
+   "bgm_confidence": 1.0
+  },
+  "196187": {
+   "anilist": 196187,
+   "title": "スーパーの裏でヤニ吸うふたり",
+   "annict": 16391,
+   "bgm": 571784,
+   "bgm_confidence": 1.0
+  },
+  "196218": {
+   "anilist": 196218,
+   "title": "領民0人スタートの辺境領主様",
+   "annict": 16395,
+   "bgm": 571895,
+   "bgm_confidence": 0.8
+  },
+  "196219": {
+   "anilist": 196219,
+   "title": "無自覚聖女は今日も無意識に力を垂れ流す",
+   "annict": 16396,
+   "bgm": 571910,
+   "bgm_confidence": 1.0
+  },
+  "196356": {
+   "anilist": 196356,
+   "title": "いびってこない義母と義姉",
+   "annict": 16405,
+   "bgm": 572613,
+   "bgm_confidence": 1.0
+  },
+  "196722": {
+   "anilist": 196722,
+   "title": "レイカは華麗な僕の女王 THE ANIMATION"
+  },
+  "196750": {
+   "anilist": 196750,
+   "title": "シスターブリーダー"
+  },
+  "197543": {
+   "anilist": 197543,
+   "title": "BanG Dream! Ave Mujica prima aurora",
+   "annict": 16454,
+   "bgm": 578262,
+   "bgm_confidence": 1.0
+  },
+  "197715": {
+   "anilist": 197715,
+   "title": "LV999の村人",
+   "annict": 16478,
+   "bgm": 579787,
+   "bgm_confidence": 1.0
+  },
+  "198048": {
+   "anilist": 198048,
+   "title": "夏妻"
+  },
+  "198376": {
+   "anilist": 198376,
+   "title": "バンドリ！ ゆめ∞みた",
+   "annict": 16519,
+   "bgm": 583729,
+   "bgm_confidence": 1.0
+  },
+  "198409": {
+   "anilist": 198409,
+   "title": "世界最強の後衛 ～迷宮国の新人探索者～",
+   "annict": 16524,
+   "bgm": 583862,
+   "bgm_confidence": 1.0
+  },
+  "198560": {
+   "anilist": 198560,
+   "title": "ダンジョン＆テレビジョン"
+  },
+  "198709": {
+   "anilist": 198709,
+   "title": "手札が多めのビクトリア",
+   "annict": 16538,
+   "bgm": 584641,
+   "bgm_confidence": 1.0
+  },
+  "198727": {
+   "anilist": 198727,
+   "title": "千歳くんはラムネ瓶のなか 2クール",
+   "annict": 17367,
+   "bgm": 584847,
+   "bgm_confidence": 1.0
+  },
+  "198946": {
+   "anilist": 198946,
+   "title": "クレバテスⅡ-魔獣の王と偽りの勇者伝承-",
+   "annict": 16555,
+   "bgm": 585820,
+   "bgm_confidence": 1.0
+  },
+  "199007": {
+   "anilist": 199007,
+   "title": "#ゾンビさがしてます",
+   "annict": 16563,
+   "bgm": 586255,
+   "bgm_confidence": 1.0
+  },
+  "199066": {
+   "anilist": 199066,
+   "title": "花織さんは転生しても喧嘩がしたい",
+   "annict": 16569,
+   "bgm": 587109,
+   "bgm_confidence": 1.0
+  },
+  "199068": {
+   "anilist": 199068,
+   "title": "新テニスの王子様 U-17 WORLD CUP 決勝メンバー決定戦",
+   "annict": 16570
+  },
+  "199111": {
+   "anilist": 199111,
+   "title": "ぐらんぶる Season 3",
+   "annict": 16571,
+   "bgm": 569116,
+   "bgm_confidence": 1.0
+  },
+  "199340": {
+   "anilist": 199340,
+   "title": "青春ブタ野郎はディアフレンドの夢を見ない",
+   "annict": 16586,
+   "bgm": 589284,
+   "bgm_confidence": 1.0
+  },
+  "199353": {
+   "anilist": 199353,
+   "title": "大王饶命 第三季",
+   "bgm": 507820,
+   "bgm_confidence": 1.0
+  },
+  "199408": {
+   "anilist": 199408,
+   "title": "ブチ切れ令嬢は報復を誓いました。　～魔導書の力で祖国を叩き潰します～",
+   "annict": 16468,
+   "bgm": 579246,
+   "bgm_confidence": 1.0
+  },
+  "199426": {
+   "anilist": 199426,
+   "title": "ホテル・インヒューマンズ 第2期",
+   "annict": 16593,
+   "bgm": 589775,
+   "bgm_confidence": 1.0
+  },
+  "199594": {
+   "anilist": 199594,
+   "title": "てつりょー！meet with 鉄道むすめ",
+   "annict": 16602,
+   "bgm": 590553,
+   "bgm_confidence": 1.0
+  },
+  "199748": {
+   "anilist": 199748,
+   "title": "ここは俺に任せて先に行けと言ってから１０年がたったら伝説になっていた。",
+   "annict": 16606,
+   "bgm": 590786,
+   "bgm_confidence": 1.0
+  },
+  "200228": {
+   "anilist": 200228,
+   "title": "おしかけ！爆乳ギャルハーレム性活"
+  },
+  "200230": {
+   "anilist": 200230,
+   "title": "レッツゴー怪奇組",
+   "annict": 16632,
+   "bgm": 595106,
+   "bgm_confidence": 1.0
+  },
+  "200294": {
+   "anilist": 200294,
+   "title": "超巡！超条先輩",
+   "annict": 16635,
+   "bgm": 593565,
+   "bgm_confidence": 1.0
+  },
+  "200455": {
+   "anilist": 200455,
+   "title": "弱気MAX令嬢なのに、辣腕婚約者様の賭けに乗ってしまった",
+   "annict": 16646,
+   "bgm": 596771,
+   "bgm_confidence": 1.0
+  },
+  "200637": {
+   "anilist": 200637,
+   "title": "君のことが大大大大大好きな100人の彼女 第3期",
+   "annict": 16658,
+   "bgm": 598058,
+   "bgm_confidence": 1.0
+  },
+  "200929": {
+   "anilist": 200929,
+   "title": "薬屋のひとりごと 亡妃の秘宝",
+   "annict": 16662
+  },
+  "201514": {
+   "anilist": 201514,
+   "title": "才女のお世話 高嶺の花だらけな名門校で、学院一のお嬢様(生活能力皆無)を陰ながらお世話することになりました",
+   "annict": 16677,
+   "bgm": 602733,
+   "bgm_confidence": 1.0
+  },
+  "201667": {
+   "anilist": 201667,
+   "title": "文豪ストレイドッグス わん！２",
+   "annict": 16681,
+   "bgm": 603352,
+   "bgm_confidence": 1.0
+  },
+  "202079": {
+   "anilist": 202079,
+   "title": "おじさんはカワイイものがお好き。",
+   "annict": 16703,
+   "bgm": 605533,
+   "bgm_confidence": 1.0
+  },
+  "202250": {
+   "anilist": 202250,
+   "title": "貸した魔力は【リボ払い】で強制徴収",
+   "annict": 16708,
+   "bgm": 606716,
+   "bgm_confidence": 1.0
+  },
+  "202269": {
+   "anilist": 202269,
+   "title": "透明な夜に駆ける君と、目に見えない恋をした。",
+   "annict": 16714,
+   "bgm": 607340,
+   "bgm_confidence": 1.0
+  },
+  "202390": {
+   "anilist": 202390,
+   "title": "ガールズ＆パンツァー 最終章 第5話",
+   "annict": 16716,
+   "bgm": 208829,
+   "bgm_confidence": 1.0
+  },
+  "202957": {
+   "anilist": 202957,
+   "title": "名探偵プリキュア！",
+   "bgm": 611077,
+   "bgm_confidence": 1.0
+  },
+  "203275": {
+   "anilist": 203275,
+   "title": "デモンズ・クレスト",
+   "annict": 16796
+  },
+  "203367": {
+   "anilist": 203367,
+   "title": "もう一度、してみたい。"
+  },
+  "203473": {
+   "anilist": 203473,
+   "title": "恐怖コレクター",
+   "annict": 16806,
+   "bgm": 613256,
+   "bgm_confidence": 1.0
+  },
+  "203490": {
+   "anilist": 203490,
+   "title": "うちの弟どもがすみません",
+   "annict": 16808,
+   "bgm": 613438,
+   "bgm_confidence": 1.0
+  },
+  "203880": {
+   "anilist": 203880,
+   "title": "令和のダラさん",
+   "annict": 16822,
+   "bgm": 614594,
+   "bgm_confidence": 1.0
+  },
+  "204011": {
+   "anilist": 204011,
+   "title": "PSYREN -サイレン-",
+   "annict": 16852,
+   "bgm": 614640,
+   "bgm_confidence": 1.0
+  },
+  "204060": {
+   "anilist": 204060,
+   "title": "鉄鍋のジャン！",
+   "annict": 16856,
+   "bgm": 615835,
+   "bgm_confidence": 1.0
+  },
+  "204389": {
+   "anilist": 204389,
+   "title": "野生のラスボスが現れた！ 第2期",
+   "annict": 16906,
+   "bgm": 616808,
+   "bgm_confidence": 0.8
+  },
+  "204466": {
+   "anilist": 204466,
+   "title": "乙女怪獣キャラメリゼ",
+   "annict": 16910,
+   "bgm": 617123,
+   "bgm_confidence": 1.0
+  },
+  "204650": {
+   "anilist": 204650,
+   "title": "桃源暗鬼 日光・華厳の滝編",
+   "annict": 16942,
+   "bgm": 617948,
+   "bgm_confidence": 1.0
+  },
+  "204762": {
+   "anilist": 204762,
+   "title": "Enter the Garden"
+  },
+  "205289": {
+   "anilist": 205289,
+   "title": "ノーマン・ザ・スノーマン ~こどもたちのひとつ星~"
+  },
+  "205896": {
+   "anilist": 205896,
+   "title": "信者ゼロの女神サマと始める異世界攻略",
+   "annict": 17025,
+   "bgm": 621073,
+   "bgm_confidence": 1.0
+  },
+  "205909": {
+   "anilist": 205909,
+   "title": "ホタルの嫁入り",
+   "annict": 17026,
+   "bgm": 621108,
+   "bgm_confidence": 1.0
+  },
+  "206163": {
+   "anilist": 206163,
+   "title": "装甲騎兵ボトムズ 灰色の魔女",
+   "annict": 17039
+  },
+  "206249": {
+   "anilist": 206249,
+   "title": "岩元先輩ノ推薦",
+   "annict": 17043,
+   "bgm": 621843,
+   "bgm_confidence": 1.0
+  },
+  "206401": {
+   "anilist": 206401,
+   "title": "FX戦士くるみちゃん",
+   "annict": 17053,
+   "bgm": 622288,
+   "bgm_confidence": 1.0
+  },
+  "206521": {
+   "anilist": 206521,
+   "title": "ワールド イズ ダンシング",
+   "annict": 17057,
+   "bgm": 622633,
+   "bgm_confidence": 1.0
+  },
+  "206774": {
+   "anilist": 206774,
+   "title": "マウスカーソルで現実を操作できるようになったので、女の子をいっぱいクリックしまーす",
+   "annict": 17071,
+   "bgm": 698032,
+   "bgm_confidence": 1.0
+  },
+  "206814": {
+   "anilist": 206814,
+   "title": "ドラゴンボール超 ビルス",
+   "annict": 17068,
+   "bgm": 623249,
+   "bgm_confidence": 1.0
+  },
+  "206949": {
+   "anilist": 206949,
+   "title": "凶乱令嬢ニア・リストン",
+   "annict": 17077,
+   "bgm": 624085,
+   "bgm_confidence": 1.0
+  },
+  "207084": {
+   "anilist": 207084,
+   "title": "お姉ちゃんごっこ"
+  },
+  "207141": {
+   "anilist": 207141,
+   "title": "ヤニねこ",
+   "annict": 17088,
+   "bgm": 622206,
+   "bgm_confidence": 1.0
+  },
+  "207191": {
+   "anilist": 207191,
+   "title": "どうも、好きな人に惚れ薬を依頼された魔女です。",
+   "annict": 17089,
+   "bgm": 624923,
+   "bgm_confidence": 1.0
+  },
+  "207217": {
+   "anilist": 207217,
+   "title": "子猫の配達員うーにゃん (2026)"
+  },
+  "207254": {
+   "anilist": 207254,
+   "title": "サンダー３",
+   "annict": 17092
+  },
+  "207327": {
+   "anilist": 207327,
+   "title": "どこよりも遠い場所にいる君へ",
+   "annict": 17108,
+   "bgm": 626870,
+   "bgm_confidence": 1.0
+  },
+  "207329": {
+   "anilist": 207329,
+   "title": "追放されたチート付与魔術師は気ままなセカンドライフを謳歌する。　～俺は武器だけじゃなく、あらゆるものに『強化ポイント』を付与できるし、俺の意思でいつでも効果を解除できるけど、残った人たち大丈夫？～",
+   "annict": 17097,
+   "bgm": 625799,
+   "bgm_confidence": 1.0
+  },
+  "207674": {
+   "anilist": 207674,
+   "title": "うしろの正面カムイさん",
+   "annict": 17114,
+   "bgm": 627136,
+   "bgm_confidence": 1.0
+  },
+  "207809": {
+   "anilist": 207809,
+   "title": "天は赤い河のほとり",
+   "annict": 17121,
+   "bgm": 627648,
+   "bgm_confidence": 1.0
+  },
+  "208025": {
+   "anilist": 208025,
+   "title": "ダークサモナーとデキている",
+   "annict": 17132,
+   "bgm": 630160,
+   "bgm_confidence": 1.0
+  },
+  "208044": {
+   "anilist": 208044,
+   "title": "落第賢者の学院無双～二度目の転生、Sランクチート魔術師冒険録～",
+   "annict": 17131,
+   "bgm": 630163,
+   "bgm_confidence": 0.8
+  },
+  "208225": {
+   "anilist": 208225,
+   "title": "「きみを愛する気はない」と言った次期公爵様がなぜか溺愛してきます",
+   "annict": 17147,
+   "bgm": 631018,
+   "bgm_confidence": 1.0
+  },
+  "208367": {
+   "anilist": 208367,
+   "title": "Duel Masters LOST ～断罪の少年～",
+   "annict": 18102,
+   "bgm": 632061,
+   "bgm_confidence": 1.0
+  },
+  "208685": {
+   "anilist": 208685,
+   "title": "同じゼミの染谷さんがセクシー女優だった話。",
+   "annict": 17192
+  },
+  "209032": {
+   "anilist": 209032,
+   "title": "魔法の姉妹ルルットリリィ 第2クール",
+   "annict": 17813,
+   "bgm": 634210,
+   "bgm_confidence": 1.0
+  },
+  "209219": {
+   "anilist": 209219,
+   "title": "転生ゴブリンだけど質問ある？",
+   "annict": 17229,
+   "bgm": 634587,
+   "bgm_confidence": 1.0
+  },
+  "209463": {
+   "anilist": 209463,
+   "title": "彼方から",
+   "annict": 17297,
+   "bgm": 636058,
+   "bgm_confidence": 1.0
+  },
+  "209499": {
+   "anilist": 209499,
+   "title": "TANK CHAIR-戦車椅子-",
+   "annict": 17295,
+   "bgm": 636023,
+   "bgm_confidence": 1.0
+  },
+  "209502": {
+   "anilist": 209502,
+   "title": "塩対応の佐藤さんが俺にだけ甘い",
+   "annict": 17298,
+   "bgm": 634708,
+   "bgm_confidence": 1.0
+  },
+  "209504": {
+   "anilist": 209504,
+   "title": "捨てられ聖女の異世界ごはん旅 隠れスキルでキャンピングカーを召喚しました",
+   "annict": 17296,
+   "bgm": 636067,
+   "bgm_confidence": 1.0
+  },
+  "209562": {
+   "anilist": 209562,
+   "title": "バーテックスフォース",
+   "annict": 17314,
+   "bgm": 636512,
+   "bgm_confidence": 1.0
+  },
+  "209642": {
+   "anilist": 209642,
+   "title": "劇場版 前橋ウィッチーズ ～魔女見習いのエモエモリーズ～",
+   "annict": 17316
+  },
+  "209669": {
+   "anilist": 209669,
+   "title": "花ざかりの君たちへ 第2期",
+   "annict": 17323,
+   "bgm": 637124,
+   "bgm_confidence": 1.0
+  },
+  "209709": {
+   "anilist": 209709,
+   "title": "しろたん",
+   "annict": 17329,
+   "bgm": 637206,
+   "bgm_confidence": 1.0
+  },
+  "209800": {
+   "anilist": 209800,
+   "title": "鎧真伝サムライトルーパー 第2クール",
+   "annict": 16792
+  },
+  "209872": {
+   "anilist": 209872,
+   "title": "らんま1/2 (2024) 第3期",
+   "annict": 17344,
+   "bgm": 637802,
+   "bgm_confidence": 1.0
+  },
+  "209981": {
+   "anilist": 209981,
+   "title": "はーとまーく多め。"
+  },
+  "209983": {
+   "anilist": 209983,
+   "title": "ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～ 2nd Season",
+   "annict": 17353,
+   "bgm": 638151,
+   "bgm_confidence": 1.0
+  },
+  "21": {
+   "anilist": 21,
+   "title": "ONE PIECE",
+   "bgm": 602059,
+   "bgm_confidence": 1.0,
+   "via": "manual: Bangumi splits the 2026 arc (エルバフ編) into its own subject"
+  },
+  "210031": {
+   "anilist": 210031,
+   "title": "正反対な君と僕 第2期",
+   "annict": 17361,
+   "bgm": 638497,
+   "bgm_confidence": 1.0
+  },
+  "210482": {
+   "anilist": 210482,
+   "title": "ジョジョの奇妙な冒険 スティール・ボール・ラン 2nd＆3rd STAGE"
+  },
+  "211220": {
+   "anilist": 211220,
+   "title": "李熊猫"
+  },
+  "211778": {
+   "anilist": 211778,
+   "title": "世界最強の魔女、始めました",
+   "annict": 17539,
+   "bgm": 646154,
+   "bgm_confidence": 1.0
+  },
+  "211877": {
+   "anilist": 211877,
+   "title": "彼女の友達",
+   "annict": 17547,
+   "bgm": 647220,
+   "bgm_confidence": 1.0
+  },
+  "212144": {
+   "anilist": 212144,
+   "title": "傷だらけ聖女より報復をこめて Season2",
+   "annict": 17556,
+   "bgm": 650428,
+   "bgm_confidence": 1.0
+  },
+  "212503": {
+   "anilist": 212503,
+   "title": "冰剣の魔術師が世界を統べるⅡ",
+   "annict": 17586,
+   "bgm": 654294,
+   "bgm_confidence": 1.0
+  },
+  "212539": {
+   "anilist": 212539,
+   "title": "タコピーの原罪 -ありがとう、また明日-",
+   "annict": 17589
+  },
+  "212667": {
+   "anilist": 212667,
+   "title": "人付き合いが苦手な未亡人の雪女さんと呪いの指輪",
+   "annict": 17600,
+   "bgm": 656083,
+   "bgm_confidence": 1.0
+  },
+  "212799": {
+   "anilist": 212799,
+   "title": "マロニエ王国の七人の騎士",
+   "annict": 17627,
+   "bgm": 657084,
+   "bgm_confidence": 1.0
+  },
+  "212888": {
+   "anilist": 212888,
+   "title": "テムパル～アイテムの力～",
+   "annict": 17635,
+   "bgm": 657656,
+   "bgm_confidence": 0.8
+  },
+  "213068": {
+   "anilist": 213068,
+   "title": "獣王武神ダンデヴァイン",
+   "annict": 17636,
+   "bgm": 657778,
+   "bgm_confidence": 1.0
+  },
+  "213298": {
+   "anilist": 213298,
+   "title": "ゆるゆる図鑑",
+   "annict": 17803,
+   "bgm": 661278,
+   "bgm_confidence": 1.0
+  },
+  "213457": {
+   "anilist": 213457,
+   "title": "フールナイト",
+   "annict": 17818
+  },
+  "213657": {
+   "anilist": 213657,
+   "title": "夜桜さんちの大作戦 第2期 第2クール",
+   "annict": 17850,
+   "bgm": 664389,
+   "bgm_confidence": 1.0
+  },
+  "213658": {
+   "anilist": 213658,
+   "title": "ダイヤのA actⅡ -Second Season- 第2クール",
+   "annict": 17853,
+   "bgm": 664395,
+   "bgm_confidence": 1.0
+  },
+  "213665": {
+   "anilist": 213665,
+   "title": "身代わり令嬢を救ったのは冷酷無慈悲な氷の王子の愛でした",
+   "annict": 17371,
+   "bgm": 638995,
+   "bgm_confidence": 1.0
+  },
+  "213666": {
+   "anilist": 213666,
+   "title": "パーフェクトアディクション",
+   "annict": 17134,
+   "bgm": 630164,
+   "bgm_confidence": 1.0
+  },
+  "213805": {
+   "anilist": 213805,
+   "title": "氷の城壁 第2期",
+   "annict": 17864,
+   "bgm": 665390,
+   "bgm_confidence": 1.0
+  },
+  "213831": {
+   "anilist": 213831,
+   "title": "スナックはざま-HAZAMA-",
+   "annict": 17729
+  },
+  "213847": {
+   "anilist": 213847,
+   "title": "Star Wars：ビジョンズ 九人目のジェダイ",
+   "bgm": 553904,
+   "bgm_confidence": 1.0
+  },
+  "213961": {
+   "anilist": 213961,
+   "title": "ようじょしぇんき2",
+   "annict": 17643
+  },
+  "214443": {
+   "anilist": 214443,
+   "title": "ヒトリ妻"
+  },
+  "214536": {
+   "anilist": 214536,
+   "title": "カードファイト!! ヴァンガード Divinez 運命星戦編"
+  },
+  "214593": {
+   "anilist": 214593,
+   "title": "ゆうさんち！from 遊ハち",
+   "bgm": 688204,
+   "bgm_confidence": 1.0
+  },
+  "214703": {
+   "anilist": 214703,
+   "title": "ごーすと・みーつ・ぎゃる！",
+   "annict": 17955
+  },
+  "214968": {
+   "anilist": 214968,
+   "title": "ねずみくんのチョッキ (TV) 第2期",
+   "annict": 18059
+  },
+  "215527": {
+   "anilist": 215527,
+   "title": "夏日 The Animation"
+  },
+  "215835": {
+   "anilist": 215835,
+   "title": "うまゆるふるげ〜と!",
+   "annict": 18106
+  },
+  "215989": {
+   "anilist": 215989,
+   "title": "堕ちるパート妻 年下男との情事に溺れた果てに…"
+  },
+  "216171": {
+   "anilist": 216171,
+   "title": "真面目なキミにハマるカラダ THE ANIMATION"
+  },
+  "216557": {
+   "anilist": 216557,
+   "title": "ケロロ軍曹☆",
+   "annict": 16912,
+   "bgm": 617273,
+   "bgm_confidence": 1.0
+  },
+  "216617": {
+   "anilist": 216617,
+   "title": "ふたなり神社は乙女おチ○ポ相談所"
+  },
+  "216860": {
+   "anilist": 216860,
+   "title": "ぷにるんず ぷに４",
+   "bgm": 646586,
+   "bgm_confidence": 1.0
+  },
+  "216895": {
+   "anilist": 216895,
+   "title": "蒼き伝承 ウェルシュ&シェーダー",
+   "annict": 18218,
+   "bgm": 701782,
+   "bgm_confidence": 1.0
+  },
+  "216926": {
+   "anilist": 216926,
+   "title": "お隣の贄"
+  },
+  "217009": {
+   "anilist": 217009,
+   "title": "ギャルズフィクション THE ANIMATION"
+  },
+  "217282": {
+   "anilist": 217282,
+   "title": "ゲルぴよ 2"
+  },
+  "217458": {
+   "anilist": 217458,
+   "title": "悪霊退散！おねが～い！色神様"
+  },
+  "217459": {
+   "anilist": 217459,
+   "title": "姉モネ"
+  },
+  "217577": {
+   "anilist": 217577,
+   "title": "マゼンチュ",
+   "bgm": 701779,
+   "bgm_confidence": 0.8
+  },
+  "217624": {
+   "anilist": 217624,
+   "title": "ぷちきゅあ～Precure Fairies～ シーズン4"
+  },
+  "217782": {
+   "anilist": 217782,
+   "title": "彼女の友達 ミニアニメ劇場",
+   "annict": 18277
+  },
+  "217787": {
+   "anilist": 217787,
+   "title": "ポップパップポルターズ",
+   "bgm": 635258,
+   "bgm_confidence": 1.0
+  },
+  "217941": {
+   "anilist": 217941,
+   "title": "人妻と寝取られ旅行"
+  },
+  "218011": {
+   "anilist": 218011,
+   "title": "タヌキとキツネ",
+   "annict": 17352,
+   "bgm": 638081,
+   "bgm_confidence": 1.0
+  },
+  "218217": {
+   "anilist": 218217,
+   "title": "JKダークサモナーとデキ。。。。。。でいない!?",
+   "annict": 18152
+  },
+  "21828": {
+   "anilist": 21828,
+   "title": "小女ラムネ"
+  },
+  "218532": {
+   "anilist": 218532,
+   "title": "猫猫のひとりごと 第3期",
+   "annict": 18281,
+   "bgm": 707667,
+   "bgm_confidence": 1.0
+  },
+  "218931": {
+   "anilist": 218931,
+   "title": "さくら裂ク 散ル花びら"
+  },
+  "218938": {
+   "anilist": 218938,
+   "title": "ホタルの嫁入り ちょいたし"
+  },
+  "218942": {
+   "anilist": 218942,
+   "title": "シルバニアファミリー フレアのカラフル・エブリデイ",
+   "bgm": 704737,
+   "bgm_confidence": 1.0
+  },
+  "219507": {
+   "anilist": 219507,
+   "title": "お茶犬 ーちょびっとものがたりー"
+  },
+  "235": {
+   "anilist": 235,
+   "title": "名探偵コナン",
+   "bgm": 899,
+   "bgm_confidence": 1.0
+  },
+  "2406": {
+   "anilist": 2406,
+   "title": "サザエさん"
+  },
+  "6149": {
+   "anilist": 6149,
+   "title": "ちびまる子ちゃん"
+  },
+  "8687": {
+   "anilist": 8687,
+   "title": "ドラえもん (2005)",
+   "bgm": 18692,
+   "bgm_confidence": 1.0
+  },
+  "966": {
+   "anilist": 966,
+   "title": "クレヨンしんちゃん",
+   "bgm": 24823,
+   "bgm_confidence": 1.0
+  }
+ },
+ "unmatched_bgm": [
+  {
+   "bgm": 577237,
+   "name": "仙逆剧场版 弑仙之战",
+   "name_cn": "仙逆剧场版 弑仙之战",
+   "date": "2026-10-01"
+  },
+  {
+   "bgm": 700127,
+   "name": "ちょこっとヤバシティ",
+   "name_cn": "",
+   "date": "2026-10-01"
+  },
+  {
+   "bgm": 705980,
+   "name": "熊出没之神奇宝物2",
+   "name_cn": "熊出没之神奇宝物 第二季",
+   "date": "2026-10-01"
+  },
+  {
+   "bgm": 698981,
+   "name": "Adventure Time: Side Quests Season 2",
+   "name_cn": "探险时光：支线任务 第二季",
+   "date": "2026-10-02"
+  },
+  {
+   "bgm": 701310,
+   "name": "The Sisters Grimm Season 2",
+   "name_cn": "格林姐妹大冒险 第二季",
+   "date": "2026-10-02"
+  },
+  {
+   "bgm": 654678,
+   "name": "おしりたんてい 第11シリーズ",
+   "name_cn": "屁屁侦探 第11季",
+   "date": "2026-10-03"
+  },
+  {
+   "bgm": 694622,
+   "name": "ねずみくんのチョッキ 第2期",
+   "name_cn": "",
+   "date": "2026-10-03"
+  },
+  {
+   "bgm": 701565,
+   "name": "ふんばるず",
+   "name_cn": "",
+   "date": "2026-10-03"
+  },
+  {
+   "bgm": 702192,
+   "name": "Get Jiro!",
+   "name_cn": "极道寿司次郎！",
+   "date": "2026-10-03"
+  },
+  {
+   "bgm": 632817,
+   "name": "肥志百科 第15季",
+   "name_cn": "肥志百科 第15季",
+   "date": "2026-10-04"
+  },
+  {
+   "bgm": 688797,
+   "name": "僕らが選んだベストアドベンチャー",
+   "name_cn": "数码宝贝30周年纪念：我们选出的最佳冒险",
+   "date": "2026-10-04"
+  },
+  {
+   "bgm": 708612,
+   "name": "ダークサモナーとデキている  ミニアニメ劇場",
+   "name_cn": "黑暗召唤师在地下恋爱中 迷你动画剧场",
+   "date": "2026-10-04"
+  },
+  {
+   "bgm": 716251,
+   "name": "【活動記録】間章 Dream Interlude「陽ノ下に咲く蓮」（蓮ノ空女学院スクールアイドルクラブ）",
+   "name_cn": "",
+   "date": "2026-10-04"
+  },
+  {
+   "bgm": 390200,
+   "name": "列女战纪：女娲石记",
+   "name_cn": "列女战纪：女娲石记",
+   "date": "2026-10-05"
+  },
+  {
+   "bgm": 498559,
+   "name": "Electro Andes",
+   "name_cn": "",
+   "date": "2026-10-05"
+  },
+  {
+   "bgm": 708080,
+   "name": "Family Guy: Happy Hell-O-Ween",
+   "name_cn": "恶搞之家：地狱欢庆万圣节",
+   "date": "2026-10-05"
+  },
+  {
+   "bgm": 709326,
+   "name": "Kiff: Scarm II: The Screamwriter",
+   "name_cn": "",
+   "date": "2026-10-06"
+  },
+  {
+   "bgm": 576783,
+   "name": "狂王2",
+   "name_cn": "狂王 第2季",
+   "date": "2026-10-08"
+  },
+  {
+   "bgm": 538631,
+   "name": "Avatar: Seven Havens Season 1",
+   "name_cn": "降世神通：七个避风港 第一季",
+   "date": "2026-10-09"
+  },
+  {
+   "bgm": 700678,
+   "name": "Haunted Hotel Season 2",
+   "name_cn": "闹鬼酒店 第二季",
+   "date": "2026-10-09"
+  },
+  {
+   "bgm": 710874,
+   "name": "宝可梦动画图鉴 第六季 云岫寻踪",
+   "name_cn": "",
+   "date": "2026-10-12"
+  },
+  {
+   "bgm": 713219,
+   "name": "ミニアニメ「ホタルの嫁入り」ちょいたし",
+   "name_cn": "萤火虫的出嫁 迷你动画",
+   "date": "2026-10-12"
+  },
+  {
+   "bgm": 573707,
+   "name": "Helluva Boss Season 3",
+   "name_cn": "极恶老大 第三季",
+   "date": "2026-10-14"
+  },
+  {
+   "bgm": 712926,
+   "name": "都市古医仙2",
+   "name_cn": "",
+   "date": "2026-10-14"
+  },
+  {
+   "bgm": 449346,
+   "name": "大理寺日志 叁",
+   "name_cn": "大理寺日志 第三季",
+   "date": "2026-10-15"
+  },
+  {
+   "bgm": 716967,
+   "name": "凶乱令嬢 ニア・リストンミニ",
+   "name_cn": "乱世千金倪亚‧利斯顿 迷你动画",
+   "date": "2026-10-15"
+  },
+  {
+   "bgm": 559080,
+   "name": "Dreamland",
+   "name_cn": "",
+   "date": "2026-10-17"
+  },
+  {
+   "bgm": 712000,
+   "name": "牧神记 伍",
+   "name_cn": "牧神记5",
+   "date": "2026-10-18"
+  },
+  {
+   "bgm": 713654,
+   "name": "The Marsupilamis",
+   "name_cn": "",
+   "date": "2026-10-19"
+  },
+  {
+   "bgm": 709475,
+   "name": "ゲルぴよ 第2期",
+   "name_cn": "",
+   "date": "2026-10-21"
+  },
+  {
+   "bgm": 715907,
+   "name": "罗德岛学院",
+   "name_cn": "",
+   "date": "2026-10-25"
+  },
+  {
+   "bgm": 716367,
+   "name": "歯ならび～ズ",
+   "name_cn": "",
+   "date": "2026-10-26"
+  },
+  {
+   "bgm": 593863,
+   "name": "罗小黑战记 学前篇",
+   "name_cn": "",
+   "date": "2026-10-30"
+  },
+  {
+   "bgm": 665014,
+   "name": "Le Collège Noir Season 2",
+   "name_cn": "黑暗学院 第二季",
+   "date": "2026-10-31"
+  },
+  {
+   "bgm": 712500,
+   "name": "万圣街 特别篇 古堡的秘密",
+   "name_cn": "万圣街 特别篇 古堡的秘密",
+   "date": "2026-10-31"
+  },
+  {
+   "bgm": 717907,
+   "name": "プロジェクトセカイ カラフルステージ！ feat. 初音ミク 6周年アニバーサリーソング『エメラルド』2DMV",
+   "name_cn": "世界计划 缤纷舞台！ feat. 初音未来 6周年纪念曲『Emerald』2DMV",
+   "date": "2026-10-31"
+  }
+ ]
+}

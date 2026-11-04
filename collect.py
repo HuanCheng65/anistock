@@ -268,6 +268,12 @@ def collect_bangumi(store: Store) -> str:
                 continue
             store.register("bgm", item["id"], item.get("name_cn") or item.get("name"))
             discovered += 1
+    # airing shows Bangumi's calendar misses (long-runners, Netflix drops...), found by sim/match.py
+    extra_file = Path(__file__).parent / "tracked_extra.json"
+    if extra_file.is_file():
+        for sid in json.loads(extra_file.read_text(encoding="utf-8")).get("bgm", []):
+            store.register("bgm", sid, None)
+            discovered += 1
     store.commit()
 
     ids = store.tracked("bgm")

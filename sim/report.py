@@ -34,7 +34,7 @@ def weekly(rows: list[dict], keys: list[str]) -> list[dict]:
     return [acc[k] for k in sorted(acc)]
 
 
-def build(base: dict, alt: dict | None) -> dict:
+def build(base: dict, alt: dict | None, fiscal: dict | None, finale: dict | None, mstats: dict | None) -> dict:
     meta, stocks, macro = base["meta"], base["stocks"], base["macro"]
     last_day = macro[-1]["d"]
 
@@ -68,9 +68,15 @@ def build(base: dict, alt: dict | None) -> dict:
                    for w in weeks],
     } for sid in by_rev[:N_SHARE]]
 
+    def mix(sid):
+        rm = [sum(r.get("rm", [0, 0, 0])[i] for r in stocks[sid][-7:]) for i in range(3)]
+        t = sum(rm) or 1.0
+        return [round(100 * v / t) for v in rm]   # us, cn, jp
+
     def stock_row(sid):
         s = stocks[sid]
         return {
+            "mix": mix(sid),
             "id": sid, "title": meta[sid]["title"], "title_en": meta[sid]["title_en"],
             "studio": meta[sid]["studio"], "episodes": meta[sid]["episodes"],
             "ipo": s[0]["o"], "price": s[-1]["c"], "value": s[-1]["v"], "div_w": s[-1]["div_w"],
@@ -83,7 +89,10 @@ def build(base: dict, alt: dict | None) -> dict:
         w["tax"] = w["tax_corp"] + w["tax_div"] + w["tax_stamp"]
 
     m0, m1 = macro[0], macro[-1]
-    sleeper = max(live, key=lambda s: stocks[s][-1]["c"] / stocks[s][0]["o"] if stocks[s][0]["o"] else 0)
+    # sleeper: biggest gain among shows that matter (≥1% of revenue), not a floor-priced micro-cap
+    floor = base["params"]["company"]["ipo_price_min"]
+    pool = [s for s in live if recent_rev(s) / total_recent >= 0.01 and stocks[s][0]["o"] > floor * 1.01] or live
+    sleeper = max(pool, key=lambda s: stocks[s][-1]["c"] / stocks[s][0]["o"])
     op = next((s for s in live if "ONE PIECE" in meta[s]["title"]), None)
     stats = {
         "listed": m1["listed"],
@@ -97,6 +106,13 @@ def build(base: dict, alt: dict | None) -> dict:
         "transfer_total": sum(r["transfer"] for r in macro),
         "rate_start": m0["rate"], "rate_end": m1["rate"],
         "alt_rate_end": alt["macro"][-1]["rate"] if alt else None,
+        "alt_growth_end": alt["macro"][-1]["m2_growth_ann"] if alt else None,
+        "alt_bills_end": alt["macro"][-1]["bills"] if alt else None,
+        "fiscal_rate_end": fiscal["macro"][-1]["rate"] if fiscal else None,
+        "fiscal_growth_end": fiscal["macro"][-1]["m2_growth_ann"] if fiscal else None,
+        "growth_end": m1["m2_growth_ann"],
+        "no_cn_jp": sum(1 for s in live if mix(s)[1] == 0 and mix(s)[2] == 0),
+        "market_stats": mstats,
         "decisions": sum(1 for r in macro if date.fromisoformat(r["d"]).weekday() == 6),
         "op_share": stock_row(op)["share"] if op else None,
         "top": stock_row(by_rev[0]),
@@ -110,7 +126,9 @@ def build(base: dict, alt: dict | None) -> dict:
         "table": [stock_row(s) for s in by_rev[:N_TABLE]],
         "share": share_series,
         "macro": [{k: r[k] for k in ("d", "m2", "bills", "gov", "rate", "m2_growth_ann", "mcap")} for r in macro],
-        "alt_macro": [{k: r[k] for k in ("d", "rate", "m2", "bills")} for r in alt["macro"]] if alt else None,
+        "alt_macro": [{k: r[k] for k in ("d", "rate", "m2", "bills", "m2_growth_ann")} for r in alt["macro"]] if alt else None,
+        "fiscal_macro": [{k: r[k] for k in ("d", "rate", "m2_growth_ann")} for r in fiscal["macro"]] if fiscal else None,
+        "finale": {k: finale[k] for k in ("shows", "median", "p25", "p75", "tail_decay")} if finale else None,
         "flows": flows,
         "window": base["window"],
         "generated_at": base["generated_at"],
@@ -121,6 +139,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=str(ROOT / "sim" / "out" / "result.json"))
     ap.add_argument("--alt", default=str(ROOT / "sim" / "out" / "result_fastcb.json"))
+    ap.add_argument("--fiscal", default=str(ROOT / "sim" / "out" / "result_fiscal.json"))
     ap.add_argument("--template", default=str(ROOT / "sim" / "report_template.html"))
     ap.add_argument("--out", default=str(ROOT / "sim" / "out" / "report.html"))
     args = ap.parse_args()
@@ -128,7 +147,13 @@ def main() -> None:
     base = json.loads(Path(args.base).read_text(encoding="utf-8"))
     alt_path = Path(args.alt)
     alt = json.loads(alt_path.read_text(encoding="utf-8")) if alt_path.exists() else None
-    data = build(base, alt)
+    def opt(path):
+        f = Path(path)
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+    fiscal = opt(args.fiscal)
+    finale = opt(ROOT / "data" / "derived" / "finale_profile.json")
+    markets = opt(ROOT / "data" / "derived" / "markets.json")
+    data = build(base, alt, fiscal, finale, markets["stats"] if markets else None)
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     html = Path(args.template).read_text(encoding="utf-8").replace("/*__DATA__*/null", payload)
     Path(args.out).write_text(html, encoding="utf-8")
