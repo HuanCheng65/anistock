@@ -4,7 +4,17 @@
   "21": {
    "bgm": 602059,
    "bgm_confidence": 1.0,
-   "via": "manual: Bangumi splits the 2026 arc (エルバフ編) into its own subject"
+   "via": "manual: Bangumi splits the 2026 arc (エルバフ編) into its own subject",
+   "title_cn": "航海王"
+  },
+  "210482": {
+   "title_cn": "飙马野郎 JOJO的奇妙冒险 第二&第三赛段"
+  },
+  "188034": {
+   "title_cn": "少女与战车 lovelove大作战！"
+  },
+  "203275": {
+   "title_cn": "恶魔纹章"
   }
  },
  "matches": {
@@ -527,7 +537,8 @@
   "188034": {
    "anilist": 188034,
    "title": "ガールズ＆パンツァー もっとらぶらぶ作戦です！",
-   "annict": 17851
+   "annict": 17851,
+   "title_cn": "少女与战车 lovelove大作战！"
   },
   "188139": {
    "anilist": 188139,
@@ -910,7 +921,8 @@
   "203275": {
    "anilist": 203275,
    "title": "デモンズ・クレスト",
-   "annict": 16796
+   "annict": 16796,
+   "title_cn": "恶魔纹章"
   },
   "203367": {
    "anilist": 203367,
@@ -1236,7 +1248,8 @@
   },
   "210482": {
    "anilist": 210482,
-   "title": "ジョジョの奇妙な冒険 スティール・ボール・ラン 2nd＆3rd STAGE"
+   "title": "ジョジョの奇妙な冒険 スティール・ボール・ラン 2nd＆3rd STAGE",
+   "title_cn": "飙马野郎 JOJO的奇妙冒险 第二&第三赛段"
   },
   "211220": {
    "anilist": 211220,

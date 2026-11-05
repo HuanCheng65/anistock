@@ -33,7 +33,8 @@ CREATE INDEX IF NOT EXISTS accounts_kind ON accounts(kind);
 CREATE TABLE IF NOT EXISTS companies (
     id            INTEGER PRIMARY KEY,   -- AniList media id
     code          TEXT UNIQUE NOT NULL,  -- display code, e.g. 100001
-    title         TEXT NOT NULL,
+    title         TEXT NOT NULL,          -- Chinese title (Bangumi name_cn) when known, else the original
+    title_ja      TEXT,                   -- original (Japanese) title
     title_en      TEXT,
     studio        TEXT,
     episodes      INTEGER,

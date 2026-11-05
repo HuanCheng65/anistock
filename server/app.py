@@ -269,7 +269,7 @@ async def logout(response: Response):
 def portfolio_rows(account_id: int) -> list[dict]:
     c = db()
     out = []
-    for h in c.execute("""SELECT h.company_id, h.qty, h.qty_frozen, co.code, co.title, co.last_price, co.prev_close, co.status
+    for h in c.execute("""SELECT h.company_id, h.qty, h.qty_frozen, co.code, co.title, co.title_ja, co.last_price, co.prev_close, co.status
                           FROM holdings h JOIN companies co ON co.id = h.company_id
                           WHERE h.account_id=? AND h.qty > 0 ORDER BY co.code""", (account_id,)).fetchall():
         cost = c.execute("SELECT COALESCE(SUM(qty*cost),0) FROM lots WHERE account_id=? AND company_id=?",
@@ -280,7 +280,7 @@ def portfolio_rows(account_id: int) -> list[dict]:
                            (account_id, h["company_id"])).fetchone()[0]
         value = h["qty"] * h["last_price"]
         out.append({
-            "company_id": h["company_id"], "code": h["code"], "title": h["title"], "qty": h["qty"],
+            "company_id": h["company_id"], "code": h["code"], "title": h["title"], "title_ja": h["title_ja"], "qty": h["qty"],
             "available": h["qty"] - h["qty_frozen"], "avg_cost": yuan(round(cost / h["qty"])),
             "price": yuan(h["last_price"]), "value": yuan(value), "pnl": yuan(value - cost),
             "pnl_pct": (value - cost) / cost if cost else None, "dividends": yuan(divs),
@@ -360,7 +360,7 @@ async def market():
                                 WHERE o.company_id=? AND o.status='open' AND a.kind='company'""", (co["id"],)).fetchone()
         v, t = vol.get(co["id"], (0, 0))
         rows.append({
-            "id": co["id"], "code": co["code"], "title": co["title"], "title_en": co["title_en"],
+            "id": co["id"], "code": co["code"], "title": co["title"], "title_ja": co["title_ja"], "title_en": co["title_en"],
             "price": yuan(co["last_price"]), "prev_close": yuan(co["prev_close"]),
             "change": (co["last_price"] - co["prev_close"]) / co["prev_close"] if co["prev_close"] else 0,
             "volume": v or 0, "turnover": yuan(t or 0),
@@ -433,7 +433,7 @@ async def stock(company_id: int, player=Depends(optional_player)):
     ipo_open = c.execute("""SELECT o.qty - o.filled AS left FROM orders o JOIN accounts a ON a.id=o.account_id
                             WHERE o.company_id=? AND o.status='open' AND a.kind='company'""", (company_id,)).fetchone()
     out = {
-        "id": co["id"], "code": co["code"], "title": co["title"], "title_en": co["title_en"], "studio": co["studio"],
+        "id": co["id"], "code": co["code"], "title": co["title"], "title_ja": co["title_ja"], "title_en": co["title_en"], "studio": co["studio"],
         "status": co["status"], "episodes": co["episodes"], "long_runner": bool(co["long_runner"]),
         "first_air": co["first_air"], "listed_on": co["listed_on"], "shares": co["shares"],
         "ipo_price": yuan(co["ipo_price"]), "ipo_left": ipo_open["left"] if ipo_open else 0,

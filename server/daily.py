@@ -209,6 +209,8 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
         for c in conn.execute("SELECT * FROM companies WHERE status='listed'").fetchall():
             close_candle(conn, c, day)
 
+        refresh_titles(conn, cfg)
+
         # 8. new listings for tomorrow
         list_new(conn, cfg, day, ts, shows, listed_shows, markets, aud, rate, demand_week)
 
@@ -353,6 +355,23 @@ def close_candle(conn, c, day: str) -> None:
     conn.execute("UPDATE companies SET prev_close=?, last_price=? WHERE id=?", (cl, cl, c["id"]))
 
 
+_CN: dict = {}
+
+
+def cn_titles(cfg: Config) -> dict[int, str]:
+    """Chinese titles, reloaded when sim/matches.json or the collector DB changes."""
+    key = tuple((p.stat().st_mtime if p.exists() else 0) for p in (ROOT / "sim" / "matches.json", cfg.collector_db))
+    if _CN.get("key") != key:
+        _CN["key"], _CN["map"] = key, E.load_cn_titles(cfg.collector_db)
+    return _CN["map"]
+
+
+def refresh_titles(conn, cfg: Config) -> None:
+    """Pick up Chinese titles that appeared after listing (new Bangumi entries, manual fixes)."""
+    for cid, name in cn_titles(cfg).items():
+        conn.execute("UPDATE companies SET title=? WHERE id=? AND title != ?", (name, cid, name))
+
+
 def list_new(conn, cfg: Config, day: str, ts: str, shows: dict, listed_shows: list, markets, aud,
              rate: float, demand_week: float) -> None:
     """List shows whose premiere is within ipo_lead_days of tomorrow. The float goes on the book at the IPO
@@ -375,6 +394,7 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
                    rate: float, demand_week: float, ipo_price: int | None = None, float_on_book: bool = True) -> int:
     p, co = cfg.params, cfg.params["company"]
     shares = co["shares"]
+    title = cn_titles(cfg).get(s.id) or s.title
     if ipo_price is None:
         d = date.fromisoformat(day)
         share = expected_share(s, d, listed_shows, p, markets, aud)
@@ -383,15 +403,15 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
         ipo_price = max(round(co["ipo_price_min"] * 100), round(v * (1 - co["ipo_discount"])))
     n = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     code = f"{100001 + n}"
-    conn.execute("""INSERT INTO companies(id, code, title, title_en, studio, episodes, long_runner, first_air, listed_on,
-                    status, shares, ipo_price, prev_close, last_price, fair_value)
-                    VALUES (?,?,?,?,?,?,?,?,?, 'listed', ?,?,?,?,?)""",
-                 (s.id, code, s.title, s.title_en, s.studio, s.episodes if s.episodes_known else None,
+    conn.execute("""INSERT INTO companies(id, code, title, title_ja, title_en, studio, episodes, long_runner, first_air,
+                    listed_on, status, shares, ipo_price, prev_close, last_price, fair_value)
+                    VALUES (?,?,?,?,?,?,?,?,?,?, 'listed', ?,?,?,?,?)""",
+                 (s.id, code, title, s.title, s.title_en, s.studio, s.episodes if s.episodes_known else None,
                   int(s.long_runner), s.first_air.isoformat(), listed_on, shares, ipo_price, ipo_price, ipo_price, ipo_price))
     company_acct = conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('company', ?, ?, ?)",
-                                (f"{s.title} 公司账户", s.id, ts)).lastrowid
+                                (f"{title} 公司账户", s.id, ts)).lastrowid
     committee = conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('committee', ?, ?, ?)",
-                             (f"{s.title} 制作委员会", s.id, ts)).lastrowid
+                             (f"{title} 制作委员会", s.id, ts)).lastrowid
     world = gdb.special(conn, "world")
     mm = conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('mm', ?, ?, ?)",
                       (f"做市商·{code}", s.id, ts)).lastrowid
@@ -403,7 +423,7 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
         conn.execute("UPDATE holdings SET qty_frozen = ? WHERE account_id=? AND company_id=?", (float_qty, company_acct, s.id))
         conn.execute("""INSERT INTO orders(account_id, company_id, side, kind, price, qty, status, created_at, updated_at)
                         VALUES (?,?, 'sell', 'limit', ?, ?, 'open', ?, ?)""", (company_acct, s.id, ipo_price, float_qty, ts, ts))
-        news(conn, day, ts, "ipo", f"新股上市：《{s.title}》（{code}）",
+        news(conn, day, ts, "ipo", f"新股上市：《{title}》（{code}）",
              f"{listed_on} 上市，发行价 {ipo_price / 100:.2f} 币，公开发行 {float_qty:,} 股，先到先得。"
              f"上市后 {cfg.game['ipo_free_days']} 个交易日不设涨跌幅限制。首播日 {s.first_air.isoformat()}。", s.id)
     else:

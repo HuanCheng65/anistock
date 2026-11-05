@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FEATURE_KEYWORDS = ["薬屋のひとりごと 第3期", "ONE PIECE", "サイバーパンク", "追放されたチート"]
+FEATURE_KEYWORDS = ["药屋少女的呢喃 第三季", "航海王", "赛博朋克", "被放逐的作弊赋予魔术师"]
 N_FEATURED = 10
 N_SHARE = 8
 N_TABLE = 20
@@ -36,6 +37,13 @@ def weekly(rows: list[dict], keys: list[str]) -> list[dict]:
 
 def build(base: dict, alt: dict | None, fiscal: dict | None, finale: dict | None, mstats: dict | None) -> dict:
     meta, stocks, macro = base["meta"], base["stocks"], base["macro"]
+    # Chinese titles (Bangumi name_cn / manual fixes) for display; the original stays as title_ja
+    sys.path.insert(0, str(ROOT))
+    from engine.economy import load_cn_titles
+    cn = load_cn_titles(ROOT / "data" / "anistock.db")
+    for sid, m in meta.items():
+        m["title_ja"] = m["title"]
+        m["title"] = cn.get(int(sid)) or m["title"]
     last_day = macro[-1]["d"]
 
     # revenue over the last 7 days decides the ranking

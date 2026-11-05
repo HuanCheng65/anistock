@@ -276,3 +276,21 @@ def load_audiences(db_path: Path) -> dict[int, dict[str, float]]:
             a["jp"] = an[r["annict"]].get("watchersCount", 0)
         out[int(aid)] = a
     return out
+
+
+def load_cn_titles(db_path: Path) -> dict[int, str]:
+    """Chinese title per AniList id: a manual `title_cn` in sim/matches.json wins, else Bangumi's name_cn."""
+    mfile = ROOT / "sim" / "matches.json"
+    if not mfile.exists():
+        return {}
+    data = json.loads(mfile.read_text(encoding="utf-8"))
+    matches, manual = data["matches"], data.get("manual", {})
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    bg = {int(i): json.loads(x).get("name_cn") for i, x in db.execute(
+        "SELECT external_id, data FROM snapshots WHERE source='bgm' AND kind='subject' ORDER BY day")}
+    out = {}
+    for aid, r in matches.items():
+        name = (manual.get(aid) or {}).get("title_cn") or bg.get(r.get("bgm"))
+        if name:
+            out[int(aid)] = name.strip()
+    return out
