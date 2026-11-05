@@ -360,10 +360,10 @@ def tail_of(fp: dict, m: str) -> dict | None:
 
 def tail_parts(tl: dict, t: float, mult: float) -> tuple[float, float, float]:
     """The three parts of the expected post-finale factor t days after the finale's week, beyond the transition
-    weeks: the floor × yearly^(t/365) and the slow excess × exp(-t/tau2), both scaled by the show's tail prior
-    `mult` (the prior is fitted on the level 2-3 years out); the fast excess × exp(-t/tau)."""
+    weeks: the floor × yearly^(t/365), the slow excess × exp(-t/tau2) and the fast excess × exp(-t/tau), all scaled
+    by the show's tail prior `mult` (fitted on the residuals 3-36 months after the finale)."""
     return (mult * tl["floor"] * tl["yearly"] ** (t / 365.0), mult * tl["excess2"] * math.exp(-t / tl["tau2"]),
-            tl["excess"] * math.exp(-t / tl["tau"]))
+            mult * tl["excess"] * math.exp(-t / tl["tau"]))
 
 
 def tail_formula(tl: dict, t: float, mult: float) -> float:
@@ -405,7 +405,9 @@ def tail_mult(fp: dict, score: float | None, ona: bool, popularity: float | None
         return 1.0
     x = pr["score"] * ((score - pr["score_ref"]) / 10.0 if score else 0.0) + (pr["ona"] if ona else 0.0)
     q = pop_percentile(pr, popularity)
-    if q is not None:
+    if q is not None and pr.get("pop_fifth"):
+        x = x + pr["pop_fifth"][min(4, int(q * 5))]
+    elif q is not None:
         x = x + (pr.get("pop_bottom", 0.0) if q < 0.2 else 0.0) + (pr.get("pop_top", 0.0) if q >= 0.9 else 0.0)
     return math.exp(x - pr["center"])
 

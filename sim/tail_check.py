@@ -7,7 +7,8 @@ first weeks from the inputs, as in sim/fit_valuation.py) and checked on the odd 
 finale, from public information only (score, format, popularity at the finale), and compared with the deflated
 attention factor 3, 6, 12, 24, 36 months later. Per group (popularity fifth within the finale year; itself a
 sequel or not): the mean log error against the median forecast (≈ 0 if unbiased), the ratio of mean realised to
-mean forecast factor (≈ 1 if unbiased in level, what the value needs), and the share inside the 80% interval.
+mean forecast factor (≈ 1 if unbiased in level, what the value needs; ± its sampling error, the realised factor's
+coefficient of variation / sqrt(n)), and the share inside the 80% interval.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ def main():
     st_even = tr + FV.bucket(pts for _, _, pts in even)
     curve, _ = FV.tail_curve_fit(st_even, 21)
     tail = {"trans": [round(math.exp(mu + 0.5 * v), 6) for t, mu, v, n in tr], **curve, "var": FV.tail_var_fit(st_even)}
-    prior, *_ = FV.tail_prior_fit(even, pct, ref)
+    prior, *_ = FV.tail_prior_fit(even, pct, ref, tail)
     fpe = {"tail": {"us": tail, "prior": prior}}
     rows = []
     for mid, m, pts in odd:
@@ -74,7 +75,10 @@ def main():
             err = sum(math.log(r[3]) - (math.log(r[4]) - 0.5 * r[5]) for r in rs) / len(rs)
             lvl = (sum(r[3] for r in rs) / len(rs)) / (sum(r[4] for r in rs) / len(rs))
             cov = sum(1 for r in rs if abs(math.log(r[3]) - (math.log(r[4]) - 0.5 * r[5])) <= FV.Z80 * math.sqrt(r[5])) / len(rs)
-            cells.append(f"{len(rs)}, {err:+.2f}, {lvl:.2f}, {cov:.0%}")
+            mf = sum(r[3] for r in rs) / len(rs)
+            sdf = math.sqrt(sum((r[3] - mf) ** 2 for r in rs) / (len(rs) - 1))
+            se = lvl * sdf / mf / math.sqrt(len(rs))   # sampling error of the ratio (realised side)
+            cells.append(f"{len(rs)}, {err:+.2f}, {lvl:.2f}±{se:.2f}, {cov:.0%}")
         print(f"| {name} | " + " | ".join(cells) + " |")
 
 

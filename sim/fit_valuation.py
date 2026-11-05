@@ -442,28 +442,32 @@ def solve3(A, b):
     return x
 
 
-def tail_prior_fit(us_hist, pct, ref):
-    """Tail level by score, format and popularity (docs/v2-series.md §4.1): OLS of the log mean us factor over months
-    24-36 after the finale on (score - 70)/10, ONA, and the popularity percentile at the finale within its finale year
-    (sim/long_tail_analysis.py's definition), as two flags: bottom quintile and top decile. The relation is U-shaped
-    (the report's linear term, -1.035 there, comes from a different normalisation; here, relative to the show's own
-    level at the finale and before any sign of a sequel, a linear term is -0.16 and positive above the bottom
-    quintile), so flags rather than a line. Only public data at the finale; the report's other covariates include
-    future information. Held out: fit on even ids, R² on odd. The runtime percentile compares a show's popularity
-    with the latest complete finale year's (`pop_ref`); the centring makes the multiplier average 1 in level."""
+def tail_prior_fit(us_hist, pct, ref, tail=None):
+    """Tail level by score, format and popularity (docs/v2-series.md §4.1). Per show, the mean log residual of its us
+    factor 3-36 months after the finale against the fitted curve's median (`tail` with no prior), regressed (OLS) on
+    (score - 70)/10, ONA and the popularity fifth within its finale year (sim/long_tail_analysis.py's definition; one
+    effect per fifth, the middle one the reference: the relation is U-shaped). The multiplier scales the whole
+    post-transition curve (the effect is there from the first months on), centred to average 1 in level. Only public
+    data at the finale (the report's other covariates include future information, e.g. a sequel airing). Held out:
+    fit on even ids, R² on odd. The runtime percentile compares a show's popularity with the latest complete finale
+    year's (`pop_ref`)."""
     rows = []
     for mid, m, pts in us_hist:
-        v = [f for t, f in pts if 700 <= t <= 1100 and f > 0]
-        if len(v) < 2 or not m.get("averageScore") or mid not in pct:
+        if not m.get("averageScore") or mid not in pct or tail is None:
             continue
-        rows.append((mid, [1.0, (m["averageScore"] - 70) / 10, 1.0 if m["format"] == "ONA" else 0.0,
-                           1.0 if pct[mid] < 0.2 else 0.0, 1.0 if pct[mid] >= 0.9 else 0.0],
-                     math.log(sum(v) / len(v))))
+        res = [math.log(f) - (math.log(V.tail_formula(tail, t, 1.0)) - 0.5 * V.tail_var(tail, round(t)))
+               for t, f in pts if 75 <= t <= 1100 and f > 0]
+        if len(res) < 3:
+            continue
+        k = min(4, int(pct[mid] * 5))
+        x = [1.0, (m["averageScore"] - 70) / 10, 1.0 if m["format"] == "ONA" else 0.0] + \
+            [1.0 if k == j else 0.0 for j in (0, 1, 3, 4)]
+        rows.append((mid, x, sum(res) / len(res)))
 
     def ols(rs):
-        k = len(rs[0][1])
-        A = [[sum(x[i] * x[j] for _, x, _ in rs) for j in range(k)] for i in range(k)]
-        b = [sum(x[i] * y for _, x, y in rs) for i in range(k)]
+        n = len(rs[0][1])
+        A = [[sum(x[i] * x[j] for _, x, _ in rs) for j in range(n)] for i in range(n)]
+        b = [sum(x[i] * y for _, x, y in rs) for i in range(n)]
         return solve_n(A, b)
 
     def r2(beta, rs):
@@ -481,9 +485,9 @@ def tail_prior_fit(us_hist, pct, ref):
     c = math.log(sum(math.exp(sum(b * v for b, v in zip(beta[1:], x[1:]))) for _, x, _ in rows) / n)
     years = [y for y, v in ref.items() if len(v) >= 100]
     y = max(years)
-    return {"score": round(beta[1], 6), "ona": round(beta[2], 6), "pop_bottom": round(beta[3], 6),
-            "pop_top": round(beta[4], 6), "center": round(c, 6), "score_ref": 70.0, "pop_ref_year": y,
-            "pop_ref": ref[y]}, n, r2_in, r2_out, sd
+    fifth = [round(beta[3], 6), round(beta[4], 6), 0.0, round(beta[5], 6), round(beta[6], 6)]
+    return {"score": round(beta[1], 6), "ona": round(beta[2], 6), "pop_fifth": fifth, "center": round(c, 6),
+            "score_ref": 70.0, "pop_ref_year": y, "pop_ref": ref[y]}, n, r2_in, r2_out, sd
 
 
 def solve_n(A, b):
@@ -606,17 +610,16 @@ def fit_tail(hist_path, shows, drift8, bump, lines):
     lines.append("jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; "
                  "the Annict watch-record history is not collected yet): **the us shape, flagged**.\n")
     pct, ref = hist.popularity_percentiles()
-    prior, n, r2, r2_out, sd = tail_prior_fit(us_hist, pct, ref)
+    prior, n, r2, r2_out, sd = tail_prior_fit(us_hist, pct, ref, out["us"])
     out["prior"] = prior
-    lines.append(f"Tail level prior (us, months 24–36, {n} shows): log level = {prior['score']:.3f}·(score−70)/10 + "
-                 f"{prior['ona']:.3f}·ONA + {prior['pop_bottom']:.3f}·[popularity in the bottom fifth of its finale "
-                 f"year] + {prior['pop_top']:.3f}·[top tenth] − {prior['center']:.3f} (R² {r2:.3f}, held out "
-                 f"{r2_out:.3f}; score and ONA alone: 0.128 / 0.149; a linear percentile term: 0.130 / 0.151, "
-                 f"coefficient −0.16; residual sd {sd:.2f}). Popularity is compared with the {prior['pop_ref_year']} "
-                 f"finales (`pop_ref`). Scales the floor and the slow excess, all markets. The data report's −1.035 "
-                 f"for a linear percentile is a different normalisation (relative to the in-season mean, sequels "
-                 f"included, a 'sequel aired' covariate): relative to its own level at the finale a popular show's "
-                 f"tail is, if anything, higher, not lower.\n")
+    f5 = prior["pop_fifth"]
+    lines.append(f"Tail level prior (us, mean log residual 3–36 months after the finale against the curve, {n} shows): "
+                 f"{prior['score']:.3f}·(score−70)/10 + {prior['ona']:.3f}·ONA + popularity fifth within the finale "
+                 f"year {f5} (the middle fifth the reference) − {prior['center']:.3f} (R² {r2:.3f}, held out "
+                 f"{r2_out:.3f}; residual sd {sd:.2f}). The relation with popularity is U-shaped, so one effect per "
+                 f"fifth. Popularity is compared with the {prior['pop_ref_year']} finales (`pop_ref`). Scales the whole "
+                 f"post-transition curve, all markets. The data report's −1.035 for a linear percentile is a different "
+                 f"normalisation (relative to the in-season mean, sequels included, a 'sequel aired' covariate).\n")
     even = [h for h in us_hist if h[0] % 2 == 0]
     odd = [h for h in us_hist if h[0] % 2 == 1]
     ev_st = us_tr + bucket(pts for _, _, pts in even)

@@ -110,7 +110,7 @@ cn: transition [1.820989, 1.083025, 0.748894, 0.564722]; then 0.0922 × 0.9037^(
 
 jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; the Annict watch-record history is not collected yet): **the us shape, flagged**.
 
-Tail level prior (us, months 24–36, 731 shows): log level = 0.186·(score−70)/10 + 0.452·ONA + 0.368·[popularity in the bottom fifth of its finale year] + 0.257·[top tenth] − 0.114 (R² 0.160, held out 0.180; score and ONA alone: 0.128 / 0.149; a linear percentile term: 0.130 / 0.151, coefficient −0.16; residual sd 0.68). Popularity is compared with the 2025 finales (`pop_ref`). Scales the floor and the slow excess, all markets. The data report's −1.035 for a linear percentile is a different normalisation (relative to the in-season mean, sequels included, a 'sequel aired' covariate): relative to its own level at the finale a popular show's tail is, if anything, higher, not lower.
+Tail level prior (us, mean log residual 3–36 months after the finale against the curve, 1128 shows): 0.120·(score−70)/10 + 0.482·ONA + popularity fifth within the finale year [0.279911, 0.03796, 0.0, 0.061764, 0.122181] (the middle fifth the reference) − 0.173 (R² 0.168, held out 0.196; residual sd 0.56). The relation with popularity is U-shaped, so one effect per fifth. Popularity is compared with the 2025 finales (`pop_ref`). Scales the whole post-transition curve, all markets. The data report's −1.035 for a linear percentile is a different normalisation (relative to the in-season mean, sequels included, a 'sequel aired' covariate).
 
 Finale week (phase 1 review): the bump differs by show; its log variance across shows (us 0.084, cn 0.080, jp 0.003; `finale_bump_var`) is added to the noise of an observation that includes the finale's week. The us prior's elasticity refitted with the dynamics fixed: 0.95 (held out 0.98), log-likelihood +0.3: not significant, kept at 1.
 
@@ -192,3 +192,35 @@ and sequels alike, and for the top two popularity fifths (0.80–1.15), where mo
 forecast even with its prior flag) and the second and third fifths are over-forecast (0.69–0.94×, worst at 24–36
 months). The prior's two flags capture the U-shape only in part; a prior by popularity fifth would be the next
 step. Acceptance for step 1: met overall and for the top two fifths, not met for the lower three.
+
+
+#### With the prior by popularity fifth (second round)
+
+The prior now has one effect per popularity fifth (log scale, on each show's mean residual 3–36 months after the
+finale; the middle fifth the reference; [+0.28, +0.04, 0, +0.06, +0.12]) and scales the whole post-transition curve
+(the effect is there from the first months on). Held out (fit on even ids, checked on odd); each cell: n, mean log
+error against the median forecast, level ratio ± its sampling error, 80% coverage:
+
+| group | 3 m: n, log err, level ratio, 80% cov | 6 m: n, log err, level ratio, 80% cov | 12 m: n, log err, level ratio, 80% cov | 24 m: n, log err, level ratio, 80% cov | 36 m: n, log err, level ratio, 80% cov |
+|---|---|---|---|---|---|
+| all | 586, +0.10, 1.11±0.05, 89% | 562, +0.00, 1.04±0.06, 89% | 517, -0.03, 1.04±0.06, 81% | 414, +0.05, 1.15±0.10, 86% | 349, -0.02, 1.08±0.10, 81% |
+| popularity 0.0–0.2 | 122, +0.19, 1.40±0.16, 80% | 118, +0.09, 1.37±0.19, 82% | 106, +0.08, 1.39±0.18, 76% | 76, +0.23, 1.87±0.40, 76% | 60, +0.31, 1.86±0.41, 73% |
+| popularity 0.2–0.4 | 135, +0.05, 1.01±0.07, 86% | 133, -0.07, 0.88±0.06, 89% | 130, -0.11, 0.86±0.06, 80% | 109, -0.10, 0.81±0.06, 86% | 92, -0.23, 0.77±0.09, 82% |
+| popularity 0.4–0.6 | 124, +0.07, 0.96±0.05, 94% | 122, -0.03, 0.88±0.06, 91% | 112, -0.12, 0.83±0.06, 85% | 94, -0.07, 0.88±0.11, 89% | 79, -0.12, 0.85±0.09, 76% |
+| popularity 0.6–0.8 | 117, +0.09, 1.04±0.10, 94% | 113, +0.00, 0.96±0.08, 92% | 101, +0.06, 1.08±0.12, 82% | 76, +0.10, 0.98±0.08, 92% | 68, -0.07, 0.84±0.06, 93% |
+| popularity 0.8–1.0 | 88, +0.11, 1.06±0.10, 92% | 76, +0.07, 1.09±0.12, 89% | 68, -0.07, 0.96±0.14, 85% | 59, +0.20, 1.22±0.17, 85% | 50, +0.20, 1.10±0.12, 82% |
+| first season | 456, +0.11, 1.15±0.07, 88% | 442, -0.00, 1.04±0.07, 89% | 412, -0.06, 1.00±0.06, 82% | 333, +0.04, 1.17±0.12, 85% | 282, -0.04, 1.09±0.12, 80% |
+| itself a sequel | 130, +0.07, 0.99±0.06, 92% | 120, +0.03, 1.06±0.09, 87% | 105, +0.06, 1.15±0.14, 79% | 81, +0.08, 1.06±0.13, 89% | 67, +0.08, 1.01±0.11, 84% |
+
+Against the acceptance (level ratio within ±0.15 of 1 at 6/12/24 months):
+
+- **all, first seasons, sequels, the 0.6–0.8 and 0.8–1.0 fifths:** met (1.04/1.04/1.15 overall; the top fifth's
+  1.22 at 24 months is 1.3 sampling errors from 1.15).
+- **0.2–0.4 and 0.4–0.6:** 0.81–0.88, i.e. just outside at 12–24 months (each ±0.06, so the miss is about
+  1–3 sampling errors); the log error there is −0.07 to −0.12.
+- **0.0–0.2: not met (1.37–1.87) and not fixable by a prior here — survivorship.** The history covers shows with
+  AniList popularity ≥ 3,000 *today*. 83% of the bottom fifth had fewer than 3,000 list entries at their finale
+  and are in the sample only because they grew afterwards (median ×4.8 since the finale, against ×2.7–3.4 for the
+  other fifths): they are selected on a strong tail. A level-unbiased fit per fifth (ratio of sums instead of log
+  means) chased these few large tails and made every fifth worse out of sample (overall 0.83–0.90), so it was not
+  kept. The game lists only shows with ≥ 3,000 entries at listing, so this fifth is mostly outside the market.
