@@ -61,12 +61,30 @@ fn main() {
         }
         None => Clock::new(cfg.tz),
     };
+    // go-live of the filtered valuation (docs/v2-valuation.md): start it from the inputs history once
+    match engine.valuation_go_live(&cfg, &clock.ts()) {
+        Ok(Some(n)) => eprintln!("valuation: started the filter from the inputs history, {n} companies valued"),
+        Ok(None) => {}
+        Err(e) => eprintln!("valuation bootstrap failed (the filter starts at the next close): {e}"),
+    }
+    engine.flush().unwrap_or_else(|e| fail(format!("persist: {e}"), 1));
     // v1: DIST = ROOT / "web" / "dist" with ROOT resolved; mounted only if it exists at startup
     let root = std::fs::canonicalize(&cfg.root).unwrap_or_else(|_| cfg.root.clone());
     let dist = Some(root.join("web").join("dist")).filter(|d| d.exists());
 
     let cfg = Arc::new(cfg);
-    let (actor, engine_thread) = Actor::start(Ctx { engine, cfg: cfg.clone(), ops: Box::new(EngineOps::default()) });
+    let ops = EngineOps::new(&cfg);
+    let (actor, engine_thread) = Actor::start(Ctx { engine, cfg: cfg.clone(), ops: Box::new(ops) });
+    // the v2 NPC market ([market].enabled): first start migrates the database (after a backup)
+    let now = clock.now().timestamp();
+    match actor.call_blocking(move |ctx| {
+        let cfg = ctx.cfg.clone();
+        ctx.ops.market_startup(&mut ctx.engine, &cfg, now)
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => fail(format!("npc market: {e}"), 1),
+        Err(_) => fail("engine thread gone", 1),
+    }
     let st = Arc::new(AppState {
         actor: actor.clone(),
         cfg: cfg.clone(),

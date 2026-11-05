@@ -112,6 +112,10 @@ pub(crate) struct State {
     pub company_proceeds: HashMap<(i64, String), i64>,
     /// day -> ledger amounts received by gov as corp_tax / dividend_tax / stamp_duty
     pub gov_taxes: BTreeMap<String, i64>,
+    /// trading days in a row each listed stock has closed under 1 币 (面值退市 countdown)
+    pub penny_days: HashMap<i64, i64>,
+    /// the valuation filter's state per (company, market index)
+    pub vstate: HashMap<(i64, usize), crate::vclose::VState>,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -132,6 +136,8 @@ pub struct Engine {
     sink: Box<dyn ChangeSink>,
     db_path: Option<PathBuf>,
     reader: Option<rusqlite::Connection>,
+    /// > 0 inside `begin_batch` .. `end_batch`: operations accumulate into one database transaction
+    batch_depth: u32,
 }
 
 impl Engine {
@@ -162,6 +168,7 @@ impl Engine {
             sink,
             db_path: None,
             reader: None,
+            batch_depth: 0,
         };
         for o in s.open_orders.values() {
             e.st.by_account.entry(o.account_id).or_default().insert(o.id);
@@ -363,7 +370,7 @@ impl Engine {
                 self.st.orders.remove(&id);
             }
         }
-        if !self.out.is_empty() {
+        if !self.out.is_empty() && self.batch_depth == 0 {
             let batch = std::mem::take(&mut self.out);
             self.sink.send(batch);
         }
@@ -629,6 +636,26 @@ impl Engine {
         }));
     }
 
+    /// Group the following operations into one database transaction (until `end_batch`); for multi-step
+    /// maintenance such as the NPC-market migration. Each operation still validates on its own.
+    pub fn begin_batch(&mut self) {
+        self.batch_depth += 1;
+    }
+
+    pub fn end_batch(&mut self) {
+        self.batch_depth = self.batch_depth.saturating_sub(1);
+        self.commit();
+    }
+
+    /// Change an account's kind (retiring the v1 NPC accounts).
+    pub fn set_account_kind(&mut self, id: i64, kind: &str) {
+        if let Some(a) = self.st.accounts.get_mut(&id) {
+            a.kind = kind.to_string();
+            self.out.push(Change::AccountKind { id, kind: kind.to_string() });
+        }
+        self.commit();
+    }
+
     /// Publish a news row (events, announcements).
     pub fn post_news(&mut self, ts: &str, day: &str, kind: &str, company_id: Option<i64>, title: String, body: String) {
         self.push_news(ts, day, kind, company_id, title, body);
@@ -707,9 +734,16 @@ impl Engine {
         if r <= 0 || ((tp as f64) / (r as f64) - 1.0).abs() <= thr + 1e-12 {
             return true;
         }
+        if self.rules.vcm_min_tick && (tp - r).abs() <= 1 {
+            return true;
+        }
         let rf = r as f64;
-        let lo = ((rf * (1.0 - thr) - 1e-9).ceil() as i64).max(1);
-        let hi = (rf * (1.0 + thr) + 1e-9).floor() as i64;
+        let mut lo = ((rf * (1.0 - thr) - 1e-9).ceil() as i64).max(1);
+        let mut hi = (rf * (1.0 + thr) + 1e-9).floor() as i64;
+        if self.rules.vcm_min_tick {
+            lo = lo.min((r - 1).max(1));
+            hi = hi.max(r + 1);
+        }
         let until = ts_add_minutes(ts, self.rules.vcm_cool_min);
         let title = format!("《{}》触发冷静期", c.title);
         let body = format!(
@@ -1183,6 +1217,8 @@ impl State {
             macro_days: s.macro_days.clone(),
             company_proceeds: s.company_proceeds.clone(),
             gov_taxes: s.gov_taxes.clone(),
+            penny_days: s.penny_days.clone(),
+            vstate: s.vstate.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,
             last_ledger_id: s.max_ledger_id,

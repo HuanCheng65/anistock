@@ -26,7 +26,14 @@ use crate::pyrandom::PyRandom;
 use crate::store::persist::Change;
 use crate::valuation::{self as V, Params};
 
-pub const MARKET_KINDS: [&str; 5] = ["player", "mm", "noise", "committee", "company"];
+/// 面值退市: closing under this many cents ...
+pub const PENNY_CENTS: i64 = 100;
+/// ... for this many trading days in a row (warning at `PENNY_WARN_DAYS`)
+pub const PENNY_DELIST_DAYS: i64 = 20;
+pub const PENNY_WARN_DAYS: i64 = 10;
+
+/// Accounts in the money stock (M2). `npc` = the v2 NPC agents (households).
+pub const MARKET_KINDS: [&str; 6] = ["player", "mm", "noise", "committee", "company", "npc"];
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Summary {
@@ -116,6 +123,8 @@ struct Ctx<'a> {
     cb: i64,
     gov: i64,
     sum: Summary,
+    /// the filtered valuation's market totals from this close (for IPO pricing; v2 economy)
+    vtotals: Option<[Vec<f64>; 3]>,
 }
 
 impl Ctx<'_> {
@@ -194,6 +203,7 @@ impl Engine {
             cb,
             gov,
             sum: Summary { day: day.to_string(), injected: 0, exported: 0, taxes: 0, interest: 0, rate },
+            vtotals: None,
         };
         match self.close_inner(&mut cx, rate, a_ref) {
             Ok(rate) => {
@@ -306,7 +316,7 @@ impl Engine {
                 .st
                 .accounts
                 .values()
-                .filter(|a| matches!(a.kind.as_str(), "player" | "mm" | "noise") && a.cash > 0)
+                .filter(|a| matches!(a.kind.as_str(), "player" | "mm" | "noise" | "npc") && a.cash > 0)
                 .map(|a| (a.kind.as_str(), a.id, a.cash))
                 .collect();
             recipients.sort();
@@ -334,12 +344,41 @@ impl Engine {
         let week_ago = iso(d - Duration::days(7));
         let total_week_rev: i64 =
             self.st.company_days.values().filter(|r| r.day.as_str() > week_ago.as_str()).map(|r| r.revenue).sum();
+        let v2 = if cx.cfg.economy_v1 {
+            None
+        } else {
+            // the filtered valuation (docs/v2-valuation.md): update every show's filter with today's data,
+            // then value every company from the expected attention paths
+            let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+            for c in &cx.companies {
+                if let Some(s) = cx.inp.show(c.id) {
+                    self.valuation_step(&fp, s, &day, &ts);
+                }
+            }
+            let today = crate::vclose::day_no(&day).ok_or("bad day")?;
+            self.record_total(today);
+            let (vals, totals) = self.valuation_values(&fp, &p, today, rate, a_ref);
+            cx.vtotals = Some(totals);
+            Some(vals)
+        };
         for c in cx.companies.clone() {
             let Some(s) = cx.inp.show(c.id) else { continue };
-            let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
-            let book = self.cash_of(acct);
-            let pre = cx.expected_share(s);
-            let fv = self.fair_value(cx, s, c.id, c.shares, book, rate, demand_week, pre)?;
+            let fv = match &v2 {
+                // no filter state in any market (nothing to earn): its cash per share
+                Some(vals) => match vals.get(&c.id) {
+                    Some(v) => *v,
+                    None => {
+                        let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
+                        (self.cash_of(acct) / c.shares.max(1)).max(1)
+                    }
+                },
+                None => {
+                    let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
+                    let book = self.cash_of(acct);
+                    let pre = cx.expected_share(s);
+                    self.fair_value(cx, s, c.id, c.shares, book, rate, demand_week, pre)?
+                }
+            };
             self.st.companies.get_mut(&c.id).unwrap().fair_value = fv;
             self.mark_company(c.id);
             if sunday {
@@ -364,8 +403,11 @@ impl Engine {
 
         // 7. candles and next day's reference price
         let listed_now: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
-        for id in listed_now {
+        for &id in &listed_now {
             self.close_candle(id, &day);
+        }
+        if !cx.cfg.economy_v1 {
+            self.penny_rule(cx, &listed_now)?;
         }
 
         // refresh titles
@@ -521,7 +563,16 @@ impl Engine {
     }
 
     fn pay_transfers(&mut self, cx: &mut Ctx, amount: i64) {
-        let players: Vec<i64> = self.st.accounts.values().filter(|a| a.kind == "player").map(|a| a.id).collect();
+        // per capita to every household: players and (v2) the NPC agents, who stand for the rest of the
+        // population (v1 paid players only: with 40 players that was ~30% of starting cash a season)
+        let v1 = cx.cfg.economy_v1;
+        let players: Vec<i64> = self
+            .st
+            .accounts
+            .values()
+            .filter(|a| a.kind == "player" || (!v1 && a.kind == "npc"))
+            .map(|a| a.id)
+            .collect();
         if players.is_empty() || amount <= 0 {
             return;
         }
@@ -576,7 +627,6 @@ impl Engine {
     }
 
     fn maybe_delist(&mut self, cx: &mut Ctx, c: &Company, s: &ShowInputs, total_week_rev: i64) -> Result<(), String> {
-        let (day, ts) = (cx.day.clone(), cx.ts.clone());
         let finished = V::finished(s.aired, s.episodes, s.long_runner);
         let week_ago = iso(cx.d - Duration::days(7));
         let week_rev: i64 = self
@@ -594,6 +644,13 @@ impl Engine {
         if weeks < cx.g().delist_after_weeks {
             return Ok(());
         }
+        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
+    }
+
+    /// Delist `c`: cancel its open orders, pay holders the company's cash per share (rights holders' part to
+    /// the world account), retire the shares, post the news (`{per}` in the body is the payout per share).
+    fn liquidate(&mut self, cx: &mut Ctx, c: &Company, title: String, body: &str) -> Result<(), String> {
+        let (day, ts) = (cx.day.clone(), cx.ts.clone());
         // cancel open orders, return company cash per share, retire the shares
         let mut open: Vec<i64> = self
             .st
@@ -624,14 +681,38 @@ impl Engine {
         co.status = "delisted".into();
         co.delisted_on = Some(day.clone());
         self.mark_company(c.id);
-        self.push_news(
-            &ts,
-            &day,
-            "delisting",
-            Some(c.id),
-            format!("《{}》退市", c.title),
-            format!("按每股净资产 {} 币向股东返还现金。", fixed(per as f64 / 100.0, 2)),
-        );
+        self.push_news(&ts, &day, "delisting", Some(c.id), title, body.replace("{per}", &fixed(per as f64 / 100.0, 2)));
+        Ok(())
+    }
+
+    /// 面值退市: a stock closing under 1 币 for 20 trading days in a row is delisted (warning at 10).
+    fn penny_rule(&mut self, cx: &mut Ctx, listed: &[i64]) -> Result<(), String> {
+        for &id in listed {
+            let close = self.st.companies[&id].prev_close;
+            let n = self.st.penny_days.entry(id).or_insert(0);
+            *n = if close < PENNY_CENTS { *n + 1 } else { 0 };
+            let n = *n;
+            let c = self.st.companies[&id].clone();
+            if n == PENNY_WARN_DAYS {
+                let (ts, day) = (cx.ts.clone(), cx.day.clone());
+                self.push_news(
+                    &ts,
+                    &day,
+                    "warning",
+                    Some(id),
+                    format!("面值退市预警：《{}》已连续 {n} 个交易日收盘低于 1 币", c.title),
+                    format!("连续 {PENNY_DELIST_DAYS} 个交易日收盘低于 1 币将按每股净资产退市。"),
+                );
+            } else if n >= PENNY_DELIST_DAYS {
+                self.liquidate(
+                    cx,
+                    &c,
+                    format!("《{}》面值退市", c.title),
+                    "连续 20 个交易日收盘低于 1 币，按每股净资产 {per} 币向股东返还现金。",
+                )?;
+                self.st.penny_days.remove(&id);
+            }
+        }
         Ok(())
     }
 
@@ -800,8 +881,18 @@ impl Engine {
             _ => s.title_ja.clone(),
         };
         let share = cx.expected_share(s);
-        let v = self.fair_value(cx, s, s.id, shares, 0, rate, demand_week, share)?;
-        let ipo_price = pround(cx.p.ipo_price_min * 100.0).max(pround(v as f64 * (1.0 - cx.p.ipo_discount)));
+        let ipo_price = match (&cx.vtotals, cx.cfg.economy_v1) {
+            (Some(totals), false) => {
+                let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+                let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
+                let today = crate::vclose::day_no(&day).ok_or("bad day")?;
+                self.ipo_price_v2(&fp, &cx.p, s, shares, today, totals, rate, a_ref)
+            }
+            _ => {
+                let v = self.fair_value(cx, s, s.id, shares, 0, rate, demand_week, share)?;
+                pround(cx.p.ipo_price_min * 100.0).max(pround(v as f64 * (1.0 - cx.p.ipo_discount)))
+            }
+        };
         let n = self.st.companies.len() as i64;
         let code = format!("{}", 100001 + n);
         let (sub_start, sub_end) = subscription;

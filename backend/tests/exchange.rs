@@ -297,3 +297,33 @@ fn a_failed_write_stops_the_engine() {
     );
     e.create_account("world", "world", None, None, None, TS);
 }
+
+#[test]
+fn a_penny_stock_can_always_move_one_cent() {
+    // v1: at 3 cents the ±10% VCM band rounds to [3, 3] and nothing else can ever trade
+    let mut f = Fx::new();
+    let a = f.player("a", 100_000, 0);
+    let b = f.player("b", 0, 0);
+    let mut c2 = f.e.company(1).unwrap().clone();
+    c2.id = 2;
+    c2.code = "100002".into();
+    c2.prev_close = 3;
+    c2.last_price = 3;
+    c2.open_ref = Some(3);
+    f.e.insert_company(c2);
+    f.e.add_shares(b, 2, 1000, 3, "2026-10-01");
+    let order = |f: &mut Fx, acct, side, price| {
+        f.e.place_order(&anistock::NewOrder {
+            account_id: acct, company_id: 2, side, kind: "limit", qty: 10, price: Some(price), day: DAY, ts: TS, match_: true,
+        })
+        .unwrap()
+    };
+    order(&mut f, b, "sell", 4);
+    assert_eq!(order(&mut f, a, "buy", 4).filled, 10); // one cent up: no cooling-off
+    assert_eq!(f.e.company(2).unwrap().vcm_count, 0);
+    order(&mut f, b, "sell", 6);
+    assert_eq!(order(&mut f, a, "buy", 6).filled, 0); // +100% from the 3-cent anchor: cooling-off
+    let c = f.e.company(2).unwrap();
+    assert_eq!((c.vcm_count, c.vcm_low, c.vcm_high), (1, Some(2), Some(4))); // at least one cent each side
+    f.e.flush().unwrap();
+}

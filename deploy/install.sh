@@ -135,10 +135,11 @@ mkdir -p ~/.config/systemd/user
 sed "s#%h/.local/bin/uv#$UV#" "$(server_unit_file)" > ~/.config/systemd/user/anistock-server.service
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-collect.service > ~/.config/systemd/user/anistock-collect.service
 cp deploy/anistock-collect.timer ~/.config/systemd/user/
-cp deploy/anistock-flash.service deploy/anistock-flash.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now anistock-collect.timer
-systemctl --user enable --now anistock-flash.timer
+# v0.3.0+: the game server fetches the hourly comment snapshots itself; retire the earlier record-only timer
+systemctl --user disable --now anistock-flash.timer 2>/dev/null || true
+rm -f ~/.config/systemd/user/anistock-flash.service ~/.config/systemd/user/anistock-flash.timer
 systemctl --user enable anistock-server
 systemctl --user restart anistock-server
 loginctl enable-linger "$USER" 2>/dev/null || warn "enable-linger 失败：退出 SSH 后服务可能停止，请让管理员执行 sudo loginctl enable-linger $USER"

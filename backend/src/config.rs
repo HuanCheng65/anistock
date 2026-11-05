@@ -72,6 +72,9 @@ pub struct Config {
     pub invite_code: String,
     pub always_open: bool,
     pub no_loops: bool,
+    /// v1 economy rules (raw 7-day revenue, stepwise episode valuation, transfers to players only, no penny
+    /// delisting, VCM band may round to one price): only for the difftests against the v1 Python server.
+    pub economy_v1: bool,
 }
 
 #[derive(Debug)]
@@ -186,6 +189,8 @@ impl Config {
             invite_code: if invite.is_empty() { "anistock".into() } else { invite },
             always_open: env("ANISTOCK_ALWAYS_OPEN").as_deref() == Some("1"),
             no_loops: env("ANISTOCK_NO_LOOPS").as_deref() == Some("1"),
+            // development/difftest only: the v1 economy rules (see `economy_v1`)
+            economy_v1: env("ANISTOCK_ECONOMY_V1").as_deref() == Some("1"),
             game,
             game_raw,
         })
@@ -200,6 +205,7 @@ impl Config {
             vcm_threshold: self.game.vcm_threshold,
             vcm_window_min: self.game.vcm_window_min,
             vcm_cool_min: self.game.vcm_cool_min,
+            vcm_min_tick: !self.economy_v1,
             ..Rules::default()
         }
     }

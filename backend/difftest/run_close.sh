@@ -35,7 +35,7 @@ for seed in "${SEEDS[@]}"; do
   ( time "${PIN[@]}" "$BIN" "$d/rs.db" "$d/ops.jsonl" "$d/rs.results" )
   ok=1
   python3 backend/difftest/compare.py "$d/py.db" "$d/rs.db" "$d/py.results" "$d/rs.results" "$d/ops.jsonl" || ok=0
-  uv run python -m server.tools.compare_close "$d/py.db" "$d/rs.db" --skip-tables refinery_schema_history || ok=0
+  uv run python -m server.tools.compare_close "$d/py.db" "$d/rs.db" --skip-tables refinery_schema_history,valuation_state || ok=0
   if [ $ok = 1 ]; then echo "== seed $seed: IDENTICAL"; else echo "== seed $seed: DIFFERENT"; fail=1; fi
 done
 exit $fail

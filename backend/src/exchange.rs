@@ -70,11 +70,21 @@ pub struct Rules {
     pub vcm_cool_min: i64,
     /// a limit price may not exceed this multiple of the previous close
     pub sanity_mult: i64,
+    /// the VCM band is always at least one cent each side of the reference, and a one-cent move never
+    /// triggers it (v1: at a few cents the ±10% band rounded to a single price and froze the stock)
+    pub vcm_min_tick: bool,
 }
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules { vcm_threshold: 0.10, vcm_window_min: 5, vcm_cool_min: 5, sanity_mult: 20 }
+        Rules { vcm_threshold: 0.10, vcm_window_min: 5, vcm_cool_min: 5, sanity_mult: 20, vcm_min_tick: true }
+    }
+}
+
+impl Rules {
+    /// v1's rules exactly (for the difftests against the v1 Python exchange).
+    pub fn v1() -> Rules {
+        Rules { vcm_min_tick: false, ..Rules::default() }
     }
 }
 

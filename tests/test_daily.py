@@ -35,7 +35,7 @@ def test_dividend_tax_by_lot_age_and_founders_leave(conn):
     p = conn.execute("INSERT INTO accounts(kind, name, username, created_at) VALUES ('player','p','p',?)", (TS,)).lastrowid
     ex.add_shares(conn, committee, 1, 750, 500, "2026-06-10")
     ex.add_shares(conn, p, 1, 100, 500, "2026-06-20")    # held > 1 season: tax free
-    ex.add_shares(conn, p, 1, 150, 500, "2026-11-05")    # held 3 days: 20%
+    ex.add_shares(conn, p, 1, 150, 500, "2026-11-05")    # held 3 days: 10%
     # a week of profit: 10,000 cents after tax -> 90% paid out = 9 cents a share
     ex.transfer(conn, world, company, 10_000, "revenue", day=DAY, ts=TS, company_id=1)
     conn.execute("UPDATE companies SET profit_week=10000 WHERE id=1")
@@ -46,7 +46,7 @@ def test_dividend_tax_by_lot_age_and_founders_leave(conn):
 
     dps = 9
     gross_p = dps * 250
-    tax = int(dps * 150 * 0.20)
+    tax = int(dps * 150 * 0.10)
     assert conn.execute("SELECT cash FROM accounts WHERE id=?", (p,)).fetchone()[0] == gross_p - tax
     assert conn.execute("SELECT cash FROM accounts WHERE id=?", (gov,)).fetchone()[0] == tax
     assert conn.execute("SELECT cash FROM accounts WHERE id=?", (world,)).fetchone()[0] == world_before + dps * 750
@@ -57,9 +57,11 @@ def test_dividend_tax_by_lot_age_and_founders_leave(conn):
 
 def test_holding_tax_schedule():
     cfg = load()
-    assert daily.holding_tax_rate(cfg, "2026-11-05", "2026-11-08") == 0.20
-    assert daily.holding_tax_rate(cfg, "2026-10-01", "2026-11-08") == 0.10
-    assert daily.holding_tax_rate(cfg, "2026-06-01", "2026-11-08") == 0.0
+    # game-time brackets: same day 20%, under 4 weeks 10%, 4 weeks or more tax-free
+    assert daily.holding_tax_rate(cfg, "2026-11-08", "2026-11-08") == 0.20
+    assert daily.holding_tax_rate(cfg, "2026-11-05", "2026-11-08") == 0.10
+    assert daily.holding_tax_rate(cfg, "2026-10-12", "2026-11-08") == 0.10
+    assert daily.holding_tax_rate(cfg, "2026-10-11", "2026-11-08") == 0.0
 
 
 def _subscribing(conn, cfg):

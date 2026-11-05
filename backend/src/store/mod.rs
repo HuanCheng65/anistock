@@ -209,6 +209,10 @@ pub struct Snapshot {
     pub company_proceeds: std::collections::HashMap<(i64, String), i64>,
     /// day -> gov's corp_tax + dividend_tax + stamp_duty receipts (days after `last_closed` - 10)
     pub gov_taxes: BTreeMap<String, i64>,
+    /// company -> trailing live closes under 1 币 (面值退市 countdown), from `candles`
+    pub penny_days: std::collections::HashMap<i64, i64>,
+    /// the valuation filter's state (table valuation_state, migration V2)
+    pub vstate: std::collections::HashMap<(i64, usize), crate::vclose::VState>,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -465,6 +469,44 @@ fn load_daily(conn: &Connection, s: &mut Snapshot) -> DbResult<()> {
     {
         let (seller, day, v) = r?;
         s.company_proceeds.insert((seller, day), v);
+    }
+    {
+        let mut st = conn.prepare("SELECT company_id, close FROM candles WHERE source='live' ORDER BY company_id, day DESC")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut done: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        for row in rows {
+            let (c, close) = row?;
+            if done.contains(&c) {
+                continue;
+            }
+            if close < 100 {
+                *s.penny_days.entry(c).or_default() += 1;
+            } else {
+                done.insert(c);
+            }
+        }
+    }
+    if table_exists(conn, "valuation_state")? {
+        let mut st = conn.prepare("SELECT company_id, market, mean, var, last_obs, day, acc, acc_n FROM valuation_state")?;
+        let rows = st.query_map([], |r| {
+            Ok((
+                (r.get::<_, i64>(0)?, r.get::<_, String>(1)?),
+                crate::vclose::VState {
+                    mean: r.get(2)?,
+                    var: r.get(3)?,
+                    last_obs: r.get(4)?,
+                    day: r.get(5)?,
+                    acc: r.get(6)?,
+                    acc_n: r.get(7)?,
+                },
+            ))
+        })?;
+        for row in rows {
+            let ((c, m), v) = row?;
+            if let Some(mi) = crate::vfilter::MARKETS.iter().position(|x| *x == m) {
+                s.vstate.insert((c, mi), v);
+            }
+        }
     }
     let gov: Option<i64> =
         conn.query_row("SELECT id FROM accounts WHERE kind='gov' ORDER BY id LIMIT 1", [], |r| r.get(0)).optional()?;

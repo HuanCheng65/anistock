@@ -160,6 +160,8 @@ export const LEDGER_REASON: Record<string, string> = {
 /** News kinds grouped into the four badges of the 资讯 page. */
 export const NEWS_GROUP: Record<string, { label: string; tone: 'flash' | 'notice' | 'air' | 'close' }> = {
   vcm: { label: '快讯', tone: 'flash' },
+  flash: { label: '快讯', tone: 'flash' },
+  warning: { label: '公告', tone: 'notice' },
   premiere: { label: '放送', tone: 'air' },
   finale: { label: '放送', tone: 'air' },
   ipo: { label: '公告', tone: 'notice' },

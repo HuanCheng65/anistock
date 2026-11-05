@@ -66,6 +66,9 @@ pub fn parse_ts(s: &str) -> i64 {
     at_local(&s[..10], n(11, 2), n(14, 2)) + n(17, 2)
 }
 
+/// Day index (0 = the first simulated day) on which the bots start trading.
+pub const BOT_START_DAY: usize = 7;
+
 #[derive(Clone)]
 pub struct SimOptions {
     pub world_db: PathBuf,
@@ -79,6 +82,8 @@ pub struct SimOptions {
     pub spread_every_min: i64,
     /// inactive player accounts (they share the weekly tax transfers with the bot)
     pub idle_players: usize,
+    /// the fan bots' foresight: (company, day) -> hidden value at that day's open (from a baseline run)
+    pub foresight: Option<Arc<std::collections::HashMap<(i64, String), (i64, i64)>>>,
 }
 
 pub struct SimResult {
@@ -116,6 +121,19 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let load = |d: &str| Inputs::read(&opts.inputs_dir.join(format!("{d}.json")));
     let prev_inputs = Inputs::read(&opts.inputs_dir.join(format!("{last_closed}.json"))).or_else(|_| load(&days[0]))?;
 
+    // ---- the filtered valuation from the season so far (the world was seeded with v1 values)
+    if !cfg.economy_v1 {
+        let mut hist: Vec<String> = std::fs::read_dir(&opts.inputs_dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|f| f.ok()?.file_name().into_string().ok())
+            .filter_map(|n| n.strip_suffix(".json").map(str::to_string))
+            .filter(|d| d.as_str() <= last_closed.as_str())
+            .collect();
+        hist.sort();
+        let history: Vec<Inputs> = hist.iter().map(|d| load(d)).collect::<Result<_, _>>()?;
+        e.valuation_bootstrap(cfg, &history, &ts_of(at_local(&days[0], 7, 0)))?;
+    }
+
     // ---- the NPC market
     let mut m = Market::new(opts.market.clone(), cfg);
     m.set_heat(&e, &prev_inputs, params.market_weights);
@@ -133,7 +151,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let acct = e.create_account("player", k.name(), Some(k.name()), None, None, &ts0);
         let world = e.special("world").unwrap();
         e.transfer(world, acct, start_cash, "grant", &last_closed, &ts0, None, None);
-        Bot::new(k, acct, start_cash)
+        let mut b = Bot::new(k, acct, start_cash);
+        b.foresight = opts.foresight.clone();
+        b
     });
 
     // a realistic number of (inactive) players: weekly tax transfers are shared among all players
@@ -154,6 +174,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     }
     let npc_accounts: HashSet<i64> = m.agents.iter().map(|a| a.account).collect();
     let mut rec = Recorder::new(&e, &m, &npc_accounts);
+    rec.dividend_tax = cfg.game.dividend_tax.clone();
     rec.start_wealth(&e, &m);
     let mut prev = prev_inputs;
     let mut flashes = data.flashes.clone();
@@ -183,8 +204,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 }
                 // overnight flashes are announced when they come out; the NPCs see them from the open
                 m.step_until(&mut e, f.at.max(m.now));
-                rec.event(&f);
-                m.post_event(&mut e, f, Some("flash"));
+                if let Some(out) = m.apply_flash(&mut e, cfg, f.company_id, f.episode, f.hours, f.comments, &f.prev, f.at.max(m.now)) {
+                    rec.flash(f.company_id, f.at, out.surprise);
+                }
             }
             let tick = std::time::Instant::now();
             m.step_until(&mut e, next);
@@ -194,7 +216,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             if s == 12 * 3600 {
                 m.subscribe_ipos(&mut e, t);
             }
-            if s >= 9 * 3600 && s < 23 * 3600 {
+            // the bots start in the second week: the world starts at v1 prices, and the first days are the
+            // market repricing to the new valuation (a one-off of the go-live, not a strategy's merit)
+            if s >= 9 * 3600 && s < 23 * 3600 && k >= BOT_START_DAY {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
                     b.on_minute(&mut e, t, &heat);
@@ -269,9 +293,11 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             m.post_event(&mut e, ev, Some("warning"));
         }
         let next_day = day_of(t_close);
+        m.note_revisions(&e, t_close);
         m.fund_flows(&mut e, day, &ts_close);
         m.prune(t_close);
         rec.after_close(&e, &m, day, &next_day);
+        rec.note_info(&inp, &prev, day);
         {
             let mut tp = tap.0.lock().unwrap();
             rec.absorb(&mut tp);

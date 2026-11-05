@@ -252,7 +252,9 @@ pre{{background:var(--card);border:1px solid var(--line);border-radius:8px;paddi
         if base["invariants_ok"].as_bool() == Some(true) { "全部成立" } else { "<b class=bad>不成立</b>" }
     );
 
-    h.push_str("<h2>§7 指标</h2><div class=wrap><table><tr><th>指标</th><th>目标</th><th>热门</th><th>中等</th><th>冷门</th><th>全部</th><th>结论</th></tr>");
+    h.push_str(&valuation_acceptance(base, bots, threshold_pts));
+    h.push_str(&money_table(base, bots));
+    h.push_str("<h2>市场指标（NPC 市场设计 §7）</h2><div class=wrap><table><tr><th>指标</th><th>目标</th><th>热门</th><th>中等</th><th>冷门</th><th>全部</th><th>结论</th></tr>");
     h.push_str(&row(
         "成交间隔中位数（分钟）",
         "几分钟一笔，热门更快",
@@ -396,6 +398,12 @@ pre{{background:var(--card);border:1px solid var(--line);border-radius:8px;paddi
                 "pump" => "拉抬到冷静期以下再出货",
                 "spoof" => "挂大单撤单影响报价",
                 "vcm_fade" => "推到 VCM 冷静期再反向操作",
+                "air_calendar" => "日历：播出前一晚卖出、播出后买回",
+                "air_early" => "日历：只在第 1、2 集播出前一晚卖出、播出后买回",
+                "fan_0.1" => "懂行的粉丝：提前两天知道估值，误差 10%",
+                "fan_0.3" => "懂行的粉丝：提前两天知道估值，误差 30%",
+                "fan_long_0.3" => "粉丝的判断：看过第 1 集后知道未来四周的价值，误差 30%，每周调仓",
+                "ex_dividend" => "日历：除息前（周日晚）卖出、周一买回",
                 _ => k,
             };
             let tr = v["transfers"].as_f64().unwrap_or(0.0) / v["start"].as_f64().unwrap_or(1.0);
@@ -451,5 +459,164 @@ pre{{background:var(--card);border:1px solid var(--line);border-radius:8px;paddi
     );
     let _ = write!(h, "<h2>参数（[market]）</h2><pre>{}</pre>", esc(config_toml));
     h.push_str("</main></body></html>");
+    h
+}
+
+fn verdict(b: bool) -> &'static str {
+    if b { "<span class=ok>通过</span>" } else { "<span class=bad>未通过</span>" }
+}
+
+fn bot_ret(bots: &[(String, Value)], k: &str) -> Option<f64> {
+    bots.iter().find(|(n, _)| n == k).and_then(|(_, v)| v["return"].as_f64())
+}
+
+/// docs/v2-valuation.md §7: the valuation's acceptance table.
+fn valuation_acceptance(base: &Value, bots: &[(String, Value)], threshold_pts: f64) -> String {
+    let r = &base["revisions"];
+    let g = |k: &str| r[k].as_f64().unwrap_or(f64::NAN);
+    let mut h = String::from("<h2>估值验收（v2 估值 §7）</h2><div class=wrap><table><tr><th>检验</th><th>要求</th><th>结果</th><th>结论</th></tr>");
+    // 1. forecast coverage (fitted on last season, held-out shows)
+    let fit = &base["filter_fit"];
+    let mut cov = Vec::new();
+    let mut cov_ok = fit.is_object();
+    for m in ["us", "cn", "jp"] {
+        let a = fit[m]["coverage80_in_sample"].as_f64().unwrap_or(f64::NAN);
+        let b = fit[m]["coverage80_held_out"].as_f64().unwrap_or(f64::NAN);
+        cov_ok &= (0.75..=0.90).contains(&b);
+        cov.push(format!("{m} {:.1}% / {:.1}%", a * 100.0, b * 100.0));
+    }
+    let _ = write!(h, "<tr><td>预测是否准确</td><td>下一次观测落在 80% 预测区间的比例接近 80%（75%–90%，留出作品）</td><td>{}（样本内 / 留出）</td><td>{}</td></tr>", cov.join("；"), verdict(cov_ok));
+    // 2. unpredictable revisions
+    let wd: Vec<f64> = r["weekday_mean"].as_array().map(|a| a.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or_default();
+    let wd_mean = wd.iter().sum::<f64>() / wd.len().max(1) as f64;
+    let wd_dev = wd.iter().map(|x| (x - wd_mean).abs()).fold(0.0, f64::max);
+    let lag_ok = g("lag1_corr").abs() < 0.1;
+    let early = g("air_first2w_simple_mean");
+    let se = g("air_first2w_se");
+    let air_ok = early.abs() <= 2.0 * se.max(0.005) && (g("air_later_simple_mean") - g("other_simple_mean")).abs() < 0.02;
+    let _ = write!(
+        h,
+        "<tr><td>修正是否不可预测</td><td>与前一天的修正、星期几、播出日都不相关</td><td>滞后 1 相关 {:.3}；星期几均值最大偏离 {:.2}%；播出日（首播后两周内）平均 {:+.2}%（标准误 {:.2}%，{} 个）；其后播出日 {:+.2}%，其他日子 {:+.2}%</td><td>{}</td></tr>",
+        g("lag1_corr"), wd_dev * 100.0, early * 100.0, se * 100.0, r["air_first2w_n"], g("air_later_simple_mean") * 100.0, g("other_simple_mean") * 100.0,
+        verdict(lag_ok && wd_dev < 0.01 && air_ok)
+    );
+    // 3. where the volatility is
+    let vol_ok = g("info_rms") > 2.0 * g("no_info_rms");
+    let _ = write!(
+        h,
+        "<tr><td>波动出现的位置</td><td>有新信息（播出、新数据、快讯）的日子明显大于其他日子，其他日子接近 0</td><td>有信息 {:.1}%（{} 天）/ 无信息 {:.1}%（{} 天，|修正| 中位数 {:.2}%）</td><td>{}</td></tr>",
+        g("info_rms") * 100.0, r["info_days"], g("no_info_rms") * 100.0, r["no_info_days"], g("no_info_median_abs") * 100.0, verdict(vol_ok)
+    );
+    // 4. premiere week strongest
+    let ord_ok = g("first_week_rms") > g("middle_rms") && g("middle_rms") > g("last_two_weeks_rms");
+    let _ = write!(
+        h,
+        "<tr><td>首播最激烈</td><td>首播后一周 > 中段 > 最后两周（日修正均方根）</td><td>{:.1}% > {:.1}% > {:.1}%</td><td>{}</td></tr>",
+        g("first_week_rms") * 100.0, g("middle_rms") * 100.0, g("last_two_weeks_rms") * 100.0, verdict(ord_ok)
+    );
+    // 5. calendar strategies vs the same holdings bought and held (equal weight)
+    if let Some(bh) = bot_ret(bots, "buy_hold") {
+        let mut parts = Vec::new();
+        let mut ok = true;
+        for k in ["air_calendar", "air_early", "ex_dividend"] {
+            if let Some(x) = bot_ret(bots, k) {
+                ok &= x <= bh;
+                parts.push(format!("{k} {:+.2}", (x - bh) * 100.0));
+            }
+        }
+        let _ = write!(h, "<tr><td>日历策略</td><td>播出前卖出播出后买回、只在第 1–2 集这样做、除息前卖出除息后买回：都不跑赢买入持有（等权，同样的持仓）</td><td>相对买入持有：{} 个百分点</td><td>{}</td></tr>", parts.join("；"), verdict(ok));
+    }
+    // 6. exploits vs cap-weighted buy and hold
+    if let Some(cap) = bot_ret(bots, "buy_hold_cap") {
+        let mut parts = Vec::new();
+        let mut ok = true;
+        for k in ["scalper", "scalper_taker", "value", "value_hold", "pump", "spoof", "vcm_fade"] {
+            if let Some(x) = bot_ret(bots, k) {
+                ok &= (x - cap) * 100.0 <= threshold_pts;
+                parts.push(format!("{k} {:+.2}", (x - cap) * 100.0));
+            }
+        }
+        let _ = write!(h, "<tr><td>防薅羊毛</td><td>跑赢按市值买入持有不超过 {threshold_pts:.0} 个百分点</td><td>{} 个百分点</td><td>{}</td></tr>", parts.join("；"), verdict(ok));
+    }
+    h.push_str("</table></div><p class=mut>修正 = 隐藏估值相邻两天开盘时的变化（中间是收盘），分红加回。买入持有在前五天分批建仓。</p>");
+    h
+}
+
+/// docs/v2-valuation.md §5: where the money is and where it went.
+fn money_table(base: &Value, bots: &[(String, Value)]) -> String {
+    let mo = base["money"].as_array().cloned().unwrap_or_default();
+    let (Some(a), Some(b)) = (mo.first(), mo.last()) else { return String::new() };
+    let v = |x: &Value, k: &str| x[k].as_f64().unwrap_or(0.0);
+    let mut h = String::from("<h2>资金检验（v2 估值 §5）</h2><div class=wrap><table><tr><th>存量（币）</th><th>期初</th><th>期末</th><th>变化</th></tr>");
+    let row = |h: &mut String, name: &str, x0: f64, x1: f64| {
+        let pct = if x0.abs() > 0.0 { format!("（{:+.1}%）", (x1 / x0 - 1.0) * 100.0) } else { String::new() };
+        let _ = write!(h, "<tr><td>{name}</td><td>{}</td><td>{}</td><td>{}{}</td></tr>", fmt_num(x0), fmt_num(x1), fmt_num(x1 - x0), pct);
+    };
+    row(&mut h, "玩家现金（= 财富，基准回放里的玩家不交易）", v(a, "players_cash"), v(b, "players_cash"));
+    row(&mut h, "NPC 现金", v(a, "npc_cash"), v(b, "npc_cash"));
+    row(&mut h, "NPC 财富（现金 + 持仓市值）", v(a, "npc_wealth"), v(b, "npc_wealth"));
+    row(&mut h, "居民财富合计（玩家 + NPC）", v(a, "players_wealth") + v(a, "npc_wealth"), v(b, "players_wealth") + v(b, "npc_wealth"));
+    row(&mut h, "公司现金（留存收益和新股募资，计入每股净资产，退市时返还股东）", v(a, "company_cash"), v(b, "company_cash"));
+    row(&mut h, "做市商现金", v(a, "mm_cash"), v(b, "mm_cash"));
+    row(&mut h, "做市商财富", v(a, "mm_wealth"), v(b, "mm_wealth"));
+    row(&mut h, "货币总量（玩家 + NPC + 公司 + 做市商的现金）", v(a, "money_stock"), v(b, "money_stock"));
+    row(&mut h, "政府（税收减去转移支付和利息）", v(a, "gov_cash"), v(b, "gov_cash"));
+    row(&mut h, "总市值（全部上市公司）", v(a, "market_cap"), v(b, "market_cap"));
+    row(&mut h, "期初上市公司的市值", v(a, "start_set_cap"), v(b, "start_set_cap"));
+    let _ = write!(
+        h,
+        "<tr><td>　其间这些公司付出的分红和退市返还（所有持有人，含税和版权方部分）</td><td></td><td>{}</td><td></td></tr><tr><td>上市公司数</td><td>{}</td><td>{}</td><td></td></tr></table></div>",
+        fmt_num(v(b, "start_set_paid")), a["listed"], b["listed"]
+    );
+    // flows
+    let l = &base["ledger_by_reason"];
+    let f = |k: &str| l[k].as_f64().unwrap_or(0.0);
+    h.push_str("<div class=wrap><table><tr><th>流量（整季，币）</th><th>金额</th><th>方向</th></tr>");
+    for (k, name, dir) in [
+        ("revenue", "营收", "外部世界 → 公司（注入）"),
+        ("operating_cost", "运营成本", "公司 → 外部世界"),
+        ("corp_tax", "企业所得税", "公司 → 政府"),
+        ("dividend", "分红（给股东，税后）", "公司 → 居民、做市商"),
+        ("dividend_tax", "分红税", "公司 → 政府"),
+        ("dividend_export", "分红（版权方等外部股东）", "公司 → 外部世界"),
+        ("production_fee", "制作费", "公司 → 外部世界"),
+        ("ipo", "新股募资", "居民、做市商 → 公司"),
+        ("delisting", "退市返还", "公司 → 持有人"),
+        ("transfer", "转移支付（按人头，含 NPC）", "政府 → 居民"),
+        ("interest", "利息", "政府 → 居民"),
+        ("npc_fund_in", "NPC 资金流入", "外部世界 → NPC"),
+        ("npc_fund_out", "NPC 资金流出", "NPC → 外部世界"),
+        ("grant", "玩家初始资金", "外部世界 → 玩家"),
+    ] {
+        let _ = write!(h, "<tr><td>{name}</td><td>{}</td><td>{dir}</td></tr>", fmt_num(f(k)));
+    }
+    h.push_str("</table></div>");
+    // checks
+    let n = &base["npc"];
+    let npc_drift = n["agents_wealth_drift_pct"].as_f64().unwrap_or(f64::NAN);
+    let excess = n["excess_vs_passive_pct"].as_f64().unwrap_or(f64::NAN);
+    let pl0 = v(a, "players_wealth");
+    let pl1 = v(b, "players_wealth");
+    let tr_pct = bots
+        .iter()
+        .find(|(k, _)| k == "buy_hold")
+        .map(|(_, x)| x["transfers"].as_f64().unwrap_or(0.0) / x["start"].as_f64().unwrap_or(1.0))
+        .unwrap_or(f64::NAN);
+    let cap_ratio = v(b, "start_set_cap") / v(a, "start_set_cap").max(1.0) - 1.0;
+    h.push_str("<div class=wrap><table><tr><th>检验</th><th>要求</th><th>结果</th><th>结论</th></tr>");
+    let _ = write!(h, "<tr><td>账本总和</td><td>恒为 0</td><td>{}</td><td>{}</td></tr>", if base["invariants_ok"].as_bool() == Some(true) { "所有不变量成立" } else { "不成立" }, verdict(base["invariants_ok"].as_bool() == Some(true)));
+    let _ = write!(
+        h,
+        "<tr><td>居民财富</td><td>不因注入持续单向增减：NPC 财富漂移 ≤ 5%，玩家只多出转移支付</td><td>NPC {:+.1}%；不交易的玩家 {:+.1}%（转移支付 {:.1}%）</td><td>{}</td></tr>",
+        npc_drift * 100.0, (pl1 / pl0.max(1.0) - 1.0) * 100.0, tr_pct * 100.0, verdict(npc_drift.abs() <= 0.05 && pl1 / pl0.max(1.0) - 1.0 <= tr_pct + 0.01)
+    );
+    let _ = write!(
+        h,
+        "<tr><td>综合指数</td><td>不因资金注入上涨：期初上市公司的市值随作品完结下降，价值以分红付出</td><td>市值 {:+.1}%，其间付出 {} 币</td><td>{}</td></tr>",
+        cap_ratio * 100.0, fmt_num(v(b, "start_set_paid")), verdict(cap_ratio <= 0.05)
+    );
+    let _ = write!(h, "<tr><td>玩家每季转移支付</td><td>占初始资金的合理比例（≤ 10%）</td><td>{:.1}%</td><td>{}</td></tr>", tr_pct * 100.0, verdict(tr_pct <= 0.10));
+    let _ = write!(h, "<tr><td>玩家与 NPC 的财富占比</td><td>NPC 相对被动持有的超额 |x| ≤ 3%</td><td>{:+.1}%</td><td>{}</td></tr>", excess * 100.0, verdict(excess.abs() <= 0.03));
+    h.push_str("</table></div><p class=mut>货币总量的增长落在公司现金（每周利润的 10% 留存、新股募资减制作费；计入每股净资产，退市时按每股净资产返还股东）和做市商现金（持仓收到的分红；做市商财富基本不变，持仓随作品完结贬值）。居民的现金和财富由 NPC 资金流（超过上限流回外部世界）和税收约束。</p>");
     h
 }

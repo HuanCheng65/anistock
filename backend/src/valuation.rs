@@ -34,6 +34,8 @@ pub struct Params {
     pub premiere_drop: f64,
     pub in_season_retention: f64,
     pub min_days_after_premiere: i64,
+    /// episode count assumed when it is unknown
+    pub default_episodes: i64,
     // central bank
     pub r_neutral: f64,
     pub r_min: f64,
@@ -96,6 +98,7 @@ impl Params {
             premiere_drop: num(cfg, "valuation.premiere_drop")?,
             in_season_retention: num(cfg, "valuation.in_season_retention")?,
             min_days_after_premiere: int(cfg, "valuation.min_days_after_premiere")?,
+            default_episodes: int(cfg, "valuation.default_episodes").unwrap_or(13),
             r_neutral: num(cfg, "central_bank.r_neutral")?,
             r_min: num(cfg, "central_bank.r_min")?,
             r_max: num(cfg, "central_bank.r_max")?,

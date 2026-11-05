@@ -16,6 +16,8 @@ pub mod pyfmt;
 pub mod pyrandom;
 pub mod sim;
 pub mod valuation;
+pub mod vclose;
+pub mod vfilter;
 pub mod store;
 
 // HTTP layer

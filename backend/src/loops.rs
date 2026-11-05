@@ -20,6 +20,10 @@ pub fn spawn(st: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
 }
 
 async fn npc_loop(st: Arc<AppState>) {
+    let market = st.actor.call(|ctx| ctx.ops.market_enabled()).await.unwrap_or(false);
+    if market {
+        return market_loop(st).await;
+    }
     let every = Duration::from_secs_f64(st.cfg.npc.tick_seconds.max(0.05));
     loop {
         tokio::time::sleep(every).await;
@@ -40,6 +44,28 @@ async fn npc_loop(st: Arc<AppState>) {
             .await;
         if r.is_err() {
             return; // shutting down
+        }
+    }
+}
+
+/// The v2 NPC market: one engine job a second (the agents act at their own Poisson times inside it), and
+/// the hourly 热度快讯 fetch (a Python subprocess, outside the engine thread) while shows air.
+async fn market_loop(st: Arc<AppState>) {
+    let mut last_fetch_hour = -1i64;
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let now = st.clock.now().timestamp();
+        if st.actor.call(move |ctx| ctx.ops.market_tick(&mut ctx.engine, now)).await.is_err() {
+            return;
+        }
+        // at five past every hour from 08:00 to 03:00 (late-night anime), fetch today's episode comments
+        let (_, s) = crate::market::local(now);
+        let hour = now.div_euclid(3600);
+        let h = s / 3600;
+        if (s % 3600) >= 300 && hour != last_fetch_hour && (h >= 8 || h < 3) {
+            last_fetch_hour = hour;
+            let cfg = st.cfg.clone();
+            tokio::task::spawn_blocking(move || crate::inputs::fetch_flashes(&cfg));
         }
     }
 }
@@ -97,7 +123,13 @@ pub async fn catch_up(st: &Arc<AppState>) -> Result<Option<usize>, String> {
             .actor
             .call(move |ctx| {
                 let cfg = ctx.cfg.clone();
-                ctx.engine.run_day(&cfg, &day, &clock.ts(), &inputs)
+                let low: std::collections::HashMap<i64, i64> = ctx.engine.companies().map(|c| (c.id, c.low_weeks)).collect();
+                let now = clock.now();
+                let out = ctx.engine.run_day(&cfg, &day, &crate::config::format_ts(&now), &inputs)?;
+                if matches!(out, crate::daily::CloseOutcome::Closed(_)) {
+                    ctx.ops.market_after_close(&mut ctx.engine, &cfg, &inputs, now.timestamp(), &low)?;
+                }
+                Ok::<_, String>(out)
             })
             .await;
         match r {

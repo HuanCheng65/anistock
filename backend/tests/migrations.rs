@@ -58,15 +58,15 @@ fn yoyo_database_is_baselined_not_migrated() {
         )
         .unwrap();
     }
-    assert!(store::migrate(&path).unwrap().is_empty());
+    // V1 is baselined (not run); the later migrations run, after a backup
+    assert_eq!(store::migrate(&path).unwrap(), vec!["V2__valuation_state".to_string()]);
     assert!(store::migrate(&path).unwrap().is_empty());
     let c = store::connect(&path).unwrap();
     let n: i64 = c.query_row("SELECT COUNT(*) FROM refinery_schema_history WHERE version=1", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 1);
     let v: String = c.query_row("SELECT value FROM state WHERE key='keep'", [], |r| r.get(0)).unwrap();
     assert_eq!(v, "me");
-    // nothing was pending, so no backup was made
-    assert!(!dir.path().join("backups").exists());
+    assert!(dir.path().join("backups").exists());
 }
 
 #[test]

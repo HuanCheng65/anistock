@@ -78,9 +78,10 @@ say "更新 systemd 服务定义（$(server_kind)）"
 sed "s#%h/.local/bin/uv#$UV#" "$(server_unit_file)" > ~/.config/systemd/user/anistock-server.service
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-collect.service > ~/.config/systemd/user/anistock-collect.service
 cp deploy/anistock-collect.timer ~/.config/systemd/user/
-cp deploy/anistock-flash.service deploy/anistock-flash.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now anistock-flash.timer
+# v0.3.0+: the game server fetches the hourly comment snapshots itself; retire the earlier record-only timer
+systemctl --user disable --now anistock-flash.timer 2>/dev/null || true
+rm -f ~/.config/systemd/user/anistock-flash.service ~/.config/systemd/user/anistock-flash.timer
 
 say "重启游戏服务"
 if port_taken_by_other; then

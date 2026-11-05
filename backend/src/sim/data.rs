@@ -10,11 +10,22 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::engine::Engine;
-use crate::market::{at_local, Credibility, Event, Nature};
+use crate::market::at_local;
 
 pub struct SeasonData {
     pub air: HashMap<i64, Vec<i64>>,
-    pub flashes: Vec<Event>,
+    pub flashes: Vec<FlashObs>,
+}
+
+/// A 热度快讯 observation (what engine/flash_fetch.py would have seen).
+#[derive(Debug, Clone)]
+pub struct FlashObs {
+    pub company_id: i64,
+    pub at: i64,
+    pub episode: f64,
+    pub comments: i64,
+    pub prev: Vec<i64>,
+    pub hours: f64,
 }
 
 fn parse_utc(s: &str) -> Option<i64> {
@@ -30,6 +41,7 @@ impl SeasonData {
         days: &[String],
     ) -> SeasonData {
         let mut out = SeasonData { air: HashMap::new(), flashes: Vec::new() };
+        let fp = crate::vfilter::FilterParams::load(cfg).ok();
         let read = |p: std::path::PathBuf| -> Option<serde_json::Value> {
             serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
         };
@@ -123,27 +135,19 @@ impl SeasonData {
                 if mean < 5.0 {
                     continue;
                 }
-                let ratio = ep.2 as f64 / mean;
-                let (dir, word) = if ratio >= mc.flash_ratio {
-                    (1, "明显高于")
-                } else if ratio <= 1.0 / mc.flash_ratio {
-                    (-1, "明显低于")
-                } else {
-                    continue;
-                };
-                let magnitude = (2.0 + 4.0 * ratio.log2().abs()).min(10.0);
-                out.flashes.push(Event {
+                // the hourly fetch a few hours after airing; the count then is the final count scaled by the
+                // hourly curve (the collector has final counts only; the live fetcher sees the real count)
+                let hours = mc.flash_delay_h;
+                let frac = fp.as_ref().and_then(|fp| fp.flash_curve.get((hours as usize).saturating_sub(1)).copied()).unwrap_or(0.2);
+                out.flashes.push(FlashObs {
                     company_id: id,
-                    kind: "flash".into(),
-                    direction: dir,
-                    magnitude,
-                    credibility: Credibility::Media,
-                    source: "Bangumi 单集吐槽数".into(),
-                    at: air + (mc.flash_delay_h * 3600.0) as i64,
-                    nature: Nature::Sentiment,
-                    half_life_h: mc.flash_half_life_h,
-                    title: format!("热度快讯：《{title}》第 {} 集讨论热度{word}前几集", ep.0),
+                    at: air + (hours * 3600.0) as i64,
+                    episode: ep.0 as f64,
+                    comments: (ep.2 as f64 * frac).round() as i64,
+                    prev: prev.clone(),
+                    hours,
                 });
+                let _ = &title;
             }
         }
         out.flashes.sort_by_key(|f| (f.at, f.company_id));

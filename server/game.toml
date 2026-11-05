@@ -13,6 +13,10 @@ base_params = "sim/params_recommended.toml"
 "company.fees_leave_economy" = true
 "company.operating_cost_ratio" = 0.5
 "company.payout_ratio" = 0.9
+# equity premium, annual, added to the policy rate when discounting dividends (sim/params_recommended.toml has
+# the broad-market 0.08). Raised for risk: every stock here is a very small, very volatile company that may be
+# delisted, so holding stocks earns about 5% a season over transfers (docs/game-design.md ⚠️).
+"valuation.equity_premium" = 0.30
 
 [game]
 timezone = "Asia/Shanghai"
@@ -27,7 +31,7 @@ vcm_window_min = 5
 vcm_cool_min = 5               # cooling-off length; later triggers anchor on the day's open at ±20%, ±30%...
 commission = 0.00025
 stamp_duty = 0.0005
-dividend_tax = [[7, 0.20], [91, 0.10], [100000, 0.0]]   # [max holding days, rate]
+dividend_tax = [[0, 0.20], [27, 0.10], [100000, 0.0]]  # [max holding days, inclusive]: same day 20%, under 4 weeks 10%, 4 weeks+ 0
 transfer_ratio = 0.25          # share of weekly taxes paid back to players equally
 delist_after_weeks = 8         # finished and earning under delist_revenue_share for this many weeks
 delist_revenue_share = 0.0005  # of total weekly revenue
@@ -54,8 +58,8 @@ noise_trade_prob = 0.15        # per tick per noise trader
 [market]
 # v2 NPC market (docs/v2-npc-market.md; Rust server only, the v1 Python server ignores this section).
 # Calibrated in simulation (backend: marketsim); every key not listed keeps its default in
-# backend/src/market/config.rs. Off until phase 2 wires it into the server's loops.
-enabled = false
+# backend/src/market/config.rs. On since v0.3.0 (false: the v1 NPCs, npc.rs).
+enabled = true
 seed = 20261105
 n_value = 240                  # population (§2)
 n_trend = 120

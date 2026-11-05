@@ -12,6 +12,7 @@
 pub mod config;
 pub mod events;
 pub mod rng;
+pub mod runtime;
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
@@ -136,6 +137,10 @@ pub struct Market {
     hist: HashMap<i64, VecDeque<(i64, i64)>>,
     known: HashSet<i64>,
     subscribed: HashSet<(usize, i64)>,
+    /// the public value at the last revision check
+    last_fair: HashMap<i64, i64>,
+    /// (company, episode) whose 热度快讯 has been published (one per episode; later hours only revise)
+    flashed: std::collections::HashSet<(i64, u64)>,
     rng: Rng,
     pub stats: MarketStats,
     pub now: i64,
@@ -163,6 +168,8 @@ impl Market {
             hist: HashMap::new(),
             known: HashSet::new(),
             subscribed: HashSet::new(),
+            last_fair: HashMap::new(),
+            flashed: Default::default(),
             stats: MarketStats::default(),
             now: 0,
             fees_commission: game.game.commission,
@@ -310,7 +317,8 @@ impl Market {
         if fair <= 0 {
             return None;
         }
-        Some(fair as f64 * (self.bias(agent, c, t) + self.shock(c, t)).exp())
+        // all information reaches the agents through the public value (docs/v2-valuation.md §4)
+        Some(fair as f64 * self.bias(agent, c, t).exp())
     }
 
     // ------------------------------------------------------------ population
@@ -320,18 +328,20 @@ impl Market {
     pub fn create_population(&mut self, engine: &mut Engine, day: &str, ts: &str) {
         let world = engine.special("world").expect("world account");
         let listed: Vec<i64> = engine.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        let n = self.population_counts(listed.len());
+        engine.set_state("npc_population", &format!("{},{},{},{}", n[0], n[1], n[2], n[3]));
         let kinds = [
-            (AgentKind::Value, self.cfg.n_value, self.cfg.cash_value),
-            (AgentKind::Trend, self.cfg.n_trend, self.cfg.cash_trend),
-            (AgentKind::News, self.cfg.n_news, self.cfg.cash_news),
-            (AgentKind::Retail, self.cfg.n_retail, self.cfg.cash_retail),
+            (AgentKind::Value, n[0], self.cfg.cash_value),
+            (AgentKind::Trend, n[1], self.cfg.cash_trend),
+            (AgentKind::News, n[2], self.cfg.cash_news),
+            (AgentKind::Retail, n[3], self.cfg.cash_retail),
         ];
         for (kind, n, cash) in kinds {
             for _ in 0..n {
                 let i = self.agents.len();
                 let h = |k: u64| unit(hash(&[self.cfg.seed, 0xa6e7, i as u64, k]));
                 let name = format!("{}NPC-{:04}", kind.label(), i + 1);
-                let account = engine.create_account("noise", &name, None, None, None, ts);
+                let account = engine.create_account("npc", &name, None, None, None, ts);
                 // starting cash varies ±50% between agents
                 let start_cash = (cash * 100.0 * (0.5 + h(1))).round() as i64;
                 engine.transfer(world, account, start_cash, "npc_fund_in", day, ts, None, None);
@@ -358,6 +368,15 @@ impl Market {
         }
     }
 
+    /// Agents per type for `listed` stocks: the configured counts scaled by listed / `population_reference`
+    /// (the calibration's universe), at least a tenth of them.
+    pub fn population_counts(&self, listed: usize) -> [usize; 4] {
+        let c = &self.cfg;
+        let k = if c.population_reference > 0.0 { (listed as f64 / c.population_reference).max(0.1) } else { 1.0 };
+        let f = |n: usize| ((n as f64 * k).round() as usize).max(1);
+        [f(c.n_value), f(c.n_trend), f(c.n_news), f(c.n_retail)]
+    }
+
     fn draw_watch(&self, listed: &[i64], n: usize, salt: u64) -> Vec<i64> {
         // weighted sampling without replacement (Efraimidis–Spirakis keys)
         let mut keyed: Vec<(f64, i64)> = listed
@@ -377,13 +396,21 @@ impl Market {
     pub fn attach_population(&mut self, engine: &Engine) {
         // the accounts were created in order; their ids are found by name
         let by_name: HashMap<String, i64> =
-            engine.accounts().filter(|a| a.kind == "noise").map(|a| (a.name.clone(), a.id)).collect();
+            engine.accounts().filter(|a| a.kind == "npc").map(|a| (a.name.clone(), a.id)).collect();
         let listed: Vec<i64> = engine.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        // the counts chosen when the population was created (they scale with the listed stocks then)
+        let n: [usize; 4] = engine
+            .state("npc_population")
+            .and_then(|v| {
+                let x: Vec<usize> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+                (x.len() == 4).then(|| [x[0], x[1], x[2], x[3]])
+            })
+            .unwrap_or([self.cfg.n_value, self.cfg.n_trend, self.cfg.n_news, self.cfg.n_retail]);
         let kinds = [
-            (AgentKind::Value, self.cfg.n_value, self.cfg.cash_value),
-            (AgentKind::Trend, self.cfg.n_trend, self.cfg.cash_trend),
-            (AgentKind::News, self.cfg.n_news, self.cfg.cash_news),
-            (AgentKind::Retail, self.cfg.n_retail, self.cfg.cash_retail),
+            (AgentKind::Value, n[0], self.cfg.cash_value),
+            (AgentKind::Trend, n[1], self.cfg.cash_trend),
+            (AgentKind::News, n[2], self.cfg.cash_news),
+            (AgentKind::Retail, n[3], self.cfg.cash_retail),
         ];
         self.agents.clear();
         for (kind, n, cash) in kinds {
@@ -1087,6 +1114,75 @@ impl Market {
         let agents: i64 = self.agents.iter().map(|a| self.wealth(engine, a.account)).sum();
         let mms: i64 = self.mms.values().map(|m| self.wealth(engine, m.account)).sum();
         (agents, mms)
+    }
+
+    /// Large revisions of the public value become internal events: they wake up news agents and raise the
+    /// stock's activity for a few hours (no news row; the reason is already public).
+    pub fn note_revisions(&mut self, engine: &Engine, t: i64) {
+        let min = self.cfg.revision_min;
+        let mut evs = Vec::new();
+        for c in engine.companies().filter(|c| c.status == "listed" && c.fair_value > 0) {
+            let prev = self.last_fair.insert(c.id, c.fair_value);
+            if let Some(p) = prev.filter(|p| *p > 0) {
+                let r = (c.fair_value as f64 / p as f64).ln();
+                if r.abs() >= min {
+                    evs.push(Event {
+                        company_id: c.id,
+                        kind: "revision".into(),
+                        direction: if r > 0.0 { 1 } else { -1 },
+                        magnitude: (r.abs() * 50.0).min(10.0),
+                        credibility: Credibility::Official,
+                        source: "估值修正".into(),
+                        at: t,
+                        nature: Nature::Sentiment,
+                        half_life_h: self.cfg.event_activity_half_life_h,
+                        title: String::new(),
+                    });
+                }
+            }
+        }
+        for ev in evs {
+            self.stats.events += 1;
+            self.events.push(ev);
+        }
+    }
+
+    /// A 热度快讯 observation: update the show's filter and value (`Engine::valuation_flash`), publish the
+    /// flash when the surprise is large enough, and let the revision reach the agents.
+    pub fn apply_flash(&mut self, engine: &mut Engine, cfg: &crate::config::Config, company: i64, episode: f64, hours: f64, comments: i64, prev: &[i64], t: i64) -> Option<crate::vclose::FlashOutcome> {
+        let ts = ts_of(t);
+        let out = engine.valuation_flash(cfg, company, episode, hours, comments, prev, &ts).ok().flatten()?;
+        if out.surprise.abs() >= self.cfg.flash_news_min && self.flashed.insert((company, episode.to_bits())) {
+            let title = engine.company(company).map(|c| c.title.clone()).unwrap_or_default();
+            let word = if out.surprise > 0.0 { "高于" } else { "低于" };
+            let ep = if episode.fract() == 0.0 { format!("{}", episode as i64) } else { format!("{episode}") };
+            engine.post_news(
+                &ts,
+                &day_of(t),
+                "flash",
+                Some(company),
+                format!("热度快讯：《{title}》第 {ep} 集讨论量{word}预期 {:.0}%", out.surprise.abs() * 100.0),
+                format!("播出 {:.0} 小时后的 Bangumi 单集吐槽数。估值随之修正：{} → {} 币。", hours, crate::exchange::yuan_str(out.old_value), crate::exchange::yuan_str(out.new_value)),
+            );
+            self.stats.flashes += 1;
+        }
+        self.note_revisions(engine, t);
+        Some(out)
+    }
+
+    /// Restart the action schedule from `now` (after a pause: no burst of overdue actions).
+    pub fn reschedule(&mut self, now: i64) {
+        self.schedule.clear();
+        for i in 0..self.agents.len() {
+            let t = now + self.next_gap(i);
+            self.schedule.push(Reverse((t, Actor::Agent(i as u32))));
+        }
+        let mms: Vec<i64> = self.mms.keys().copied().collect();
+        for c in mms {
+            let t = now + (self.rng.exp(self.cfg.mm_rate / 3600.0).ceil() as i64).max(1);
+            self.schedule.push(Reverse((t, Actor::Mm(c))));
+        }
+        self.now = now;
     }
 
     pub fn prune(&mut self, t: i64) {

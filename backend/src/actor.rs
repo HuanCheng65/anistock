@@ -41,17 +41,50 @@ pub trait GameOps: Send {
     ) -> Result<i64, OrderError>;
     /// v1 `unsubscribe`.
     fn unsubscribe(&mut self, e: &mut Engine, account_id: i64, company_id: i64) -> Result<(), OrderError>;
+    /// Is the v2 NPC market running (`[market].enabled`)? Then `market_*` replace `npc_tick`.
+    fn market_enabled(&self) -> bool {
+        false
+    }
+    /// Bring the market up (migrating the database the first time). `now`: unix seconds.
+    fn market_startup(&mut self, _e: &mut Engine, _cfg: &Config, _now: i64) -> Result<(), String> {
+        Ok(())
+    }
+    /// Run the NPC market up to `now`.
+    fn market_tick(&mut self, _e: &mut Engine, _now: i64) {}
+    /// After the daily close of `inputs.day` (fund flows, events, heat).
+    fn market_after_close(
+        &mut self,
+        _e: &mut Engine,
+        _cfg: &Config,
+        _inputs: &crate::inputs::Inputs,
+        _t_close: i64,
+        _low_weeks_before: &std::collections::HashMap<i64, i64>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// The real implementations (`npc.rs`, `daily.rs`, `ipo.rs`).
 pub struct EngineOps {
     rng: PyRandom,
+    market: Option<crate::market::runtime::MarketRuntime>,
+}
+
+impl EngineOps {
+    /// With the v2 NPC market when `[market].enabled`, else the v1 NPCs.
+    pub fn new(cfg: &Config) -> EngineOps {
+        EngineOps {
+            rng: PyRandom::from_entropy(),
+            // the v1 economy (difftests against v1) never runs the v2 market
+            market: (cfg.market.enabled && !cfg.economy_v1).then(|| crate::market::runtime::MarketRuntime::new(cfg)),
+        }
+    }
 }
 
 impl Default for EngineOps {
     fn default() -> Self {
-        // v1: random.Random() seeded from the OS
-        EngineOps { rng: PyRandom::from_entropy() }
+        // v1: random.Random() seeded from the OS; no v2 market
+        EngineOps { rng: PyRandom::from_entropy(), market: None }
     }
 }
 
@@ -74,6 +107,37 @@ impl GameOps for EngineOps {
 
     fn unsubscribe(&mut self, e: &mut Engine, account_id: i64, company_id: i64) -> Result<(), OrderError> {
         e.unsubscribe(account_id, company_id)
+    }
+
+    fn market_enabled(&self) -> bool {
+        self.market.is_some()
+    }
+
+    fn market_startup(&mut self, e: &mut Engine, cfg: &Config, now: i64) -> Result<(), String> {
+        match self.market.as_mut() {
+            Some(m) => m.startup(e, cfg, now),
+            None => Ok(()),
+        }
+    }
+
+    fn market_tick(&mut self, e: &mut Engine, now: i64) {
+        if let Some(m) = self.market.as_mut() {
+            m.tick(e, now);
+        }
+    }
+
+    fn market_after_close(
+        &mut self,
+        e: &mut Engine,
+        cfg: &Config,
+        inputs: &crate::inputs::Inputs,
+        t_close: i64,
+        low_weeks_before: &std::collections::HashMap<i64, i64>,
+    ) -> Result<(), String> {
+        match self.market.as_mut() {
+            Some(m) => m.after_close(e, cfg, inputs, t_close, low_weeks_before),
+            None => Ok(()),
+        }
     }
 }
 

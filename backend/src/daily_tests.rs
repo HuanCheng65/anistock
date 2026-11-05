@@ -74,6 +74,7 @@ fn ctx<'a>(e: &Engine, cfg: &'a Config, inp: &'a Inputs) -> Ctx<'a> {
         cb: e.special("cb").unwrap(),
         gov: e.special("gov").unwrap(),
         sum: Summary { day: DAY.into(), injected: 0, exported: 0, taxes: 0, interest: 0, rate: 0.03 },
+        vtotals: None,
     }
 }
 
@@ -90,8 +91,8 @@ fn dividend_tax_by_lot_age_and_founders_leave() {
     let (company_acct, committee) = (e.account_of("company", 1).unwrap(), e.account_of("committee", 1).unwrap());
     let p = e.create_account("player", "p", Some("p"), None, None, TS);
     e.add_shares(committee, 1, 750, 500, "2026-06-10");
-    e.add_shares(p, 1, 100, 500, "2026-06-20"); // held > 1 season: tax free
-    e.add_shares(p, 1, 150, 500, "2026-11-05"); // held 3 days: 20%
+    e.add_shares(p, 1, 100, 500, "2026-06-20"); // held over 4 weeks: tax free
+    e.add_shares(p, 1, 150, 500, "2026-11-05"); // held 3 days: 10%
     e.transfer(world, company_acct, 10_000, "revenue", DAY, TS, Some(1), None);
     e.st.companies.get_mut(&1).unwrap().profit_week = 10_000;
     let world_before = cash(&e, world);
@@ -99,7 +100,7 @@ fn dividend_tax_by_lot_age_and_founders_leave() {
     e.pay_dividends(&mut cx).unwrap();
 
     let dps = 9;
-    let tax = (dps as f64 * 150.0 * 0.20) as i64;
+    let tax = (dps as f64 * 150.0 * 0.10) as i64;
     assert_eq!(cash(&e, p), dps * 250 - tax);
     assert_eq!(cash(&e, gov), tax);
     assert_eq!(cash(&e, world), world_before + dps * 750);
@@ -111,9 +112,10 @@ fn dividend_tax_by_lot_age_and_founders_leave() {
 #[test]
 fn holding_tax_schedule() {
     let cfg = cfg();
-    assert_eq!(holding_tax_rate(&cfg.game, "2026-11-05", "2026-11-08").unwrap(), 0.20);
-    assert_eq!(holding_tax_rate(&cfg.game, "2026-10-01", "2026-11-08").unwrap(), 0.10);
-    assert_eq!(holding_tax_rate(&cfg.game, "2026-06-01", "2026-11-08").unwrap(), 0.0);
+    assert_eq!(holding_tax_rate(&cfg.game, "2026-11-08", "2026-11-08").unwrap(), 0.20);
+    assert_eq!(holding_tax_rate(&cfg.game, "2026-11-05", "2026-11-08").unwrap(), 0.10);
+    assert_eq!(holding_tax_rate(&cfg.game, "2026-10-12", "2026-11-08").unwrap(), 0.10);
+    assert_eq!(holding_tax_rate(&cfg.game, "2026-10-11", "2026-11-08").unwrap(), 0.0);
 }
 
 fn subscribing(e: &mut Engine) -> i64 {
@@ -192,7 +194,10 @@ fn oversubscribed_ipo_claws_back_and_ballots() {
 
 #[test]
 fn a_failed_close_changes_nothing() {
-    let cfg = cfg();
+    // the v1 valuation raises on a non-long-running show without an episode count, after revenue and the
+    // Sunday dividends are booked: a convenient mid-close failure
+    let mut cfg = cfg();
+    cfg.economy_v1 = true;
     let (mut e, sink) = Engine::in_memory(Fees::default(), Rules::default());
     for k in ["world", "cb", "gov"] {
         e.create_account(k, k, None, None, None, TS);
@@ -293,4 +298,59 @@ fn rejected_subscription_keeps_the_old_one() {
     assert_eq!(err.0, "认购时间是 2026-11-06 至 2026-11-09");
     assert_eq!(e.ipo_application(2, p).unwrap().qty, 119);
     e.check_invariants().unwrap();
+}
+
+#[test]
+fn transfers_go_to_every_household() {
+    let cfg = cfg();
+    let inp = empty_inputs();
+    let mut e = fixture();
+    let world = e.special("world").unwrap();
+    let gov = e.special("gov").unwrap();
+    e.transfer(world, gov, 1_000_000, "corp_tax", DAY, TS, None, None);
+    let p = e.create_account("player", "p", Some("p"), None, None, TS);
+    let npcs: Vec<i64> = (0..3).map(|i| e.create_account("npc", &format!("n{i}"), None, None, None, TS)).collect();
+    let mut cx = ctx(&e, &cfg, &inp);
+    e.pay_transfers(&mut cx, 40_000);
+    assert_eq!(cash(&e, p), 10_000); // 40,000 split over 4 households
+    for n in npcs {
+        assert_eq!(cash(&e, n), 10_000);
+    }
+    // the v1 rule: players only
+    let mut cfg1 = cfg.clone();
+    cfg1.economy_v1 = true;
+    let mut cx1 = ctx(&e, &cfg1, &inp);
+    e.pay_transfers(&mut cx1, 40_000);
+    assert_eq!(cash(&e, p), 50_000);
+}
+
+#[test]
+fn penny_stocks_are_warned_then_delisted() {
+    let cfg = cfg();
+    let inp = empty_inputs();
+    let mut e = fixture();
+    let committee = e.account_of("committee", 1).unwrap();
+    e.add_shares(committee, 1, 1000, 500, "2026-09-10");
+    e.st.companies.get_mut(&1).unwrap().prev_close = 99;
+    let mut cx = ctx(&e, &cfg, &inp);
+    for day in 1..=19 {
+        e.penny_rule(&mut cx, &[1]).unwrap();
+        assert_eq!(e.st.penny_days[&1], day);
+        assert_eq!(e.company(1).unwrap().status, "listed");
+    }
+    e.penny_rule(&mut cx, &[1]).unwrap();
+    assert_eq!(e.company(1).unwrap().status, "delisted");
+    assert!(e.holding(committee, 1).is_none());
+    e.flush().unwrap();
+    e.check_invariants().unwrap();
+    // one day at or above 1 币 resets the count
+    let mut e = fixture();
+    e.st.companies.get_mut(&1).unwrap().prev_close = 50;
+    let mut cx = ctx(&e, &cfg, &inp);
+    for _ in 0..15 {
+        e.penny_rule(&mut cx, &[1]).unwrap();
+    }
+    e.st.companies.get_mut(&1).unwrap().prev_close = 100;
+    e.penny_rule(&mut cx, &[1]).unwrap();
+    assert_eq!(e.st.penny_days[&1], 0);
 }

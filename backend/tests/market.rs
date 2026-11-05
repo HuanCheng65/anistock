@@ -66,6 +66,7 @@ fn small(seed: u64) -> MarketConfig {
     m.n_trend = 20;
     m.n_news = 10;
     m.n_retail = 30;
+    m.population_reference = 0.0;
     m.watch_min = 2;
     m.watch_max = 5;
     m
@@ -222,4 +223,34 @@ fn a_restarted_population_keeps_watching_what_it_holds() {
             );
         }
     }
+}
+
+#[test]
+fn migrating_a_v1_database_retires_the_v1_npcs_zero_sum() {
+    let mut cfg = cfg();
+    cfg.market = small(21);
+    let mut e = world();
+    let world_id = e.special("world").unwrap();
+    let ts = "2026-11-04T20:00:00+08:00";
+    // a v1 noise trader with cash, shares and an open order
+    let n = e.create_account("noise", "散户1", None, None, None, ts);
+    e.transfer(world_id, n, 500_000, "grant", "2026-11-04", ts, None, None);
+    let mm = e.account_of("mm", 1000).unwrap();
+    e.remove_shares(mm, 1000, 100, 0).unwrap();
+    e.add_shares(n, 1000, 100, 500, "2026-10-01");
+    e.place_order(&anistock::NewOrder {
+        account_id: n, company_id: 1000, side: "sell", kind: "limit", qty: 50, price: Some(900), day: DAY,
+        ts, match_: false,
+    })
+    .unwrap();
+    let mut rt = anistock::market::runtime::MarketRuntime::new(&cfg);
+    rt.migrate(&mut e, &cfg, at_local(DAY, 6, 40)).unwrap();
+    e.check_invariants().unwrap();
+    let a = e.account(n).unwrap();
+    assert_eq!((a.kind.as_str(), a.cash, a.cash_frozen), ("retired", 0, 0));
+    assert!(e.holding(n, 1000).is_none());
+    assert_eq!(e.state("npc_market"), Some("1"));
+    assert!(e.accounts().filter(|a| a.kind == "npc").count() > 50);
+    // the market maker keeps its target; the rest went to the agents
+    assert_eq!(e.holding(mm, 1000).unwrap().qty, 500);
 }

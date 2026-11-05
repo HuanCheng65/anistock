@@ -1,16 +1,16 @@
 //! Market events (§5): one structure for everything that moves beliefs or activity. Internal events now
 //! (premiere, finale, delisting warning, 热度快讯 from episode comments); news later through the same entry.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Credibility {
     Official,
     Media,
     Rumor,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Nature {
     /// shifts beliefs until the next close (the hidden value then absorbs or contradicts it)
     Fundamental,
@@ -18,7 +18,7 @@ pub enum Nature {
     Sentiment,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub company_id: i64,
     /// premiere | finale | delist_warning | flash | news...

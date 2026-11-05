@@ -24,6 +24,21 @@ pub const BATCH_WINDOW: Duration = Duration::from_millis(50);
 pub enum Change {
     AccountInsert(Account),
     /// `UPDATE accounts SET cash, cash_frozen`
+    /// `INSERT OR REPLACE INTO valuation_state`
+    ValuationState {
+        company_id: i64,
+        market: String,
+        mean: f64,
+        var: f64,
+        last_obs: Option<f64>,
+        day: String,
+        acc: f64,
+        acc_n: i64,
+        updated_at: String,
+    },
+    ValuationStateDelete { company_id: i64, market: String },
+    /// `UPDATE accounts SET kind`
+    AccountKind { id: i64, kind: String },
     AccountBalance {
         id: i64,
         cash: i64,
@@ -114,6 +129,23 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 a.cash_frozen,
                 a.created_at
             ])?;
+        }
+        Change::ValuationState { company_id, market, mean, var, last_obs, day, acc, acc_n, updated_at } => {
+            conn.prepare_cached(
+                "INSERT INTO valuation_state(company_id, market, mean, var, last_obs, day, acc, acc_n, updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(company_id, market) DO UPDATE SET mean=excluded.mean, var=excluded.var,
+                   last_obs=excluded.last_obs, day=excluded.day, acc=excluded.acc, acc_n=excluded.acc_n,
+                   updated_at=excluded.updated_at",
+            )?
+            .execute(params![company_id, market, mean, var, last_obs, day, acc, acc_n, updated_at])?;
+        }
+        Change::ValuationStateDelete { company_id, market } => {
+            conn.prepare_cached("DELETE FROM valuation_state WHERE company_id=? AND market=?")?
+                .execute(params![company_id, market])?;
+        }
+        Change::AccountKind { id, kind } => {
+            conn.prepare_cached("UPDATE accounts SET kind=? WHERE id=?")?.execute(params![kind, id])?;
         }
         Change::AccountBalance { id, cash, cash_frozen } => {
             conn.prepare_cached("UPDATE accounts SET cash=?, cash_frozen=? WHERE id=?")?.execute(params![

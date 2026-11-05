@@ -45,7 +45,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 PY = REPO / ".venv" / "bin" / "python"
-PORTS = {"v1": 18751, "v2": 18752}
+PORTS = {"v1": 18742, "v2": 18743}
 SECRET = "difftest-secret-0123456789"
 INVITE = "club-invite"
 
@@ -132,7 +132,9 @@ def start(which: str, binary: str, root: Path, db: Path, coll: Path, sc: dict, l
     env = {k: v for k, v in os.environ.items() if not k.startswith("ANISTOCK_")}
     env.update(ANISTOCK_GAME_DB=str(db), ANISTOCK_DB=str(coll), ANISTOCK_NO_LOOPS="1", ANISTOCK_INVITE=INVITE,
                ANISTOCK_FREEZE_TIME=sc["time"], PORT=str(PORTS[which]), ANISTOCK_PORT=str(PORTS[which]),
-               ANISTOCK_HOST="127.0.0.1", ANISTOCK_ROOT=str(root), V1_ROOT=str(root))
+               ANISTOCK_HOST="127.0.0.1", ANISTOCK_ROOT=str(root), V1_ROOT=str(root),
+               # the reference is v1: v1 economy rules and no v2 NPC market
+               ANISTOCK_ECONOMY_V1="1")
     if sc["always_open"]:
         env["ANISTOCK_ALWAYS_OPEN"] = "1"
     if sc["secret"]:

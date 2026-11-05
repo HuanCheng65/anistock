@@ -41,7 +41,7 @@ pub struct Series {
     pub acf_abs_daily: Vec<f64>,
     pub intraday: Vec<(i64, String, Vec<(i64, f64)>)>,
     /// every stock: (company, group, [(day, close, fair)])
-    pub paths: Vec<(i64, String, Vec<(String, i64, i64)>)>,
+    pub paths: Vec<(i64, String, Vec<(String, i64, i64, i64)>)>,
 }
 
 pub struct Recorder {
@@ -55,6 +55,8 @@ pub struct Recorder {
     mm_accounts: HashSet<i64>,
     wealth0: (i64, i64),
     npc_income: i64,
+    /// transfers and interest received by the NPC agents (a passive holder gets them too)
+    npc_unearned: i64,
     npc_fund: i64,
     mm_fund: i64,
     mm_income: i64,
@@ -62,6 +64,19 @@ pub struct Recorder {
     titles: HashMap<i64, String>,
     ledger_reasons: BTreeMap<String, i64>,
     watch: Option<i64>,
+    /// (company, day) -> the close of `day` brought new information (an episode, a cn/jp value, a flash)
+    info: HashSet<(i64, String)>,
+    /// company -> its premiere day and last episode day, from the inputs
+    premiere: HashMap<i64, String>,
+    finale: HashMap<i64, String>,
+    air_day: HashSet<(i64, String)>,
+    money: Vec<serde_json::Value>,
+    /// companies listed on the first day, and their dividends per share paid since (cents)
+    start_set: Option<Vec<i64>>,
+    start_set_paid: i64,
+    /// the game's dividend tax brackets (max holding days, rate), for the passive benchmark
+    pub dividend_tax: Vec<(f64, f64)>,
+    start_set_accounts: std::collections::HashSet<i64>,
     /// NPC agents' holdings and cash at the start (for the passive benchmark)
     start_holdings: HashMap<i64, i64>,
     start_cash: i64,
@@ -141,6 +156,7 @@ impl Recorder {
             mm_accounts,
             wealth0: (0, 0),
             npc_income: 0,
+            npc_unearned: 0,
             npc_fund: 0,
             mm_fund: 0,
             mm_income: 0,
@@ -148,6 +164,15 @@ impl Recorder {
             titles: HashMap::new(),
             ledger_reasons: BTreeMap::new(),
             watch: None,
+            info: HashSet::new(),
+            premiere: HashMap::new(),
+            finale: HashMap::new(),
+            air_day: HashSet::new(),
+            money: Vec::new(),
+            start_set: None,
+            start_set_paid: 0,
+            dividend_tax: vec![(7.0, 0.2), (91.0, 0.1)],
+            start_set_accounts: Default::default(),
             start_holdings: HashMap::new(),
             start_cash: 0,
             first_day: String::new(),
@@ -180,6 +205,36 @@ impl Recorder {
             let r = self.rows.entry(c.id).or_default().entry(day.to_string()).or_default();
             r.fair = c.fair_value;
         }
+    }
+
+    /// What the close of `day` learned, per company (for the revision statistics).
+    pub fn note_info(&mut self, inp: &crate::inputs::Inputs, prev: &crate::inputs::Inputs, day: &str) {
+        for s in &inp.shows {
+            let p = prev.show(s.id);
+            let aired_up = p.is_some_and(|p| s.aired > p.aired);
+            let cnjp = p.is_some_and(|p| p.att.cn != s.att.cn || p.att.jp != s.att.jp);
+            if aired_up || cnjp {
+                self.info.insert((s.id, day.to_string()));
+            }
+            if aired_up {
+                self.air_day.insert((s.id, day.to_string()));
+            }
+            if s.aired >= 1 {
+                self.premiere.entry(s.id).or_insert_with(|| day.to_string());
+            }
+            if s.episodes.is_some_and(|n| s.aired >= n) && !s.long_runner {
+                self.finale.entry(s.id).or_insert_with(|| day.to_string());
+            }
+        }
+        for (c, at, kind, _, _) in &self.events {
+            if kind == "flash" && crate::market::day_of(*at) == day {
+                self.info.insert((*c, day.to_string()));
+            }
+        }
+    }
+
+    pub fn flash(&mut self, company: i64, at: i64, surprise: f64) {
+        self.events.push((company, at, "flash".into(), if surprise > 0.0 { 1 } else { -1 }, surprise.abs()));
     }
 
     pub fn event(&mut self, ev: &Event) {
@@ -221,6 +276,38 @@ impl Recorder {
                 r.heat = h;
             }
         }
+        let sum = |k: &[&str]| e.accounts().filter(|a| k.contains(&a.kind.as_str())).map(|a| a.cash).sum::<i64>() as f64 / 100.0;
+        let index: f64 = e.companies().filter(|c| c.status == "listed").map(|c| (c.last_price * c.shares) as f64).sum::<f64>() / 100.0;
+        let hold = |k: &str| -> f64 {
+            e.accounts()
+                .filter(|a| a.kind == k)
+                .map(|a| e.holdings_of(a.id).map(|h| (h.qty * e.company(h.company_id).map_or(0, |c| c.last_price)) as f64).sum::<f64>() + a.cash as f64)
+                .sum::<f64>()
+                / 100.0
+        };
+        if self.start_set.is_none() {
+            let mut ids: Vec<i64> = e.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+            ids.sort_unstable();
+            self.start_set_accounts = ids.iter().filter_map(|id| e.account_of("company", *id)).collect();
+            self.start_set = Some(ids);
+        }
+        let set = self.start_set.clone().unwrap_or_default();
+        // the first day's listed companies: market value now (0 once delisted) plus what they paid out since
+        // (dividends and liquidation, all holders)
+        let set_cap: f64 = set
+            .iter()
+            .filter_map(|id| e.company(*id))
+            .filter(|c| c.status == "listed")
+            .map(|c| (c.last_price * c.shares) as f64)
+            .sum::<f64>()
+            / 100.0;
+        self.money.push(json!({
+            "rate": e.state("rate").and_then(crate::pyfmt::parse_float), "mm_wealth": hold("mm"), "gov_cash": sum(&["gov"]), "start_set_cap": set_cap,
+            "start_set_paid": self.start_set_paid as f64 / 100.0, "listed": e.companies().filter(|c| c.status == "listed").count(),
+            "day": day, "players_cash": sum(&["player"]), "npc_cash": sum(&["npc"]), "company_cash": sum(&["company"]),
+            "mm_cash": sum(&["mm"]), "money_stock": sum(&["player", "npc", "company", "mm"]), "market_cap": index,
+            "players_wealth": hold("player"), "npc_wealth": hold("npc"),
+        }));
         self.series.days.push(day.to_string());
         self.series.npc_wealth.push(m.npc_wealth(e).0 as f64 / 100.0);
         self.series.mm_wealth.push(self.mm_wealth(e) as f64 / 100.0);
@@ -250,6 +337,11 @@ impl Recorder {
         }
         for (from, to, amt, reason) in tap.ledger.drain(..) {
             *self.ledger_reasons.entry(reason.clone()).or_default() += amt;
+            if self.start_set_accounts.contains(&from)
+                && matches!(reason.as_str(), "dividend" | "dividend_export" | "dividend_tax" | "delisting")
+            {
+                self.start_set_paid += amt;
+            }
             if Some(to) == self.watch {
                 match reason.as_str() {
                     "transfer" => self.watch_transfers += amt,
@@ -265,6 +357,9 @@ impl Recorder {
                         self.npc_fund += sign * amt;
                     } else if income {
                         self.npc_income += sign * amt;
+                        if matches!(reason.as_str(), "transfer" | "interest") {
+                            self.npc_unearned += sign * amt;
+                        }
                     }
                 } else if self.mm_accounts.contains(&acct) {
                     if fund {
@@ -523,24 +618,110 @@ impl Recorder {
             );
         }
 
+        // ---- revisions of the hidden value (docs/v2-valuation.md §7)
+        let mut rev_all: Vec<f64> = Vec::new();
+        let mut rev_pairs: Vec<(f64, f64)> = Vec::new();
+        let mut by_weekday: [Vec<f64>; 7] = Default::default();
+        let (mut on_info, mut no_info, mut on_air, mut off_air) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut first_wk, mut middle, mut end) = (Vec::new(), Vec::new(), Vec::new());
+        // simple returns (the bias a calendar trader would earn): air days in the first two weeks after the
+        // premiere, later air days, other days
+        let (mut air_early, mut air_later, mut other_simple) = (Vec::new(), Vec::new(), Vec::new());
+        for (c, rows) in &self.rows {
+            let v: Vec<(&String, &DayRow)> = rows.iter().collect();
+            let mut prev_rev: Option<f64> = None;
+            for w in v.windows(2) {
+                let (d0, r0) = w[0];
+                let (_, r1) = w[1];
+                if r0.fair <= 0 || r1.fair <= 0 {
+                    prev_rev = None;
+                    continue;
+                }
+                // the change of the value between the two days' opens (the close of d0 in between), dividends added back
+                let rv = ((r1.fair + r0.div) as f64 / r0.fair as f64).ln();
+                rev_all.push(rv);
+                if let Some(p) = prev_rev {
+                    rev_pairs.push((p, rv));
+                }
+                prev_rev = Some(rv);
+                if let Some(dd) = chrono::NaiveDate::parse_from_str(d0, "%Y-%m-%d").ok() {
+                    by_weekday[chrono::Datelike::weekday(&dd).num_days_from_monday() as usize].push(rv);
+                }
+                let key = (*c, d0.clone());
+                if self.info.contains(&key) { on_info.push(rv) } else { no_info.push(rv) }
+                if self.air_day.contains(&key) { on_air.push(rv) } else { off_air.push(rv) }
+                if self.air_day.contains(&key) {
+                    let since = self.premiere.get(c).and_then(|p| {
+                        Some((chrono::NaiveDate::parse_from_str(d0, "%Y-%m-%d").ok()? - chrono::NaiveDate::parse_from_str(p, "%Y-%m-%d").ok()?).num_days())
+                    });
+                    if since.is_some_and(|s| (0..14).contains(&s)) { air_early.push(rv.exp() - 1.0) } else { air_later.push(rv.exp() - 1.0) }
+                } else {
+                    other_simple.push(rv.exp() - 1.0);
+                }
+                if let Some(p) = self.premiere.get(c) {
+                    let since = chrono::NaiveDate::parse_from_str(d0, "%Y-%m-%d").ok().zip(chrono::NaiveDate::parse_from_str(p, "%Y-%m-%d").ok()).map(|(a, b)| (a - b).num_days());
+                    let to_end = self.finale.get(c).and_then(|f| chrono::NaiveDate::parse_from_str(f, "%Y-%m-%d").ok()).zip(chrono::NaiveDate::parse_from_str(d0, "%Y-%m-%d").ok()).map(|(f, a)| (f - a).num_days());
+                    match (since, to_end) {
+                        (Some(s), _) if (0..7).contains(&s) => first_wk.push(rv),
+                        (Some(s), Some(t)) if s >= 7 && (0..14).contains(&t) => end.push(rv),
+                        (Some(s), _) if s >= 7 => middle.push(rv),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let rmsv = |v: &[f64]| (v.iter().map(|x| x * x).sum::<f64>() / v.len().max(1) as f64).sqrt();
+        let meanv = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+        let corr = |p: &[(f64, f64)]| {
+            let (mx, my) = (meanv(&p.iter().map(|x| x.0).collect::<Vec<_>>()), meanv(&p.iter().map(|x| x.1).collect::<Vec<_>>()));
+            let cov: f64 = p.iter().map(|(a, b)| (a - mx) * (b - my)).sum();
+            let va: f64 = p.iter().map(|(a, _)| (a - mx).powi(2)).sum();
+            let vb: f64 = p.iter().map(|(_, b)| (b - my).powi(2)).sum();
+            cov / (va * vb).sqrt()
+        };
+        let revisions = json!({
+            "n": rev_all.len(),
+            "rms": rmsv(&rev_all),
+            "lag1_corr": corr(&rev_pairs),
+            "weekday_mean": by_weekday.iter().map(|v| meanv(v)).collect::<Vec<_>>(),
+            "weekday_rms": by_weekday.iter().map(|v| rmsv(v)).collect::<Vec<_>>(),
+            "air_day_mean": meanv(&on_air), "other_day_mean": meanv(&off_air),
+            "air_day_rms": rmsv(&on_air), "other_day_rms": rmsv(&off_air),
+            "info_rms": rmsv(&on_info), "no_info_rms": rmsv(&no_info), "info_days": on_info.len(), "no_info_days": no_info.len(),
+            "no_info_median_abs": median(no_info.iter().map(|x| x.abs()).collect()),
+            "first_week_rms": rmsv(&first_wk), "middle_rms": rmsv(&middle), "last_two_weeks_rms": rmsv(&end),
+            "first_week_n": first_wk.len(), "middle_n": middle.len(), "end_n": end.len(),
+            "air_first2w_simple_mean": meanv(&air_early), "air_first2w_n": air_early.len(),
+            "air_first2w_se": rmsv(&air_early) / (air_early.len().max(1) as f64).sqrt(),
+            "air_later_simple_mean": meanv(&air_later), "other_simple_mean": meanv(&other_simple),
+        });
+
         // NPC wealth
         let (w_agents, _) = m.npc_wealth(e);
         let w_mm = self.mm_wealth(e);
         let trading_pnl = w_agents - self.wealth0.0 - self.npc_fund - self.npc_income;
         let mm_trading = w_mm - self.wealth0.1 - self.mm_fund - self.mm_income;
-        // passive benchmark: the agents' starting cash and holdings, held all season (dividends after the
-        // 10% tax a quarter-old lot pays; delisted shares count as 0)
-        let mut passive = self.start_cash as f64;
+        // passive benchmark: the agents' starting cash and holdings, held all season (dividends after tax;
+        // delisted shares count as 0)
+        // (plus the per-capita transfers and interest the agents received: not a trading result)
+        let mut passive = (self.start_cash + self.npc_unearned) as f64;
         for (c, q) in &self.start_holdings {
             let Some(co) = e.company(*c) else { continue };
             let px = if co.status == "listed" { co.last_price as f64 } else { 0.0 };
-            let dps: i64 =
-                e.st.company_days
-                    .range((*c, self.first_day.clone())..)
-                    .take_while(|(k, _)| k.0 == *c)
-                    .map(|(_, d)| d.dividend_ps)
-                    .sum();
-            passive += *q as f64 * (px + dps as f64 * 0.9);
+            // dividends after the tax for a lot bought on the first day (its age on each payday)
+            let first = crate::vclose::day_no(&self.first_day).unwrap_or(0);
+            let net: f64 = e
+                .st
+                .company_days
+                .range((*c, self.first_day.clone())..)
+                .take_while(|(k, _)| k.0 == *c)
+                .map(|(_, d)| {
+                    let age = (crate::vclose::day_no(&d.day).unwrap_or(first) - first) as f64;
+                    let rate = self.dividend_tax.iter().find(|(max, _)| age <= *max).map_or(0.0, |x| x.1);
+                    d.dividend_ps as f64 * (1.0 - rate)
+                })
+                .sum();
+            passive += *q as f64 * (px + net);
         }
         let actual = (w_agents - self.npc_fund) as f64;
         let npc = json!({
@@ -551,6 +732,7 @@ impl Recorder {
             "agents_end": w_agents as f64 / 100.0,
             "agents_fund_net": self.npc_fund as f64 / 100.0,
             "agents_income": self.npc_income as f64 / 100.0,
+            "agents_transfers_interest": self.npc_unearned as f64 / 100.0,
             "agents_trading_pnl": trading_pnl as f64 / 100.0,
             "agents_trading_pnl_pct": trading_pnl as f64 / self.wealth0.0.max(1) as f64,
             "agents_wealth_drift_pct": w_agents as f64 / self.wealth0.0.max(1) as f64 - 1.0,
@@ -596,7 +778,7 @@ impl Recorder {
             self.series.paths.push((
                 *c,
                 group.get(c).unwrap_or(&"").to_string(),
-                rows.iter().map(|(d, r)| (d.clone(), r.close, r.fair)).collect(),
+                rows.iter().map(|(d, r)| (d.clone(), r.close, r.fair, r.div)).collect(),
             ));
         }
         let mut by_kind: BTreeMap<String, (i64, i64, usize)> = BTreeMap::new();
@@ -639,6 +821,8 @@ impl Recorder {
             "events": self.events.len(),
             "ledger_by_reason": self.ledger_reasons.iter().map(|(k, v)| (k.clone(), *v as f64 / 100.0)).collect::<BTreeMap<_, _>>(),
             "invariants_ok": e.check_invariants().is_ok(),
+            "revisions": revisions,
+            "money": self.money,
             "stocks_detail": movers,
             "agents_by_kind": kinds_json,
             "elapsed_s": elapsed,

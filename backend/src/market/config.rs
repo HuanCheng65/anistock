@@ -16,6 +16,8 @@ pub struct MarketConfig {
     pub n_trend: usize,
     pub n_news: usize,
     pub n_retail: usize,
+    /// the counts above are for this many listed stocks and scale with the actual number (0: fixed)
+    pub population_reference: f64,
     /// starting cash per agent, 币
     pub cash_value: f64,
     pub cash_trend: f64,
@@ -122,6 +124,10 @@ pub struct MarketConfig {
     /// hours after air time the flash appears
     pub flash_delay_h: f64,
     pub flash_half_life_h: f64,
+    /// a 热度快讯 is published when the episode's comments differ from expectations by this much
+    pub flash_news_min: f64,
+    /// a change of the public value by this much (log) is a revision the news agents react to
+    pub revision_min: f64,
 }
 
 impl Default for MarketConfig {
@@ -133,6 +139,7 @@ impl Default for MarketConfig {
             n_trend: 120,
             n_news: 60,
             n_retail: 180,
+            population_reference: 140.0,
             cash_value: 15000.0,
             cash_trend: 8000.0,
             cash_news: 8000.0,
@@ -184,6 +191,8 @@ impl Default for MarketConfig {
             flash_ratio: 1.5,
             flash_delay_h: 3.0,
             flash_half_life_h: 6.0,
+            flash_news_min: 0.2,
+            revision_min: 0.05,
         }
     }
 }

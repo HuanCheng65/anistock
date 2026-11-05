@@ -72,9 +72,11 @@ fn main() {
     }
     let db = std::path::Path::new(&args[1]);
     store::migrate(db).expect("migrate");
-    let cfg = Config::load_from(&anistock::config::find_root(), |_| None).expect("config");
+    let mut cfg = Config::load_from(&anistock::config::find_root(), |_| None).expect("config");
+    // the reference is the v1 Python server: v1 economy rules
+    cfg.economy_v1 = true;
     let (fees, rules) = (cfg.fees(), cfg.rules());
-    assert_eq!((fees, rules), (Fees::default(), Rules::default()), "driver.py uses v1's defaults");
+    assert_eq!((fees, rules), (Fees::default(), Rules::v1()), "driver.py uses v1's defaults");
     let mut e = Engine::open(db, fees, rules).expect("load");
     let mut rng = PyRandom::new(0);
     let ops = std::io::BufReader::new(std::fs::File::open(&args[2]).expect("ops"));

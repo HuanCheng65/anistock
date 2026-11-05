@@ -40,6 +40,12 @@ pub struct ShowInputs {
     pub has_real_data: bool,
     pub att: Markets,
     pub expected: Markets,
+    /// the audience-based pre-air estimate per market (the valuation filter's prior; since v0.3.0)
+    #[serde(default)]
+    pub preair: Option<Markets>,
+    /// the day each episode aired so far, one entry per episode (since v0.3.0)
+    #[serde(default)]
+    pub air_dates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,5 +198,18 @@ pub fn refresh_market_data(cfg: &Config) {
             Ok(o) => eprintln!("{script} {arg} failed: {}", tail(&o.stderr, 500)),
             Err(e) => eprintln!("{script} {arg} failed: {e}"),
         }
+    }
+}
+
+/// Run `engine/flash_fetch.py` once (热度快讯: today's episodes' Bangumi comment counts → JSON files in the
+/// events inbox, which the market ingests). Failures are logged and ignored.
+pub fn fetch_flashes(cfg: &Config) {
+    let inbox = crate::market::runtime::MarketRuntime::events_dir(cfg).join("inbox");
+    let mut cmd = python(cfg, "engine/flash_fetch.py");
+    cmd.arg("--inbox").arg(&inbox).arg("--game-db").arg(&cfg.game_db);
+    match run_with_timeout(cmd, Duration::from_secs(600)) {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => eprintln!("flash_fetch.py failed: {}", tail(&o.stderr, 500)),
+        Err(e) => eprintln!("flash_fetch.py failed: {e}"),
     }
 }
