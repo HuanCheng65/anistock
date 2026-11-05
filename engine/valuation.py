@@ -273,9 +273,10 @@ def last_air_before(sched: list[int], t: int) -> int | None:
 
 
 def att_path(fp: dict, p: dict, m: str, mean: float, var: float, today: int, sched: list[int], first_air: int,
-             long_runner: bool, horizon: int) -> list[float]:
+             long_runner: bool, horizon: int, mult: float = 1.0) -> list[float]:
     """Expected attention in market m for days today+1 .. today+horizon. `sched`: every episode's air day
-    (`schedule`); after the last one's week the measured post-finale decay applies."""
+    (`schedule`); after the last one's week the measured post-finale decay applies (the long tail, its floor scaled
+    by the show's tail prior `mult`, `tail_mult`)."""
     drift, q = fp["drift"][m], fp["q"][m]
     val = p["valuation"]
     prof, tail = post_finale_curve(fp, p, m)
@@ -297,6 +298,12 @@ def att_path(fp: dict, p: dict, m: str, mean: float, var: float, today: int, sch
             # after the last episode's week: the measured post-finale decay of the level at the finale
             jf = max(0, final + 7 - base)
             lvl = math.exp(mean + cum_drift(fp, m, base, base + jf, first_air) + 0.5 * (var + q * jf)) * finale_bump(fp, m)
+            tl = tail_of(fp, m)
+            if tl is not None:
+                # the expected long tail; the level's variance already holds the spread learned since the finale
+                # week (D(now)), which the expected curve counts from the finale week on
+                out.append(lvl * tail_mean(tl, t - final - 7, mult) * math.exp(-0.5 * tail_var(tl, today - final - 7)))
+                continue
             w = (t - final - 7) // 7
             f = prof[w] if w < len(prof) else prof[-1] * tail ** (w - len(prof) + 1)
             out.append(lvl * f)
@@ -324,14 +331,82 @@ def post_finale_curve(fp: dict, p: dict, m: str) -> tuple[list[float], float]:
     return val["post_finale_profile"], val["post_finale_tail_decay"]
 
 
-def post_finale_factor(fp: dict, p: dict, m: str, final: int, t: int) -> float:
+def post_finale_factor(fp: dict, p: dict, m: str, final: int, t: int, mult: float = 1.0) -> float:
     """The post-finale factor of market m's level on day t for a show whose last episode aired on `final`: 1
-    until a week after it, then the profile and its tail (the same as in `att_path`)."""
+    until a week after it, then the long tail's MEDIAN factor (the filter reads post-finale observations through
+    it: the level after the finale is a random walk whose spread grows by D(t); `att_path` adds that spread back
+    as the expected curve), else the profile and its tail."""
     if t < final + 7:
         return 1.0
+    tl = tail_of(fp, m)
+    if tl is not None:
+        return tail_mean(tl, t - final - 7, mult) * math.exp(-0.5 * tail_var(tl, t - final - 7))
     prof, tail = post_finale_curve(fp, p, m)
     w = (t - final - 7) // 7
     return prof[w] if w < len(prof) else prof[-1] * tail ** (w - len(prof) + 1)
+
+
+# ---- the long tail (docs/v2-series.md §4; fitted by sim/fit_valuation.py --history)
+
+
+def tail_of(fp: dict, m: str) -> dict | None:
+    """Market m's long-tail parameters, or None (older fits: the weekly profile)."""
+    return fp.get("tail", {}).get(m)
+
+
+def tail_parts(tl: dict, t: float, mult: float) -> tuple[float, float, float]:
+    """The three parts of the expected post-finale factor t days after the finale's week, beyond the transition
+    weeks: the floor × yearly^(t/365) and the slow excess × exp(-t/tau2), both scaled by the show's tail prior
+    `mult` (the prior is fitted on the level 2-3 years out); the fast excess × exp(-t/tau)."""
+    return (mult * tl["floor"] * tl["yearly"] ** (t / 365.0), mult * tl["excess2"] * math.exp(-t / tl["tau2"]),
+            tl["excess"] * math.exp(-t / tl["tau"]))
+
+
+def tail_formula(tl: dict, t: float, mult: float) -> float:
+    """The expected post-finale factor beyond the transition weeks: floor + slow excess + fast excess."""
+    a, b, c = tail_parts(tl, t, mult)
+    return a + b + c
+
+
+def tail_mean(tl: dict, t: int, mult: float) -> float:
+    """The expected post-finale factor t days after the finale's week: the weekly transition, then the formula."""
+    w = t // 7
+    tr = tl["trans"]
+    return tr[w] if w < len(tr) else tail_formula(tl, t, mult)
+
+
+def tail_var(tl: dict, t: int) -> float:
+    """D(t): the spread (log variance) across shows of the post-finale factor t days after the finale's week, the
+    show-specific tail that observations reveal: a (1 - e^(-t/T)) + b t; 0 before."""
+    if t <= 0:
+        return 0.0
+    v = tl["var"]
+    return v[0] * (1.0 - math.exp(-t / v[1])) + v[2] * t
+
+
+def tail_mult(fp: dict, score: float | None, ona: bool) -> float:
+    """The show's prior tail level relative to the average (docs/v2-series.md §4.1): fitted on score and format
+    (log-linear, centred so the average show has 1). A missing score counts as the reference score."""
+    pr = fp.get("tail", {}).get("prior")
+    if not pr:
+        return 1.0
+    x = pr["score"] * ((score - pr["score_ref"]) / 10.0 if score else 0.0) + (pr["ona"] if ona else 0.0) - pr["center"]
+    return math.exp(x)
+
+
+def tail_beyond(tl: dict, mult: float, t_last: int, last: float, disc: float) -> float:
+    """Σ_{k>=1} disc^k × attention(t_last + k) for a path whose day t_last after the finale's week (beyond the
+    transition) had expected attention `last`: each part is a geometric series (closed form)."""
+    if t_last < 7 * len(tl["trans"]):
+        return 0.0
+    a, b, c = tail_parts(tl, t_last, mult)
+    if a + b + c <= 0:
+        return 0.0
+    k = last / (a + b + c)
+    g1 = tl["yearly"] ** (1 / 365.0) * disc
+    g2 = math.exp(-1.0 / tl["tau2"]) * disc
+    g3 = math.exp(-1.0 / tl["tau"]) * disc
+    return k * (a * g1 / (1.0 - g1) + b * g2 / (1.0 - g2) + c * g3 / (1.0 - g3))
 
 
 def discount_day(rate: float, p: dict) -> float:
@@ -340,9 +415,11 @@ def discount_day(rate: float, p: dict) -> float:
 
 
 def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: dict, shares: int,
-                     book_cents: int, rate: float, long_runner: bool) -> float:
+                     book_cents: int, rate: float, long_runner: bool, tails: dict | None = None) -> float:
     """Per-share value (yuan): expected dividends from the attention paths, discounted, plus cash per share.
-    own/totals: market -> expected attention per future day (the same length)."""
+    own/totals: market -> expected attention per future day (the same length). tails: market -> (tail parameters,
+    the show's tail prior, days after the finale's week on the path's last day) for a path that ends in the long
+    tail: its revenue beyond the horizon, at the last day's revenue per unit of attention, in closed form."""
     rv, co = p["revenue"], p["company"]
     disc = discount_day(rate, p)
     # all after-tax profit reaches the shareholders: the paid-out part as dividends, the retained part as the
@@ -364,6 +441,20 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     if long_runner and h > 0:
         g = p["valuation"]["long_runner_decay"] ** (1 / 7.0) * disc
         pv += last * f * g / (1 - g)
+    elif tails and h > 0:
+        # beyond the horizon: each market's revenue per unit of attention stays at the last day's (the market
+        # totals and demand are not forecast that far), the attention follows the long tail
+        tt = {m: totals[m][h - 1] for m in MARKETS}
+        live = [m for m in MARKETS if tt[m] > 0]
+        wsum = sum(weights[m] for m in live) or 1.0
+        dd = demand_day(tt["us"], a_ref, rv)
+        for m in MARKETS:
+            x = tails.get(m)
+            if x is None or m not in live:
+                continue
+            tl, mult, t_last = x
+            per = dd * (weights[m] / wsum) / tt[m] * keep / shares
+            pv += f * per * tail_beyond(tl, mult, t_last, own[m][h - 1], disc)
     return pv + book_cents / 100 / shares
 
 

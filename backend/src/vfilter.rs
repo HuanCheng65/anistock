@@ -87,7 +87,41 @@ struct RawParams {
     post_finale: Option<PerMarketVec>,
     #[serde(default)]
     post_finale_tail: Option<PerMarket>,
+    /// phase 1: the long tail after the finale, per market, and the tail-level prior (docs/v2-series.md §4)
+    #[serde(default)]
+    tail: Option<RawTail>,
+}
 
+#[derive(Debug, Clone, Deserialize)]
+struct RawTail {
+    us: Option<Tail>,
+    cn: Option<Tail>,
+    jp: Option<Tail>,
+    prior: Option<TailPrior>,
+}
+
+/// One market's long tail (Python `tail_of`): the expected post-finale factor t days after the finale's week is
+/// `trans[t / 7]` for the transition weeks, then floor × mult × yearly^(t/365) + excess × exp(-t/tau); the spread
+/// across shows D(t) = var[0] (1 - e^(-t/var[1])) + var[2] (1 - e^(-t/var[3])).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Tail {
+    pub trans: Vec<f64>,
+    pub floor: f64,
+    pub yearly: f64,
+    pub excess: f64,
+    pub tau: f64,
+    pub excess2: f64,
+    pub tau2: f64,
+    pub var: [f64; 3],
+}
+
+/// The tail level's prior by score and format (Python `tail_mult`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TailPrior {
+    pub score: f64,
+    pub ona: f64,
+    pub center: f64,
+    pub score_ref: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +157,9 @@ pub struct FilterParams {
     /// per market: attention by week after the finale week and its weekly tail (empty: the game's profile)
     pub post_finale: [Vec<f64>; 3],
     pub post_finale_tail: M3,
+    /// per market: the long tail (None: the weekly profile above)
+    pub tail: [Option<Tail>; 3],
+    pub tail_prior: Option<TailPrior>,
     /// long-runners' weekly level factor (`[valuation] long_runner_decay`; their filter's drift)
     pub long_runner_decay: f64,
 }
@@ -237,6 +274,8 @@ impl FilterParams {
             drift_by_week: r.drift_by_week.map_or([Vec::new(), Vec::new(), Vec::new()], |v| [v.us, v.cn, v.jp]),
             post_finale: r.post_finale.map_or([Vec::new(), Vec::new(), Vec::new()], |v| [v.us, v.cn, v.jp]),
             post_finale_tail: r.post_finale_tail.map_or([0.0; 3], |t| t.m3()),
+            tail_prior: r.tail.as_ref().and_then(|t| t.prior.clone()),
+            tail: r.tail.map_or([None, None, None], |t| [t.us, t.cn, t.jp]),
         })
     }
 }
@@ -368,6 +407,7 @@ pub fn att_path(
     first_air: i64,
     long_runner: bool,
     horizon: usize,
+    mult: f64,
 ) -> Vec<f64> {
     let q = fp.q[m];
     let (prof, tail) = post_finale_curve(fp, p, m);
@@ -390,6 +430,10 @@ pub fn att_path(
             if t >= fin + 7 {
                 let jf = (fin + 7 - base).max(0);
                 let lvl = (mean + fp.cum_drift(m, base, base + jf, first_air) + 0.5 * (var + q * jf as f64)).exp() * fp.finale_bump[m];
+                if let Some(tl) = &fp.tail[m] {
+                    out.push(lvl * tail_mean(tl, t - fin - 7, mult) * (-0.5 * tail_var(tl, today - fin - 7)).exp());
+                    continue;
+                }
                 let w = (t - fin - 7).div_euclid(7);
                 let f = if (w as usize) < prof.len() {
                     prof[w as usize]
@@ -431,9 +475,12 @@ pub fn post_finale_curve<'a>(fp: &'a FilterParams, p: &'a Params, m: usize) -> (
 
 /// The post-finale factor of market `m`'s level on day `t` for a show whose last episode aired on `fin`
 /// (Python `post_finale_factor`): 1 until a week after it, then the profile and its tail.
-pub fn post_finale_factor(fp: &FilterParams, p: &Params, m: usize, fin: i64, t: i64) -> f64 {
+pub fn post_finale_factor(fp: &FilterParams, p: &Params, m: usize, fin: i64, t: i64, mult: f64) -> f64 {
     if t < fin + 7 {
         return 1.0;
+    }
+    if let Some(tl) = &fp.tail[m] {
+        return tail_mean(tl, t - fin - 7, mult) * (-0.5 * tail_var(tl, t - fin - 7)).exp();
     }
     let (prof, tail) = post_finale_curve(fp, p, m);
     let w = (t - fin - 7).div_euclid(7);
@@ -443,6 +490,68 @@ pub fn post_finale_factor(fp: &FilterParams, p: &Params, m: usize, fin: i64, t: 
         prof[prof.len() - 1] * tail.powf((w - prof.len() as i64 + 1) as f64)
     }
 }
+
+/// The three parts of the expected post-finale factor beyond the transition weeks (Python `tail_parts`): floor ×
+/// yearly^(t/365) and slow excess × exp(-t/tau2), both × the show's prior; fast excess × exp(-t/tau).
+pub fn tail_parts(tl: &Tail, t: f64, mult: f64) -> (f64, f64, f64) {
+    (mult * tl.floor * tl.yearly.powf(t / 365.0), mult * tl.excess2 * (-t / tl.tau2).exp(), tl.excess * (-t / tl.tau).exp())
+}
+
+/// The expected post-finale factor beyond the transition weeks (Python `tail_formula`).
+pub fn tail_formula(tl: &Tail, t: f64, mult: f64) -> f64 {
+    let (a, b, c) = tail_parts(tl, t, mult);
+    a + b + c
+}
+
+/// The expected post-finale factor `t` days after the finale's week (Python `tail_mean`).
+pub fn tail_mean(tl: &Tail, t: i64, mult: f64) -> f64 {
+    let w = t.div_euclid(7);
+    if w >= 0 && (w as usize) < tl.trans.len() {
+        tl.trans[w as usize]
+    } else {
+        tail_formula(tl, t as f64, mult)
+    }
+}
+
+/// D(t), the spread across shows of the log post-finale factor (Python `tail_var`).
+pub fn tail_var(tl: &Tail, t: i64) -> f64 {
+    if t <= 0 {
+        return 0.0;
+    }
+    let v = &tl.var;
+    let t = t as f64;
+    v[0] * (1.0 - (-t / v[1]).exp()) + v[2] * t
+}
+
+/// The show's prior tail level relative to the average (Python `tail_mult`).
+pub fn tail_mult(fp: &FilterParams, score: Option<f64>, ona: bool) -> f64 {
+    let Some(pr) = &fp.tail_prior else { return 1.0 };
+    let s = match score {
+        Some(x) if x != 0.0 => (x - pr.score_ref) / 10.0,
+        _ => 0.0,
+    };
+    (pr.score * s + if ona { pr.ona } else { 0.0 } - pr.center).exp()
+}
+
+/// Σ_{k>=1} disc^k × attention(t_last + k) of a path in the long tail (Python `tail_beyond`).
+pub fn tail_beyond(tl: &Tail, mult: f64, t_last: i64, last: f64, disc: f64) -> f64 {
+    if t_last < 7 * tl.trans.len() as i64 {
+        return 0.0;
+    }
+    let (a, b, c) = tail_parts(tl, t_last as f64, mult);
+    if a + b + c <= 0.0 {
+        return 0.0;
+    }
+    let k = last / (a + b + c);
+    let g1 = tl.yearly.powf(1.0 / 365.0) * disc;
+    let g2 = (-1.0 / tl.tau2).exp() * disc;
+    let g3 = (-1.0 / tl.tau).exp() * disc;
+    k * (a * g1 / (1.0 - g1) + b * g2 / (1.0 - g2) + c * g3 / (1.0 - g3))
+}
+
+/// A path that ends in the long tail: its market's tail, the show's prior, days after the finale's week on the
+/// path's last day (Python `value_from_paths` `tails`).
+pub type TailEnd<'a> = Option<(&'a Tail, f64, i64)>;
 
 /// Per-share value (yuan) from the attention paths (Python `value_from_paths`).
 #[allow(clippy::too_many_arguments)]
@@ -456,6 +565,7 @@ pub fn value_from_paths(
     book_cents: i64,
     rate: f64,
     long_runner: bool,
+    tails: &[TailEnd; 3],
 ) -> f64 {
     let disc = discount_day(rate, p);
     // all after-tax profit reaches the shareholders (dividends, or retained cash in the book value)
@@ -476,6 +586,29 @@ pub fn value_from_paths(
     if long_runner && h > 0 {
         let g = p.long_runner_decay.powf(1.0 / 7.0) * disc;
         pv += last * f * g / (1.0 - g);
+    } else if h > 0 && tails.iter().any(|t| t.is_some()) {
+        // beyond the horizon: revenue per unit of attention at the last day's, attention along the long tail
+        let tt = [totals[0][h - 1], totals[1][h - 1], totals[2][h - 1]];
+        let mut wsum = 0.0;
+        let mut any = false;
+        for m in 0..3 {
+            if tt[m] > 0.0 {
+                wsum += weights[m];
+                any = true;
+            }
+        }
+        if !any || wsum == 0.0 {
+            wsum = 1.0;
+        }
+        let dd = demand_day(tt[0], a_ref, p);
+        for m in 0..3 {
+            let Some((tl, mult, t_last)) = tails[m] else { continue };
+            if tt[m] <= 0.0 {
+                continue;
+            }
+            let per = dd * (weights[m] / wsum) / tt[m] * keep / shares as f64;
+            pv += f * per * tail_beyond(tl, mult, t_last, own[m][h - 1], disc);
+        }
     }
     pv + book_cents as f64 / 100.0 / shares as f64
 }
@@ -513,32 +646,48 @@ mod tests {
         let m1 = [7.5, 3.0, 2.0];
         let v1 = [0.05, 0.2, 0.03];
         let own1: [Vec<f64>; 3] =
-            std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s1, today - 20, false, 120));
+            std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s1, today - 20, false, 120, 1.0));
         let m2 = [8.0, 3.5, 2.5];
-        let own2: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m2[m], 0.01, today, &s2, today - 900, true, 120));
+        let own2: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m2[m], 0.01, today, &s2, today - 900, true, 120, 1.0));
         let tot: [Vec<f64>; 3] = std::array::from_fn(|m| {
             own1[m].iter().zip(&own2[m]).map(|(a, b)| a + b + 1000.0 * (m as f64 + 1.0)).collect()
         });
         let w = p.market_weights;
-        let a = value_from_paths(&own1, &tot, &w, 110925.85, &p, 10000, 1234567, 0.0325, false);
-        let b = value_from_paths(&own2, &tot, &w, 110925.85, &p, 10000, 555, 0.03, true);
+        let a = value_from_paths(&own1, &tot, &w, 110925.85, &p, 10000, 1234567, 0.0325, false, &[None, None, None]);
+        let b = value_from_paths(&own2, &tot, &w, 110925.85, &p, 10000, 555, 0.03, true, &[None, None, None]);
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
-        assert!(ulps(a, 22.23599386634486) <= 2, "{a}");
-        assert!(ulps(b, 359.9638471331933) <= 2, "{b}");
+        assert!(ulps(a, 22.74665592751861) <= 2, "{a}");
+        assert!(ulps(b, 357.95961620416017) <= 2, "{b}");
         assert!(ulps(own1[0][5], 835.2637132741504) <= 2, "{}", own1[0][5]);
-        assert!(ulps(own1[1][100], 2.8463816081531292) <= 2, "{}", own1[1][100]);
+        assert!(ulps(own1[1][100], 10.093938597699406) <= 2, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
         assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.644)));
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
         // a show not airing yet: no fading before its premiere; the post-finale profile
         let s3 = schedule(&[today + 10], Some(12), false);
-        let o3 = att_path(&fp, &p, 0, 7.0, 0.1, today, &s3, today + 10, false, 120);
+        let o3 = att_path(&fp, &p, 0, 7.0, 0.1, today, &s3, today + 10, false, 120, 1.0);
         assert_eq!(o3[5], 0.0);
         // (after the finale the tail's power and the summed drift may differ in the last few bits)
-        assert!(ulps(o3[15], 456.9515821577898) <= 2 && (o3[110] / 224.61921276713286 - 1.0).abs() < 1e-13, "{} {}", o3[15], o3[110]);
-        assert!(ulps(post_finale_factor(&fp, &p, 0, today, today + 30), 0.179913) <= 2);
+        assert!(ulps(o3[15], 456.9515821577898) <= 2 && (o3[110] / 220.84182663908234 - 1.0).abs() < 1e-13, "{} {}", o3[15], o3[110]);
+        assert!(ulps(post_finale_factor(&fp, &p, 0, today, today + 30, 1.0), 0.16330143897601446) <= 2);
+        // the long tail (phase 1): a show that finished 200 days ago with a score prior; the value includes the
+        // closed-form sum beyond the horizon (backend/difftest/valuation_ref.py prints these)
+        let mult = tail_mult(&fp, Some(78.0), true);
+        assert!(ulps(mult, 2.0524655955763746) <= 2, "{mult}");
+        let s4 = schedule(&(0..12).map(|k| today - 290 + 7 * k).collect::<Vec<_>>(), Some(12), false);
+        let fin4 = *s4.last().unwrap();
+        let own4: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s4, s4[0], false, 400, mult));
+        let tot4: [Vec<f64>; 3] = std::array::from_fn(|m| own4[m].iter().map(|x| x + 500.0 * (m as f64 + 1.0)).collect());
+        let tails: [TailEnd; 3] = std::array::from_fn(|m| fp.tail[m].as_ref().map(|tl| (tl, mult, today + 400 - fin4 - 7)));
+        let c4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails);
+        let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None]);
+        assert!((own4[0][0] / 469.2214252449581 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
+        assert!((own4[1][399] / 2.974024532655546 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
+        assert!((c4 / 119.40088036710972 - 1.0).abs() < 1e-13 && (c0 / 54.12183885587719 - 1.0).abs() < 1e-13, "{c4} {c0}");
+        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.3572582370850549) <= 2);
+        assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
         // the joint filter (v0.3.2)
         let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
         let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];

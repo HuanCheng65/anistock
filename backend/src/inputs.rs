@@ -61,6 +61,12 @@ pub struct ShowInputs {
     /// which markets' data sources the show is mapped to (since v0.3.2)
     #[serde(default)]
     pub sources: Option<Flags>,
+    /// AniList averageScore on the day (None: not enough votes yet); the long tail's prior (phase 1)
+    #[serde(default)]
+    pub score: Option<f64>,
+    /// AniList format (TV, ONA, MOVIE, ...) (phase 1)
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 /// One flag per market.

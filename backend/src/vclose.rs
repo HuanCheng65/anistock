@@ -37,6 +37,14 @@ pub struct JState {
     /// equivalents, the show draws level × post now
     #[serde(default = "ones")]
     pub post: M3,
+    /// the show's long-tail prior (score and format, `vfilter::tail_mult`): follows the inputs until the finale's
+    /// week ends, then fixed (the post-finale observations are read through it)
+    #[serde(default = "one")]
+    pub tail_mult: f64,
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 fn ones() -> M3 {
@@ -56,6 +64,7 @@ impl JState {
             acc_n: 0,
             day: day.to_string(),
             post: [1.0; 3],
+            tail_mult: 1.0,
         }
     }
     fn var(&self, m: usize) -> f64 {
@@ -197,6 +206,24 @@ impl Engine {
         std::array::from_fn(|i| std::array::from_fn(|j| c[i][j] + b[i] * b[j] * v))
     }
 
+    /// The show's long-tail prior from its score and format (`vfilter::tail_mult`).
+    fn tail_mult_of(fp: &FilterParams, s: &ShowInputs) -> f64 {
+        F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"))
+    }
+
+    /// For each market whose expected path ends in the long tail: (its tail, the show's prior, days after the
+    /// finale's week on the path's last day), for the value beyond the horizon.
+    fn tail_ends<'a>(fp: &'a FilterParams, sched: &[i64], long: bool, today: i64, mult: f64) -> [F::TailEnd<'a>; 3] {
+        let fin = if long { None } else { sched.last().copied() };
+        std::array::from_fn(|m| match (fin, &fp.tail[m]) {
+            (Some(f), Some(tl)) => {
+                let t_last = today + fp.horizon_days as i64 - f - 7;
+                (t_last >= 0).then_some((tl, mult, t_last))
+            }
+            _ => None,
+        })
+    }
+
     fn sources(s: &ShowInputs) -> [bool; 3] {
         s.sources.as_ref().map_or([true; 3], |x| [true, x.cn, x.jp])
     }
@@ -223,10 +250,15 @@ impl Engine {
             _ => None,
         };
         // (the profile is relative to the finale's week, bump included)
-        let post: M3 = std::array::from_fn(|m| {
-            fin.map_or(1.0, |f| if today >= f + 7 { F::post_finale_factor(fp, p, m, f, today) * fp.finale_bump[m] } else { 1.0 })
-        });
         let after_finale = fin.is_some_and(|f| today >= f + 7);
+        // the long tail's prior: from the inputs until the finale's week ends, then the state's
+        let mult = match self.st.jstate.get(&s.id) {
+            Some(j) if after_finale => j.tail_mult,
+            _ => Self::tail_mult_of(fp, s),
+        };
+        let post: M3 = std::array::from_fn(|m| {
+            fin.map_or(1.0, |f| if today >= f + 7 { F::post_finale_factor(fp, p, m, f, today, mult) * fp.finale_bump[m] } else { 1.0 })
+        });
         let in_finale_week = fin.is_some_and(|f| f <= today && today < f + 7);
         let mut att = s.att.m3();
         for (m, (a, f)) in att.iter_mut().zip(post).enumerate() {
@@ -246,6 +278,7 @@ impl Engine {
             j.mean = mean;
             j.cov = cov;
             j.active = sources;
+            j.tail_mult = mult;
             j
         };
         let cur = self.st.jstate.get(&s.id).cloned();
@@ -283,12 +316,23 @@ impl Engine {
                         fp.cum_drift(m, from, today, prem) / days as f64
                     }
                 });
-                let (mean, cov) = F::kf_predict_joint(&st.mean, &st.cov, days, &drift, &fp.q);
+                // after the finale's week the level is a random walk whose variance grows by the spread of
+                // show-specific tails D(t) (docs/v2-series.md §4); before it, the in-season process noise
+                let q: M3 = std::array::from_fn(|m| match (fin, &fp.tail[m]) {
+                    (Some(f), Some(tl)) if today >= f + 7 && days > 0 => {
+                        let (t0, t1) = (from - f - 7, today - f - 7);
+                        let pre = (-t0).clamp(0, days) as f64 * fp.q[m];
+                        (pre + F::tail_var(tl, t1) - F::tail_var(tl, t0.max(0))) / days as f64
+                    }
+                    _ => fp.q[m],
+                });
+                let (mean, cov) = F::kf_predict_joint(&st.mean, &st.cov, days, &drift, &q);
                 JState { mean, cov, day: day.into(), ..st }
             }
         };
         st.day = day.into();
         st.post = post;
+        st.tail_mult = mult;
         // the observations of the day, us first
         let mut ys: Vec<(usize, f64)> = Vec::new();
         let drift_us = if after_finale {
@@ -361,7 +405,7 @@ impl Engine {
             let (sched, first_air, long) = self.shape(c, p);
             let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
                 if js.active[m] {
-                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h)
+                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
                 } else {
                     vec![0.0; h]
                 }
@@ -505,9 +549,13 @@ impl Engine {
         std::array::from_fn(|m| totals[m].iter().zip(&own[m]).map(|(t, o)| t + o).collect())
     }
 
-    fn value_of(&self, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64) -> i64 {
+    #[allow(clippy::too_many_arguments)]
+    fn value_of(&self, fp: &FilterParams, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64) -> i64 {
         let book = self.account_of("company", c.id).map_or(0, |a| self.st.accounts[&a].cash);
-        let v = F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, c.long_runner != 0);
+        let (sched, _, long) = self.shape(c, p);
+        let mult = self.st.jstate.get(&c.id).map_or(1.0, |j| j.tail_mult);
+        let tails = Self::tail_ends(fp, &sched, long, today, mult);
+        let v = F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, c.long_runner != 0, &tails);
         ((v * 100.0).round_ties_even() as i64).max(1)
     }
 
@@ -519,13 +567,13 @@ impl Engine {
         let (sched, first_air, long) = self.shape(c, p);
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {
             if js.active[m] {
-                F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, fp.horizon_days)
+                F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, fp.horizon_days, js.tail_mult)
             } else {
                 vec![0.0; fp.horizon_days]
             }
         });
         Self::fill_preair(&mut own[0], today, first_air, js.last_obs[0]);
-        Some(self.value_of(c, &own, totals, p, rate, a_ref))
+        Some(self.value_of(fp, c, &own, totals, p, rate, a_ref, today))
     }
 
     /// Hidden values of every listed company with a filter state (cents), and the market totals used.
@@ -553,7 +601,7 @@ impl Engine {
         let trace: Option<i64> = std::env::var("SIM_TRACE").ok().and_then(|v| v.parse().ok());
         for (id, own) in &paths {
             let c = &self.st.companies[id];
-            let v = self.value_of(c, own, &totals, p, rate, a_ref);
+            let v = self.value_of(fp, c, own, &totals, p, rate, a_ref, today);
             if trace_all || trace == Some(*id) {
                 let st: Vec<String> = (0..3)
                     .map(|m| match self.st.jstate.get(id) {
@@ -683,9 +731,10 @@ impl Engine {
         let first = day_no(&s.first_air).unwrap_or(today);
         let sched = F::schedule(&[first], episodes, long);
         let pc = Self::prior_cov_at(fp, s, today);
+        let mult = Self::tail_mult_of(fp, s);
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {
             if src[m] {
-                F::att_path(fp, p, m, pm[m], pc[m][m], today, &sched, first, long, fp.horizon_days)
+                F::att_path(fp, p, m, pm[m], pc[m][m], today, &sched, first, long, fp.horizon_days, mult)
             } else {
                 vec![0.0; fp.horizon_days]
             }
@@ -693,7 +742,8 @@ impl Engine {
         let us_now = s.att.us;
         Self::fill_preair(&mut own[0], today, first, (us_now > 0.0).then_some(us_now));
         // (the new show is not in today's totals yet: it joins them)
-        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long);
+        let tails = Self::tail_ends(fp, &sched, long, today, mult);
+        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails);
         let used: Vec<f64> = (0..3).filter(|m| src[*m]).map(|m| fp.p0[m]).collect();
         let sd = if used.is_empty() { 0.0 } else { (used.iter().sum::<f64>() / used.len() as f64).sqrt() };
         let discount = 1.0 - (-fp.ipo_risk * sd).exp();
@@ -744,7 +794,7 @@ impl Engine {
         let paths = self.paths(&fp, &p, today);
         let totals = self.totals_from(&paths, &fp, today);
         let new = match paths.get(&company) {
-            Some(own) => self.value_of(&c, own, &totals, &p, rate, a_ref),
+            Some(own) => self.value_of(&fp, &c, own, &totals, &p, rate, a_ref, today),
             None => old,
         };
         self.st.companies.get_mut(&company).unwrap().fair_value = new;

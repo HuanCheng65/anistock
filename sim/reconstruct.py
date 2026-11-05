@@ -32,11 +32,11 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
-DB = ROOT / "data" / "anistock.db"
+DB = Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db"))
 # ANISTOCK_DERIVED_DIR: where markets.json is written (default data/derived; annict_airtimes.json is read from
 # data/derived unless it exists there)
 DERIVED_OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived"))
-DERIVED = ROOT / "data" / "derived"
+DERIVED = DERIVED_OUT if (DERIVED_OUT / "annict_airtimes.json").exists() else ROOT / "data" / "derived"
 CALIBRATION = ROOT / "sim" / "calibration"   # tracked in git: small aggregate curves, costly to re-measure
 UA = "anistock-collector/0.1 (anime club market game)"
 MAX_AGE = 28  # maturity curve horizon, days
@@ -446,6 +446,11 @@ def cmd_build() -> None:
     import tomllib
     p = tomllib.loads((ROOT / "sim" / "params.toml").read_text(encoding="utf-8"))["valuation"]
     profile, tail = p["post_finale_profile"], p["post_finale_tail_decay"]
+    sys.path.insert(0, str(ROOT))
+    from engine import valuation as V
+    ff = Path(os.environ.get("ANISTOCK_FILTER_FILE", CALIBRATION / "valuation_filter.json"))
+    fp = json.loads(ff.read_text(encoding="utf-8")) if ff.exists() else None
+    score_fmt = {mid: (m.get("averageScore"), m.get("format") == "ONA") for mid, m in latest("anilist", "media").items()}
     series = episode_series(min_age=3.0)
     fetched = {**{k: v for k, v in _fetched_at("bgm", "episodes").items()},
                **{k: v for k, v in _fetched_at("annict", "work").items()}}
@@ -474,11 +479,19 @@ def cmd_build() -> None:
                     daily[d] = weekly
                     d += timedelta(days=1)
             else:
-                # finished: extend with the AniList post-finale profile
+                # finished: extend with the model's post-finale curve. The rebuilt series has no post-finale data
+                # (an episode's count belongs to its air week); with the fitted long tail (docs/v2-series.md §4) the
+                # extension is its median factor, so the filter reads it as "no news" (the live game observes the
+                # tail: cn from Bangumi collection increments, jp from Annict record increments)
                 k = 0
+                tl = V.tail_of(fp, mk) if fp else None
+                mult = V.tail_mult(fp, *score_fmt.get(aid, (None, False))) if tl else 1.0
                 while d <= snap_day:
-                    w = k // 7
-                    f = profile[w] if w < len(profile) else profile[-1] * tail ** (w - len(profile) + 1)
+                    if tl is not None:
+                        f = V.post_finale_factor(fp, {}, mk, 0, k + 7, mult)
+                    else:
+                        w = k // 7
+                        f = profile[w] if w < len(profile) else profile[-1] * tail ** (w - len(profile) + 1)
                     daily[d] = weekly * f
                     stats[mk]["extended_days"] += 1
                     d += timedelta(days=1)

@@ -49,3 +49,118 @@ Noise variance of log(count_h / (curve_h × previous mean)) by hour: [1.0, 1.193
 ## IPO discount
 
 ipo_risk = 0: over the 61 shows listed in August-October of the v0.3.2 replay, the value 28 days after listing plus dividends relative to the model's value when the offer was priced is 0.935 value-weighted (1.158 equal-weighted, driven by three hits; 1.024 without them). The model's value already prices the uncertainty; a further discount was a riskless gain for subscribers (ipo_all +9.7 points over cap-weighted buy-and-hold with ipo_risk 0.25).
+
+
+## Long tail (docs/v2-series.md §4)
+
+Expected attention t days after the finale's week = level at the finale × finale bump × factor(t): weekly transition, then floor × yearly^(t/365) + slow excess × exp(−t/τ2) + fast excess × exp(−t/τ), the floor and the slow excess scaled by the score prior. The filter reads post-finale observations through the median factor (expected × exp(−D(t)/2)), the level a random walk whose variance grows by D(t), the spread of show-specific tails.
+
+us: 1496 finished shows of the history backfill (TV/ONA 2018–2025; windows before any sign of a sequel; deflated attention / (mean of the 4 weeks before the finale's week × finale bump 1.507)); weeks 0–2 from the inputs ([50, 49, 49] shows).
+
+| t (days after finale+7) | n | median factor | log var | expected (data) | expected (model) |
+|---|---|---|---|---|---|
+| 3 | 50 | 0.3853 | 0.144 | 0.4140 | (transition) |
+| 10 | 49 | 0.2789 | 0.103 | 0.2937 | (transition) |
+| 17 | 49 | 0.2111 | 0.101 | 0.2220 | (transition) |
+| 29 | 1200 | 0.1538 | 0.299 | 0.1786 | 0.1789 |
+| 60 | 1186 | 0.1171 | 0.457 | 0.1472 | 0.1490 |
+| 90 | 1168 | 0.1162 | 0.340 | 0.1377 | 0.1318 |
+| 136 | 1149 | 0.0879 | 0.471 | 0.1113 | 0.1168 |
+| 182 | 1127 | 0.0877 | 0.444 | 0.1095 | 0.1080 |
+| 273 | 1090 | 0.0761 | 0.456 | 0.0956 | 0.0970 |
+| 364 | 1023 | 0.0663 | 0.515 | 0.0857 | 0.0888 |
+| 456 | 964 | 0.0606 | 0.602 | 0.0819 | 0.0817 |
+| 547 | 915 | 0.0556 | 0.690 | 0.0786 | 0.0754 |
+| 638 | 857 | 0.0524 | 0.626 | 0.0716 | 0.0698 |
+| 730 | 811 | 0.0490 | 0.612 | 0.0666 | 0.0648 |
+| 912 | 734 | 0.0405 | 0.685 | 0.0570 | 0.0565 |
+| 1095 | 659 | 0.0337 | 0.821 | 0.0508 | 0.0498 |
+| 1277 | 585 | 0.0297 | 0.729 | 0.0428 | 0.0445 |
+| 1460 | 518 | 0.0264 | 0.733 | 0.0382 | 0.0402 |
+| 1825 | 391 | 0.0208 | 0.882 | 0.0324 | 0.0342 |
+| 2191 | 276 | 0.0173 | 1.098 | 0.0300 | 0.0304 |
+| 2556 | 179 | 0.0151 | 1.646 | 0.0344 | 0.0279 |
+| 2921 | 82 | 0.0150 | 0.906 | 0.0236 | 0.0264 |
+
+us: transition [0.414046, 0.293731, 0.222047]; then 0.0238 × 1.0000^(t/365) + 0.1025 × exp(−t/797) + 0.1009 × exp(−t/50); spread D(t) = 0.409(1−e^(−t/22)) + 0.1128·t/365.
+
+Cross-check (data report: median ≈ 0.025 + 0.14·e^(−t/7 months) of the in-season mean; here the median factor × level·bump / in-season mean = × 1.239): 1 m: 0.146 vs 0.188, 3 m: 0.116 vs 0.131, 6 m: 0.084 vs 0.106, 12 m: 0.050 vs 0.085, 24 m: 0.030 vs 0.058, 36 m: 0.026 vs 0.042, 60 m: 0.025 vs 0.026, 96 m: 0.025 vs 0.017.
+
+
+cn: 351 shows with Bangumi subject (collection) comments; the collection rate relative to the season's mean (incl. the two weeks after the finale) × 1.076 (the game's cn attention: in-season mean / finale week, 48 shows of the inputs) ÷ finale bump 1.118.
+
+| t (days after finale+7) | n | median factor | log var | expected (data) | expected (model) |
+|---|---|---|---|---|---|
+| 4 | 271 | 1.4647 | 0.435 | 1.8210 | (transition) |
+| 10 | 271 | 0.8192 | 0.558 | 1.0830 | (transition) |
+| 18 | 271 | 0.5353 | 0.672 | 0.7489 | (transition) |
+| 24 | 271 | 0.3902 | 0.739 | 0.5647 | (transition) |
+| 42 | 269 | 0.2982 | 0.641 | 0.4108 | 0.4114 |
+| 73 | 262 | 0.2260 | 0.642 | 0.3115 | 0.3114 |
+| 120 | 257 | 0.1653 | 0.672 | 0.2314 | 0.2292 |
+| 195 | 251 | 0.1120 | 0.741 | 0.1623 | 0.1666 |
+| 320 | 224 | 0.0832 | 0.815 | 0.1250 | 0.1200 |
+| 500 | 198 | 0.0568 | 0.904 | 0.0893 | 0.0922 |
+| 750 | 170 | 0.0484 | 0.928 | 0.0770 | 0.0775 |
+| 1100 | 133 | 0.0436 | 0.923 | 0.0692 | 0.0682 |
+| 1550 | 91 | 0.0416 | 0.798 | 0.0620 | 0.0600 |
+| 2200 | 31 | 0.0337 | 0.658 | 0.0468 | 0.0501 |
+
+cn: transition [1.820989, 1.083025, 0.748894, 0.564722]; then 0.0922 × 0.9037^(t/365) + 0.2458 × exp(−t/165) + 0.3446 × exp(−t/43); spread D(t) = 0.705(1−e^(−t/5)) + 0.0496·t/365.
+
+jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; the Annict watch-record history is not collected yet): **the us shape, flagged**.
+
+Tail level prior (us, months 24–36, 731 shows): log level = 0.178·(score−70)/10 + 0.629·ONA − 0.052 (×1.19 per 10 points, ×1.88 for ONA; R² 0.13, residual sd 0.69); centred to average 1. Scales the floor term, all markets.
+
+Hold-out (§11): share of us factors inside the 80% interval (fit on even AniList ids, tested on odd; in sample in brackets): 12 months 82.6% of 517 (83.1%), 24 months 83.1% of 414 (85.6%), 36 months 81.4% of 349 (81.9%).
+
+
+### Long tail: what the data can and cannot say (phase 1, step 1)
+
+Fitted by `sim/fit_valuation.py INPUTS --history HISTORY_DB` (`sim/tail_history.py` reads the backfill of
+`sim/history_backfill.py`; this fit: the final backfill snapshot of 2026-11-06 and the standard inputs 2026-07-01..11-03).
+
+- **Form.** The doc's “floor + decaying excess” needs two decay speeds: one excess alone either misses the first months
+  or makes the floor itself decay (a one-excess fit put the floor at ×0.81 a year). With a fast (τ ≈ 50 days) and a slow
+  (τ ≈ 800 days) excess the us floor comes out flat (yearly 1.0000, at the bound): the 5–8-year medians still drift
+  down (0.0208 → 0.0150, ~×0.9/yr) but those windows hold few, survivor-biased shows. Not tuned.
+- **Mean and median.** The value uses the expected (lognormal mean) factor; the filter reads post-finale observations
+  through the median (expected × e^(−D(t)/2)), and after the finale's week the level is a random walk whose variance
+  grows by D(t). So the value of a finished show is a martingale under the model: the spread of show-specific tails
+  is revealed by observations, not by a predictable drift.
+- **Cross-check with the data report.** This fit's median tracks the report's table (no-sequel median at 12 months
+  0.074 of the in-season mean; here 0.085), not its closed form 0.025 + 0.14·e^(−t/7 months) (0.050 at 12 months,
+  which does not match the report's own table there). Left as it is.
+- **cn.** The doc's §4.2 link (episode comments ÷ collection increments over the 4 weeks before the finale) cannot be
+  calibrated: the collector has one day of Bangumi snapshots, and in the history backfill collection comments (the
+  proxy) cluster when people mark a show finished, so their pre-finale rate says little about collection-count
+  increments. The cn tail is therefore measured against the season's mean (incl. the two weeks after, the report's
+  normalisation) and converted to the level at the finale with the game's own in-season/finale-week ratio. Deflated
+  by a Bangumi platform index (median in-season collection-comment rate of the sample's shows by start year). The
+  cn spread's fast part (0.705 within ~5 days) is mostly the page-interpolation noise of the proxy, not show-specific
+  spread: live, the first post-finale cn observation will move the cn level with a gain near 1. Known limitation.
+- **jp.** No post-finale data anywhere (the rebuilt Annict series assigns each episode's records to its air week;
+  Annict's record history is not collected yet): the us shape. The doc's “jp's own first post-finale weeks” are not
+  available (in the inputs they are a modelled extension), so they are not used.
+- **Replay inputs.** cn/jp after the finale are not observed in the standard inputs: `sim/reconstruct.py` extends a
+  finished show's last week with the model's median factor (it used the v1 profile before), so the filter reads them as
+  “no news”, and realised cn/jp tail revenue in the replay runs at the median, below the mean the value prices. Live,
+  cn comes from Bangumi collection increments (the collector keeps every finished work's subject snapshot daily) and
+  jp from Annict record increments — not implemented in this step (no snapshot history to build it on).
+- **Tail prior.** OLS on score and ONA only (the report's 16-covariate regression includes “a sequel aired”, future
+  information): ×1.19 per 10 points, ×1.88 for ONA, R² 0.13. Applied to the floor and the slow excess.
+
+#### Sensitivity: how much of a finished show's value is the far tail
+
+Present value of the expected tail at the finale, in level-days (a 12-week season at a constant level ≈ 81), per
+market, mult 1:
+
+| equity premium | us: ≤ 400 days | us: beyond | cn: ≤ 400 days | cn: beyond | us beyond, yearly 0.975 | cn beyond, yearly 0.975 |
+|---|---|---|---|---|---|---|
+| 0.30 | 42.4 | 38.4 | 90.4 | 50.8 | 36.6 | 66.3 |
+| 0.15 | 45.2 | 68.7 | 94.7 | 90.5 | 62.9 | 133.4 |
+| 0.08 | 46.6 | 105.2 | 96.8 | 129.3 | 90.6 | 217.0 |
+
+At the current 30% premium the tail is worth about as much as the season itself (it was a few level-weeks under the
+×0.94/week curve), and half of it lies beyond the 400-day horizon. A lower premium (step 5) makes the flat floor
+dominate: the floor's level and its decay beyond 8 years — which the data cannot pin down — then drive the value.

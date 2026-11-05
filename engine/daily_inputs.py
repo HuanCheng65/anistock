@@ -45,6 +45,8 @@ File format (JSON, one object):
         sources         {"us","cn","jp"}  whether the show is mapped to the market's data source (Bangumi, Annict
                         in sim/matches.json); an unmapped market earns nothing (since v0.3.2)
         att             {"us","cn","jp"}  realised attention on D per market (revenue shares, demand index)
+        score           AniList averageScore on D (null: not enough votes yet); the long tail's prior (phase 1)
+        format          AniList format (TV, ONA, MOVIE, ...) (phase 1)
         expected        {"us","cn","jp"}  expected attention on D: `att` once the show has real data, else the
                         per-market max of `att` and the audience-based pre-air estimate (expected-share
                         denominator, IPO pricing, fair values)
@@ -123,6 +125,8 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             **({"adult": True} if s.adult else {}),
             **({"promo": True} if s.promo else {}),
             "air_dates": air_dates(s, day),
+            "score": E.at(s, s.score, day, None),
+            "format": s.fmt,
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
     return {
@@ -198,6 +202,8 @@ class ShowInputs:
     prior: dict | None = None              # since v0.3.2
     observed: dict | None = None           # since v0.3.2
     sources: dict | None = None            # since v0.3.2
+    score: float | None = None             # phase 1
+    format: str | None = None              # phase 1
 
 
 @dataclass(frozen=True)
