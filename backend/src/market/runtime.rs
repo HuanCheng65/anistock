@@ -122,9 +122,14 @@ impl MarketRuntime {
         let until = day_of(now + 35 * 86_400);
         let data = crate::sim::data::SeasonData::load(cfg, &self.market.cfg, None, e, &[day_of(now - 86_400), today, until]);
         self.market.set_air_times(data.air);
-        for ev in self.read_log(now - 8 * 86_400) {
+        // a revision's streak looks back `reaction_window_days` (at most the 8 days kept): read that much more,
+        // index, then keep the 8 days
+        let back = 8 * 86_400 + (self.market.cfg.reaction_window_days.min(8.0) * 86_400.0) as i64;
+        for ev in self.read_log(now - back) {
             self.market.events.push(ev);
         }
+        self.market.index_reactions();
+        self.market.prune(now);
         self.market.refresh_universe(e, now);
         self.market.reschedule(now);
         Ok(())
@@ -198,6 +203,15 @@ impl MarketRuntime {
             self.last_inbox_scan = now;
             self.ingest_inbox(e, now);
         }
+        self.log_fresh();
+    }
+
+    /// Log the events the market created itself (revisions, attention triggers): they are read back at the
+    /// next start, so a streak or an attention episode survives a restart.
+    fn log_fresh(&mut self) {
+        for ev in std::mem::take(&mut self.market.fresh) {
+            self.log(&ev);
+        }
     }
 
     /// After the daily close of `day`: events from the close (premiere, finale, delisting and 面值退市
@@ -247,6 +261,7 @@ impl MarketRuntime {
             self.market.post_event(e, ev, kind);
         }
         self.market.note_revisions(e, t_close);
+        self.log_fresh();
         self.designate(e, t_close)?;
         self.market.fund_flows(e, &day, &ts);
         self.market.prune(t_close);
@@ -324,5 +339,6 @@ fn close_event(company_id: i64, kind: &str, direction: i8, magnitude: f64, natur
         nature,
         half_life_h: 24.0,
         title,
+        change: 0.0,
     }
 }

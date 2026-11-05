@@ -65,6 +65,15 @@ impl From<crate::config::Phase> for Phase {
     }
 }
 
+/// 市场情绪档位（封闭）：冷淡 / 平稳 / 火热
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Sentiment {
+    Cold,
+    Neutral,
+    Hot,
+}
+
 /// 买卖方向（封闭）
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -321,6 +330,8 @@ pub struct MarketStatus {
     pub launched_on: Option<TradingDay>,
     pub policy_rate: f64,
     pub deposit_rate: f64,
+    /// 当天的市场情绪档位；NPC 市场或情绪层未开启时为 null
+    pub sentiment: Option<Sentiment>,
 }
 
 #[derive(Serialize, ToSchema)]

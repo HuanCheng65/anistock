@@ -167,6 +167,43 @@ pub struct MarketConfig {
     pub flash_news_min: f64,
     /// a change of the public value by this much (log) is a revision the news agents react to
     pub revision_min: f64,
+
+    // ---- sentiment layer, batch 1 (docs/v2-sentiment.md). Off in these defaults; on in server/game.toml.
+    // Every random strength, duration and occurrence below is a hash of (seed, server secret, company, time):
+    // the same after a restart, not computable from the public repository.
+    /// market-wide sentiment (Baker–Wurgler): a daily AR(1) in standard units; its effect on retail and trend
+    /// agents is `sentiment_strength` per standard deviation at sensitivity 1 (0: off)
+    pub sentiment_strength: f64,
+    pub sentiment_half_life_days: f64,
+    /// sensitivity of a stock ∝ (1 / heat)^`sentiment_heat_exp`, clamped to this range, then scaled so the
+    /// listed stocks average 1 (cold, hard-to-value stocks are more sentiment-prone)
+    pub sentiment_heat_exp: f64,
+    pub sentiment_sens: [f64; 2],
+    /// band shown to players: below -x 冷淡, above +x 火热 (standard deviations)
+    pub sentiment_band: f64,
+    /// attention-driven buying (Barber–Odean): retail buy tilt per unit of attention (0: off)
+    pub attention: f64,
+    /// chance that a trigger (premiere night, a published 热度快讯, entering the movers' list) draws attention
+    pub attention_prob: f64,
+    /// log-normal spread of an attention episode's strength (mean 1)
+    pub attention_sigma: f64,
+    /// half-life range of an attention episode, hours (log-uniform)
+    pub attention_half_life_h: [f64; 2],
+    /// 上热榜: the top N gainers and losers of the day (the market page's lists) draw attention (0: off), with
+    /// this weight relative to a premiere or a flash
+    pub attention_rank_n: usize,
+    pub attention_rank_weight: f64,
+    /// under- and over-reaction (Barberis–Shleifer–Vishny): the news agents' reaction to a revision is scaled
+    /// by a random factor in `reaction_first` for the first surprise in a direction, and by
+    /// 1 + (k - 1) * step (step drawn from `reaction_step`, at most `reaction_max`) for the k-th in a row;
+    /// the reaction decays with a random half-life from `reaction_half_life_h` (log-uniform). Off: false.
+    pub reaction: bool,
+    pub reaction_first: [f64; 2],
+    pub reaction_step: [f64; 2],
+    pub reaction_max: f64,
+    pub reaction_half_life_h: [f64; 2],
+    /// revisions further apart than this do not form a streak (at most 8: the events kept)
+    pub reaction_window_days: f64,
 }
 
 impl Default for MarketConfig {
@@ -248,6 +285,23 @@ impl Default for MarketConfig {
             flash_half_life_h: 6.0,
             flash_news_min: 0.2,
             revision_min: 0.05,
+            sentiment_strength: 0.0,
+            sentiment_half_life_days: 14.0,
+            sentiment_heat_exp: 0.5,
+            sentiment_sens: [0.5, 2.0],
+            sentiment_band: 0.67,
+            attention: 0.0,
+            attention_prob: 0.75,
+            attention_sigma: 0.75,
+            attention_half_life_h: [1.0, 6.0],
+            attention_rank_n: 0,
+            attention_rank_weight: 0.5,
+            reaction: false,
+            reaction_first: [0.3, 0.8],
+            reaction_step: [0.2, 0.6],
+            reaction_max: 2.5,
+            reaction_half_life_h: [1.0, 8.0],
+            reaction_window_days: 8.0,
         }
     }
 }

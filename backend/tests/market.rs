@@ -318,3 +318,126 @@ fn a_larger_configured_population_is_appended_and_reattached() {
         assert_eq!((a.account, a.kind, a.start_cash), (b.account, b.kind, b.start_cash));
     }
 }
+
+// ---------------------------------------------------------------- sentiment layer (docs/v2-sentiment.md)
+
+fn layer_on(seed: u64) -> MarketConfig {
+    let mut m = small(seed);
+    m.sentiment_strength = 0.15;
+    m.attention = 0.25;
+    m.attention_rank_n = 6;
+    m.reaction = true;
+    m
+}
+
+#[test]
+fn market_sentiment_is_a_seeded_stationary_ar1() {
+    use anistock::market::{secret_salt, sentiment_band, sentiment_level};
+    let mc = layer_on(3);
+    let salt = secret_salt(b"a secret");
+    let xs: Vec<f64> = (20_000..24_000).map(|d| sentiment_level(&mc, salt, d)).collect();
+    // deterministic per (seed, secret, day)
+    assert_eq!(xs[17], sentiment_level(&mc, salt, 20_017));
+    assert_ne!(xs[17], sentiment_level(&mc, secret_salt(b"another"), 20_017));
+    let mut other = mc.clone();
+    other.seed = 4;
+    assert_ne!(xs[17], sentiment_level(&other, salt, 20_017));
+    // unit variance, lag-1 autocorrelation = 0.5^(1/half-life)
+    let n = xs.len() as f64;
+    let mean = xs.iter().sum::<f64>() / n;
+    let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n;
+    let ac = xs.windows(2).map(|w| (w[0] - mean) * (w[1] - mean)).sum::<f64>() / n / var;
+    let phi = 0.5f64.powf(1.0 / mc.sentiment_half_life_days);
+    assert!(mean.abs() < 0.3 && (var - 1.0).abs() < 0.3, "{mean} {var}");
+    assert!((ac - phi).abs() < 0.03, "{ac} {phi}");
+    // the bands split at ±sentiment_band; off: no band
+    let hot = xs.iter().filter(|x| **x > mc.sentiment_band).count() as f64 / n;
+    assert!((0.15..0.35).contains(&hot), "{hot}");
+    assert_eq!(sentiment_band(&MarketConfig::default(), salt, DAY), None);
+    assert!(sentiment_band(&mc, salt, DAY).is_some());
+}
+
+#[test]
+fn a_day_with_the_sentiment_layer_keeps_every_constraint_and_is_deterministic() {
+    let run = |seed: u64| {
+        let cfg = cfg();
+        let mut e = world();
+        let mut m = Market::new(layer_on(seed), &cfg);
+        let t0 = at_local(DAY, 8, 0);
+        let ts0 = anistock::market::ts_of(t0);
+        m.create_population(&mut e, "2026-11-04", &ts0);
+        m.rebalance_float(&mut e, "2026-11-04", &ts0);
+        m.refresh_universe(&e, t0);
+        m.step_until(&mut e, at_local(DAY, 23, 0));
+        (e, m)
+    };
+    let (a, ma) = run(7);
+    a.check_invariants().unwrap();
+    assert_eq!(ma.stats.rejected, 0);
+    // the movers' lists drew attention, and those triggers are handed out for logging
+    assert!(ma.events.iter().any(|e| e.kind == "attention" && e.source == "rank"));
+    assert_eq!(ma.fresh.len(), ma.events.len());
+    let (b, _) = run(7);
+    assert_eq!(fingerprint(&a), fingerprint(&b));
+}
+
+#[test]
+fn premiere_night_attention_is_random_but_reproducible() {
+    let cfg = cfg();
+    let e = world();
+    let air = at_local("2026-10-01", 22, 0);
+    let mk = || {
+        let mut m = Market::new(layer_on(11), &cfg);
+        m.set_air_times((0..6).map(|i| (1000 + i, vec![air, air + 7 * 86_400])).collect());
+        m.refresh_universe(&e, air - 86_400);
+        m
+    };
+    let (m1, m2) = (mk(), mk());
+    let at: Vec<f64> = (0..6).map(|i| m1.attention(1000 + i, air + 1800)).collect();
+    assert_eq!(at, (0..6).map(|i| m2.attention(1000 + i, air + 1800)).collect::<Vec<_>>());
+    assert!(at.iter().all(|a| *a >= 0.0) && at.iter().any(|a| *a > 0.0), "{at:?}");
+    // nothing before the premiere, and it fades
+    assert!((0..6).all(|i| m1.attention(1000 + i, air - 60) == 0.0));
+    assert!((0..6).all(|i| m1.attention(1000 + i, air + 3 * 86_400) < 1e-3));
+}
+
+#[test]
+fn a_streak_of_same_sign_revisions_turns_under_reaction_into_over_reaction() {
+    use anistock::market::{Credibility, Event, Nature};
+    let cfg = cfg();
+    let mut m = Market::new(layer_on(5), &cfg);
+    let rev = |at: i64, change: f64| Event {
+        company_id: 1000,
+        kind: "revision".into(),
+        direction: if change > 0.0 { 1 } else { -1 },
+        magnitude: (change.abs() * 50.0).min(10.0),
+        credibility: Credibility::Official,
+        source: "估值修正".into(),
+        at,
+        nature: Nature::Sentiment,
+        half_life_h: 2.0,
+        title: String::new(),
+        change,
+    };
+    let t = at_local(DAY, 3, 0);
+    let w = 86_400 * 7;
+    // up, up, up (a week apart), then down; then up again after a gap longer than the window
+    for (k, ch) in [(0, 0.08), (1, 0.06), (2, 0.1), (3, -0.07)] {
+        m.events.push(rev(t + k * w, ch));
+    }
+    let late = t + 3 * w + 9 * 86_400;
+    m.events.push(rev(late, 0.05));
+    m.index_reactions();
+    let r = |k: i64| m.reaction(1000, t + k * w).unwrap();
+    let mc = layer_on(5);
+    let first = |x: (f64, f64)| (mc.reaction_first[0]..=mc.reaction_first[1]).contains(&x.0);
+    assert!(first(r(0)), "{:?}", r(0));
+    assert!(r(1).0 > 1.0 && r(2).0 > r(1).0.min(mc.reaction_max) - 1.0 && r(2).0 <= mc.reaction_max, "{:?} {:?}", r(1), r(2));
+    assert!(first(r(3)), "the first fall after rises is a fresh surprise: {:?}", r(3));
+    assert!(first(m.reaction(1000, late).unwrap()));
+    for k in 0..4 {
+        let hl = r(k).1;
+        assert!((mc.reaction_half_life_h[0]..=mc.reaction_half_life_h[1]).contains(&hl), "{hl}");
+    }
+    assert_eq!(m.streak(1000), 1);
+}

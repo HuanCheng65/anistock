@@ -254,6 +254,7 @@ pre{{background:var(--card);border:1px solid var(--line);border-radius:8px;paddi
 
     h.push_str(&valuation_acceptance(base, bots, threshold_pts));
     h.push_str(&money_table(base, bots));
+    h.push_str(&stylised_table(g));
     h.push_str("<h2>市场指标（NPC 市场设计 §7）</h2><div class=wrap><table><tr><th>指标</th><th>目标</th><th>热门</th><th>中等</th><th>冷门</th><th>全部</th><th>结论</th></tr>");
     h.push_str(&row(
         "成交间隔中位数（分钟）",
@@ -405,6 +406,17 @@ pre{{background:var(--card);border:1px solid var(--line);border-radius:8px;paddi
                 "ipo_all" => "打新：认购每一只新股（每只预算相同），中签后持有",
                 "fan_long_0.3" => "粉丝的判断：看过第 1 集后知道未来四周的价值，误差 30%，每周调仓",
                 "ex_dividend" => "日历：除息前（周日晚）卖出、周一买回",
+                "fade_flash" => "热度快讯：利空快讯后买入，一天后卖出",
+                "ride_flash" => "热度快讯：利好快讯后买入，一天后卖出",
+                "momentum_k" => "动量：持有过去 5 个交易日涨得最多的 5 支",
+                "momentum_1" => "动量：持有前一个交易日涨得最多的 5 支",
+                "contrarian_k" => "反转：持有过去 5 个交易日跌得最多的 5 支",
+                "contrarian_1" => "反转：持有前一个交易日跌得最多的 5 支",
+                "sentiment_timer" => "情绪择时：火热时清仓，冷淡时买回全市场",
+                "premiere_rush" => "首播：首播前一晚买入，首播后一晚卖出",
+                "hold_hottest" => "持有最热的 3 支",
+                "spoof_scare" => "挂大单吓退 NPC",
+                "bad_price" => "挂坏价格等 NPC 成交",
                 _ => k,
             };
             let tr = v["transfers"].as_f64().unwrap_or(0.0) / v["start"].as_f64().unwrap_or(1.0);
@@ -540,6 +552,42 @@ fn valuation_acceptance(base: &Value, bots: &[(String, Value)], threshold_pts: f
         let _ = write!(h, "<tr><td>防薅羊毛</td><td>跑赢按市值买入持有不超过 {threshold_pts:.0} 个百分点</td><td>{} 个百分点</td><td>{}</td></tr>", parts.join("；"), verdict(ok));
     }
     h.push_str("</table></div><p class=mut>修正 = 隐藏估值相邻两天开盘时的变化（中间是收盘），分红加回。买入持有在前五天分批建仓。</p>");
+    h
+}
+
+/// docs/v2-sentiment.md §4: the stylised facts, per heat group (measurements; the verdicts need judgement and
+/// a comparison with the run without the sentiment layer).
+fn stylised_table(g: &Value) -> String {
+    let mut h = String::from("<h2>市场特征（情绪层 §4）</h2><div class=wrap><table><tr><th>特征</th><th>指标</th><th>热门</th><th>中等</th><th>冷门</th><th>全部</th></tr>");
+    let cell = |v: &Value| v.as_f64().map_or("–".to_string(), |x| format!("{x:.3}"));
+    let rows: [(&str, &str, &dyn Fn(&Value) -> String); 9] = [
+        ("波动聚集", "日收益绝对值自相关（滞后 1、2、5 天）", &|x: &Value| {
+            (0..3).map(|i| cell(&x["acf_abs_daily"][i])).collect::<Vec<_>>().join(" / ")
+        }),
+        ("肥尾", "日收益峰度", &|x: &Value| cell(&x["kurtosis_daily"])),
+        ("短期反转", "1 小时收益滞后 1 自相关", &|x: &Value| cell(&x["acf_1h_lag1"])),
+        ("短期反转", "日收益滞后 1、2 自相关", &|x: &Value| {
+            format!("{} / {}", cell(&x["stylised"]["acf_daily_lag1"]), cell(&x["stylised"]["acf_daily_lag2"]))
+        }),
+        ("中期动量", "价格/估值偏离的半衰期（天）", &|x: &Value| cell(&x["deviation_half_life_days"])),
+        ("偏离有界", "log(价格/估值) 的 5%、50%、95% 分位", &|x: &Value| {
+            let st = &x["stylised"];
+            format!("{} / {} / {}", cell(&st["deviation_p05"]), cell(&st["deviation_p50"]), cell(&st["deviation_p95"]))
+        }),
+        ("偏离有界", "同向偏离超过 10% 的最长连续天数（p90 / 最长）", &|x: &Value| {
+            let st = &x["stylised"];
+            format!("{} / {}", cell(&st["deviation_run_10pct_p90_days"]), cell(&st["deviation_run_10pct_max_days"]))
+        }),
+        ("量与关注", "日成交笔数与热度的相关（全部 / 去掉个股均值）；事件日成交 ÷ 平日", &|x: &Value| {
+            let st = &x["stylised"];
+            format!("{} / {}；{}", cell(&st["corr_trades_heat_pooled"]), cell(&st["corr_trades_heat_within"]), cell(&st["trades_event_day_ratio_median"]))
+        }),
+        ("情绪", "火热日与冷淡日的平均 log(价格/估值) 之差", &|x: &Value| cell(&x["stylised"]["deviation_hot_minus_cold_sentiment"])),
+    ];
+    for (name, metric, f) in rows {
+        let _ = write!(h, "<tr><td>{name}</td><td>{metric}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>", f(&g["hot"]), f(&g["mid"]), f(&g["cold"]), f(&g["all"]));
+    }
+    h.push_str("</table></div>");
     h
 }
 

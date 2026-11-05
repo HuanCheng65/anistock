@@ -1477,6 +1477,17 @@
             "format": "double",
             "type": "number"
           },
+          "sentiment": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Sentiment",
+                "description": "当天的市场情绪档位；NPC 市场或情绪层未开启时为 null"
+              }
+            ]
+          },
           "trading_day": {
             "$ref": "#/components/schemas/TradingDay"
           }
@@ -1491,6 +1502,7 @@
           "phase",
           "phase_ends_at",
           "policy_rate",
+          "sentiment",
           "trading_day"
         ],
         "type": "object"
@@ -2749,6 +2761,15 @@
           "query"
         ],
         "type": "object"
+      },
+      "Sentiment": {
+        "description": "市场情绪档位（封闭）：冷淡 / 平稳 / 火热",
+        "enum": [
+          "cold",
+          "neutral",
+          "hot"
+        ],
+        "type": "string"
       },
       "StockDetail": {
         "properties": {
