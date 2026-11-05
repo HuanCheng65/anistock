@@ -480,3 +480,15 @@ fn a_new_season_of_a_listed_series_joins_its_company() {
     let got = e.st.company_days.get(&(1, day2.to_string())).unwrap().revenue;
     assert!((got - want).abs() <= 1, "{got} vs {want}");
 }
+
+#[test]
+fn a_missing_episode_marker_is_not_a_finish_when_the_schedule_has_more() {
+    // 185874: AniList stopped recording episodes at 8 of 10; Bangumi lists episodes 9 and 10
+    let aired: Vec<i64> = (0..8).map(|k| 1000 + 7 * k).collect();
+    let today = 1049 + 14;
+    assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &[]), Some(8));
+    let schedule: Vec<i64> = (0..10).map(|k| 1000 + 7 * k).collect();
+    assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &schedule), Some(10));
+    // a season released at once: the schedule has nothing after the last episode seen
+    assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &aired), Some(8));
+}

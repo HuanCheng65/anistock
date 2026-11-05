@@ -88,6 +88,9 @@ pub struct ShowInputs {
     /// the collector has the show's relations as of the day (else "no sequel announced" is not information)
     #[serde(default)]
     pub relations_known: bool,
+    /// the public schedule: every main episode's air date on Bangumi (past and announced) (phase 1)
+    #[serde(default)]
+    pub schedule: Vec<String>,
 }
 
 /// An announced sequel: its AniList id, the day the relation first appeared, and its premiere day(s): the

@@ -65,6 +65,9 @@ pub struct WorkMeta {
     pub episodes: Option<i64>,
     pub long: bool,
     pub air: Vec<i64>,
+    /// the public schedule: every main episode's air date (Bangumi)
+    #[serde(default)]
+    pub schedule: Vec<i64>,
 }
 
 fn one() -> f64 {
@@ -183,11 +186,23 @@ impl Engine {
 
     /// The episode count to plan with: the announced one, unless the show has aired nothing for two weeks
     /// since its last episode (a whole season released at once, or a stop): then what has aired.
-    pub(crate) fn planned_episodes(episodes: Option<i64>, aired: &[i64], today: i64) -> Option<i64> {
+    /// (A missing AniList episode marker is not a finish: when the public schedule — the episodes' air dates on
+    /// Bangumi, `schedule` — has an episode after the last one seen, the show keeps its announced count.)
+    pub(crate) fn planned_episodes(episodes: Option<i64>, aired: &[i64], today: i64, schedule: &[i64]) -> Option<i64> {
         match (episodes, aired.last()) {
-            (Some(n), Some(&last)) if (aired.len() as i64) < n && today - last >= 14 => Some(aired.len() as i64),
+            (Some(n), Some(&last)) if (aired.len() as i64) < n && today - last >= 14 => {
+                if schedule.iter().any(|d| *d > last) {
+                    episodes
+                } else {
+                    Some(aired.len() as i64)
+                }
+            }
             _ => episodes,
         }
+    }
+
+    fn schedule_of(&self, work: i64) -> Vec<i64> {
+        self.st.jstate.get(&work).and_then(|j| j.meta.as_ref()).map_or(Vec::new(), |m| m.schedule.clone())
     }
 
     /// The works a company owns besides its first (V8 company_works), in id order.
@@ -208,6 +223,7 @@ impl Engine {
             episodes: s.episodes,
             long: s.long_runner,
             air: s.air_dates.iter().filter_map(|d| day_no(d)).collect(),
+            schedule: s.schedule.iter().filter_map(|d| day_no(d)).collect(),
         })
     }
 
@@ -219,7 +235,7 @@ impl Engine {
         }
         let Some(m) = self.st.jstate.get(&w).and_then(|j| j.meta.clone()) else { return self.shape(c, p) };
         let today = self.st.jstate.get(&w).and_then(|j| day_no(&j.day)).unwrap_or(m.first_air);
-        let episodes = Self::planned_episodes(m.episodes.or(if m.long { None } else { Some(p.default_episodes) }), &m.air, today);
+        let episodes = Self::planned_episodes(m.episodes.or(if m.long { None } else { Some(p.default_episodes) }), &m.air, today, &m.schedule);
         let mut air = m.air.clone();
         if air.is_empty() && !m.long {
             air.push(m.first_air);
@@ -232,7 +248,7 @@ impl Engine {
         let first_air = day_no(&c.first_air).unwrap_or(0);
         let aired0 = self.air_days_of(c.id);
         let today = self.st.jstate.get(&c.id).and_then(|j| day_no(&j.day)).unwrap_or(first_air);
-        let episodes = Self::planned_episodes(c.episodes.or(if long { None } else { Some(p.default_episodes) }), &aired0, today);
+        let episodes = Self::planned_episodes(c.episodes.or(if long { None } else { Some(p.default_episodes) }), &aired0, today, &self.schedule_of(c.id));
         let mut aired = aired0;
         if aired.is_empty() && !long {
             // not aired yet: the first episode on its announced date, then weekly
@@ -370,7 +386,8 @@ impl Engine {
         // describes is not news) and no longer drifts
         // (finished: exactly the announced number of episodes aired; a show that keeps airing past its
         // count is not finished)
-        let fin = match Self::planned_episodes(s.episodes, &sched, today) {
+        let schedule: Vec<i64> = s.schedule.iter().filter_map(|d| day_no(d)).collect();
+        let fin = match Self::planned_episodes(s.episodes, &sched, today, &schedule) {
             Some(n) if !s.long_runner && n > 0 && sched.len() as i64 == n => Some(sched[(n - 1) as usize]),
             _ => None,
         };
