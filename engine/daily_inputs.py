@@ -30,6 +30,8 @@ File format (JSON, one object):
         aired           episodes aired as of D (0 before the premiere)
         has_real_data   D is at least valuation.min_days_after_premiere days after first_air
         air_dates       ["YYYY-MM-DD", ...] the day each episode aired so far (one entry per episode; since v0.3.0)
+        adult           true for an adult title (AniList isAdult or the Hentai genre); absent otherwise.
+                        Never listed; a listed one is bought out at the next close (since v0.3.1)
         preair          {"us","cn","jp"}  the audience-based pre-air estimate of daily attention per market: the
                         valuation filter's prior (since v0.3.0)
         att             {"us","cn","jp"}  realised attention on D per market (revenue shares, demand index)
@@ -105,6 +107,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "preair": {m: v for m, v in E.preair_att(s, day, val, aud).items()},
             "air_dates": air_dates(s, day),
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
+            **({"adult": True} if s.adult else {}),
         })
     return {
         "day": day.isoformat(),
@@ -174,6 +177,7 @@ class ShowInputs:
     expected: dict
     preair: dict | None = None             # since v0.3.0
     air_dates: list = field(default_factory=list)
+    adult: bool = False                    # since v0.3.1
 
 
 @dataclass(frozen=True)

@@ -41,6 +41,7 @@ class Show:
     list_day: date | None = None
     long_runner: bool = False
     episodes_known: bool = True
+    adult: bool = False              # AniList isAdult or the Hentai genre: never listed
 
 
 def load_shows(db_path: Path, p: dict, start: date, end: date | None,
@@ -76,6 +77,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
             episodes=m.get("episodes"),
             popularity_end=m.get("popularity") or 0,
             studio=(m.get("studios", {}).get("nodes") or [{}])[0].get("name"),
+            adult=bool(m.get("isAdult")) or "Hentai" in (m.get("genres") or []),
         )
         _fill_grid(s, t, end, gaps)
         if not s.days:

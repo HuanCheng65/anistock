@@ -46,6 +46,9 @@ pub struct ShowInputs {
     /// the day each episode aired so far, one entry per episode (since v0.3.0)
     #[serde(default)]
     pub air_dates: Vec<String>,
+    /// an adult title (AniList isAdult or the Hentai genre): never listed, bought out if it is (since v0.3.1)
+    #[serde(default)]
+    pub adult: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

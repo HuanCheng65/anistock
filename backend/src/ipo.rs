@@ -18,7 +18,7 @@ impl Engine {
         self.st.ipo_apps.range((company_id, i64::MIN)..=(company_id, i64::MAX)).map(|(_, a)| a).collect()
     }
 
-    fn do_withdraw(&mut self, company_id: i64, account_id: i64) {
+    pub(crate) fn do_withdraw(&mut self, company_id: i64, account_id: i64) {
         if let Some(old) = self.st.ipo_apps.remove(&(company_id, account_id)) {
             self.add_cash(account_id, 0, -old.frozen);
             self.out.push(Change::IpoAppDelete { company_id, account_id });

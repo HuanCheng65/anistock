@@ -319,7 +319,7 @@ MEDIA_FIELDS = """
   studios(isMain: true) { nodes { id name } }
   averageScore meanScore popularity favourites trending
   nextAiringEpisode { episode airingAt }
-  genres
+  genres isAdult
   tags { name rank }
   stats { statusDistribution { status amount } scoreDistribution { score amount } }
 """

@@ -224,6 +224,35 @@ impl Engine {
         let p = cx.p.clone();
         let d = cx.d;
 
+        // 0. adult titles are not traded here: buy out any listed one at today's last price and close
+        //    any open subscription with full refunds
+        let adult: Vec<Company> = cx.companies.iter().filter(|c| cx.inp.show(c.id).is_some_and(|s| s.adult)).cloned().collect();
+        for c in &adult {
+            self.buyout(cx, c)?;
+        }
+        if !adult.is_empty() {
+            cx.companies.retain(|c| !adult.iter().any(|a| a.id == c.id));
+            cx.listed.retain(|s| !s.adult);
+        }
+        let subs: Vec<Company> = self
+            .st
+            .companies
+            .values()
+            .filter(|c| c.status == "subscribing" && cx.inp.show(c.id).is_some_and(|s| s.adult))
+            .cloned()
+            .collect();
+        for c in subs {
+            let apps: Vec<i64> = self.ipo_applications(c.id).iter().map(|a| a.account_id).collect();
+            for a in apps {
+                self.do_withdraw(c.id, a);
+            }
+            let co = self.st.companies.get_mut(&c.id).unwrap();
+            co.status = "delisted".into();
+            co.delisted_on = Some(day.clone());
+            self.mark_company(c.id);
+            self.push_news(&ts, &day, "delisting", Some(c.id), format!("《{}》取消发行", c.title), "成人向作品不在安易交易，认购资金已全部退回。".to_string());
+        }
+
         // 1. revenue
         let mut totals = [0.0f64; 3];
         for m in 0..3 {
@@ -647,6 +676,42 @@ impl Engine {
         self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
     }
 
+    /// Take `c` off the market at today's last price (an adult title, step 0): cancel its open orders, the
+    /// world account pays every holder but the company and the committee `last_price` per share, the shares
+    /// are retired and the company's cash goes to the world account. Holders keep exactly what the stock was
+    /// worth on their screen.
+    fn buyout(&mut self, cx: &mut Ctx, c: &Company) -> Result<(), String> {
+        let (day, ts) = (cx.day.clone(), cx.ts.clone());
+        let mut open: Vec<i64> = self
+            .st
+            .orders
+            .values()
+            .filter(|o| o.company_id == c.id && o.status == OrderStatus::Open)
+            .map(|o| o.id)
+            .collect();
+        open.sort();
+        for id in open {
+            self.close(id, OrderStatus::Cancelled, &ts);
+        }
+        let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
+        let per = self.st.companies[&c.id].last_price;
+        for (h, qty, kind) in self.holders(c.id) {
+            if h != acct && kind != "committee" {
+                self.do_transfer(cx.world, h, per * qty, "delisting", &day, &ts, Some(c.id), None);
+            }
+            self.do_remove_shares(h, c.id, qty, 0)?;
+        }
+        let left = self.cash_of(acct);
+        self.do_transfer(acct, cx.world, left, "delisting", &day, &ts, Some(c.id), None);
+        let co = self.st.companies.get_mut(&c.id).unwrap();
+        co.status = "delisted".into();
+        co.delisted_on = Some(day.clone());
+        self.mark_company(c.id);
+        let body = format!("成人向作品不在安易交易，按 {} 币每股收回全部股份。", fixed(per as f64 / 100.0, 2));
+        self.push_news(&ts, &day, "delisting", Some(c.id), format!("《{}》摘牌", c.title), body);
+        Ok(())
+    }
+
     /// Delist `c`: cancel its open orders, pay holders the company's cash per share (rights holders' part to
     /// the world account), retire the shares, post the news (`{per}` in the body is the payout per share).
     fn liquidate(&mut self, cx: &mut Ctx, c: &Company, title: String, body: &str) -> Result<(), String> {
@@ -847,7 +912,7 @@ impl Engine {
         let existing: HashSet<i64> = self.st.companies.keys().copied().collect();
         let inp = cx.inp;
         for s in &inp.shows {
-            if existing.contains(&s.id) || s.popularity_end < cx.g().min_listing_popularity {
+            if existing.contains(&s.id) || s.adult || s.popularity_end < cx.g().min_listing_popularity {
                 continue;
             }
             let first_air = date(&s.first_air)?;
