@@ -8,3 +8,13 @@ data/
 __pycache__/
 collect.log
 sim/out/
+
+# benchmark build outputs and results
+bench/out/
+bench/go/server
+bench/loadgen/loadgen
+bench/rust/target/
+bench/python/.venv/
+bench/go-v2/server
+bench/rust-v2/target/
+bench/loadgen/loadgen-v2
