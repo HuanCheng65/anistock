@@ -52,6 +52,12 @@ File format (JSON, one object):
         att             {"us","cn","jp"}  realised attention on D per market (revenue shares, demand index)
         score           AniList averageScore on D (null: not enough votes yet); the long tail's prior (phase 1)
         format          AniList format (TV, ONA, MOVIE, ...) (phase 1)
+        source          AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...) (phase 1)
+        prequel         itself a sequel: the relations known on D have a PREQUEL TV/ONA/film (phase 1)
+        top_pop         top decile of popularity among the shows premiering within half a year of it (phase 1)
+        sequel          an announced sequel not yet aired, from the relations known on D, else null (phase 1;
+                        engine/daily_inputs.py `series_facts`): {"id", "announced" (the first day the relation was
+                        seen), "premieres" [days, equally likely], "exact" (an announced day)}
         expected        {"us","cn","jp"}  expected attention on D: `att` once the show has real data, else the
                         per-market max of `att` and the audience-based pre-air estimate (expected-share
                         denominator, IPO pricing, fair values)
@@ -101,6 +107,73 @@ def air_dates(s: E.Show, day: date) -> list[str]:
     return out
 
 
+SERIES_FORMATS = {"TV", "TV_SHORT", "ONA", "MOVIE"}
+
+
+def load_relations(db_path: Path) -> dict[int, list[tuple[date, list]]]:
+    """AniList relations snapshots (collector kind 'relations'): {id: [(day, edges)]} oldest first."""
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    out: dict[int, list] = {}
+    try:
+        for mid, d, data in db.execute(
+                "SELECT external_id, day, data FROM snapshots WHERE source='anilist' AND kind='relations' ORDER BY day"):
+            out.setdefault(int(mid), []).append((date.fromisoformat(d), json.loads(data).get("edges") or []))
+    except sqlite3.Error:
+        pass
+    finally:
+        db.close()
+    return out
+
+
+def _fdate(d: dict | None) -> tuple[date | None, str]:
+    """An AniList fuzzy date and its precision: day, month, year or none."""
+    if not d or not d.get("year"):
+        return None, "none"
+    if not d.get("month"):
+        return date(d["year"], 7, 1), "year"
+    if not d.get("day"):
+        return date(d["year"], d["month"], 15), "month"
+    return date(d["year"], d["month"], d["day"]), "day"
+
+
+def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
+    """What the relations known on `day` say (docs/v2-series.md §5): whether the show is itself a sequel (a PREQUEL
+    TV/ONA/film), and an announced sequel that has not aired: a SEQUEL TV/ONA/film entry not yet released, announced
+    on the first day the relation was seen, premiering on its start date (a month or year only: the middle of it),
+    else the announcement plus each fitted announcement-to-premiere lag."""
+    snaps = [(d, e) for d, e in rel.get(sid, []) if d <= day]
+    if not snaps:
+        return {"prequel": False, "sequel": None}
+    edges = snaps[-1][1]
+
+    def anime(e):
+        return e["node"].get("type") == "ANIME" and e["node"].get("format") in SERIES_FORMATS
+    prequel = any(e["relationType"] == "PREQUEL" and anime(e) for e in edges)
+    cands = []
+    for e in edges:
+        n = e["node"]
+        if e["relationType"] != "SEQUEL" or not anime(e):
+            continue
+        start, prec = _fdate(n.get("startDate"))
+        if n.get("status") not in ("NOT_YET_RELEASED", None) or (start is not None and prec == "day" and start <= day):
+            continue
+        first = min(d for d, es in snaps if any(x["node"]["id"] == n["id"] and x["relationType"] == "SEQUEL" for x in es))
+        if prec == "none":
+            prem = [first + timedelta(days=lag) for lag in lags]
+        else:
+            prem = [max(start, day + timedelta(days=1))]
+        cands.append((min(prem), {"id": n["id"], "announced": first.isoformat(), "premieres": [d.isoformat() for d in prem],
+                                  "exact": prec == "day"}))
+    cands.sort(key=lambda c: (c[0], c[1]["id"]))
+    return {"prequel": prequel, "sequel": cands[0][1] if cands else None}
+
+
+def top_decile(shows: list[E.Show], s: E.Show) -> bool:
+    """In the top decile of popularity among the shows premiering within half a year of it."""
+    peers = [x.popularity_end for x in shows if x.first_air and abs((x.first_air - s.first_air).days) <= 182]
+    return bool(peers) and sum(1 for v in peers if v < s.popularity_end) / len(peers) >= 0.9
+
+
 PLATFORM_DAYS = 365   # the platform size is the mean over the trailing year (four quarters)
 
 
@@ -136,11 +209,15 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
 
 
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
-          window_start: date, aud_dated: dict | None = None, sources: dict | None = None) -> dict:
+          window_start: date, aud_dated: dict | None = None, sources: dict | None = None,
+          relations: dict | None = None) -> dict:
     """The inputs dict for `day` from already-loaded model objects (no I/O)."""
     rv, val = p["revenue"], p["valuation"]
     aud_dated = aud_dated or {}
     sources = sources or {}
+    relations = relations or {}
+    from engine import valuation as V
+    lags = V.filter_params(p).get("sequel", {}).get("lag_days", [])
     out = []
     for s in shows:
         att = E.market_att(s, day, rv, markets)
@@ -166,6 +243,9 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "air_dates": air_dates(s, day),
             "score": E.at(s, s.score, day, None),
             "format": s.fmt,
+            "source": s.source,
+            **series_facts(s.id, relations, day, lags),
+            "top_pop": top_decile(shows, s),
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
     plat, n = platform_size(shows, markets, day, p)
@@ -204,7 +284,8 @@ def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
     shows, _ = E.load_shows(cfg.collector_db, cfg.params, start, d,
                             upcoming_days=cfg.game["ipo_subscription_days"] + 1)
     return build(shows, load_markets(), E.load_audiences(cfg.collector_db), E.load_cn_titles(cfg.collector_db),
-                 d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), E.mapped_sources(cfg.collector_db))
+                 d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), E.mapped_sources(cfg.collector_db),
+                 load_relations(cfg.collector_db))
 
 
 def dumps(inputs: dict) -> str:
@@ -246,6 +327,10 @@ class ShowInputs:
     sources: dict | None = None            # since v0.3.2
     score: float | None = None             # phase 1
     format: str | None = None              # phase 1
+    source: str | None = None              # phase 1
+    prequel: bool = False                  # phase 1
+    top_pop: bool = False                  # phase 1
+    sequel: dict | None = None             # phase 1
 
 
 @dataclass(frozen=True)

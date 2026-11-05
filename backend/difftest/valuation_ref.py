@@ -54,3 +54,15 @@ print("tail_var", repr(V.tail_var(V.tail_of(fp, "us"), 250)))
 # absolute revenue (phase 1 step 2): platform sizes and the switch scale
 plat = ({"us": 105000.0, "cn": 450.0, "jp": 1460.0}, 0.83)
 print("d", repr(V.value_from_paths(own4, tot4, w, 110925.85, p, 10000, 4321, 0.03, False, tails, plat)))
+# the sequel option (phase 1 step 3): before the finale, after it, an announced sequel
+sp = fp["sequel"]
+z = V.sequel_z(sp, 78.0, "LIGHT_NOVEL", False, True)
+zs = z + sp["beta"]["sequel"]
+disc = V.discount_day(0.03, p)
+fin1 = s1[-1]
+e1 = V.sequel_extra(fp, "us", 7.5, 0.05, today, fin1, today - 20, z, zs, disc)
+e4 = V.sequel_extra(fp, "cn", 3.0, 0.2, today, fin4, s4[0], z, zs, disc)
+e5 = V.sequel_extra(fp, "jp", 2.0, 0.03, today, fin4, s4[0], z, zs, disc, [today + 200, today + 300])
+print("z", repr(z), "e1", repr(e1), "e4", repr(e4), "e5", repr(e5))
+ex = {"us": e1, "cn": e4, "jp": e5}
+print("g", repr(V.value_from_paths(own4, tot4, w, 110925.85, p, 10000, 4321, 0.03, False, tails, plat, ex)))

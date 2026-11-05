@@ -67,6 +67,31 @@ pub struct ShowInputs {
     /// AniList format (TV, ONA, MOVIE, ...) (phase 1)
     #[serde(default)]
     pub format: Option<String>,
+    /// AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...) (phase 1: the sequel option)
+    #[serde(default)]
+    pub source: Option<String>,
+    /// itself a sequel: a PREQUEL relation to a TV/ONA/film (phase 1)
+    #[serde(default)]
+    pub prequel: bool,
+    /// in the top decile of popularity among the shows premiering within half a year of it (phase 1)
+    #[serde(default)]
+    pub top_pop: bool,
+    /// an announced sequel not yet aired (phase 1, docs/v2-series.md §5.2)
+    #[serde(default)]
+    pub sequel: Option<SequelInputs>,
+}
+
+/// An announced sequel: its AniList id, the day the relation first appeared, and its premiere day(s): the
+/// announced date, the middle of the announced month or year, or the announcement plus each of the fitted
+/// announcement-to-premiere lags (equally likely).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SequelInputs {
+    pub id: i64,
+    pub announced: String,
+    pub premieres: Vec<String>,
+    #[serde(default)]
+    pub exact: bool,
 }
 
 /// One flag per market.

@@ -45,6 +45,7 @@ class Show:
     episodes_known: bool = True
     adult: bool = False              # AniList isAdult or the Hentai genre: never listed
     promo: bool = False              # a PV / CM / teaser compilation, not a show (`is_promo`): never listed
+    source: str | None = None        # AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...)
 
 
 # promotional material catalogued as an "anime": PVs, CMs, teasers, trailers (as a word, so "CMYK" or a
@@ -108,6 +109,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
             studio=(m.get("studios", {}).get("nodes") or [{}])[0].get("name"),
             adult=bool(m.get("isAdult")) or "Hentai" in (m.get("genres") or []),
             promo=is_promo(mid, m),
+            source=m.get("source"),
         )
         _fill_grid(s, t, end, gaps)
         if not s.days:

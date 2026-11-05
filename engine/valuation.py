@@ -144,6 +144,10 @@ def filter_params(p: dict) -> dict:
         fp.setdefault("horizon_days", 400)
         fp.setdefault("flash_min_expected", 5.0)
         fp.setdefault("ipo_risk", 0.25)
+        # the sequel option's parameters (sim/fit_sequel.py), next to the filter's
+        sq = path.parent / "sequel.json"
+        if sq.exists() and "sequel" not in fp:
+            fp["sequel"] = json.loads(sq.read_text(encoding="utf-8"))
         _FP_CACHE[path] = fp
     return _FP_CACHE[path]
 
@@ -409,6 +413,127 @@ def tail_beyond(tl: dict, mult: float, t_last: int, last: float, disc: float) ->
     return k * (a * g1 / (1.0 - g1) + b * g2 / (1.0 - g2) + c * g3 / (1.0 - g3))
 
 
+# ---- the sequel option (docs/v2-series.md §5; fitted by sim/fit_sequel.py)
+
+SEASON_DAYS = 84      # a sequel season: 12 weekly episodes
+SEQ_HORIZON = 3650    # announcements later than 10 years after the finale are not counted
+SEQ_STEP = 30
+
+
+def _sig(z: float) -> float:
+    return 1.0 / (1.0 + math.exp(-z))
+
+
+def sequel_z(sp: dict, score: float | None, source: str | None, prequel: bool, top_pop: bool) -> float:
+    """The show's log-odds shift of every period's announcement hazard: score, source, itself a sequel, top-decile
+    popularity (all public at the finale). A missing score counts as 70."""
+    b = sp["beta"]
+    return (b["score"] * ((score - 70.0) / 10.0 if score else 0.0) + (b["light_novel"] if source == "LIGHT_NOVEL" else 0.0)
+            + (b["original"] if source == "ORIGINAL" else 0.0) + (b["sequel"] if prequel else 0.0)
+            + (b["top_pop"] if top_pop else 0.0))
+
+
+def gap_ratio(sp: dict, gap: float) -> float:
+    """The sequel's expected in-season attention relative to its prequel's, by the gap from the prequel's finale."""
+    g = sp["gap_ratio"]
+    for b in g:
+        if gap < b["until_days"]:
+            return b["ratio"]
+    return g[-1]["ratio"]
+
+
+def announce_schedule(sp: dict, z: float, t_now: int) -> list[tuple[int, float]]:
+    """[(days after the finale, probability)] of the announcement, from t_now days after the finale on (given no
+    announcement so far): at the finale (its ± 7 days) while that is still open, then in 30-day steps with the
+    period's yearly hazard turned into a constant daily rate."""
+    a, per = sp["alpha"], sp["period_days"]
+    out = []
+    surv = 1.0
+    start = t_now
+    if t_now < per[0]:
+        p0 = _sig(a[0] + z)
+        out.append((max(t_now, 0), p0))
+        surv = 1.0 - p0
+        start = per[0]
+    s = start
+    while s < SEQ_HORIZON:
+        k = 1 if s < per[1] else (2 if s < per[2] else (3 if s < per[3] else 4))
+        lam = -math.log(1.0 - _sig(a[k] + z)) / 365.0
+        q = 1.0 - math.exp(-lam * SEQ_STEP)
+        out.append((s + SEQ_STEP // 2, surv * q))
+        surv = surv * (1.0 - q)
+        s += SEQ_STEP
+    return out
+
+
+def season_value(fp: dict, m: str, disc: float) -> float:
+    """W_m: the present value at its premiere, in attention-days per unit of in-season mean attention, of a sequel
+    season in market m: 12 weeks at the in-season mean, then its long tail from the finale week's level (the
+    in-season mean × `season_to_finale`), to infinity."""
+    sp = fp["sequel"]
+    w = 0.0
+    f = 1.0
+    for _ in range(SEASON_DAYS):
+        w += f
+        f *= disc
+    tl = tail_of(fp, m)
+    if tl is None:
+        return w
+    c = sp["season_to_finale"][m]
+    last = 0.0
+    for t in range(400):
+        last = c * tail_mean(tl, t, 1.0)
+        w += f * last
+        f *= disc
+    return w + f / disc * tail_beyond(tl, 1.0, 399, last, disc)
+
+
+def sequel_multiple(fp: dict, m: str, z: float, zs: float, t_now: int, disc: float, known: list[int] | None = None) -> float:
+    """The sequel option of a show in market m, in attention-days per unit of the show's in-season mean attention,
+    discounted to today (t_now days after its finale; negative before it): Σ over announcement times and the
+    announcement-to-premiere lags of P × disc^(days to the premiere) × the sequel's attention ratio × (the sequel
+    season's value + its own option). z: the show's hazard shift (`sequel_z`); zs: the sequel's (itself a sequel).
+    `known`: the premiere day(s) (days after the finale) of an announced sequel, equally likely."""
+    sp = fp["sequel"]
+    w = season_value(fp, m, disc)
+    # the sequel's own option at its premiere, as a fraction of its own season's value: geometric
+    a_s = _option_factor(sp, zs, 0, disc) * disc ** SEASON_DAYS
+    own = a_s * w / (1.0 - a_s) if a_s < 1.0 else 0.0
+    if known:
+        acc = 0.0
+        for d in known:
+            acc += disc ** max(0, d - t_now) * gap_ratio(sp, d)
+        return acc / len(known) * (w + own)
+    return _option_factor(sp, z, t_now, disc) * (w + own)
+
+
+def finale_level(fp: dict, m: str, mean: float, var: float, today: int, final: int, first_air: int) -> float:
+    """Market m's expected attention in the finale's week (level × bump), as in `att_path`."""
+    base = max(today, first_air)
+    jf = max(0, final + 7 - base)
+    return math.exp(mean + cum_drift(fp, m, base, base + jf, first_air) + 0.5 * (var + fp["q"][m] * jf)) * finale_bump(fp, m)
+
+
+def sequel_extra(fp: dict, m: str, mean: float, var: float, today: int, final: int, first_air: int, z: float,
+                 zs: float, disc: float, known: list[int] | None = None) -> float:
+    """The sequel option of market m in attention-days discounted to today: the show's in-season mean attention
+    (finale week ÷ `season_to_finale`) × `sequel_multiple`. `known`: an announced sequel's premiere day(s)."""
+    sp = fp["sequel"]
+    lvl = finale_level(fp, m, mean, var, today, final, first_air) / sp["season_to_finale"][m]
+    k = [d - final for d in known] if known else None
+    return lvl * sequel_multiple(fp, m, z, zs, today - final, disc, k)
+
+
+def _option_factor(sp: dict, z: float, t_now: int, disc: float) -> float:
+    lags = sp["lag_days"]
+    acc = 0.0
+    for ta, p in announce_schedule(sp, z, t_now):
+        s = 0.0
+        for lag in lags:
+            d = ta + lag
+            s += disc ** (d - t_now) * gap_ratio(sp, d)
+        acc += p * s / len(lags)
+    return acc
 def discount_day(rate: float, p: dict) -> float:
     rw = (rate + p["valuation"]["equity_premium"]) / 52
     return (1 / (1 + rw)) ** (1 / 7.0)
@@ -425,7 +550,7 @@ def absolute_parts(own: dict, platform: dict, scale: float, weights: dict, rv: d
 
 def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: dict, shares: int,
                      book_cents: int, rate: float, long_runner: bool, tails: dict | None = None,
-                     platform: tuple | None = None) -> float:
+                     platform: tuple | None = None, extra: dict | None = None) -> float:
     """Per-share value (yuan): expected dividends from the attention paths, discounted, plus cash per share.
     own/totals: market -> expected attention per future day (the same length). tails: market -> (tail parameters,
     the show's tail prior, days after the finale's week on the path's last day) for a path that ends in the long
@@ -457,18 +582,16 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     if long_runner and h > 0:
         g = p["valuation"]["long_runner_decay"] ** (1 / 7.0) * disc
         pv += last * f * g / (1 - g)
-    elif tails and h > 0:
+    elif (tails or extra) and h > 0:
         # beyond the horizon: the attention follows the long tail, each market's revenue per unit of attention
-        # as on the last day
+        # as on the last day; `extra`: attention-days already discounted to today (the sequel option), valued at the
+        # same revenue per unit of attention
         if platform is None:
             tt = {m: totals[m][h - 1] for m in MARKETS}
             live = [m for m in MARKETS if tt[m] > 0]
             wsum = sum(weights[m] for m in live) or 1.0
             dd = demand_day(tt["us"], a_ref, rv)
         for m in MARKETS:
-            x = tails.get(m)
-            if x is None:
-                continue
             if platform is not None:
                 if platform[0][m] <= 0:
                     continue
@@ -477,8 +600,12 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
                 if m not in live:
                     continue
                 per = dd * (weights[m] / wsum) / tt[m] * keep / shares
-            tl, mult, t_last = x
-            pv += f * per * tail_beyond(tl, mult, t_last, own[m][h - 1], disc)
+            x = tails.get(m) if tails else None
+            if x is not None:
+                tl, mult, t_last = x
+                pv += f * per * tail_beyond(tl, mult, t_last, own[m][h - 1], disc)
+            if extra:
+                pv += per * extra[m]
     return pv + book_cents / 100 / shares
 
 
