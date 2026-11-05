@@ -508,6 +508,14 @@ impl Market {
     /// (1 + (k - 1) * step, step drawn from `reaction_step`, at most `reaction_max`); the half-life of the
     /// reaction is drawn too. Call after events are added (they are in time order).
     pub fn index_reactions(&mut self) {
+        // stocks already on the movers' lists (also after a restart: the triggers come back from the log)
+        let ranked: Vec<(i64, i64)> = self
+            .events
+            .iter()
+            .filter(|e| e.kind == "attention" && e.source == "rank")
+            .map(|e| (local(e.at - ROLLOVER_S).0, e.company_id))
+            .collect();
+        self.ranked.extend(ranked);
         if !self.cfg.reaction {
             return;
         }
