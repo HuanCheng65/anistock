@@ -478,7 +478,7 @@ query ($id: Int!, $after: String) {
 
 ANNICT_BY_TITLE = """
 query ($titles: [String!]) {
-  searchWorks(titles: $titles, first: 10) {
+  searchWorks(titles: $titles, orderBy: {field: WATCHERS_COUNT, direction: DESC}, first: 50) {
     nodes { %s }
   }
 }
@@ -508,12 +508,14 @@ def discover_annict(http: "Http", store: Store) -> int:
             store.register("annict", by_mal[int(mal)], None, mal)  # keep it tracked
             continue
         t = m.get("title") or {}
+        seen: list[str] = []
         for title in dict.fromkeys(x for x in (t.get("native"), t.get("romaji")) if x):
             try:
                 nodes = http.graphql(ANNICT, ANNICT_BY_TITLE, {"titles": [title]})["searchWorks"]["nodes"]
             except Exception as e:  # one failed search must not stop the day's collection
                 log.warning("annict title search failed for %s: %r", title, e)
                 break
+            seen += [f'{w["annictId"]} {w["title"]} mal={w.get("malAnimeId")}' for w in nodes[:5]]
             hit = next((w for w in nodes if w.get("malAnimeId") and int(w["malAnimeId"]) == int(mal)), None)
             if hit:
                 store.register("annict", hit["annictId"], hit["title"], mal)
@@ -521,6 +523,9 @@ def discover_annict(http: "Http", store: Store) -> int:
                 new += 1
                 log.info("annict: found %s (%s) for AniList %s", hit["annictId"], hit["title"], m["id"])
                 break
+        else:
+            log.info("annict: no MAL %s match for AniList %s %s; top results: %s",
+                     mal, m["id"], t.get("native"), "; ".join(seen) or "none")
     store.commit()
     return new
 
