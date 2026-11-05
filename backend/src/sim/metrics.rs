@@ -161,8 +161,7 @@ fn sd(x: &[f64]) -> f64 {
 }
 
 fn wealth(e: &Engine, acct: i64) -> i64 {
-    e.account(acct).map_or(0, |a| a.cash)
-        + e.holdings_of(acct).map(|h| h.qty * e.company(h.company_id).map_or(0, |c| c.last_price)).sum::<i64>()
+    e.net_assets(acct)
 }
 
 impl Recorder {

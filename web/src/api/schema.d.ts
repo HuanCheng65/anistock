@@ -328,6 +328,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/credit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 信用账户 */
+        get: operations["credit"];
+        put?: never;
+        /** 开通信用账户 */
+        post: operations["open"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/credit/repay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 直接还款 */
+        post: operations["repay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/ledger": {
         parameters: {
             query?: never;
@@ -585,6 +620,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stocks/{id}/margin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 融资融券条件 */
+        get: operations["stock_margin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stocks/{id}/trades": {
         parameters: {
             query?: never;
@@ -635,6 +687,7 @@ export interface components {
         AssetDay: {
             cash: components["schemas"]["Money"];
             is_partial: boolean;
+            liabilities: components["schemas"]["Money"];
             restructured: boolean;
             /** Format: double */
             return_index: number;
@@ -752,6 +805,83 @@ export interface components {
             oversubscribed: number;
             /** Format: double */
             public_share: number;
+        };
+        CreditAccount: {
+            /** @description 可用保证金 */
+            available_margin: components["schemas"]["Money"];
+            /** @description 穿仓欠款 */
+            bad_debt: components["schemas"]["Money"];
+            call_day: null | components["schemas"]["TradingDay"];
+            /** Format: double */
+            call_ratio: number;
+            /** @description 未开通时：现在能否开通 */
+            can_open: boolean;
+            debt: components["schemas"]["Money"];
+            debts: components["schemas"]["CreditDebt"][];
+            fees: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 融资年利率
+             */
+            financing_rate: number;
+            /** @description 现金 + 持仓市值 */
+            gross_assets: components["schemas"]["Money"];
+            interest: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 融券年费率
+             */
+            lending_rate: number;
+            liabilities: components["schemas"]["Money"];
+            /** Format: double */
+            liquidate_ratio: number;
+            /** @description 冻结的融券卖出所得 */
+            locked: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 维持担保比例；没有负债时为 null
+             */
+            maintenance_ratio: number | null;
+            /** Format: double */
+            margin_ratio: number;
+            /** @description 现金 + 持仓市值 − 负债 */
+            net_assets: components["schemas"]["Money"];
+            /** @description 不能开通的原因 */
+            open_message: string | null;
+            opened: boolean;
+            short_value: components["schemas"]["Money"];
+            shorts: components["schemas"]["CreditShort"][];
+            /** @description 开放枚举：normal、call（追保）、liquidating（强制平仓中）、defaulted（已穿仓）；未开通时为 null */
+            status: string | null;
+            /** Format: double */
+            target_ratio: number;
+        };
+        CreditDebt: {
+            /** @description 未付利息 */
+            interest: components["schemas"]["Money"];
+            opened_on: components["schemas"]["TradingDay"];
+            /** @description 融资本金 */
+            principal: components["schemas"]["Money"];
+            stock: components["schemas"]["StockRef"];
+        };
+        CreditEnvelope: {
+            credit: components["schemas"]["CreditAccount"];
+        };
+        CreditShort: {
+            /** @description 未付的融券费用和分红补偿 */
+            fee: components["schemas"]["Money"];
+            opened_on: components["schemas"]["TradingDay"];
+            price: components["schemas"]["Money"];
+            /** @description 冻结的融券卖出所得 */
+            proceeds: components["schemas"]["Money"];
+            /**
+             * Format: int64
+             * @description 欠券数量
+             */
+            quantity: number;
+            stock: components["schemas"]["StockRef"];
+            /** @description 欠券市值（数量 × 最新价） */
+            value: components["schemas"]["Money"];
         };
         DividendPaid: {
             per_share: components["schemas"]["Money"];
@@ -1004,6 +1134,8 @@ export interface components {
         Me: {
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
+            /** @description 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null */
+            credit_status: string | null;
             /** Format: double */
             deposit_rate: number;
             dividends: components["schemas"]["Money"];
@@ -1011,8 +1143,11 @@ export interface components {
             /** Format: int64 */
             id: number;
             initial_cash: components["schemas"]["Money"];
+            /** @description 融资融券负债 */
+            liabilities: components["schemas"]["Money"];
             restructure: components["schemas"]["RestructureState"];
             stock_value: components["schemas"]["Money"];
+            /** @description 净资产：现金 + 持仓市值 − 负债 */
             total_assets: components["schemas"]["Money"];
             /**
              * Format: double
@@ -1094,6 +1229,8 @@ export interface components {
         Order: {
             average_fill_price: null | components["schemas"]["Money"];
             created_at: components["schemas"]["Timestamp"];
+            /** @description 信用委托的类型，开放枚举：margin_buy（融资买入）、short_sell（融券卖出）、sell_repay（卖券还款）、buy_return（买券还券）；普通委托为 null */
+            credit: string | null;
             /** Format: int64 */
             filled_quantity: number;
             frozen_cash: components["schemas"]["Money"];
@@ -1131,6 +1268,8 @@ export interface components {
          */
         Phase: "auction" | "continuous" | "closed";
         PlaceOrderRequest: {
+            /** @description 信用委托：margin_buy、short_sell（side 为 sell）、sell_repay（sell）、buy_return（buy）；只接受限价，只在连续交易时段 */
+            credit?: string | null;
             price?: null | components["schemas"]["Money"];
             /** Format: int64 */
             quantity: number;
@@ -1153,6 +1292,7 @@ export interface components {
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
             frozen_cash: components["schemas"]["Money"];
+            liabilities: components["schemas"]["Money"];
             stock_value: components["schemas"]["Money"];
             total_assets: components["schemas"]["Money"];
         };
@@ -1262,6 +1402,13 @@ export interface components {
             password: string;
             username: string;
         };
+        RepayRequest: {
+            amount?: null | components["schemas"]["Money"];
+        };
+        RepayResponse: {
+            credit: components["schemas"]["CreditAccount"];
+            paid: components["schemas"]["Money"];
+        };
         RestructureRequest: {
             /** @description 必须为 true */
             confirm: boolean;
@@ -1271,7 +1418,7 @@ export interface components {
             count: number;
             eligible: boolean;
             message: string | null;
-            /** @description not_poor、this_season、market_closed；可以申请时为 null */
+            /** @description not_poor、this_season、market_closed、margin_debt；可以申请时为 null */
             reason: string | null;
         };
         RevenueWeek: {
@@ -1393,6 +1540,28 @@ export interface components {
             title_ja: string | null;
             trading_day: components["schemas"]["TradingDay"];
             vcm: components["schemas"]["Vcm"];
+        };
+        StockMargin: {
+            /** @description 是否融资融券标的 */
+            eligible: boolean;
+            /** Format: double */
+            financing_rate: number;
+            /** @description 剩余融资额度 */
+            financing_room: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 折算率
+             */
+            haircut: number;
+            /**
+             * Format: int64
+             * @description 可融券数量
+             */
+            lendable: number;
+            /** Format: double */
+            lending_rate: number;
+            /** @description 开放枚举：new_listing、penny、delisting、not_listed；是标的时为 null */
+            reason: string | null;
         };
         StockQuote: {
             /** Format: double */
@@ -1569,6 +1738,13 @@ export interface components {
             seq: number;
             /** @enum {string} */
             t: "cash";
+        } | {
+            call_day: null | components["schemas"]["TradingDay"];
+            /** Format: int64 */
+            seq: number;
+            status: string | null;
+            /** @enum {string} */
+            t: "credit";
         } | (components["schemas"]["Event"] & {
             /** @enum {string} */
             t: "event";
@@ -2183,6 +2359,91 @@ export interface operations {
             };
         };
     };
+    credit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditEnvelope"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    open: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreditEnvelope"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    repay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepayRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepayResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     ledger: {
         parameters: {
             query?: {
@@ -2734,6 +2995,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntradayResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    stock_margin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMargin"];
                 };
             };
             default: {

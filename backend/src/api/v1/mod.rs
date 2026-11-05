@@ -10,6 +10,7 @@
 
 pub mod account;
 pub mod bind;
+pub mod credit;
 pub mod error;
 pub mod events;
 pub mod market;
@@ -553,6 +554,9 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/trades", get(account::my_trades))
         .route("/me/ledger", get(account::ledger))
         .route("/me/restructure", post(account::restructure))
+        .route("/me/credit", get(credit::credit).post(credit::open))
+        .route("/me/credit/repay", post(credit::repay))
+        .route("/stocks/{id}/margin", get(credit::stock_margin))
         .route("/leaderboard", get(account::leaderboard))
         .route("/auth/register", post(account::register))
         .route("/auth/login", post(account::login))

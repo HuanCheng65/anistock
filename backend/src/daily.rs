@@ -223,6 +223,8 @@ impl Engine {
         let (day, ts) = (cx.day.clone(), cx.ts.clone());
         let p = cx.p.clone();
         let d = cx.d;
+        // 融资融券: open credit orders end before the close (crate::margin)
+        self.margin_pre_close(&ts);
 
         // 0. adult titles are not traded here: buy out any listed one at today's last price and close
         //    any open subscription with full refunds
@@ -485,6 +487,9 @@ impl Engine {
             }
         }
 
+        // 融资融券: manufactured dividends, interest and fees, maintenance (crate::margin)
+        self.margin_post_close(&day, &ts);
+
         // 8. allot subscriptions that closed today, then open new ones
         let due: Vec<i64> = self
             .st
@@ -744,6 +749,7 @@ impl Engine {
         }
         let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
         let per = self.st.companies[&c.id].last_price;
+        self.margin_on_delist(c.id, per, &day, &ts);
         for (h, qty, kind) in self.holders(c.id) {
             if h != acct && kind != "committee" {
                 self.do_transfer(cx.world, h, per * qty, "delisting", &day, &ts, Some(c.id), None);
@@ -781,6 +787,7 @@ impl Engine {
         let cash = self.cash_of(acct);
         let holders = self.holders(c.id);
         let per = floordiv(cash, c.shares);
+        self.margin_on_delist(c.id, per, &day, &ts);
         for (h, qty, kind) in holders {
             let amt = per * qty;
             if h != acct {
@@ -1079,12 +1086,14 @@ impl Engine {
                     .sum();
                 let pr = self.st.player_returns.get(&a.id);
                 let (factor, base) = pr.map_or((1.0, initial), |p| (p.return_factor, p.segment_base));
-                let total = a.cash + stock;
+                let liabilities = self.liabilities(a.id);
+                let total = a.cash + stock - liabilities;
                 PlayerDay {
                     account_id: a.id,
                     day: day.to_string(),
                     cash: a.cash,
                     stock_value: stock,
+                    liabilities,
                     return_index: if base > 0 { factor * total as f64 / base as f64 } else { factor },
                     restructured: pr.is_some_and(|p| p.last_day == day),
                 }

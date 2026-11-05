@@ -13,6 +13,7 @@ pub mod config;
 pub mod events;
 pub mod rng;
 pub mod runtime;
+mod short;
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
@@ -1086,11 +1087,7 @@ impl Market {
     }
 
     fn wealth(&self, engine: &Engine, acct: i64) -> i64 {
-        let cash = engine.account(acct).map_or(0, |a| a.cash);
-        cash + engine
-            .holdings_of(acct)
-            .map(|h| h.qty * engine.company(h.company_id).map_or(0, |c| c.last_price))
-            .sum::<i64>()
+        engine.net_assets(acct)
     }
 
     fn clamp_price(engine: &Engine, rules: &crate::exchange::Rules, c: i64, p: f64, t: i64) -> i64 {
@@ -1133,6 +1130,9 @@ impl Market {
             return;
         }
         let held = engine.available_shares(a.account, c);
+        if self.value_short(engine, i, c, t, m, b) {
+            return; // 融资融券 (short.rs)
+        }
         if m > 0.0 {
             let wealth = self.wealth(engine, a.account) as f64;
             let room = self.cfg.max_position_frac * wealth - held as f64 * p;

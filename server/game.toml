@@ -131,3 +131,24 @@ ws_per_ip = 8                 # concurrent WebSocket connections per IP
 big_move_daily = 0.10         # |change vs prev close| crosses each multiple of this
 big_move_window = 0.05        # |change vs the price window_min minutes ago|
 big_move_window_min = 30
+
+[margin]
+# 融资融券 (docs/v2-margin.md §11). These are the defaults in backend/src/margin.rs; change a value here to override it.
+enabled = true
+min_days = 7              # days since registration before credit can be opened
+min_assets = 0.5          # net assets at least this share of initial_cash
+listed_days = 5           # a stock is marginable this many days after listing
+haircut = 0.7             # collateral value of a marginable stock (折算率)
+margin_ratio = 1.0        # initial margin for financing and short sales (保证金比例)
+interest_spread = 0.03    # financing rate = policy rate + this
+fee_spread = 0.05         # lending fee = policy rate + this
+call_ratio = 1.3          # margin call at the daily close (追保线)
+liquidate_ratio = 1.1     # immediate forced liquidation intraday (平仓线)
+target_ratio = 1.5        # forced liquidation stops here
+protect = 0.05            # liquidation orders: limit at last price x (1 -/+ protect)
+lend_frac = 0.5           # the rights holders lend at most this share of their stock (held + lent)
+stock_cap = 0.25          # per stock: financing balance / short interest at most this share of the float
+concentration = 1.0       # one stock's financing + short value at most this multiple of net assets
+npc_short_frac = 0.3      # share of value agents that may sell short
+npc_short_extra = 0.10    # extra mispricing a value agent needs before shorting (beyond its buy threshold)
+npc_short_size = 0.10     # one short position at most this share of the agent's wealth

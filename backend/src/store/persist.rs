@@ -101,6 +101,8 @@ pub enum Change {
     PlayerReturnSet(PlayerReturn),
     /// `INSERT OR REPLACE INTO player_days` (the daily asset snapshot, written by the close)
     PlayerDayReplace(PlayerDay),
+    /// 融资融券 rows (crate::margin)
+    Margin(crate::margin::MarginChange),
     StateSet {
         key: String,
         value: String,
@@ -371,10 +373,10 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
         }
         Change::PlayerDayReplace(p) => {
             conn.prepare_cached(
-                "INSERT OR REPLACE INTO player_days(account_id, day, cash, stock_value, return_index, restructured)
-                 VALUES (?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO player_days(account_id, day, cash, stock_value, liabilities, return_index, restructured)
+                 VALUES (?,?,?,?,?,?,?)",
             )?
-            .execute(params![p.account_id, p.day, p.cash, p.stock_value, p.return_index, p.restructured as i64])?;
+            .execute(params![p.account_id, p.day, p.cash, p.stock_value, p.liabilities, p.return_index, p.restructured as i64])?;
         }
         Change::IpoAppDelete { company_id, account_id } => {
             conn.prepare_cached("DELETE FROM ipo_applications WHERE company_id=? AND account_id=?")?
@@ -390,6 +392,7 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
             conn.prepare_cached("INSERT INTO news(id, ts, day, kind, company_id, title, body) VALUES (?,?,?,?,?,?,?)")?
                 .execute(params![n.id, n.ts, n.day, n.kind, n.company_id, n.title, n.body])?;
         }
+        Change::Margin(m) => crate::margin::apply(conn, m)?,
         Change::StateSet { key, value } => {
             conn.prepare_cached(
                 "INSERT INTO state(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

@@ -625,6 +625,7 @@ impl Fanout {
                         trading_day: t::day(self.trading_day_of(&o.created_at)),
                         created_at: t::ts(o.created_at.clone()),
                         updated_at: t::ts(o.updated_at.clone()),
+                        credit: e.margin_mode(o.id).map(|m| m.as_str().to_string()),
                     };
                     self.to_account(o.account_id, |seq| M::Order { seq, order });
                 }
@@ -640,6 +641,16 @@ impl Fanout {
                         frozen_cash: Money(cash_frozen),
                         available_cash: Money(cash - cash_frozen),
                     });
+                }
+            }
+            Change::Margin(crate::margin::MarginChange::Credit(c)) => {
+                if Self::is_player(e, c.account_id) {
+                    self.to_account(c.account_id, |seq| M::Credit { seq, status: Some(c.status.clone()), call_day: c.call_day.clone().map(t::day) });
+                }
+            }
+            Change::Margin(crate::margin::MarginChange::CreditDelete(id)) => {
+                if Self::is_player(e, id) {
+                    self.to_account(id, |seq| M::Credit { seq, status: None, call_day: None });
                 }
             }
             Change::CompanyMarket { id, .. } => {

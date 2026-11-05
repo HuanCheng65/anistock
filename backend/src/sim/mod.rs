@@ -126,6 +126,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     };
     let tap = TapSink::default();
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
+    e.margin = cfg.margin.clone();
     let params = Params::from_config(cfg)?;
     let last_closed = e.state("last_closed").ok_or("world has no last_closed")?.to_string();
 
@@ -330,6 +331,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                     }
                 }
             }
+            // 融资融券: forced liquidation runs once a minute in continuous trading
+            if s >= 9 * 3600 {
+                e.margin_sweep(&day_of(t), &ts_of(t));
+            }
             if (s / 60) % opts.spread_every_min == 0 && s >= 9 * 3600 {
                 rec.sample_spreads(&e, &m, t);
             }
@@ -476,6 +481,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             "return": w as f64 / b.start_cash as f64 - 1.0, "orders": b.trades_placed,
             "transfers": watched.0, "dividends": watched.1,
             "return_ex_transfers": (w - watched.0) as f64 / b.start_cash as f64 - 1.0,
+            "margin": b.mstats,
         })
     });
     let actions: u64 = m.stats.actions.values().sum::<u64>();

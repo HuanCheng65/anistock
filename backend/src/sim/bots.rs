@@ -7,6 +7,10 @@ use crate::engine::{Engine, NewOrder};
 use crate::exchange::cooling;
 use crate::market::{day_of, local, ts_of};
 
+/// 融资融券 bots (docs/v2-margin.md §9)
+#[path = "margin_bots.rs"]
+pub mod margin;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BotKind {
     /// buy every listed stock equally on day one, hold (the baseline)
@@ -53,6 +57,12 @@ pub enum BotKind {
     /// public popularity with a delay?
     HoldHottest,
     BadPrice,
+    /// 融资融券: buy every stock equally with own cash, then keep all the available margin in financed buys
+    LeverHold,
+    /// 融资融券: short the five stocks priced furthest over their public value, cover at the value
+    ShortRich,
+    /// 融资融券: short the highest expected dividend yields on Sunday evening, cover on Monday
+    ShortDividend,
     /// sentiment layer (docs/v2-sentiment.md §3): after each published 热度快讯, buy the stock if it was bad
     /// news (betting on an over-reaction) and sell a day later
     FadeFlash,
@@ -72,7 +82,7 @@ pub enum BotKind {
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 27] {
+    pub fn all() -> [BotKind; 30] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -93,6 +103,9 @@ impl BotKind {
             BotKind::SpoofScare,
             BotKind::BadPrice,
             BotKind::HoldHottest,
+            BotKind::LeverHold,
+            BotKind::ShortRich,
+            BotKind::ShortDividend,
             BotKind::FadeFlash,
             BotKind::RideFlash,
             BotKind::MomentumK,
@@ -124,6 +137,9 @@ impl BotKind {
             BotKind::SpoofScare => "spoof_scare",
             BotKind::BadPrice => "bad_price",
             BotKind::HoldHottest => "hold_hottest",
+            BotKind::LeverHold => "lever_hold",
+            BotKind::ShortRich => "short_rich",
+            BotKind::ShortDividend => "short_dividend",
             BotKind::FadeFlash => "fade_flash",
             BotKind::RideFlash => "ride_flash",
             BotKind::MomentumK => "momentum_k",
@@ -174,6 +190,8 @@ pub struct Bot {
     opens: std::collections::HashMap<i64, Vec<i64>>,
     /// the fan bots' foresight: (company, day) -> the hidden value at that day's open, cents
     pub foresight: Option<std::sync::Arc<std::collections::HashMap<(i64, String), (i64, i64)>>>,
+    /// drawdown, liabilities, margin calls (sampled by the 融资融券 bots)
+    pub mstats: margin::MStats,
 }
 
 fn place(e: &mut Engine, acct: i64, c: i64, side: &str, kind: &str, qty: i64, price: Option<i64>, t: i64) -> bool {
@@ -228,16 +246,13 @@ impl Bot {
             flashes_seen: 0,
             opens: Default::default(),
             foresight: None,
+            mstats: Default::default(),
         }
     }
 
     /// Wealth at last prices, cents.
     pub fn wealth(&self, e: &Engine) -> i64 {
-        let cash = e.account(self.account).map_or(0, |a| a.cash);
-        cash + e
-            .holdings_of(self.account)
-            .map(|h| h.qty * e.company(h.company_id).map_or(0, |c| c.last_price))
-            .sum::<i64>()
+        e.net_assets(self.account)
     }
 
     /// Buy up to `budget` cents of `c` (limit 0.5% over the last price).
@@ -277,6 +292,9 @@ impl Bot {
         let (_, s) = local(t);
         let acct = self.account;
         let ts = ts_of(t);
+        if s % 1800 == 0 {
+            self.mstats.sample(e, acct);
+        }
         if s == 9 * 3600 {
             // the price at the open is the last session's close
             for c in e.companies().filter(|c| c.status == "listed" && c.last_price > 0) {
@@ -284,6 +302,7 @@ impl Bot {
             }
         }
         match self.kind {
+            BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
             BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
                 if !self.exits.is_empty() {
                     self.run_exits(e, t);

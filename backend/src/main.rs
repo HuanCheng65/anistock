@@ -65,6 +65,7 @@ fn main() {
     }
     let mut engine = Engine::open(&cfg.game_db, cfg.fees(), cfg.rules())
         .unwrap_or_else(|e| fail(format!("refusing to start: {e}"), 1));
+    engine.margin = cfg.margin.clone();
 
     // the session key: ANISTOCK_SECRET, else the random one kept in the game database
     let stored = engine.state("session_secret").map(str::to_string);

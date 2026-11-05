@@ -112,6 +112,9 @@
           "is_partial": {
             "type": "boolean"
           },
+          "liabilities": {
+            "$ref": "#/components/schemas/Money"
+          },
           "restructured": {
             "type": "boolean"
           },
@@ -136,6 +139,7 @@
         "required": [
           "cash",
           "is_partial",
+          "liabilities",
           "restructured",
           "return_index",
           "stock_value",
@@ -567,6 +571,226 @@
         "required": [
           "oversubscribed",
           "public_share"
+        ],
+        "type": "object"
+      },
+      "CreditAccount": {
+        "properties": {
+          "available_margin": {
+            "$ref": "#/components/schemas/Money",
+            "description": "可用保证金"
+          },
+          "bad_debt": {
+            "$ref": "#/components/schemas/Money",
+            "description": "穿仓欠款"
+          },
+          "call_day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay",
+                "description": "追保通知的交易日"
+              }
+            ]
+          },
+          "call_ratio": {
+            "format": "double",
+            "type": "number"
+          },
+          "can_open": {
+            "description": "未开通时：现在能否开通",
+            "type": "boolean"
+          },
+          "debt": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "debts": {
+            "items": {
+              "$ref": "#/components/schemas/CreditDebt"
+            },
+            "type": "array"
+          },
+          "fees": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "financing_rate": {
+            "description": "融资年利率",
+            "format": "double",
+            "type": "number"
+          },
+          "gross_assets": {
+            "$ref": "#/components/schemas/Money",
+            "description": "现金 + 持仓市值"
+          },
+          "interest": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "lending_rate": {
+            "description": "融券年费率",
+            "format": "double",
+            "type": "number"
+          },
+          "liabilities": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "liquidate_ratio": {
+            "format": "double",
+            "type": "number"
+          },
+          "locked": {
+            "$ref": "#/components/schemas/Money",
+            "description": "冻结的融券卖出所得"
+          },
+          "maintenance_ratio": {
+            "description": "维持担保比例；没有负债时为 null",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "margin_ratio": {
+            "format": "double",
+            "type": "number"
+          },
+          "net_assets": {
+            "$ref": "#/components/schemas/Money",
+            "description": "现金 + 持仓市值 − 负债"
+          },
+          "open_message": {
+            "description": "不能开通的原因",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "opened": {
+            "type": "boolean"
+          },
+          "short_value": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "shorts": {
+            "items": {
+              "$ref": "#/components/schemas/CreditShort"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "开放枚举：normal、call（追保）、liquidating（强制平仓中）、defaulted（已穿仓）；未开通时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_ratio": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "available_margin",
+          "bad_debt",
+          "call_day",
+          "call_ratio",
+          "can_open",
+          "debt",
+          "debts",
+          "fees",
+          "financing_rate",
+          "gross_assets",
+          "interest",
+          "lending_rate",
+          "liabilities",
+          "liquidate_ratio",
+          "locked",
+          "maintenance_ratio",
+          "margin_ratio",
+          "net_assets",
+          "open_message",
+          "opened",
+          "short_value",
+          "shorts",
+          "status",
+          "target_ratio"
+        ],
+        "type": "object"
+      },
+      "CreditDebt": {
+        "properties": {
+          "interest": {
+            "$ref": "#/components/schemas/Money",
+            "description": "未付利息"
+          },
+          "opened_on": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "principal": {
+            "$ref": "#/components/schemas/Money",
+            "description": "融资本金"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          }
+        },
+        "required": [
+          "interest",
+          "opened_on",
+          "principal",
+          "stock"
+        ],
+        "type": "object"
+      },
+      "CreditEnvelope": {
+        "properties": {
+          "credit": {
+            "$ref": "#/components/schemas/CreditAccount"
+          }
+        },
+        "required": [
+          "credit"
+        ],
+        "type": "object"
+      },
+      "CreditShort": {
+        "properties": {
+          "fee": {
+            "$ref": "#/components/schemas/Money",
+            "description": "未付的融券费用和分红补偿"
+          },
+          "opened_on": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "proceeds": {
+            "$ref": "#/components/schemas/Money",
+            "description": "冻结的融券卖出所得"
+          },
+          "quantity": {
+            "description": "欠券数量",
+            "format": "int64",
+            "type": "integer"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Money",
+            "description": "欠券市值（数量 × 最新价）"
+          }
+        },
+        "required": [
+          "fee",
+          "opened_on",
+          "price",
+          "proceeds",
+          "quantity",
+          "stock",
+          "value"
         ],
         "type": "object"
       },
@@ -1515,6 +1739,13 @@
           "cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "credit_status": {
+            "description": "信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "deposit_rate": {
             "format": "double",
             "type": "number"
@@ -1532,6 +1763,10 @@
           "initial_cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "liabilities": {
+            "$ref": "#/components/schemas/Money",
+            "description": "融资融券负债"
+          },
           "restructure": {
             "$ref": "#/components/schemas/RestructureState"
           },
@@ -1539,7 +1774,8 @@
             "$ref": "#/components/schemas/Money"
           },
           "total_assets": {
-            "$ref": "#/components/schemas/Money"
+            "$ref": "#/components/schemas/Money",
+            "description": "净资产：现金 + 持仓市值 − 负债"
           },
           "total_return": {
             "description": "链接收益率（时间加权）",
@@ -1556,11 +1792,13 @@
         "required": [
           "available_cash",
           "cash",
+          "credit_status",
           "deposit_rate",
           "dividends",
           "frozen_cash",
           "id",
           "initial_cash",
+          "liabilities",
           "restructure",
           "stock_value",
           "total_assets",
@@ -1815,6 +2053,13 @@
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
+          "credit": {
+            "description": "信用委托的类型，开放枚举：margin_buy（融资买入）、short_sell（融券卖出）、sell_repay（卖券还款）、buy_return（买券还券）；普通委托为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "filled_quantity": {
             "format": "int64",
             "type": "integer"
@@ -1864,6 +2109,7 @@
         "required": [
           "average_fill_price",
           "created_at",
+          "credit",
           "filled_quantity",
           "frozen_cash",
           "id",
@@ -1934,6 +2180,13 @@
       },
       "PlaceOrderRequest": {
         "properties": {
+          "credit": {
+            "description": "信用委托：margin_buy、short_sell（side 为 sell）、sell_repay（sell）、buy_return（buy）；只接受限价，只在连续交易时段",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "price": {
             "oneOf": [
               {
@@ -2020,6 +2273,9 @@
           "frozen_cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "liabilities": {
+            "$ref": "#/components/schemas/Money"
+          },
           "stock_value": {
             "$ref": "#/components/schemas/Money"
           },
@@ -2031,6 +2287,7 @@
           "available_cash",
           "cash",
           "frozen_cash",
+          "liabilities",
           "stock_value",
           "total_assets"
         ],
@@ -2446,6 +2703,37 @@
         ],
         "type": "object"
       },
+      "RepayRequest": {
+        "properties": {
+          "amount": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "还款金额，整数分；省略时用可用资金还清全部"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "RepayResponse": {
+        "properties": {
+          "credit": {
+            "$ref": "#/components/schemas/CreditAccount"
+          },
+          "paid": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "credit",
+          "paid"
+        ],
+        "type": "object"
+      },
       "RestructureRequest": {
         "properties": {
           "confirm": {
@@ -2474,7 +2762,7 @@
             ]
           },
           "reason": {
-            "description": "not_poor、this_season、market_closed；可以申请时为 null",
+            "description": "not_poor、this_season、market_closed、margin_debt；可以申请时为 null",
             "type": [
               "string",
               "null"
@@ -2920,6 +3208,53 @@
           "title_ja",
           "trading_day",
           "vcm"
+        ],
+        "type": "object"
+      },
+      "StockMargin": {
+        "properties": {
+          "eligible": {
+            "description": "是否融资融券标的",
+            "type": "boolean"
+          },
+          "financing_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "financing_room": {
+            "$ref": "#/components/schemas/Money",
+            "description": "剩余融资额度"
+          },
+          "haircut": {
+            "description": "折算率",
+            "format": "double",
+            "type": "number"
+          },
+          "lendable": {
+            "description": "可融券数量",
+            "format": "int64",
+            "type": "integer"
+          },
+          "lending_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "reason": {
+            "description": "开放枚举：new_listing、penny、delisting、not_listed；是标的时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "eligible",
+          "financing_rate",
+          "financing_room",
+          "haircut",
+          "lendable",
+          "lending_rate",
+          "reason"
         ],
         "type": "object"
       },
@@ -3659,6 +3994,45 @@
               "cash",
               "frozen_cash",
               "seq",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "信用账户状态变化（追保、强制平仓、穿仓、恢复正常）；status 为 null 表示信用账户已关闭",
+            "properties": {
+              "call_day": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TradingDay"
+                  }
+                ]
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "t": {
+                "enum": [
+                  "credit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "call_day",
+              "seq",
+              "status",
               "t"
             ],
             "type": "object"
@@ -4531,6 +4905,107 @@
         "summary": "解除绑定（仅网页）",
         "tags": [
           "bindings"
+        ]
+      }
+    },
+    "/api/v1/me/credit": {
+      "get": {
+        "operationId": "credit",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "信用账户",
+        "tags": [
+          "account"
+        ]
+      },
+      "post": {
+        "operationId": "open",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreditEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "开通信用账户",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/credit/repay": {
+      "post": {
+        "operationId": "repay",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepayResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "直接还款",
+        "tags": [
+          "account"
         ]
       }
     },
@@ -5468,6 +5943,49 @@
           }
         },
         "summary": "分时",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/margin": {
+      "get": {
+        "operationId": "stock_margin",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockMargin"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "融资融券条件",
         "tags": [
           "stocks"
         ]

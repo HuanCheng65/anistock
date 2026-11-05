@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { errorText } from '../api'
 import Cover from '../components/Cover.vue'
+import CreditPanel from '../components/CreditPanel.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
 import RestructureEntry from '../components/RestructureEntry.vue'
@@ -11,6 +12,7 @@ import Tabs from '../components/Tabs.vue'
 import { usePoll } from '../composables/usePoll'
 import { dir, money, pct, qty, signed, when } from '../format'
 import { useAccount } from '../stores/account'
+import { MODE_LABEL } from '../stores/credit'
 import { useIpo } from '../stores/ipo'
 import { usePrefs } from '../stores/prefs'
 import { useSession } from '../stores/session'
@@ -98,7 +100,7 @@ async function cancel(id: number) {
     <div class="frame">
       <div class="side">
         <section v-if="me" class="summary gutter">
-          <div class="lbl">总资产</div>
+          <div class="lbl">{{ me.credit_status ? '净资产' : '总资产' }}</div>
           <div class="num total">{{ money(me.total_assets) }}</div>
           <div class="num sub">
             <span><span class="sans muted">今日 </span><span :class="dir(today)">{{ signed(today) }}</span></span>
@@ -113,6 +115,7 @@ async function cancel(id: number) {
           <div><dt>市值</dt><dd>{{ money(me.stock_value) }}</dd></div>
           <div><dt>浮动盈亏</dt><dd :class="dir(floating)">{{ signed(floating) }}</dd></div>
         </dl>
+        <CreditPanel v-if="me" :me="me" />
         <RestructureEntry v-if="me" :me="me" />
         <nav class="menu desk-only" aria-label="更多">
           <RouterLink to="/rank"><span>排行</span><span class="num v">{{ rank ? `第 ${rank} 名` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
@@ -164,7 +167,7 @@ async function cancel(id: number) {
             <tbody>
               <tr v-for="o in account.orders" :key="o.id">
                 <td class="tt"><RouterLink :to="`/stocks/${o.stock.id}`" class="serif clamp1">{{ o.stock.title }}</RouterLink></td>
-                <td :class="o.side === 'buy' ? 'up' : 'down'">{{ o.side === 'buy' ? '买入' : '卖出' }}</td>
+                <td :class="o.side === 'buy' ? 'up' : 'down'">{{ o.credit ? MODE_LABEL[o.credit] : o.side === 'buy' ? '买入' : '卖出' }}</td>
                 <td class="num">{{ o.price != null ? money(o.price) : '市价' }}</td>
                 <td class="num">{{ qty(o.quantity) }}</td>
                 <td class="num">{{ qty(o.filled_quantity) }}</td>
@@ -175,7 +178,7 @@ async function cancel(id: number) {
           </table>
           <div v-for="o in account.orders ?? []" :key="o.id" class="ord phone-only">
             <RouterLink :to="`/stocks/${o.stock.id}`" class="serif clamp1 t">{{ o.stock.title }}</RouterLink>
-            <span class="oside" :class="o.side === 'buy' ? 'up' : 'down'">{{ o.side === 'buy' ? '买入' : '卖出' }}</span>
+            <span class="oside" :class="o.side === 'buy' ? 'up' : 'down'">{{ o.credit ? MODE_LABEL[o.credit] : o.side === 'buy' ? '买入' : '卖出' }}</span>
             <span class="num m">{{ o.price != null ? money(o.price) : '市价' }} · 已成交 {{ qty(o.filled_quantity) }}/{{ qty(o.quantity) }}</span>
             <button type="button" class="linkbtn" :disabled="cancelling === o.id" @click="cancel(o.id)">{{ cancelling === o.id ? '撤单中' : '撤单' }}</button>
           </div>

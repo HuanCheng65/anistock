@@ -135,6 +135,12 @@ pub enum WsServerMessage {
         frozen_cash: Money,
         available_cash: Money,
     },
+    /// 信用账户状态变化（追保、强制平仓、穿仓、恢复正常）；status 为 null 表示信用账户已关闭
+    Credit {
+        seq: u64,
+        status: Option<String>,
+        call_day: Option<TradingDay>,
+    },
     Event(super::events::Event),
 }
 
