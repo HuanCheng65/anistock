@@ -84,7 +84,7 @@ def main() -> None:
         last = rows[-1]
         ipo = round(rows[0]["pc"] * 100)
         create_company(conn, cfg, s, rows[0]["d"], day, ts, [], markets, aud, res["macro"][-1]["rate"], 0,
-                       ipo_price=ipo, float_on_book=False)
+                       ipo_price=ipo)
         # the company's cash (retained earnings + kept IPO money) carries over: it is part of its value
         book_cash = round(last.get("book", 0) * 100) * cfg.params["company"]["shares"]
         acct = conn.execute("SELECT id FROM accounts WHERE kind='company' AND company_id=?", (sid,)).fetchone()["id"]

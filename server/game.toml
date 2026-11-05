@@ -32,6 +32,10 @@ transfer_ratio = 0.25          # share of weekly taxes paid back to players equa
 delist_after_weeks = 8         # finished and earning under delist_revenue_share for this many weeks
 delist_revenue_share = 0.0005  # of total weekly revenue
 min_listing_popularity = 3000  # AniList list entries
+# IPO: Hong Kong-style public offer with ballot and clawback (公开发售 + 抽签 + 回拨)
+ipo_subscription_days = 3      # subscription window, ending the day before listing
+ipo_public_base = 0.5          # share of the float offered to players (HK base is 10%; scaled up for a small club)
+ipo_clawback = [[15, 0.7], [50, 0.8], [100, 0.9]]   # [oversubscription multiple, public share of the float]
 
 [npc]
 market_maker_cash = 30000      # 币 per market maker (one per stock)

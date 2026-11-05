@@ -39,7 +39,8 @@ class Show:
     episodes_known: bool = True
 
 
-def load_shows(db_path: Path, p: dict, start: date, end: date | None) -> tuple[list[Show], date]:
+def load_shows(db_path: Path, p: dict, start: date, end: date | None,
+               upcoming_days: int = 0) -> tuple[list[Show], date]:
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     latest = {}
     for mid, data in db.execute(
@@ -87,7 +88,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None) -> tuple[l
         s.episodes_known = s.episodes is not None
         if s.episodes is None and not s.long_runner:
             s.episodes = v["default_episodes"]
-        if s.list_day > end:
+        if s.list_day > end + timedelta(days=upcoming_days):   # the game opens subscriptions ahead of listing
             continue
         shows.append(s)
     return shows, end

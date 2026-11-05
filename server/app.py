@@ -486,6 +486,7 @@ async def stock(company_id: int, player=Depends(optional_player)):
         "audiences": _audiences(company_id),
         "news": [dict(r) for r in c.execute("SELECT id, day, kind, title, body FROM news WHERE company_id=? ORDER BY id DESC LIMIT 20",
                                             (company_id,))],
+        "ipo": ipo_json(co, player["id"] if player else None) if co["sub_start"] else None,
     }
     if player:
         pos = next((p for p in portfolio_rows(player["id"]) if p["company_id"] == company_id), None)
@@ -608,6 +609,90 @@ async def my_ledger(player=Depends(current_player)):
                         (player["id"], player["id"])).fetchall()
     return {"entries": [{"ts": r["ts"], "reason": r["reason"], "title": r["title"],
                          "amount": yuan(r["amount"] if r["to_id"] == player["id"] else -r["amount"])} for r in rows]}
+
+
+# ---------------------------------------------------------------- IPO subscription (公开认购)
+
+def ipo_json(co, player_id: int | None) -> dict:
+    c = db()
+    float_qty = round(co["shares"] * cfg.params["company"]["ipo_float"])
+    base = round(float_qty * cfg.game["ipo_public_base"])
+    agg = c.execute("SELECT COALESCE(SUM(qty),0) q, COUNT(*) n, COALESCE(SUM(allotted),0) a FROM ipo_applications WHERE company_id=?",
+                    (co["id"],)).fetchone()
+    mine = c.execute("SELECT qty, allotted FROM ipo_applications WHERE company_id=? AND account_id=?",
+                     (co["id"], player_id)).fetchone() if player_id else None
+    allotted = co["status"] != "subscribing"
+    over = agg["q"] / base if base else 0.0
+    return {
+        "id": co["id"], "code": co["code"], "title": co["title"], "title_ja": co["title_ja"],
+        "ipo_price": yuan(co["ipo_price"]), "sub_start": co["sub_start"], "sub_end": co["sub_end"],
+        "listed_on": co["listed_on"], "first_air": co["first_air"], "float_qty": float_qty, "base_public_qty": base,
+        "applied_qty": agg["q"], "applicants": agg["n"], "status": "allotted" if allotted else "open",
+        "my": {"qty": mine["qty"], "allotted": mine["allotted"]} if mine else None,
+        "result": {"oversubscribed": over, "public_qty": agg["a"], "ratio": agg["a"] / agg["q"] if agg["q"] else None}
+                  if allotted else None,
+    }
+
+
+@app.get("/api/ipos")
+async def ipos(player=Depends(optional_player)):
+    """Open subscriptions, plus allotments of the last two weeks."""
+    since = (date.fromisoformat(clock.today()) - timedelta(days=14)).isoformat()
+    rows = db().execute("""SELECT * FROM companies WHERE sub_start IS NOT NULL AND (status='subscribing' OR sub_end >= ?)
+                           ORDER BY status='subscribing' DESC, sub_end DESC""", (since,)).fetchall()
+    return {"ipos": [ipo_json(r, player["id"] if player else None) for r in rows]}
+
+
+class SubscribeIn(BaseModel):
+    qty: int = Field(ge=0, le=10_000_000)
+
+
+def _withdraw(c, company_id: int, account_id: int) -> None:
+    old = c.execute("SELECT frozen FROM ipo_applications WHERE company_id=? AND account_id=?", (company_id, account_id)).fetchone()
+    if old:
+        c.execute("UPDATE accounts SET cash_frozen = cash_frozen - ? WHERE id=?", (old["frozen"], account_id))
+        c.execute("DELETE FROM ipo_applications WHERE company_id=? AND account_id=?", (company_id, account_id))
+
+
+@app.post("/api/ipos/{company_id}/subscribe")
+async def subscribe(company_id: int, body: SubscribeIn, player=Depends(current_player)):
+    async with LOCK:
+        c = db()
+        co = c.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
+        if co is None or co["status"] != "subscribing":
+            raise HTTPException(400, "这支新股不在认购期")
+        today = clock.today()
+        if not (co["sub_start"] <= today <= co["sub_end"]):
+            raise HTTPException(400, f"认购时间是 {co['sub_start']} 至 {co['sub_end']}")
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            _withdraw(c, company_id, player["id"])
+            frozen = 0
+            if body.qty > 0:
+                frozen = fees().buy_reserve(co["ipo_price"], body.qty)
+                if ex.available_cash(c, player["id"]) < frozen:
+                    raise HTTPException(400, f"可用资金不足：认购 {body.qty:,} 股需要冻结 {frozen / 100:,.2f} 币")
+                c.execute("UPDATE accounts SET cash_frozen = cash_frozen + ? WHERE id=?", (frozen, player["id"]))
+                c.execute("INSERT INTO ipo_applications(company_id, account_id, qty, frozen, created_at) VALUES (?,?,?,?,?)",
+                          (company_id, player["id"], body.qty, frozen, clock.ts()))
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+    return {"ok": True, "qty": body.qty, "frozen": yuan(frozen)}
+
+
+@app.delete("/api/ipos/{company_id}/subscribe")
+async def unsubscribe(company_id: int, player=Depends(current_player)):
+    async with LOCK:
+        c = db()
+        co = c.execute("SELECT status FROM companies WHERE id=?", (company_id,)).fetchone()
+        if co is None or co["status"] != "subscribing":
+            raise HTTPException(400, "认购已经截止，不能撤回")
+        c.execute("BEGIN IMMEDIATE")
+        _withdraw(c, company_id, player["id"])
+        c.execute("COMMIT")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- community

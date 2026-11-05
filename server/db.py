@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS companies (
     long_runner   INTEGER NOT NULL DEFAULT 0,
     first_air     TEXT NOT NULL,
     listed_on     TEXT NOT NULL,
-    status        TEXT NOT NULL,          -- listed | delisted
+    status        TEXT NOT NULL,          -- subscribing | listed | delisted
+    sub_start     TEXT,                   -- IPO subscription window (inclusive)
+    sub_end       TEXT,
     shares        INTEGER NOT NULL,
     ipo_price     INTEGER NOT NULL,
     prev_close    INTEGER NOT NULL,       -- yesterday's close (daily change, auction tie-break)
@@ -63,6 +65,17 @@ CREATE TABLE IF NOT EXISTS holdings (
     qty         INTEGER NOT NULL DEFAULT 0,
     qty_frozen  INTEGER NOT NULL DEFAULT 0,   -- reserved by open sell orders
     PRIMARY KEY (account_id, company_id)
+);
+
+-- IPO subscriptions (公开认购): one per player per company; cash frozen at the IPO price until allotment
+CREATE TABLE IF NOT EXISTS ipo_applications (
+    company_id  INTEGER NOT NULL,
+    account_id  INTEGER NOT NULL,
+    qty         INTEGER NOT NULL,
+    frozen      INTEGER NOT NULL,
+    allotted    INTEGER,                   -- NULL until allotment
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (company_id, account_id)
 );
 
 -- FIFO lots: holding period decides the dividend tax rate

@@ -60,3 +60,54 @@ def test_holding_tax_schedule():
     assert daily.holding_tax_rate(cfg, "2026-11-05", "2026-11-08") == 0.20
     assert daily.holding_tax_rate(cfg, "2026-10-01", "2026-11-08") == 0.10
     assert daily.holding_tax_rate(cfg, "2026-06-01", "2026-11-08") == 0.0
+
+
+def _subscribing(conn, cfg):
+    conn.execute("UPDATE companies SET status='delisted' WHERE id=1")   # the fixture's other company is not used here
+    conn.execute("""INSERT INTO companies(id, code, title, first_air, listed_on, status, sub_start, sub_end, shares,
+                    ipo_price, prev_close, last_price) VALUES (2, '100002', '新番', '2026-12-01', '2026-11-10',
+                    'subscribing', '2026-11-06', '2026-11-09', 10000, 500, 500, 500)""")
+    for kind in ("company", "committee"):
+        conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES (?, ?, 2, ?)", (kind, kind, TS))
+    committee = conn.execute("SELECT id FROM accounts WHERE kind='committee' AND company_id=2").fetchone()[0]
+    ex.add_shares(conn, committee, 2, 7500, 500, "2026-11-10")
+    return committee
+
+
+def _apply(conn, name, qty, cash=10_000_000):
+    world = conn.execute("SELECT id FROM accounts WHERE kind='world'").fetchone()[0]
+    pid = conn.execute("INSERT INTO accounts(kind, name, username, created_at) VALUES ('player',?,?,?)", (name, name, TS)).lastrowid
+    ex.transfer(conn, world, pid, cash, "grant", day=DAY, ts=TS)
+    frozen = ex.Fees().buy_reserve(500, qty)
+    conn.execute("UPDATE accounts SET cash_frozen = cash_frozen + ? WHERE id=?", (frozen, pid))
+    conn.execute("INSERT INTO ipo_applications(company_id, account_id, qty, frozen, created_at) VALUES (2,?,?,?,?)",
+                 (pid, qty, frozen, TS + name))
+    return pid
+
+
+def test_undersubscribed_ipo_fills_everyone_and_founders_keep_the_rest(conn):
+    cfg = load()
+    committee = _subscribing(conn, cfg)
+    a, b = _apply(conn, "a", 600), _apply(conn, "b", 400)
+    daily.allot(conn, cfg, dict(conn.execute("SELECT * FROM companies WHERE id=2").fetchone()), DAY, TS, {"exported": 0})
+    assert ex.available_shares(conn, a, 2) == 600 and ex.available_shares(conn, b, 2) == 400
+    assert ex.available_shares(conn, committee, 2) == 7500 + 1500
+    assert conn.execute("SELECT SUM(cash_frozen) FROM accounts WHERE kind='player'").fetchone()[0] == 0
+    assert conn.execute("SELECT status FROM companies WHERE id=2").fetchone()[0] == "listed"
+    gdb.check_invariants(conn)
+
+
+def test_oversubscribed_ipo_claws_back_and_ballots(conn):
+    cfg = load()
+    _subscribing(conn, cfg)
+    # base public tranche 1250; 25,000 applied = 20x -> clawback to 70% of the 2,500 float = 1,750
+    pids = [_apply(conn, f"p{i}", q) for i, q in enumerate([10_000, 10_000, 4_000, 1_000])]
+    daily.allot(conn, cfg, dict(conn.execute("SELECT * FROM companies WHERE id=2").fetchone()), DAY, TS, {"exported": 0})
+    got = [ex.available_shares(conn, p, 2) for p in pids]
+    assert sum(got) == 1750
+    assert [round(x / 25_000 * 1750) for x in (10_000, 10_000, 4_000, 1_000)] == [700, 700, 280, 70]
+    assert all(abs(g - e) <= 1 for g, e in zip(got, [700, 700, 280, 70]))
+    assert conn.execute("SELECT SUM(cash_frozen) FROM accounts WHERE kind='player'").fetchone()[0] == 0
+    news = conn.execute("SELECT title FROM news WHERE kind='allotment'").fetchone()[0]
+    assert "20.0 倍" in news
+    gdb.check_invariants(conn)

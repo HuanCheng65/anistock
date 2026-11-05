@@ -37,7 +37,8 @@ MARKET_KINDS = ("player", "mm", "noise", "committee", "company")
 def load_inputs(cfg: Config, conn, day: str):
     p = cfg.params
     start = date.fromisoformat(gdb.get_state(conn, "window_start"))
-    shows, _ = E.load_shows(cfg.collector_db, p, start, date.fromisoformat(day))
+    shows, _ = E.load_shows(cfg.collector_db, p, start, date.fromisoformat(day),
+                            upcoming_days=cfg.game["ipo_subscription_days"] + 1)
     mpath = ROOT / "data" / "derived" / "markets.json"
     markets = {int(k): v for k, v in json.loads(mpath.read_text(encoding="utf-8"))["series"].items()} if mpath.exists() else {}
     aud = E.load_audiences(cfg.collector_db)
@@ -211,7 +212,9 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
 
         refresh_titles(conn, cfg)
 
-        # 8. new listings for tomorrow
+        # 8. allot subscriptions that closed today, then open new ones
+        for c in conn.execute("SELECT * FROM companies WHERE status='subscribing' AND sub_end<=?", (day,)).fetchall():
+            allot(conn, cfg, dict(c), day, ts, summary)
         list_new(conn, cfg, day, ts, shows, listed_shows, markets, aud, rate, demand_week)
 
         m2 = conn.execute(f"SELECT COALESCE(SUM(cash),0) FROM accounts WHERE kind IN {MARKET_KINDS}").fetchone()[0]
@@ -397,24 +400,30 @@ def refresh_titles(conn, cfg: Config) -> None:
 
 def list_new(conn, cfg: Config, day: str, ts: str, shows: dict, listed_shows: list, markets, aud,
              rate: float, demand_week: float) -> None:
-    """List shows whose premiere is within ipo_lead_days of tomorrow. The float goes on the book at the IPO
-    price, first come first served; the company keeps unsold shares on offer."""
+    """Open IPO subscriptions for shows that list within the subscription window. A show lists
+    `ipo_lead_days` before its premiere; its subscription runs the `ipo_subscription_days` before that."""
     p, g = cfg.params, cfg.game
     tomorrow = date.fromisoformat(day) + timedelta(days=1)
     lead = p["universe"]["ipo_lead_days"]
+    window = g["ipo_subscription_days"]
     existing = {r["id"] for r in conn.execute("SELECT id FROM companies").fetchall()}
     for s in shows.values():
         if s.id in existing or s.popularity_end < g["min_listing_popularity"]:
             continue
-        if not (s.first_air - timedelta(days=lead) <= tomorrow):
+        if not (s.first_air - timedelta(days=lead + window) <= tomorrow):
             continue
         if s.first_air < tomorrow - timedelta(days=60) and not s.long_runner:
             continue                                   # long finished before the game noticed it
-        create_company(conn, cfg, s, tomorrow.isoformat(), day, ts, listed_shows, markets, aud, rate, demand_week)
+        listed_on = max(s.first_air - timedelta(days=lead), tomorrow + timedelta(days=window))
+        create_company(conn, cfg, s, listed_on.isoformat(), day, ts, listed_shows, markets, aud, rate, demand_week,
+                       subscription=(tomorrow.isoformat(), (listed_on - timedelta(days=1)).isoformat()))
 
 
 def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, listed_shows, markets, aud,
-                   rate: float, demand_week: float, ipo_price: int | None = None, float_on_book: bool = True) -> int:
+                   rate: float, demand_week: float, ipo_price: int | None = None,
+                   subscription: tuple[str, str] | None = None) -> int:
+    """Create a company with its accounts. With `subscription` (start, end) it opens an IPO subscription
+    and the public float is created at allotment; without it (launch seeding) the market maker holds the float."""
     p, co = cfg.params, cfg.params["company"]
     shares = co["shares"]
     title = cn_titles(cfg).get(s.id) or s.title
@@ -426,13 +435,16 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
         ipo_price = max(round(co["ipo_price_min"] * 100), round(v * (1 - co["ipo_discount"])))
     n = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     code = f"{100001 + n}"
+    status = "subscribing" if subscription else "listed"
+    sub_start, sub_end = subscription or (None, None)
     conn.execute("""INSERT INTO companies(id, code, title, title_ja, title_en, studio, episodes, long_runner, first_air,
-                    listed_on, status, shares, ipo_price, prev_close, last_price, fair_value)
-                    VALUES (?,?,?,?,?,?,?,?,?,?, 'listed', ?,?,?,?,?)""",
+                    listed_on, status, sub_start, sub_end, shares, ipo_price, prev_close, last_price, open_ref, fair_value)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                  (s.id, code, title, s.title, s.title_en, s.studio, s.episodes if s.episodes_known else None,
-                  int(s.long_runner), s.first_air.isoformat(), listed_on, shares, ipo_price, ipo_price, ipo_price, ipo_price))
-    company_acct = conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('company', ?, ?, ?)",
-                                (f"{title} 公司账户", s.id, ts)).lastrowid
+                  int(s.long_runner), s.first_air.isoformat(), listed_on, status, sub_start, sub_end, shares,
+                  ipo_price, ipo_price, ipo_price, ipo_price, ipo_price))
+    conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('company', ?, ?, ?)",
+                 (f"{title} 公司账户", s.id, ts))
     committee = conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('committee', ?, ?, ?)",
                              (f"{title} 制作委员会", s.id, ts)).lastrowid
     world = gdb.special(conn, "world")
@@ -441,14 +453,76 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
     ex.transfer(conn, world, mm, round(cfg.npc["market_maker_cash"] * 100), "grant", day=day, ts=ts, company_id=s.id)
     float_qty = round(shares * co["ipo_float"])
     ex.add_shares(conn, committee, s.id, shares - float_qty, ipo_price, listed_on)
-    if float_on_book:
-        ex.add_shares(conn, company_acct, s.id, float_qty, ipo_price, listed_on)
-        conn.execute("UPDATE holdings SET qty_frozen = ? WHERE account_id=? AND company_id=?", (float_qty, company_acct, s.id))
-        conn.execute("""INSERT INTO orders(account_id, company_id, side, kind, price, qty, status, created_at, updated_at)
-                        VALUES (?,?, 'sell', 'limit', ?, ?, 'open', ?, ?)""", (company_acct, s.id, ipo_price, float_qty, ts, ts))
-        news(conn, day, ts, "ipo", f"新股上市：《{title}》（{code}）",
-             f"{listed_on} 上市，发行价 {ipo_price / 100:.2f} 币，公开发行 {float_qty:,} 股，先到先得。"
-             f"首播日 {s.first_air.isoformat()}。", s.id)
+    if subscription:
+        base = round(float_qty * cfg.game["ipo_public_base"])
+        news(conn, day, ts, "ipo", f"新股认购：《{title}》（{code}）",
+             f"{sub_start} 至 {sub_end} 开放认购，发行价 {ipo_price / 100:.2f} 币，公开发售 {base:,} 股"
+             f"（超额认购 15/50/100 倍时回拨到 70%/80%/90% 的流通盘）。{listed_on} 上市，首播日 {s.first_air.isoformat()}。",
+             s.id)
     else:
         ex.add_shares(conn, mm, s.id, float_qty, ipo_price, listed_on)
     return s.id
+
+
+def public_share(cfg: Config, oversubscribed: float) -> float:
+    """Share of the float that goes to the public after clawback (回拨)."""
+    frac = cfg.game["ipo_public_base"]
+    for multiple, f in cfg.game["ipo_clawback"]:
+        if oversubscribed >= multiple:
+            frac = f
+    return frac
+
+
+def allot(conn, cfg: Config, c: dict, day: str, ts: str, summary: dict) -> None:
+    """Close a subscription: allot pro rata with a ballot for the odd shares, collect payment, release the
+    rest, give unsold shares to the rights holders, pay the studio fee, and list the company."""
+    import random
+    fees = ex.Fees(commission=cfg.game["commission"], stamp_duty=cfg.game["stamp_duty"])
+    world = gdb.special(conn, "world")
+    company_acct = account_of(conn, "company", c["id"])
+    committee = account_of(conn, "committee", c["id"])
+    price = c["ipo_price"]
+    float_qty = round(c["shares"] * cfg.params["company"]["ipo_float"])
+    base = round(float_qty * cfg.game["ipo_public_base"])
+    apps = [dict(r) for r in conn.execute("SELECT * FROM ipo_applications WHERE company_id=? ORDER BY created_at, account_id",
+                                          (c["id"],)).fetchall()]
+    total = sum(a["qty"] for a in apps)
+    over = total / base if base else 0.0
+    public = min(total, round(float_qty * public_share(cfg, over)))
+    if total <= public:
+        for a in apps:
+            a["allotted"] = a["qty"]
+    else:
+        ratio = public / total
+        for a in apps:
+            a["allotted"] = math.floor(a["qty"] * ratio)
+        left = public - sum(a["allotted"] for a in apps)
+        rng = random.Random(c["id"])                  # the ballot (抽签) for the odd shares
+        while left > 0:
+            pool = [a for a in apps if a["allotted"] < a["qty"]]
+            if not pool:
+                break
+            a = rng.choices(pool, weights=[x["qty"] - x["allotted"] for x in pool])[0]
+            a["allotted"] += 1
+            left -= 1
+    proceeds = 0
+    for a in apps:
+        conn.execute("UPDATE accounts SET cash_frozen = cash_frozen - ? WHERE id=?", (a["frozen"], a["account_id"]))
+        cost = a["allotted"] * price
+        if cost:
+            ex.transfer(conn, a["account_id"], company_acct, cost, "ipo", day=day, ts=ts, company_id=c["id"])
+            ex.transfer(conn, a["account_id"], world, fees.commission_on(cost), "commission", day=day, ts=ts, company_id=c["id"])
+            ex.add_shares(conn, a["account_id"], c["id"], a["allotted"], price, c["listed_on"])
+            proceeds += cost
+        conn.execute("UPDATE ipo_applications SET allotted=?, frozen=0 WHERE company_id=? AND account_id=?",
+                     (a["allotted"], c["id"], a["account_id"]))
+    allotted = sum(a["allotted"] for a in apps)
+    ex.add_shares(conn, committee, c["id"], float_qty - allotted, price, c["listed_on"])   # unsold: founders keep them
+    fee = round(proceeds * cfg.params["company"]["production_fee_ratio"])
+    ex.transfer(conn, company_acct, world, fee, "production_fee", day=day, ts=ts, company_id=c["id"])
+    summary["exported"] += fee
+    conn.execute("UPDATE companies SET status='listed' WHERE id=?", (c["id"],))
+    rate_txt = f"中签率 {allotted / total:.1%}" if total else "无人认购"
+    news(conn, day, ts, "allotment", f"《{c['title']}》认购结果：超额认购 {over:.1f} 倍",
+         f"共 {len(apps)} 人认购 {total:,} 股，公开发售 {public:,} 股（流通盘的 {public_share(cfg, over):.0%}），{rate_txt}。"
+         f"未售出的 {float_qty - allotted:,} 股由制作委员会持有。{c['listed_on']} 上市交易。", c["id"])
