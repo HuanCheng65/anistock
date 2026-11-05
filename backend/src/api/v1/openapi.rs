@@ -49,6 +49,13 @@ const REQUESTS: &[&str] = &[
 fn require_all(v: &mut Value) {
     match v {
         Value::Object(o) => {
+            // a free-form object (`details`, event `data`): any keys, not "no keys"
+            if o.get("type") == Some(&Value::String("object".into()))
+                && !o.contains_key("properties")
+                && !o.contains_key("additionalProperties")
+            {
+                o.insert("additionalProperties".into(), Value::Bool(true));
+            }
             if let Some(Value::Object(props)) = o.get("properties") {
                 let keys: Vec<Value> = props.keys().map(|k| Value::String(k.clone())).collect();
                 o.insert("required".into(), Value::Array(keys));

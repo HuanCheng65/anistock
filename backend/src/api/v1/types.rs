@@ -546,7 +546,6 @@ pub struct DividendPaid {
 pub struct NpcHolders {
     pub total: i64,
     /// 按主体类型（value、trend、news、retail）；NPC 市场能给出之前为 null
-    #[schema(value_type = Option<Object>)]
     pub by_style: Option<std::collections::BTreeMap<String, i64>>,
 }
 

@@ -71,7 +71,7 @@ pub enum WsServerMessage {
         rejected: Vec<WsRejected>,
     },
     Pong {
-        #[schema(value_type = Object)]
+        #[schema(value_type = i64)]
         ping: Value,
     },
     Time {
@@ -150,7 +150,7 @@ pub struct WsClientMessage {
     pub since: HashMap<String, i64>,
     #[serde(default)]
     pub resync: Vec<String>,
-    #[schema(value_type = Option<Object>)]
+    #[schema(value_type = Option<i64>)]
     pub ping: Option<Value>,
 }
 
