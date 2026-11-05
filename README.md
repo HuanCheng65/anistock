@@ -153,7 +153,8 @@ journalctl --user -u anistock-server -n 50 --no-pager
 - 新一季的番刚上来时显示的是日文名：在开发机上跑一次 `sim/match.py --search` 并提交，就会换成 Bangumi 的中文名
 - 更新代码后：`git pull && uv sync && (cd web && npm ci && npm run build) && systemctl --user restart anistock-server`
 - 重新开服（**会删除所有玩家**）：`uv run python -m server.seed --force`
-- 目前没有数据库迁移：如果某次更新改了游戏数据库的表结构（提交说明里会写），旧的 `data/game.db` 用不了，需要重新开服。开服后真正有人玩了，再加迁移脚本
+- 表结构变化用迁移脚本管理（`server/migrations/`，yoyo-migrations）：服务启动时自动执行未执行过的迁移，执行前先把数据库备份到 `data/backups/`。已发布的迁移文件不要再改，有变化就加新文件
+- 每天日结后自动备份一次游戏数据库到 `data/backups/`，保留最近 7 天
 
 ### 每季开始时（手动）
 

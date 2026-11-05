@@ -54,8 +54,8 @@ def main() -> None:
     a_ref = sum(sum(E.attention(s, start + timedelta(days=k), rv) for s in shows if s.list_day <= start + timedelta(days=k))
                 for k in range(7)) / 7 or 1.0
 
+    gdb.init(cfg.game_db)
     conn = gdb.connect(cfg.game_db)
-    gdb.init(conn)
     clock = Clock(cfg.tz)
     ts = clock.ts()
     day = end.isoformat()

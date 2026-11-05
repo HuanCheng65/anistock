@@ -192,8 +192,19 @@ def refresh_inputs() -> None:
             log.exception("%s failed", " ".join(args))
 
 
+BACKUPS_KEPT = 7
+
+
+def daily_backup(c, day: str) -> None:
+    """One copy per closed day in data/backups/; the newest BACKUPS_KEPT are kept."""
+    folder = cfg.game_db.parent / "backups"
+    gdb.backup(c, folder / f"{cfg.game_db.stem}-{day}.db")
+    for old in sorted(folder.glob(f"{cfg.game_db.stem}-2*.db"))[:-BACKUPS_KEPT]:
+        old.unlink()
+
+
 def catch_up() -> list[dict]:
-    """Close every day from the last closed one up to yesterday (uses its own connection)."""
+    """Close every day from the last closed one up to yesterday (uses its own connection), then back up."""
     c = gdb.connect(cfg.game_db)
     out = []
     last = gdb.get_state(c, "last_closed")
@@ -202,6 +213,8 @@ def catch_up() -> list[dict]:
     while d <= yesterday:
         out.append(daily.run_day(c, cfg, d.isoformat(), clock.ts()))
         d += timedelta(days=1)
+    if out:
+        daily_backup(c, yesterday.isoformat())
     c.close()
     return out
 
@@ -227,6 +240,9 @@ async def lifespan(_app: FastAPI):
     global conn, SECRET
     if not cfg.game_db.exists():
         raise SystemExit(f"{cfg.game_db} missing: run `uv run python -m server.seed` first")
+    applied = gdb.init(cfg.game_db)                # schema migrations; backs up first when players exist
+    if applied:
+        log.warning("applied database migrations: %s", applied)
     conn = gdb.connect(cfg.game_db)
     if cfg.secret == b"dev-only-secret-change-me":
         # never sign sessions with a key that is in the source code: keep a random one in the game DB

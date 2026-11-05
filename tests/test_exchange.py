@@ -11,9 +11,9 @@ RULES = ex.Rules()
 
 
 @pytest.fixture
-def conn():
-    c = gdb.connect(":memory:")
-    gdb.init(c)
+def conn(tmp_path):
+    gdb.init(tmp_path / "game.db")
+    c = gdb.connect(tmp_path / "game.db")
     for kind in ("world", "cb", "gov"):
         c.execute("INSERT INTO accounts(kind, name, created_at) VALUES (?,?,?)", (kind, kind, TS))
     c.execute("""INSERT INTO companies(id, code, title, first_air, listed_on, status, shares, ipo_price, prev_close, last_price)
