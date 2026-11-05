@@ -148,7 +148,9 @@ journalctl --user -u anistock-server -n 50 --no-pager
 浏览器打开 `http://服务器地址:8080`，用邀请码注册。
 
 - 每天 06:30 服务端自动结算前一天（采集器 06:00 先跑）；服务停过也会在启动后补上错过的日子
-- 交易时间 09:00–23:00，可在 `server/game.toml` 里改
+- 每天 08:45–09:00 开盘集合竞价，09:00–23:00 连续交易，可在 `server/game.toml` 里改；交易规则（冷静期、新股认购等）见设计文档
+- 新股在“新股认购”页（`/ipo`）认购
+- 新一季的番刚上来时显示的是日文名：在开发机上跑一次 `sim/match.py --search` 并提交，就会换成 Bangumi 的中文名
 - 更新代码后：`git pull && uv sync && (cd web && npm ci && npm run build) && systemctl --user restart anistock-server`
 - 重新开服（**会删除所有玩家**）：`uv run python -m server.seed --force`
 - 目前没有数据库迁移：如果某次更新改了游戏数据库的表结构（提交说明里会写），旧的 `data/game.db` 用不了，需要重新开服。开服后真正有人玩了，再加迁移脚本

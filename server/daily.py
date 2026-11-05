@@ -202,8 +202,11 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
                 maybe_delist(conn, cfg, day, ts, c, s, total_week_rev, summary)
 
         # 6. orders are good for the day only (当日有效); the IPO offer stays on the book
+        # (only orders from the closing day or earlier: a late close, e.g. after a restart during trading
+        # hours, must not cancel what players placed today)
         for o in conn.execute("""SELECT o.* FROM orders o JOIN accounts a ON a.id = o.account_id
-                                 WHERE o.status='open' AND a.kind != 'company'""").fetchall():
+                                 WHERE o.status='open' AND a.kind != 'company' AND o.created_at < ?""",
+                              ((d + timedelta(days=1)).isoformat(),)).fetchall():
             ex._close(conn, o, "cancelled", ts)
 
         # 7. candles and next day's reference price
@@ -377,6 +380,10 @@ def close_candle(conn, c, day: str) -> None:
         v = 0
     conn.execute("""INSERT OR REPLACE INTO candles(company_id, day, open, high, low, close, volume, source)
                     VALUES (?,?,?,?,?,?,?, 'live')""", (c["id"], day, o, h, lo, cl, v))
+    if conn.execute("SELECT 1 FROM trades WHERE company_id=? AND day>? LIMIT 1", (c["id"], day)).fetchone():
+        # a late close while the next day is already trading: keep today's price, anchor and cooling state
+        conn.execute("UPDATE companies SET prev_close=? WHERE id=?", (cl, c["id"]))
+        return
     conn.execute("""UPDATE companies SET prev_close=?, last_price=?, open_ref=?, vcm_until=NULL, vcm_low=NULL,
                     vcm_high=NULL, vcm_count=0 WHERE id=?""", (cl, cl, cl, c["id"]))
 
