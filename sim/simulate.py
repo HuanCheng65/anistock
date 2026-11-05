@@ -47,7 +47,9 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
     weights = p["markets"]
     shares = co["shares"]
 
-    hh_cash = p["economy"]["players"] * p["economy"]["initial_cash"]
+    hh_cash = p["economy"]["players"] * p["economy"]["initial_cash"] + p["economy"].get("npc_cash", 0)
+    exported = 0.0    # money that left the game economy today (rights holders' dividends, studio fees)
+    founders = co.get("founder_share", 0.0)
     bills = 0.0
     gov = 0.0
     rate = cb["r_neutral"]
@@ -74,6 +76,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
     while d <= end:
         created = 0.0
         injected = 0.0
+        exported = 0.0
         taxes_today = {"corp": 0.0, "dividend": 0.0, "stamp": 0.0}
 
         # 1. IPOs, priced at fundamental value minus the IPO discount
@@ -95,14 +98,17 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
             if s.list_day == d and s.id not in listed:
                 own_share, _ = blended_share(trail[s.id], tot_prev, weights)
                 exp_rev = rv["demand_base_week"] * own_share
-                exp_div = exp_rev * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
+                exp_div = exp_rev * (1 - co.get("operating_cost_ratio", 0.0)) * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
                 v0 = fundamental(s, d, exp_div, 0.0, rate, p, exp_div, use_preair=not has_real_data(s, d, val))
                 ipo_price = max(co["ipo_price_min"], v0 * (1 - co["ipo_discount"]))
                 raise_amt = ipo_price * shares * co["ipo_float"]   # founders keep the rest, no cash changes hands
                 hh_cash -= raise_amt
                 fee = raise_amt * co["production_fee_ratio"]
                 co_cash[s.id] += raise_amt - fee
-                hh_cash += fee
+                if co.get("fees_leave_economy"):
+                    exported += fee          # paid to the real-world studio
+                else:
+                    hh_cash += fee
                 listed.add(s.id)
                 price[s.id] = prev_price[s.id] = ipo_price
 
@@ -116,11 +122,15 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
             rev = demand_day * share
             rev_by_market[sid] = {m: demand_day * parts[m] for m in MARKETS}
             injected += rev
-            tax = rev * co["corp_tax"]
-            co_cash[sid] += rev - tax
+            # operating costs (distribution, studio, marketing) are paid to outside parties
+            cost = rev * co.get("operating_cost_ratio", 0.0)
+            exported += cost
+            profit = rev - cost
+            tax = profit * co["corp_tax"]
+            co_cash[sid] += profit - tax
             gov += tax
             taxes_today["corp"] += tax
-            profit_week[sid] += rev - tax
+            profit_week[sid] += profit - tax
             revenue_hist[sid].append(rev)
 
         # 3. weekly dividends (Sunday)
@@ -129,10 +139,13 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
                 div = max(0.0, profit_week[sid] * co["payout_ratio"])
                 div = min(div, co_cash[sid])
                 co_cash[sid] -= div
-                t = div * co["dividend_tax"]
+                # rights holders (制作委员会) own `founders` of the shares; their dividends leave the economy
+                out = div * founders
+                exported += out
+                t = (div - out) * co["dividend_tax"]
                 gov += t
                 taxes_today["dividend"] += t
-                hh_cash += div - t
+                hh_cash += div - out - t
                 profit_week[sid] = 0.0
 
         # 4. interest (created by the central bank)
@@ -166,7 +179,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
             use_pre = not has_real_data(s, d, val)
             pre_share, _ = blended_share(exp_cache[s.id], exp_tot, weights)
             preair_weekly = demand_day * 7 * pre_share
-            preair_div = preair_weekly * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
+            preair_div = preair_weekly * (1 - co.get("operating_cost_ratio", 0.0)) * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
             if since_premiere < 7:
                 # premiere week: real revenue for the days that happened, the pre-air expectation for the
                 # rest. Scaling 2 days of premiere spike by 7/2 would overshoot.
@@ -175,7 +188,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
             else:
                 hist = revenue_hist[s.id][-7:]
                 weekly_rev = sum(hist) * 7 / max(1, len(hist))
-            weekly_div = weekly_rev * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
+            weekly_div = weekly_rev * (1 - co.get("operating_cost_ratio", 0.0)) * (1 - co["corp_tax"]) * co["payout_ratio"] / shares
             book = co_cash[s.id] / shares
             V = fundamental(s, d, weekly_div, book, rate, p, preair_div, use_preair=use_pre)
 
@@ -226,7 +239,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
 
         # conservation check
         total = hh_cash + bills + sum(co_cash.values()) + gov
-        expected = total_prev + injected + created
+        expected = total_prev + injected + created - exported
         assert abs(total - expected) < 1e-6 * max(1.0, total), f"ledger leak on {d}: {total - expected}"
         assert hh_cash >= 0 and gov >= 0, f"negative balance on {d}: households={hh_cash:.0f} gov={gov:.0f}"
         total_prev = total
@@ -239,7 +252,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
             "gov": round(gov, 2), "injected": round(injected, 2), "interest": round(created, 2),
             "tax_corp": round(taxes_today["corp"], 2), "tax_div": round(taxes_today["dividend"], 2),
             "tax_stamp": round(taxes_today["stamp"], 2), "transfer": round(transfer, 2),
-            "mcap": round(mcap, 2), "listed": len(listed),
+            "mcap": round(mcap, 2), "listed": len(listed), "exported": round(exported, 2),
         })
         out_days.append(d)
         d += timedelta(days=1)
