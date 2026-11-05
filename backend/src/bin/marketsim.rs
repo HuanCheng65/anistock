@@ -26,6 +26,7 @@ fn main() {
     let mut threshold = 5.0;
     let mut probe = 0usize;
     let mut grow = None;
+    let mut allow_old_inputs = false;
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -44,6 +45,11 @@ fn main() {
                 continue;
             }
             "--probe-players" => probe = v.parse().expect("--probe-players"),
+            "--allow-old-inputs" => {
+                allow_old_inputs = true;
+                i += 1;
+                continue;
+            }
             "--grow" => {
                 let x: Vec<&str> = v.split(',').collect();
                 grow = Some((x[0].parse().expect("--grow n"), x[1].parse().expect("--grow days"), x[2].parse().expect("--grow cash")));
@@ -69,6 +75,7 @@ fn main() {
         foresight: None,
         probe: 0,
         grow,
+        allow_old_inputs,
     };
     let bots: Vec<BotKind> = match bots_arg.as_str() {
         "none" => vec![],

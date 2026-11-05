@@ -79,6 +79,24 @@ pub fn next_season_start(today: i64) -> i64 {
     n.map_or(today + 91, |n| n.num_days_from_ce() as i64)
 }
 
+/// Why the inputs cannot feed the fitted filter properly, if they can't: inputs written before v0.3.2 have no
+/// point-in-time prior and no observed/source flags, and every show's filter then starts from its first data
+/// (a much worse valuation that silently follows public heat with a delay). None when they are fine.
+pub fn inputs_schema_problem(fp: &FilterParams, inp: &crate::inputs::Inputs) -> Option<String> {
+    if !fp.prior_from_us || inp.shows.is_empty() {
+        return None;
+    }
+    let missing = inp.shows.iter().filter(|s| s.prior.is_none() || s.observed.is_none() || s.sources.is_none()).count();
+    (missing > 0).then(|| {
+        format!(
+            "{missing} of {} shows in the inputs for {} lack prior/observed/sources (inputs written before v0.3.2?): \
+             regenerate them with engine/daily_inputs.py (--from … --force)",
+            inp.shows.len(),
+            inp.day
+        )
+    })
+}
+
 /// Day number of `YYYY-MM-DD` (= Python `date.toordinal()`).
 pub fn day_no(s: &str) -> Option<i64> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(|d| d.num_days_from_ce() as i64)

@@ -104,6 +104,10 @@ Event { company_id, kind, direction(-1/0/1), magnitude(0-10), credibility(offici
 
 仿真输出一份报告（图表 + 指标表），作为 v0.3.0 的验收材料。
 
+**标准输入集。** 回放必须用和模型同一版本的每日输入。v0.3.2 起估值需要输入里的 `prior`（开播前一天冻结的“当时可知”预估）、`observed`、`sources`；用旧格式的输入回放，每部番的滤波都只能从第一批数据起步，估值会滞后于公开热度，“买最热的三支持有”之类的策略就会虚高（实测：旧输入下 hold_hottest +114% 对买入持有 +39%；标准输入下低于按市值买入持有）。所以 `marketsim` 遇到缺这些字段的输入会直接报错（`--allow-old-inputs` 才放行，只用于对比），服务器每次日结也会警告。
+
+标准输入集（`data/` 不进仓库，放在本机 scratchpad）：`~/.cache/claude-tmp/claude-1007/-home-starrydream-anisotck/ae90f005-b0a1-4ebf-b50e-662abee6e48f/scratchpad/sim/inputs33/`，2026-07-01 至 11-03，v0.3.2 格式，市场序列用修复后的 `sim/reconstruct.py` 重建；世界库用 `scratchpad/sim/mom/world.db`（7/7 收盘的迁移后副本）。重建方法：`ANISTOCK_DERIVED_DIR=<dir> python sim/reconstruct.py build`，再用 `engine/daily_inputs.py --from 2026-07-01 --day 2026-11-03 --force`（`ANISTOCK_DERIVED_DIR`、`ANISTOCK_INPUTS_DIR` 指向同一目录）。
+
 ## 8. 上线时的持仓迁移
 
 现在每支股票的流通股基本都在做市商手里。v0.3.0 启动时做一次性迁移（数据库迁移 002，先自动备份）：

@@ -673,6 +673,13 @@ def main():
         res["flash_curve"], res["flash_r"] = curve, noise
         lines.append(f"## 热度快讯 hourly curve\n\n{n} episodes. Share of 28-day comments by hour 1..24: {curve}\n\n"
                      f"Noise variance of log(count_h / (curve_h × previous mean)) by hour: {noise}\n")
+    # the IPO discount for uncertainty (vclose.rs ipo_price_v2: 1 - exp(-ipo_risk sqrt(mean p0))). Measured on the
+    # v0.3.2 replay (seed 20261105, inputs 2026-07-01..11-03): over the 61 shows listed in Aug-Oct, the value
+    # 28 days after listing plus dividends, relative to the model's value when the offer was priced, is 0.935
+    # value-weighted (1.158 equal-weighted, 1.024 without the top 3 hits): the model's own value already prices
+    # the uncertainty, and no further discount is justified (it would only hand subscribers a riskless
+    # gain; ipo_all beat cap-weighted buy-and-hold by +9.7 points with 0.25)
+    res["ipo_risk"] = 0.0
     res["clip"] = CLIP
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")

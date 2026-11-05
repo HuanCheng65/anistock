@@ -49,11 +49,14 @@ pub enum BotKind {
     SpoofScare,
     /// adaptive liquidity: post bids 5% under and offers 5% over the last price in the ten hottest stocks,
     /// refreshed hourly, and wait for NPC flow to fill them
+    /// buy the 3 hottest stocks (by the NPCs' heat) when it starts and hold them: does the valuation follow
+    /// public popularity with a delay?
+    HoldHottest,
     BadPrice,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 18] {
+    pub fn all() -> [BotKind; 19] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -73,6 +76,7 @@ impl BotKind {
             BotKind::IpoAll,
             BotKind::SpoofScare,
             BotKind::BadPrice,
+            BotKind::HoldHottest,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -95,6 +99,7 @@ impl BotKind {
             BotKind::ExDividend => "ex_dividend",
             BotKind::SpoofScare => "spoof_scare",
             BotKind::BadPrice => "bad_price",
+            BotKind::HoldHottest => "hold_hottest",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -524,6 +529,36 @@ impl Bot {
                 }
                 if s >= 22 * 3600 + 3000 {
                     self.state = 0;
+                }
+            }
+            BotKind::HoldHottest => {
+                // the first five days, every 30 minutes: build equal positions in the 3 stocks that were hottest
+                // on the first day, limit at the last price + 0.5%; then hold
+                if self.bought_initial || s % 1800 != 0 {
+                    return;
+                }
+                let today = crate::vclose::day_no(&day_of(t)).unwrap_or(0);
+                if self.since == 0 {
+                    self.since = today;
+                    self.sold = hottest(e, heat, 3);
+                }
+                let step = (today - self.since + 1).min(5);
+                let picks = self.sold.clone();
+                let per = self.start_cash / picks.len().max(1) as i64 * step / 5;
+                for c in picks {
+                    let Some(p) = e.company(c).filter(|x| x.status == "listed").map(|x| x.last_price) else { continue };
+                    let have = e.holding(acct, c).map_or(0, |h| h.qty) * p;
+                    if have < per * 8 / 10 {
+                        e.cancel_all(acct, c, &ts);
+                        let lim = p * 1005 / 1000 + 1;
+                        let q = affordable(e, (per - have).min(e.available_cash(acct)), lim);
+                        if place(e, acct, c, "buy", "limit", q, Some(lim), t) {
+                            self.trades_placed += 1;
+                        }
+                    }
+                }
+                if today - self.since >= 6 {
+                    self.bought_initial = true;
                 }
             }
             BotKind::SpoofScare => {

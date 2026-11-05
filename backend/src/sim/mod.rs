@@ -104,6 +104,8 @@ pub struct SimOptions {
     /// value agents (configured count), spread over this many daily closes (0: at once, before the first
     /// day), each new agent with this share of the configured starting cash
     pub grow: Option<(usize, usize, f64)>,
+    /// replay inputs written before v0.3.2 (no point-in-time prior): a degraded valuation, for comparisons only
+    pub allow_old_inputs: bool,
 }
 
 pub struct SimResult {
@@ -142,6 +144,13 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     }
     let load = |d: &str| Inputs::read(&opts.inputs_dir.join(format!("{d}.json")));
     let prev_inputs = Inputs::read(&opts.inputs_dir.join(format!("{last_closed}.json"))).or_else(|_| load(&days[0]))?;
+    // a replay on inputs older than the model measures a different (degraded) valuation: refuse it
+    if !cfg.economy_v1 && !opts.allow_old_inputs {
+        let fp = crate::vfilter::FilterParams::load(cfg)?;
+        if let Some(msg) = crate::vclose::inputs_schema_problem(&fp, &load(&days[0])?) {
+            return Err(format!("{msg} (--allow-old-inputs to run anyway)"));
+        }
+    }
 
     // ---- the filtered valuation from the season so far (the world was seeded with v1 values)
     if !cfg.economy_v1 {

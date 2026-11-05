@@ -45,3 +45,7 @@ Share of a season's pre-air attention not yet listed, by days from the season st
 131 episodes. Share of 28-day comments by hour 1..24: [0.0, 0.0741, 0.1304, 0.1719, 0.2105, 0.2273, 0.2333, 0.2394, 0.25, 0.2667, 0.2805, 0.2982, 0.3235, 0.3519, 0.3824, 0.4167, 0.4316, 0.4507, 0.4737, 0.4868, 0.5116, 0.5238, 0.5439, 0.5714]
 
 Noise variance of log(count_h / (curve_h × previous mean)) by hour: [1.0, 1.1935, 0.5586, 0.4651, 0.5375, 0.644, 0.6575, 0.6307, 0.6336, 0.6304, 0.5613, 0.5459, 0.5037, 0.5414, 0.4981, 0.4994, 0.4919, 0.6027, 0.5804, 0.5331, 0.5367, 0.5511, 0.5464, 0.5543]
+
+## IPO discount
+
+ipo_risk = 0: over the 61 shows listed in August-October of the v0.3.2 replay, the value 28 days after listing plus dividends relative to the model's value when the offer was priced is 0.935 value-weighted (1.158 equal-weighted, driven by three hits; 1.024 without them). The model's value already prices the uncertainty; a further discount was a riskless gain for subscribers (ipo_all +9.7 points over cap-weighted buy-and-hold with ipo_risk 0.25).

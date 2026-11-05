@@ -397,6 +397,9 @@ impl Engine {
             // the filtered valuation (docs/v2-valuation.md): update every show's filter with today's data,
             // then value every company from the expected attention paths
             let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+            if let Some(msg) = crate::vclose::inputs_schema_problem(&fp, cx.inp) {
+                eprintln!("valuation: {msg}");
+            }
             for c in &cx.companies {
                 if let Some(s) = cx.inp.show(c.id) {
                     self.valuation_step(&fp, &p, s, &day, &ts);
