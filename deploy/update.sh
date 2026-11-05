@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Pull the latest code and restart. Database migrations run automatically at startup
 # (with a backup in data/backups/ first). Run from the repo root:  bash deploy/update.sh
+#   ANISTOCK_VERSION=vX.Y.Z  install that release of the game server (default: the checked-out tag, else latest)
+#   ANISTOCK_SERVER=v1       roll back to (or stay on) the v1 Python server
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source deploy/binary.sh
 
 # Port the game server listens on: ANISTOCK_PORT in .env, else 18620 (same default as the systemd unit)
 game_port() { local p; p="$(grep -E '^ANISTOCK_PORT=[0-9]+' .env 2>/dev/null | tail -1 | cut -d= -f2)"; echo "${p:-18620}"; }
@@ -60,8 +63,19 @@ say "更新依赖、构建前端"
 "$UV" sync
 build_web
 
-say "更新 systemd 服务定义"
-sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-server.service > ~/.config/systemd/user/anistock-server.service
+if [ "$(server_kind)" = "v2" ]; then
+  say "下载游戏服务程序"
+  install_binary
+fi
+
+if [ "$(server_kind)" = "v2" ] && installed_unit_is_v1; then
+  say "第一次从 v1 切换到 v2：停服并备份数据库"
+  systemctl --user stop anistock-server || true
+  backup_game_db before-v2
+fi
+
+say "更新 systemd 服务定义（$(server_kind)）"
+sed "s#%h/.local/bin/uv#$UV#" "$(server_unit_file)" > ~/.config/systemd/user/anistock-server.service
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-collect.service > ~/.config/systemd/user/anistock-collect.service
 cp deploy/anistock-collect.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -72,7 +86,7 @@ if port_taken_by_other; then
 fi
 systemctl --user restart anistock-server
 if wait_ours; then
-  printf '\033[1;32m更新完成（端口 %s）\033[0m\n' "$(game_port)"
+  printf '\033[1;32m更新完成（%s，端口 %s）\033[0m\n' "$(server_kind)" "$(game_port)"
 else
   journalctl --user -u anistock-server -n 40 --no-pager; exit 1
 fi

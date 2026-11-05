@@ -130,6 +130,32 @@ bash deploy/install.sh
 
 日后更新：`bash deploy/update.sh`（拉代码、装依赖、构建前端、重启；数据库迁移在启动时自动执行，执行前先备份）。
 
+### 升级到 v2（Rust 游戏服务）
+
+v2 把游戏服务从 Python 换成了一个 Rust 程序，规则、数据库、接口、登录状态都和 v1 一样：同一个 `data/game.db`，玩家不用重新登录，前端不用改。服务器上不需要装 Rust：每次在 GitHub 上打 `v*` 标签，Actions 会编译好静态链接的程序挂到对应的 Release 上，`update.sh` 从那里下载。
+
+```bash
+cd ~/anistock
+export https_proxy=http://代理地址:端口        # 服务器访问 GitHub 需要代理时
+bash deploy/update.sh                           # 拉代码 → 下载程序 → 第一次切换时先停服并备份数据库 → 启动 v2
+```
+
+- 程序装在 `~/anistock/bin/anistock`；默认下载当前检出的标签对应的版本，没有标签就下载最新发布版。指定版本：`ANISTOCK_VERSION=v2.0.0 bash deploy/update.sh`
+- 下载后会校验 sha256，不符就不安装；下载失败时服务不受影响
+- 第一次从 v1 切过来时，脚本先停服，把数据库备份到 `data/backups/game-before-v2-时间.db`，再启动 v2。v2 启动时会自动接管数据库迁移记录（v1 的 yoyo 记录会被认出来，不会重复执行）
+- 采集器、每日结算用的模型数据（`engine/daily_inputs.py`）仍然是 Python，所以 `uv sync` 和前端构建照旧
+- 端口、`.env`、反向代理配置都不变；日志：`journalctl --user -u anistock-server -f`
+
+发布新版本（在开发机上）：`git tag v2.0.1 && git push origin v2.0.1`，等 GitHub Actions 的 backend 工作流跑完（几分钟），再在服务器上运行 `update.sh`。
+
+回滚到 v1：
+
+```bash
+ANISTOCK_SERVER=v1 bash deploy/update.sh        # 换回 Python 版的服务定义并重启，数据库直接沿用
+```
+
+v2 写过的数据库 v1 可以直接读写（表结构相同）。如果想退回切换前的状态，先停服，再把 `data/backups/game-before-v2-*.db` 拷回 `data/game.db`（会丢掉切换之后的所有交易）。
+
 构建前端需要 Node.js 20+；本机没有 Node 但有 Docker 时，脚本会自动用 `node:24-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换 npm 源）。
 
 想在本机装 Node.js 的话（Ubuntu）：
@@ -180,7 +206,7 @@ server {
 - 每天 08:45–09:00 开盘集合竞价，09:00–23:00 连续交易，可在 `server/game.toml` 里改；交易规则（冷静期、新股认购等）见设计文档
 - 新股在“新股认购”页（`/ipo`）认购
 - 新一季的番刚上来时显示的是日文名：在开发机上跑一次 `sim/match.py --search` 并提交，就会换成 Bangumi 的中文名
-- 更新代码后：`git pull && uv sync && (cd web && npm ci && npm run build) && systemctl --user restart anistock-server`
+- 更新代码后：`bash deploy/update.sh`（v2 需要下载对应版本的程序，不要只 `git pull` 后重启）
 - 重新开服（**会删除所有玩家**）：`uv run python -m server.seed --force`
 - 表结构变化用迁移脚本管理（`server/migrations/`，yoyo-migrations）：服务启动时自动执行未执行过的迁移，执行前先把数据库备份到 `data/backups/`。已发布的迁移文件不要再改，有变化就加新文件
 - 每天日结后自动备份一次游戏数据库到 `data/backups/`，保留最近 7 天

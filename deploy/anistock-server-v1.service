@@ -1,0 +1,19 @@
+[Unit]
+Description=AniStock game server (v1, Python; rollback: ANISTOCK_SERVER=v1 bash deploy/update.sh)
+After=network-online.target
+
+[Service]
+# %h = your home directory; assumes the repo is cloned to ~/anistock
+WorkingDirectory=%h/anistock
+# defaults; ANISTOCK_HOST / ANISTOCK_PORT in .env override them (EnvironmentFile is read after Environment)
+Environment=ANISTOCK_HOST=127.0.0.1
+Environment=ANISTOCK_PORT=18620
+EnvironmentFile=%h/anistock/.env
+# run the environment `uv sync` built, directly: no dependency resolution (or network) at startup.
+# Behind a reverse proxy on the same machine: trust its X-Forwarded-For / X-Forwarded-Proto
+ExecStart=%h/anistock/.venv/bin/python -m uvicorn server.app:app --host ${ANISTOCK_HOST} --port ${ANISTOCK_PORT} --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

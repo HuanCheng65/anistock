@@ -60,10 +60,7 @@ pub async fn place(st: &Arc<AppState>, r: &Req) -> ApiResult {
             if e.company(company_id).is_none() {
                 return Err(http(404, "没有这支股票"));
             }
-            if ph == Phase::Continuous {
-                e.open_market(&day, &ts);
-            }
-            let res = e.place_order(&NewOrder {
+            let req = NewOrder {
                 account_id,
                 company_id,
                 side: &side,
@@ -73,11 +70,14 @@ pub async fn place(st: &Arc<AppState>, r: &Req) -> ApiResult {
                 day: &day,
                 ts: &ts,
                 match_: ph == Phase::Continuous,
-            });
+            };
+            // v1: ensure_opening_auction and the order share one transaction (a rejected order rolls the
+            // opening auction back too)
+            let res = if ph == Phase::Continuous { e.open_and_place(&req) } else { e.place_order(&req) };
             e.flush().map_err(internal)?;
             let p = res.map_err(|err| http(400, err.0))?;
             Ok(obj! {"order_id" => p.order_id, "status" => p.status.as_str(), "filled" => p.filled,
-                     "avg_price" => yuan(p.avg_price)})
+            "avg_price" => yuan(p.avg_price)})
         })
         .await
         .or_else(gone)??;
@@ -107,8 +107,9 @@ pub async fn my_orders(st: &Arc<AppState>, r: &Req) -> ApiResult {
     let player = current_player(st, r).await?;
     let only_open = r.query("status").unwrap_or("open") == "open";
     st.read(move |c| {
-        let mut q = "SELECT o.*, c.title, c.code FROM orders o JOIN companies c ON c.id=o.company_id WHERE o.account_id=?"
-            .to_string();
+        let mut q =
+            "SELECT o.*, c.title, c.code FROM orders o JOIN companies c ON c.id=o.company_id WHERE o.account_id=?"
+                .to_string();
         if only_open {
             q += " AND o.status='open'";
         }
@@ -141,8 +142,8 @@ pub async fn my_trades(st: &Arc<AppState>, r: &Req) -> ApiResult {
         let rows = s
             .query_map([me, me], |r| {
                 Ok(obj! {"id" => col(r, "id"), "company_id" => col(r, "company_id"), "code" => col(r, "code"),
-                         "title" => col(r, "title"), "side" => if get_i64(r, "buyer_id") == me { "buy" } else { "sell" },
-                         "price" => yuan(col(r, "price")), "qty" => col(r, "qty"), "ts" => col(r, "ts")})
+                "title" => col(r, "title"), "side" => if get_i64(r, "buyer_id") == me { "buy" } else { "sell" },
+                "price" => yuan(col(r, "price")), "qty" => col(r, "qty"), "ts" => col(r, "ts")})
             })
             .map_err(sql)?;
         Ok(Reply::ok(obj! {"trades" => J::Arr(rows.collect::<Result<_, _>>().map_err(sql)?)}))
@@ -165,7 +166,7 @@ pub async fn my_ledger(st: &Arc<AppState>, r: &Req) -> ApiResult {
             .query_map([me, me], |r| {
                 let amount = get_i64(r, "amount");
                 Ok(obj! {"ts" => col(r, "ts"), "reason" => col(r, "reason"), "title" => col(r, "title"),
-                         "amount" => yuan(if get_i64(r, "to_id") == me { amount } else { -amount })})
+                "amount" => yuan(if get_i64(r, "to_id") == me { amount } else { -amount })})
             })
             .map_err(sql)?;
         Ok(Reply::ok(obj! {"entries" => J::Arr(rows.collect::<Result<_, _>>().map_err(sql)?)}))

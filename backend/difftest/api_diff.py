@@ -12,6 +12,8 @@ Scenarios (each starts both servers fresh from the same base database):
     open      ANISTOCK_ALWAYS_OPEN=1, 10:00: accounts, validation, orders, cancels, every GET, web/dist
     auction   08:50 (opening auction phase): orders rest, the auction preview, market orders refused
     closed    23:30: orders refused; reads
+    openfail  09:00:05, the first orders of the day are rejected: the opening auction they triggered is
+              rolled back with them (v1's one transaction), so nothing about the open is written
     nodist    like open but without web/dist (no SPA catch-all: Starlette 404 / 405 bodies)
     dbsecret  ANISTOCK_SECRET unset, state.session_secret seeded: cookies signed with the stored key
     gensecret ANISTOCK_SECRET unset and no stored key: each server creates one (compared for shape only)
@@ -54,6 +56,7 @@ SCENARIOS = {
     "open": dict(time="2026-11-05T10:00:00+08:00", always_open=True, dist=True, secret=SECRET),
     "auction": dict(time="2026-11-05T08:50:00+08:00", always_open=False, dist=True, secret=SECRET),
     "closed": dict(time="2026-11-05T23:30:00+08:00", always_open=False, dist=True, secret=SECRET),
+    "openfail": dict(time="2026-11-05T09:00:05+08:00", always_open=False, dist=True, secret=SECRET),
     "nodist": dict(time="2026-11-05T10:00:00+08:00", always_open=True, dist=False, secret=SECRET),
     "dbsecret": dict(time="2026-11-05T10:00:00+08:00", always_open=True, dist=True, secret=None, secret_in_db=True),
     "gensecret": dict(time="2026-11-05T10:00:00+08:00", always_open=True, dist=True, secret=None),
@@ -219,6 +222,18 @@ def script(sc_name: str):
              body={"company_id": 102, "side": "sell", "kind": "limit", "qty": 1, "price": 1000})
         for p in ["/api/stocks/101", "/api/stocks/102", "/api/stocks/104", "/api/market", "/api/orders",
                   "/api/orders?status=all", "/api/portfolio", "/api/status"]:
+            step("after", "GET", p, as_="p0")
+        return S
+
+    if sc_name == "openfail":
+        step("login p0", "POST", "/api/login", body={"username": "p0", "password": "secret0"}, login_as="p0")
+        step("delisted", "POST", "/api/orders", as_="p0",
+             body={"company_id": 105, "side": "buy", "kind": "limit", "qty": 10, "price": 499})
+        step("too big", "POST", "/api/orders", as_="p0",
+             body={"company_id": 101, "side": "buy", "kind": "limit", "qty": 9_000_000, "price": 9000})
+        step("no shares", "POST", "/api/orders", as_="p0",
+             body={"company_id": 101, "side": "sell", "kind": "market", "qty": 100_000})
+        for p in ["/api/stocks/101", "/api/stocks/104", "/api/market", "/api/status", "/api/orders?status=all"]:
             step("after", "GET", p, as_="p0")
         return S
 

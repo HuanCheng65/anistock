@@ -218,3 +218,82 @@ fn engine_reload_matches_memory() {
     assert_eq!(e2.account(a), f.e.account(a));
     assert_eq!(e2.lots_of(b, 1), f.e.lots_of(b, 1));
 }
+
+#[test]
+fn register_player_grants_in_one_operation() {
+    let mut f = Fx::new();
+    let id = f.e.register_player("新玩家", "salt:hash", 10_000_000, DAY, TS);
+    let a = f.e.account(id).unwrap().clone();
+    assert_eq!(
+        (a.kind.as_str(), a.username.as_deref(), a.pw_hash.as_deref()),
+        ("player", Some("新玩家"), Some("salt:hash"))
+    );
+    assert_eq!(a.cash, 10_000_000);
+    let db = f.db();
+    let (reason, amount): (String, i64) =
+        db.query_row("SELECT reason, amount FROM ledger WHERE to_id=?", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((reason.as_str(), amount), ("grant", 10_000_000));
+}
+
+#[test]
+fn a_rejected_order_rolls_back_the_opening_auction() {
+    let mut f = Fx::new();
+    let a = f.player("a", 1_000_000, 0);
+    let b = f.player("b", 0, 100);
+    f.seed_rest();
+    f.order_full(a, "buy", 30, Some(520), "limit", TS, false).unwrap();
+    f.order_full(b, "sell", 25, Some(490), "limit", TS, false).unwrap();
+    let new = |qty| anistock::NewOrder {
+        account_id: a,
+        company_id: 1,
+        side: "buy",
+        kind: "limit",
+        qty,
+        price: Some(500),
+        day: DAY,
+        ts: "2026-11-05T09:00:05+08:00",
+        match_: true,
+    };
+    // v1: ensure_opening_auction and the order share one transaction, so a rejected order undoes the auction
+    assert_eq!(f.e.open_and_place(&new(0)).unwrap_err().0, "数量必须是正整数");
+    assert_eq!(f.e.state("auction_day"), None);
+    assert_eq!(f.e.open_orders_of(a).len(), 1);
+    let n: i64 = f.db().query_row("SELECT COUNT(*) FROM trades", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+    // the next valid order opens the market at its own timestamp
+    f.e.open_and_place(&new(1)).unwrap();
+    assert_eq!(f.e.state("auction_day"), Some(DAY));
+    let db = f.db();
+    let (n, ts): (i64, String) =
+        db.query_row("SELECT COUNT(*), MIN(ts) FROM trades", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((n, ts.as_str()), (1, "2026-11-05T09:00:05+08:00"));
+    assert_eq!(f.e.company(1).unwrap().open_ref, Some(490));
+    f.check();
+}
+
+/// A sink whose database stopped accepting writes.
+struct BrokenDisk;
+
+impl anistock::store::persist::ChangeSink for BrokenDisk {
+    fn send(&mut self, _changes: Vec<anistock::store::persist::Change>) {}
+    fn flush(&mut self) -> Result<(), String> {
+        Err("disk I/O error".into())
+    }
+    fn failure(&self) -> Option<String> {
+        Some("disk I/O error".into())
+    }
+}
+
+#[test]
+#[should_panic(expected = "persistence failed")]
+fn a_failed_write_stops_the_engine() {
+    // memory must not run ahead of the database: the next operation panics (the actor then exits and
+    // systemd restarts the server from the database)
+    let mut e = anistock::Engine::from_snapshot(
+        anistock::store::Snapshot::default(),
+        Fees::default(),
+        anistock::Rules::default(),
+        Box::new(BrokenDisk),
+    );
+    e.create_account("world", "world", None, None, None, TS);
+}

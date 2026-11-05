@@ -60,9 +60,9 @@ pub async fn register(st: &Arc<AppState>, r: &Req) -> ApiResult {
             if e.accounts().any(|a| a.username.as_deref() == Some(name.as_str())) {
                 return Err(http(400, "这个用户名已经有人用了"));
             }
-            let world = e.special("world").ok_or_else(|| internal("no world account"))?;
-            let aid = e.create_account("player", &name, Some(&name), Some(&pw_hash), None, &ts);
-            e.transfer(world, aid, grant, "grant", &day, &ts, None, None);
+            e.special("world").ok_or_else(|| internal("no world account"))?;
+            // the account and its starting grant in one operation, like v1's one transaction
+            let aid = e.register_player(&name, &pw_hash, grant, &day, &ts);
             e.flush().map_err(internal)?;
             Ok(aid)
         })
@@ -143,9 +143,8 @@ pub fn portfolio_rows(c: &Connection, account_id: i64) -> Result<Vec<J>, ApiErro
         .map_err(sql)?;
     let mut out = Vec::new();
     for (cid, qty, qty_frozen, code, title, title_ja, last, prev) in rows {
-        let one = |q: &str| -> Result<J, ApiError> {
-            c.query_row(q, [account_id, cid], |r| Ok(col(r, "v"))).map_err(sql)
-        };
+        let one =
+            |q: &str| -> Result<J, ApiError> { c.query_row(q, [account_id, cid], |r| Ok(col(r, "v"))).map_err(sql) };
         let cost = one("SELECT COALESCE(SUM(qty*cost),0) AS v FROM lots WHERE account_id=? AND company_id=?")?;
         let divs = one(
             "SELECT COALESCE(SUM(amount),0) AS v FROM ledger WHERE to_id=? AND company_id=? AND reason='dividend'",

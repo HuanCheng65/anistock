@@ -4,9 +4,10 @@
 //!   first the day's opening auction (`open_market`, once a day), then one NPC round (resting orders
 //!   only during the auction). One engine job, like v1's one transaction.
 //! - Daily close: when `last_closed` is before yesterday and the time is past `daily_step_at`: refresh
-//!   the derived market data (Python subprocesses, run outside the engine thread so trading is not held
-//!   up, unlike v1 which held its lock), then close every missing day and back up (engine job). Sleeps
-//!   until the next `daily_step_at`, between 60 s and 1 h at a time.
+//!   the derived market data and build each day's inputs (Python subprocesses, run outside the engine
+//!   thread so trading is not held up, unlike v1 which held its lock), then close each missing day (one
+//!   engine job per day) and back up. Sleeps until the next `daily_step_at`, between 60 s and 1 h at a
+//!   time.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,22 +53,76 @@ async fn daily_loop(st: Arc<AppState>) {
         if last.as_deref().unwrap_or("") < yesterday.as_str() && due {
             let cfg = st.cfg.clone();
             let _ = tokio::task::spawn_blocking(move || crate::inputs::refresh_market_data(&cfg)).await;
-            let (today, ts) = (st.clock.today(), st.clock.ts());
-            let r = st
-                .actor
-                .call(move |ctx| {
-                    let cfg = ctx.cfg.clone();
-                    ctx.ops.catch_up(&mut ctx.engine, &cfg, &today, &ts)
-                })
-                .await;
-            match r {
-                Ok(Ok(n)) => eprintln!("daily close: {n} day(s) closed"),
-                Ok(Err(e)) => eprintln!("daily close failed: {e}"),
-                Err(_) => return,
+            match catch_up(&st).await {
+                Ok(Some(n)) => eprintln!("daily close: {n} day(s) closed"),
+                Ok(None) => {}
+                Err(e) => eprintln!("daily close failed: {e}"),
             }
         }
         let now = st.clock.now();
         let wait = (next_daily_step(&now, &st.cfg.game.daily_step_at) - now).num_milliseconds() as f64 / 1000.0;
         tokio::time::sleep(Duration::from_secs_f64(wait.clamp(60.0, 3600.0))).await;
     }
+}
+
+/// v1 `app.catch_up`: close every day from the last closed one up to yesterday, then back up the
+/// database. Each day's inputs come from the Python model (`inputs::fetch`, a subprocess of up to
+/// minutes) on the blocking pool, so trading goes on meanwhile; the close itself is one engine job, stamped
+/// with the clock when it runs (like v1, which reads `clock.ts()` per day). Stops at the first failure
+/// without a backup, like v1's exception. Returns the number of days closed (None: the engine stopped).
+pub async fn catch_up(st: &Arc<AppState>) -> Result<Option<usize>, String> {
+    let Ok((last, window_start)) = st
+        .actor
+        .call(|ctx| {
+            (ctx.engine.state("last_closed").map(str::to_string), ctx.engine.state("window_start").map(str::to_string))
+        })
+        .await
+    else {
+        return Ok(None);
+    };
+    let last = last.ok_or("state 'last_closed' missing")?;
+    let parse = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|e| format!("{d}: {e}"));
+    let mut d = parse(&last)? + chrono::Duration::days(1);
+    let yesterday_s = prev_day(&st.clock.today());
+    let yesterday = parse(&yesterday_s)?;
+    let (mut closed, mut any) = (0, false);
+    while d <= yesterday {
+        let day = d.format("%Y-%m-%d").to_string();
+        let (cfg, ws, day2) = (st.cfg.clone(), window_start.clone(), day.clone());
+        let inputs = tokio::task::spawn_blocking(move || crate::inputs::fetch(&cfg, &day2, ws.as_deref()))
+            .await
+            .map_err(|e| format!("inputs for {day}: {e}"))??;
+        let clock = st.clock.clone();
+        let r = st
+            .actor
+            .call(move |ctx| {
+                let cfg = ctx.cfg.clone();
+                ctx.engine.run_day(&cfg, &day, &clock.ts(), &inputs)
+            })
+            .await;
+        match r {
+            Ok(r) => {
+                if matches!(r?, crate::daily::CloseOutcome::Closed(_)) {
+                    closed += 1;
+                }
+            }
+            Err(_) => return Ok(None),
+        }
+        any = true;
+        d += chrono::Duration::days(1);
+    }
+    if any {
+        // v1 backs up whenever catch_up went through at least one day
+        let r = st
+            .actor
+            .call(move |ctx| {
+                let db = ctx.cfg.game_db.clone();
+                ctx.engine.daily_backup(&db, &yesterday_s)
+            })
+            .await;
+        if let Ok(Err(e)) = r {
+            return Err(format!("backup: {e}"));
+        }
+    }
+    Ok(Some(closed))
 }

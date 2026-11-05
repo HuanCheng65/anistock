@@ -11,8 +11,8 @@
 //! A panic inside a job means the engine may hold a half-applied operation: the process exits (code 70)
 //! instead of continuing; systemd restarts it from the database, which only ever holds whole operations.
 //!
-//! Engine features owned by other modules (IPO subscription, NPCs, the daily close) are reached through
-//! `GameOps`, so the HTTP layer does not depend on their exact signatures.
+//! Engine features owned by other modules (IPO subscription, NPCs) are reached through `GameOps`, so the
+//! HTTP layer does not depend on their exact signatures. The daily close is driven by `loops.rs`.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
@@ -29,9 +29,6 @@ use crate::pyrandom::PyRandom;
 pub trait GameOps: Send {
     /// One round of NPC activity (v1 `npc.tick`); during the opening auction they only rest orders.
     fn npc_tick(&mut self, e: &mut Engine, cfg: &Config, day: &str, ts: &str, auction: bool);
-    /// Close every day from `last_closed` + 1 up to yesterday, then back up (v1 `catch_up`). Returns the
-    /// number of days closed.
-    fn catch_up(&mut self, e: &mut Engine, cfg: &Config, today: &str, ts: &str) -> Result<usize, String>;
     /// v1 `subscribe` after its pydantic checks: replace the application; returns the cash frozen.
     fn subscribe(
         &mut self,
@@ -61,12 +58,6 @@ impl Default for EngineOps {
 impl GameOps for EngineOps {
     fn npc_tick(&mut self, e: &mut Engine, cfg: &Config, day: &str, ts: &str, auction: bool) {
         e.npc_tick(cfg, day, ts, &mut self.rng, auction);
-    }
-
-    fn catch_up(&mut self, e: &mut Engine, cfg: &Config, today: &str, ts: &str) -> Result<usize, String> {
-        let window_start = e.state("window_start").map(str::to_string);
-        let out = e.catch_up(cfg, today, ts, |day| crate::inputs::fetch(cfg, day, window_start.as_deref()))?;
-        Ok(out.len())
     }
 
     fn subscribe(
@@ -110,12 +101,16 @@ impl Actor {
     /// (after a final flush).
     pub fn start(ctx: Ctx) -> (Actor, JoinHandle<Ctx>) {
         let (tx, rx) = unbounded::<Job>();
-        let h = std::thread::Builder::new().name("engine".into()).spawn(move || run(ctx, rx)).expect("spawn engine thread");
+        let h =
+            std::thread::Builder::new().name("engine".into()).spawn(move || run(ctx, rx)).expect("spawn engine thread");
         (Actor { tx }, h)
     }
 
     /// Run `f` on the engine thread and wait for its result.
-    pub async fn call<R: Send + 'static>(&self, f: impl FnOnce(&mut Ctx) -> R + Send + 'static) -> Result<R, ActorGone> {
+    pub async fn call<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Ctx) -> R + Send + 'static,
+    ) -> Result<R, ActorGone> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
             .send(Box::new(move |c: &mut Ctx| {
@@ -126,7 +121,10 @@ impl Actor {
     }
 
     /// Like `call`, from a non-async thread.
-    pub fn call_blocking<R: Send + 'static>(&self, f: impl FnOnce(&mut Ctx) -> R + Send + 'static) -> Result<R, ActorGone> {
+    pub fn call_blocking<R: Send + 'static>(
+        &self,
+        f: impl FnOnce(&mut Ctx) -> R + Send + 'static,
+    ) -> Result<R, ActorGone> {
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.tx
             .send(Box::new(move |c: &mut Ctx| {

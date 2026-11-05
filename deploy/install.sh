@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # First-time install of the AniStock game server on the box that already runs the collector.
 # Safe to re-run: every step checks before it acts. Run from the repo root:  bash deploy/install.sh
+#   ANISTOCK_VERSION=vX.Y.Z  install that release of the game server (default: the checked-out tag, else latest)
+#   ANISTOCK_SERVER=v1       install the v1 Python server instead
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source deploy/binary.sh
 
 # Port the game server listens on: ANISTOCK_PORT in .env, else 18620 (same default as the systemd unit)
 game_port() { local p; p="$(grep -E '^ANISTOCK_PORT=[0-9]+' .env 2>/dev/null | tail -1 | cut -d= -f2)"; echo "${p:-18620}"; }
@@ -111,6 +114,16 @@ else
   "$UV" run python -m server.seed
 fi
 
+if [ "$(server_kind)" = "v2" ]; then
+  say "下载游戏服务程序"
+  install_binary || die "游戏服务程序下载失败（需要代理时先 export https_proxy=...）"
+  if installed_unit_is_v1; then
+    say "从 v1 切换到 v2：停服并备份数据库"
+    systemctl --user stop anistock-server || true
+    backup_game_db before-v2
+  fi
+fi
+
 say "检查端口"
 if port_taken_by_other; then
   die "端口 $(game_port) 已经被别的程序占用：在 .env 里设置 ANISTOCK_PORT=其他端口 后重新运行"
@@ -119,7 +132,7 @@ echo "使用端口 $(game_port)"
 
 say "安装 systemd 服务"
 mkdir -p ~/.config/systemd/user
-sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-server.service > ~/.config/systemd/user/anistock-server.service
+sed "s#%h/.local/bin/uv#$UV#" "$(server_unit_file)" > ~/.config/systemd/user/anistock-server.service
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-collect.service > ~/.config/systemd/user/anistock-collect.service
 cp deploy/anistock-collect.timer ~/.config/systemd/user/
 systemctl --user daemon-reload

@@ -21,3 +21,6 @@ bench/loadgen/loadgen-v2
 
 # v2 Rust backend build output
 backend/target/
+
+# the v2 server binary, downloaded by deploy/update.sh
+bin/
