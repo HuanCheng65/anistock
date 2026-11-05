@@ -43,3 +43,7 @@ tempfile = "3"
 [profile.release]
 codegen-units = 1
 lto = "thin"
+
+[[bin]]
+name = "marketsim"
+path = "src/bin/marketsim.rs"

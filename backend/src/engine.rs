@@ -629,6 +629,12 @@ impl Engine {
         }));
     }
 
+    /// Publish a news row (events, announcements).
+    pub fn post_news(&mut self, ts: &str, day: &str, kind: &str, company_id: Option<i64>, title: String, body: String) {
+        self.push_news(ts, day, kind, company_id, title, body);
+        self.commit();
+    }
+
     /// Restore the state saved before a failed multi-step operation (the daily close) and drop its changes.
     pub(crate) fn rollback(&mut self, saved: State) {
         self.st = saved;

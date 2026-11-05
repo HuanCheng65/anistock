@@ -50,3 +50,34 @@ mm_inventory_skew = 0.3        # quotes move this much (x) as inventory goes fro
 committee_sell_above = 1.3     # rights holders sell when price > value x this
 committee_sell_frac = 0.002    # of shares per tick, at most
 noise_trade_prob = 0.15        # per tick per noise trader
+
+[market]
+# v2 NPC market (docs/v2-npc-market.md; Rust server only, the v1 Python server ignores this section).
+# Calibrated in simulation (backend: marketsim); every key not listed keeps its default in
+# backend/src/market/config.rs. Off until phase 2 wires it into the server's loops.
+enabled = false
+seed = 20261105
+n_value = 240                  # population (§2)
+n_trend = 120
+n_news = 60
+n_retail = 180
+heat_alpha = 0.3               # watch lists and stock choice ∝ heat^alpha
+rate_value = 4.0               # actions per hour at intraday factor 1 (§3)
+rate_trend = 1.5
+rate_news = 0.3
+rate_retail = 3.0
+curve = [0.5, 1.0, 1.3, 0.9, 1.2, 2.0]   # auction, morning, lunch, afternoon, 18-20h, 20-23h
+bias_sigma = 0.05              # spread of the value agents' views (§4)
+bias_half_life_days = 4.0
+event_shock = 0.12             # belief shift of a magnitude-10 official event
+mm_target_frac = 0.2           # market maker keeps 20% of the float (§8)
+mm_rate = 20.0
+mm_base_spread = 0.008
+mm_vol_mult = 2.0
+mm_quote_frac = 0.005
+mm_levels = 3
+mm_anchor_to_price = 0.3
+mm_cash = 10000.0
+fund_floor = 0.3               # fund flows (§6)
+fund_ceiling = 1.2
+fund_weekly_cap = 0.1

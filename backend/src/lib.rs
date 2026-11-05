@@ -8,11 +8,13 @@ pub mod daily;
 pub mod engine;
 pub mod exchange;
 pub mod inputs;
+pub mod market;
 pub mod ipo;
 pub mod model;
 pub mod npc;
 pub mod pyfmt;
 pub mod pyrandom;
+pub mod sim;
 pub mod valuation;
 pub mod store;
 

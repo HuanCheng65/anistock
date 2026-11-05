@@ -63,6 +63,8 @@ pub struct Config {
     /// The raw `[game]` table, for keys not modelled in `GameRules`.
     pub game_raw: toml::Table,
     pub npc: NpcConfig,
+    /// `[market]`: the v2 NPC market (defaults when the section is absent; disabled by default)
+    pub market: crate::market::MarketConfig,
     pub tz: Tz,
     pub collector_db: PathBuf,
     pub game_db: PathBuf,
@@ -158,6 +160,7 @@ impl Config {
             .ok_or_else(|| ConfigError("game.toml: [npc] missing".into()))?
             .try_into()
             .map_err(err("[npc]"))?;
+        let market = crate::market::MarketConfig::from_table(raw.get("market")).map_err(ConfigError)?;
         let tz: Tz = game.timezone.parse().map_err(|e| ConfigError(format!("timezone: {e}")))?;
 
         let secret = env("ANISTOCK_SECRET").unwrap_or_default().trim().to_string();
@@ -175,6 +178,7 @@ impl Config {
             root: root.to_path_buf(),
             params,
             npc,
+            market,
             tz,
             collector_db: path_env("ANISTOCK_DB", root.join("data").join("anistock.db")),
             game_db: path_env("ANISTOCK_GAME_DB", root.join("data").join("game.db")),
