@@ -166,3 +166,29 @@ market, mult 1:
 At the current 30% premium the tail is worth about as much as the season itself (it was a few level-weeks under the
 ×0.94/week curve), and half of it lies beyond the 400-day horizon. A lower premium (step 5) makes the flat floor
 dominate: the floor's level and its decay beyond 8 years — which the data cannot pin down — then drive the value.
+
+
+### Out-of-sample check of the us tail (phase 1 acceptance, `sim/tail_check.py`)
+
+Held-out us tail (fit on even AniList ids, checked on odd; forecast at the finale):
+
+| group | 3 m: n, log err, level ratio, 80% cov | 6 m: n, log err, level ratio, 80% cov | 12 m: n, log err, level ratio, 80% cov | 24 m: n, log err, level ratio, 80% cov | 36 m: n, log err, level ratio, 80% cov |
+|---|---|---|---|---|---|
+| all | 586, +0.04, 1.04, 90% | 562, -0.06, 0.97, 87% | 517, -0.10, 0.96, 81% | 414, -0.02, 1.06, 84% | 349, -0.09, 0.99, 80% |
+| popularity 0.0–0.2 | 122, +0.12, 1.31, 80% | 118, -0.01, 1.25, 81% | 106, -0.01, 1.26, 76% | 76, +0.14, 1.70, 71% | 60, +0.22, 1.70, 75% |
+| popularity 0.2–0.4 | 135, -0.02, 0.94, 88% | 133, -0.15, 0.80, 89% | 130, -0.19, 0.79, 80% | 109, -0.20, 0.73, 85% | 92, -0.34, 0.69, 79% |
+| popularity 0.4–0.6 | 124, +0.01, 0.90, 95% | 122, -0.09, 0.83, 91% | 112, -0.18, 0.77, 84% | 94, -0.14, 0.81, 84% | 79, -0.18, 0.78, 72% |
+| popularity 0.6–0.8 | 117, +0.05, 1.00, 94% | 113, -0.03, 0.93, 91% | 101, +0.03, 1.04, 83% | 76, +0.06, 0.94, 93% | 68, -0.11, 0.80, 91% |
+| popularity 0.8–1.0 | 88, +0.05, 0.99, 92% | 76, +0.01, 1.01, 83% | 68, -0.13, 0.89, 82% | 59, +0.15, 1.15, 83% | 50, +0.15, 1.03, 84% |
+| first season | 456, +0.06, 1.09, 89% | 442, -0.06, 0.98, 88% | 412, -0.12, 0.94, 82% | 333, -0.02, 1.09, 83% | 282, -0.10, 1.02, 80% |
+| itself a sequel | 130, -0.02, 0.91, 91% | 120, -0.07, 0.94, 84% | 105, -0.05, 1.02, 77% | 81, -0.04, 0.93, 84% | 67, -0.04, 0.89, 81% |
+
+Columns per horizon: shows, mean log error against the median forecast (realised − forecast; 0 if unbiased),
+mean realised ÷ mean forecast factor (1 if unbiased in level, what the value needs), share inside the 80% interval.
+
+Reading: over all held-out shows the tail is unbiased (level ratio 0.96–1.06, coverage 80–90%), for first seasons
+and sequels alike, and for the top two popularity fifths (0.80–1.15), where most of the market's value is. It is
+**not** unbiased within the lower fifths: the bottom fifth's tail is under-forecast (realised 1.25–1.70× the
+forecast even with its prior flag) and the second and third fifths are over-forecast (0.69–0.94×, worst at 24–36
+months). The prior's two flags capture the U-shape only in part; a prior by popularity fifth would be the next
+step. Acceptance for step 1: met overall and for the top two fifths, not met for the lower three.

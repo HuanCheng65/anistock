@@ -474,7 +474,8 @@ def tail_prior_fit(us_hist, pct, ref):
 
     beta = ols(rows)
     r2_in, res = r2(beta, rows)
-    r2_out, _ = r2(ols([r for r in rows if r[0] % 2 == 0]), [r for r in rows if r[0] % 2 == 1])
+    odd = [r for r in rows if r[0] % 2 == 1]
+    r2_out = r2(ols([r for r in rows if r[0] % 2 == 0]), odd)[0] if odd and len(odd) < len(rows) else float("nan")
     n = len(rows)
     sd = math.sqrt(res / (n - len(beta)))
     c = math.log(sum(math.exp(sum(b * v for b, v in zip(beta[1:], x[1:]))) for _, x, _ in rows) / n)
