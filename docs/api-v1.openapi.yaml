@@ -1,0 +1,1424 @@
+# AniEx public API v1 — hand-written design (open questions decided 2026-11-06) (docs/api-v1.md is authoritative).
+# After implementation this file is replaced by the openapi.json generated with utoipa (docs/api-v1.md §6).
+openapi: 3.1.0
+info:
+  title: AniEx API
+  version: 1.0.0-draft
+  description: |
+    Money is integer cents (1 币 = 100). Ratios are fractions (0.05 = 5%). Timestamps are RFC 3339 with
+    offset (+08:00). `trading_day` rolls over at 04:00. Fields are always present; unknown values are null.
+servers:
+  - url: /api/v1
+tags:
+  - {name: market}
+  - {name: stocks}
+  - {name: news}
+  - {name: ipos}
+  - {name: account}
+  - {name: leaderboard}
+  - {name: auth}
+  - {name: bot}
+
+security:
+  - {}
+  - session: []
+  - bot: []
+
+paths:
+  /market/status:
+    get:
+      tags: [market]
+      operationId: getMarketStatus
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/MarketStatus'}}}}
+  /rules:
+    get:
+      tags: [market]
+      operationId: getRules
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Rules'}}}}
+  /market/quotes:
+    get:
+      tags: [market]
+      operationId: listQuotes
+      parameters:
+        - {name: ids, in: query, schema: {type: string}, description: comma-separated stock ids}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trading_day, as_of, items]
+                properties:
+                  trading_day: {$ref: '#/components/schemas/TradingDay'}
+                  as_of: {$ref: '#/components/schemas/Timestamp'}
+                  items: {type: array, items: {$ref: '#/components/schemas/Quote'}}
+        '400': {$ref: '#/components/responses/Error'}
+  /market/indices:
+    get:
+      tags: [market]
+      operationId: listIndices
+      parameters:
+        - {name: series, in: query, schema: {type: boolean, default: true}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trading_day, season_start, breadth, items]
+                properties:
+                  trading_day: {$ref: '#/components/schemas/TradingDay'}
+                  season_start: {type: string, format: date}
+                  breadth:
+                    type: object
+                    required: [up, flat, down]
+                    properties: {up: {type: integer}, flat: {type: integer}, down: {type: integer}}
+                  items: {type: array, items: {$ref: '#/components/schemas/IndexSeries'}}
+  /market/airings:
+    get:
+      tags: [market]
+      operationId: listAirings
+      parameters:
+        - {name: trading_day, in: query, schema: {$ref: '#/components/schemas/TradingDay'}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trading_day, from, to, items]
+                properties:
+                  trading_day: {$ref: '#/components/schemas/TradingDay'}
+                  from: {$ref: '#/components/schemas/Timestamp'}
+                  to: {$ref: '#/components/schemas/Timestamp'}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [stock, episode, airs_at, has_aired]
+                      properties:
+                        stock: {$ref: '#/components/schemas/StockRef'}
+                        episode: {type: number, description: may be fractional (e.g. 12.5)}
+                        airs_at: {$ref: '#/components/schemas/Timestamp'}
+                        has_aired: {type: boolean}
+  /market/macro:
+    get:
+      tags: [market]
+      operationId: listMacro
+      parameters:
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/MacroDay'}}
+
+  /stocks/search:
+    get:
+      tags: [stocks]
+      operationId: searchStocks
+      description: fuzzy match on code, title, title_ja, romaji, title_en and aliases (Bangumi infobox 别名, AniList synonyms)
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string, minLength: 1, maxLength: 50}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 5}}
+        - {name: status, in: query, schema: {type: string, default: 'listed,subscribing'}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [query, items]
+                properties:
+                  query: {type: string}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [stock, status, score, matched, price, change]
+                      properties:
+                        stock: {$ref: '#/components/schemas/StockRef'}
+                        status: {$ref: '#/components/schemas/StockStatus'}
+                        score: {type: number, minimum: 0, maximum: 1}
+                        matched:
+                          type: object
+                          required: [field, text]
+                          properties:
+                            field: {type: string, enum: [code, title, title_ja, title_romaji, title_en, alias]}
+                            text: {type: string}
+                        price: {$ref: '#/components/schemas/Money'}
+                        change: {$ref: '#/components/schemas/Ratio'}
+        '400': {$ref: '#/components/responses/Error'}
+  /stocks/{id}:
+    get:
+      tags: [stocks]
+      operationId: getStock
+      parameters: [{$ref: '#/components/parameters/StockId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/StockDetail'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+  /stocks/{id}/book:
+    get:
+      tags: [stocks]
+      operationId: getBook
+      parameters:
+        - {$ref: '#/components/parameters/StockId'}
+        - {name: depth, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 5}}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Book'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+  /stocks/{id}/trades:
+    get:
+      tags: [stocks]
+      operationId: listStockTrades
+      parameters:
+        - {$ref: '#/components/parameters/StockId'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Before'}
+        - {$ref: '#/components/parameters/After'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/PublicTrade'}}}}
+  /stocks/{id}/candles:
+    get:
+      tags: [stocks]
+      operationId: listCandles
+      parameters:
+        - {$ref: '#/components/parameters/StockId'}
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+        - {name: interval, in: query, schema: {type: string, enum: ['1d'], default: '1d'}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Candle'}}
+  /stocks/{id}/intraday:
+    get:
+      tags: [stocks]
+      operationId: listIntraday
+      parameters:
+        - {$ref: '#/components/parameters/StockId'}
+        - {name: trading_day, in: query, schema: {$ref: '#/components/schemas/TradingDay'}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trading_day, prev_close, items]
+                properties:
+                  trading_day: {$ref: '#/components/schemas/TradingDay'}
+                  prev_close: {$ref: '#/components/schemas/Money'}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [minute, price, volume]
+                      properties:
+                        minute: {$ref: '#/components/schemas/Timestamp'}
+                        price: {$ref: '#/components/schemas/Money'}
+                        volume: {type: integer}
+  /stocks/{id}/cover:
+    get:
+      tags: [stocks]
+      operationId: getCover
+      parameters: [{$ref: '#/components/parameters/StockId'}]
+      responses:
+        '200':
+          description: image
+          content:
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/png: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /news:
+    get:
+      tags: [news]
+      operationId: listNews
+      parameters:
+        - {name: stock_id, in: query, schema: {type: integer}}
+        - {name: category, in: query, schema: {type: string}, description: comma-separated NewsCategory}
+        - {name: kind, in: query, schema: {type: string}, description: comma-separated NewsKind}
+        - {name: trading_day, in: query, schema: {$ref: '#/components/schemas/TradingDay'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Before'}
+        - {$ref: '#/components/parameters/After'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/NewsItem'}}}}
+  /news/{id}:
+    get:
+      tags: [news]
+      operationId: getNews
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/NewsItem'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /ipos:
+    get:
+      tags: [ipos]
+      operationId: listIpos
+      parameters:
+        - {name: status, in: query, schema: {type: string, default: 'upcoming,open,allotted'}}
+        - {name: listed_since, in: query, schema: {$ref: '#/components/schemas/TradingDay'}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trading_day, items]
+                properties:
+                  trading_day: {$ref: '#/components/schemas/TradingDay'}
+                  items: {type: array, items: {$ref: '#/components/schemas/Ipo'}}
+  /ipos/{id}:
+    get:
+      tags: [ipos]
+      operationId: getIpo
+      parameters: [{$ref: '#/components/parameters/StockId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Ipo'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+  /ipos/{id}/subscription:
+    put:
+      tags: [ipos]
+      operationId: setSubscription
+      security: [{session: []}]
+      parameters: [{$ref: '#/components/parameters/StockId'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties: {quantity: {type: integer, minimum: 1, maximum: 10000000}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ipo, frozen]
+                properties:
+                  ipo: {$ref: '#/components/schemas/Ipo'}
+                  frozen: {$ref: '#/components/schemas/Money'}
+        '4XX': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [ipos]
+      operationId: withdrawSubscription
+      security: [{session: []}]
+      parameters: [{$ref: '#/components/parameters/StockId'}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, required: [ipo], properties: {ipo: {$ref: '#/components/schemas/Ipo'}}}
+        '4XX': {$ref: '#/components/responses/Error'}
+
+  /me:
+    get:
+      tags: [account]
+      operationId: getMe
+      security: [{session: []}, {bot: [], actAs: []}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '401': {$ref: '#/components/responses/Error'}
+  /me/portfolio:
+    get:
+      tags: [account]
+      operationId: getPortfolio
+      security: [{session: []}, {bot: [], actAs: []}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trading_day, summary, items]
+                properties:
+                  trading_day: {$ref: '#/components/schemas/TradingDay'}
+                  summary: {$ref: '#/components/schemas/CashSummary'}
+                  items: {type: array, items: {$ref: '#/components/schemas/Position'}}
+  /me/asset-history:
+    get:
+      tags: [account]
+      operationId: getAssetHistory
+      security: [{session: []}, {bot: [], actAs: []}]
+      parameters:
+        - {$ref: '#/components/parameters/From'}
+        - {$ref: '#/components/parameters/To'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/AssetDay'}}
+  /me/orders:
+    get:
+      tags: [account]
+      operationId: listOrders
+      security: [{session: []}, {bot: [], actAs: []}]
+      parameters:
+        - {name: status, in: query, schema: {type: string, enum: [open, closed, all], default: open}}
+        - {name: stock_id, in: query, schema: {type: integer}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Before'}
+        - {$ref: '#/components/parameters/After'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/Order'}}}}
+    post:
+      tags: [account]
+      operationId: placeOrder
+      security: [{session: []}]
+      parameters:
+        - {name: Idempotency-Key, in: header, schema: {type: string, minLength: 1, maxLength: 64}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stock_id, side, type, quantity]
+              properties:
+                stock_id: {type: integer}
+                side: {$ref: '#/components/schemas/OrderSide'}
+                type: {$ref: '#/components/schemas/OrderType'}
+                price: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}], description: required for limit, minimum 1}
+                quantity: {type: integer, minimum: 1, maximum: 10000000}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [order, fills]
+                properties:
+                  order: {$ref: '#/components/schemas/Order'}
+                  fills:
+                    type: array
+                    items:
+                      type: object
+                      required: [trade_id, price, quantity]
+                      properties:
+                        trade_id: {type: integer}
+                        price: {$ref: '#/components/schemas/Money'}
+                        quantity: {type: integer}
+        '4XX': {$ref: '#/components/responses/Error'}
+  /me/orders/{id}:
+    get:
+      tags: [account]
+      operationId: getOrder
+      security: [{session: []}, {bot: [], actAs: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Order'}}}}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [account]
+      operationId: cancelOrder
+      security: [{session: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, required: [order], properties: {order: {$ref: '#/components/schemas/Order'}}}
+        '4XX': {$ref: '#/components/responses/Error'}
+  /me/trades:
+    get:
+      tags: [account]
+      operationId: listMyTrades
+      security: [{session: []}, {bot: [], actAs: []}]
+      parameters:
+        - {name: stock_id, in: query, schema: {type: integer}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Before'}
+        - {$ref: '#/components/parameters/After'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/MyTrade'}}}}
+  /me/ledger:
+    get:
+      tags: [account]
+      operationId: listLedger
+      security: [{session: []}, {bot: [], actAs: []}]
+      parameters:
+        - {name: reason, in: query, schema: {type: string}, description: comma-separated LedgerReason}
+        - {name: stock_id, in: query, schema: {type: integer}}
+        - {name: trading_day, in: query, schema: {$ref: '#/components/schemas/TradingDay'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Before'}
+        - {$ref: '#/components/parameters/After'}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Page'}
+                  - {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/LedgerEntry'}}}}
+  /me/restructure:
+    post:
+      tags: [account]
+      operationId: restructure
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [confirm], properties: {confirm: {const: true}}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, required: [me], properties: {me: {$ref: '#/components/schemas/Me'}}}
+        '4XX': {$ref: '#/components/responses/Error'}
+  /me/bind-codes:
+    post:
+      tags: [account]
+      operationId: createBindCode
+      security: [{session: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scopes: {type: array, items: {$ref: '#/components/schemas/Scope'}, default: ['read:account']}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, expires_at, scopes]
+                properties:
+                  code: {type: string, example: K7Q3-9MZD}
+                  expires_at: {$ref: '#/components/schemas/Timestamp'}
+                  scopes: {type: array, items: {$ref: '#/components/schemas/Scope'}}
+  /me/bindings:
+    get:
+      tags: [account]
+      operationId: listBindings
+      security: [{session: []}]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties: {items: {type: array, items: {$ref: '#/components/schemas/Binding'}}}
+  /me/bindings/{id}:
+    delete:
+      tags: [account]
+      operationId: deleteBinding
+      security: [{session: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /leaderboard:
+    get:
+      tags: [leaderboard]
+      operationId: getLeaderboard
+      parameters:
+        - {name: period, in: query, schema: {$ref: '#/components/schemas/LeaderboardPeriod'}}
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [period, from_day, to_day, as_of, items, viewer]
+                properties:
+                  period: {$ref: '#/components/schemas/LeaderboardPeriod'}
+                  from_day: {$ref: '#/components/schemas/TradingDay'}
+                  to_day: {$ref: '#/components/schemas/TradingDay'}
+                  as_of: {$ref: '#/components/schemas/Timestamp'}
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [rank, user, total_assets, return, restructures]
+                      properties:
+                        rank: {type: integer}
+                        user: {$ref: '#/components/schemas/UserRef'}
+                        total_assets: {$ref: '#/components/schemas/Money'}
+                        return: {$ref: '#/components/schemas/Ratio'}
+                        restructures: {type: integer}
+                  viewer:
+                    oneOf:
+                      - type: 'null'
+                      - type: object
+                        required: [rank, return]
+                        properties: {rank: {type: integer}, return: {$ref: '#/components/schemas/Ratio'}}
+
+  /auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string, minLength: 2, maxLength: 20}
+                password: {type: string, minLength: 6}
+                invite: {type: string}
+      responses:
+        '201': {description: Created (sets the session cookie), content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '4XX': {$ref: '#/components/responses/Error'}
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties: {username: {type: string}, password: {type: string}}
+      responses:
+        '200': {description: OK (sets the session cookie), content: {application/json: {schema: {$ref: '#/components/schemas/Me'}}}}
+        '4XX': {$ref: '#/components/responses/Error'}
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      responses:
+        '204': {description: Logged out (clears the cookie)}
+
+  /bot/bindings:
+    post:
+      tags: [bot]
+      operationId: redeemBindCode
+      security: [{bot: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, platform, external_id]
+              properties:
+                code: {type: string}
+                platform: {type: string, enum: [qq]}
+                external_id: {type: string}
+      responses:
+        '201':
+          description: Bound
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [binding, account]
+                properties:
+                  binding: {$ref: '#/components/schemas/Binding'}
+                  account: {$ref: '#/components/schemas/UserRef'}
+        '4XX': {$ref: '#/components/responses/Error'}
+  /bot/bindings/{platform}/{external_id}:
+    delete:
+      tags: [bot]
+      operationId: unbind
+      security: [{bot: []}]
+      parameters:
+        - {name: platform, in: path, required: true, schema: {type: string, enum: [qq]}}
+        - {name: external_id, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Unbound}
+        '404': {$ref: '#/components/responses/Error'}
+
+components:
+  securitySchemes:
+    session: {type: apiKey, in: cookie, name: session}
+    bot: {type: http, scheme: bearer, description: server-level bot token}
+    actAs: {type: apiKey, in: header, name: X-Act-As, description: 'qq:<QQ number>; requires a binding with read:account'}
+
+  parameters:
+    StockId: {name: id, in: path, required: true, schema: {type: integer}, description: AniList id (not the display code)}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    Before: {name: before, in: query, schema: {type: string}, description: opaque cursor; older items}
+    After: {name: after, in: query, schema: {type: string}, description: opaque cursor; newer items, oldest first}
+    From: {name: from, in: query, schema: {$ref: '#/components/schemas/TradingDay'}, description: inclusive}
+    To: {name: to, in: query, schema: {$ref: '#/components/schemas/TradingDay'}, description: inclusive}
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+
+  schemas:
+    Money: {type: integer, format: int64, description: 'cents (1 币 = 100)'}
+    Ratio: {type: number, description: 'fraction: 0.05 = 5%'}
+    Timestamp: {type: string, format: date-time, example: '2026-11-07T01:23:45+08:00'}
+    TradingDay: {type: string, format: date, description: 'trading day, rolls over at 04:00'}
+
+    Error:
+      type: object
+      required: [code, message, details]
+      properties:
+        code: {type: string, description: see docs/api-v1.md §2.9}
+        message: {type: string, description: user-facing Chinese}
+        details: {type: object, additionalProperties: true}
+
+    Page:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items: {type: array}
+        next_cursor: {type: [string, 'null']}
+        has_more: {type: boolean}
+
+    Phase: {type: string, enum: [auction, continuous, closed]}
+    OrderSide: {type: string, enum: [buy, sell]}
+    OrderType: {type: string, enum: [limit, market], x-open-enum: true}
+    OrderStatus: {type: string, enum: [open, filled, cancelled], x-open-enum: true}
+    StockStatus: {type: string, enum: [subscribing, listed, delisted], x-open-enum: true}
+    IpoStatus: {type: string, enum: [upcoming, open, allotted, listed, cancelled], x-open-enum: true}
+    NewsKind: {type: string, enum: [system, ipo, allotment, premiere, finale, dividend, rate, delisting, warning, vcm, flash], x-open-enum: true}
+    NewsCategory: {type: string, enum: [flash, notice, airing, close]}
+    LedgerReason: {type: string, enum: [grant, dividend, dividend_tax, commission, stamp_duty, interest, transfer, delisting, ipo, ipo_refund, restructure], x-open-enum: true}
+    IndexKey: {type: string, enum: [all, season, long], x-open-enum: true}
+    LeaderboardPeriod: {type: string, enum: [all, week, season], default: all, x-open-enum: true}
+    CandleSource: {type: string, enum: [live, replay]}
+    Scope: {type: string, enum: ['read:account'], description: "'trade' and 'notify' are reserved"}
+
+    StockRef:
+      type: object
+      required: [id, code, title]
+      properties:
+        id: {type: integer}
+        code: {type: string}
+        title: {type: string}
+    UserRef:
+      type: object
+      required: [id, username]
+      properties: {id: {type: integer}, username: {type: string}}
+
+    MarketStatus:
+      type: object
+      required: [now, trading_day, phase, phase_ends_at, next_phase, next_open_at, last_closed_day, launched_on, policy_rate, deposit_rate]
+      properties:
+        now: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        phase: {$ref: '#/components/schemas/Phase'}
+        phase_ends_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        next_phase: {oneOf: [{$ref: '#/components/schemas/Phase'}, {type: 'null'}]}
+        next_open_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        last_closed_day: {$ref: '#/components/schemas/TradingDay'}
+        launched_on: {$ref: '#/components/schemas/TradingDay'}
+        policy_rate: {$ref: '#/components/schemas/Ratio'}
+        deposit_rate: {$ref: '#/components/schemas/Ratio'}
+
+    Rules:
+      type: object
+      description: shape only; values from server/game.toml
+      properties:
+        timezone: {type: string}
+        session:
+          type: object
+          properties:
+            auction_start: {type: string}
+            open: {type: string}
+            close: {type: string}
+            close_is_next_day: {type: boolean}
+            day_rollover: {type: string}
+            daily_close: {type: string}
+        fees:
+          type: object
+          properties:
+            commission: {$ref: '#/components/schemas/Ratio'}
+            stamp_duty: {$ref: '#/components/schemas/Ratio'}
+            stamp_duty_on: {type: string, enum: [sell, both]}
+        dividend_tax:
+          type: array
+          items:
+            type: object
+            required: [max_holding_days, rate]
+            properties:
+              max_holding_days: {type: [integer, 'null']}
+              rate: {$ref: '#/components/schemas/Ratio'}
+        vcm:
+          type: object
+          properties:
+            threshold: {$ref: '#/components/schemas/Ratio'}
+            window_minutes: {type: integer}
+            cool_minutes: {type: integer}
+            later_bands: {type: array, items: {$ref: '#/components/schemas/Ratio'}}
+        price_limit_multiple: {type: number}
+        initial_cash: {$ref: '#/components/schemas/Money'}
+        restructure:
+          type: object
+          properties:
+            threshold_ratio: {$ref: '#/components/schemas/Ratio'}
+            per_season: {type: integer}
+        ipo:
+          type: object
+          properties:
+            subscription_days: {type: integer}
+            public_base: {$ref: '#/components/schemas/Ratio'}
+            clawback:
+              type: array
+              items:
+                type: object
+                properties:
+                  oversubscribed: {type: number}
+                  public_share: {$ref: '#/components/schemas/Ratio'}
+        order_quantity_max: {type: integer}
+
+    Ratios:
+      type: object
+      required: [pe_ttm, pe_dynamic, dividend_yield_ttm, dividend_yield_dynamic, pb, book_value_per_share]
+      properties:
+        pe_ttm: {type: [number, 'null']}
+        pe_dynamic: {type: [number, 'null']}
+        dividend_yield_ttm: {type: [number, 'null']}
+        dividend_yield_dynamic: {type: [number, 'null']}
+        pb: {type: [number, 'null']}
+        book_value_per_share: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+
+    Quote:
+      type: object
+      required: [stock, title_ja, title_en, price, prev_close, change, open, high, low, volume, turnover, market_cap,
+                 week_revenue, week_revenue_change, episodes_aired, episodes, is_long_runner, first_air, listed_on,
+                 is_new, ipo_remaining, ipo_price, vcm_active, sparkline, ratios, cover_url]
+      properties:
+        stock: {$ref: '#/components/schemas/StockRef'}
+        title_ja: {type: [string, 'null']}
+        title_en: {type: [string, 'null']}
+        price: {$ref: '#/components/schemas/Money'}
+        prev_close: {$ref: '#/components/schemas/Money'}
+        change: {$ref: '#/components/schemas/Ratio'}
+        open: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        high: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        low: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        volume: {type: integer}
+        turnover: {$ref: '#/components/schemas/Money'}
+        market_cap: {$ref: '#/components/schemas/Money'}
+        week_revenue: {$ref: '#/components/schemas/Money'}
+        week_revenue_change: {type: [number, 'null']}
+        episodes_aired: {type: integer}
+        episodes: {type: [integer, 'null']}
+        is_long_runner: {type: boolean}
+        first_air: {type: string, format: date}
+        listed_on: {type: string, format: date}
+        is_new: {type: boolean}
+        ipo_remaining: {type: integer}
+        ipo_price: {$ref: '#/components/schemas/Money'}
+        vcm_active: {type: boolean}
+        sparkline: {type: array, items: {$ref: '#/components/schemas/Money'}}
+        ratios: {$ref: '#/components/schemas/Ratios'}
+        cover_url: {type: string}
+
+    Vcm:
+      type: object
+      required: [active, until, low, high, count_today]
+      properties:
+        active: {type: boolean}
+        until: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        low: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        high: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        count_today: {type: integer}
+
+    StockDetail:
+      type: object
+      required: [stock, title_ja, title_en, studio, status, trading_day, shares, first_air, listed_on, delisted_on,
+                 episodes, episodes_aired, is_long_runner, ipo_price, quote, vcm, ratios, revenue_weeks, episode_days,
+                 next_episode, dividends, holders, audiences, ipo, cover_url]
+      properties:
+        stock: {$ref: '#/components/schemas/StockRef'}
+        title_ja: {type: [string, 'null']}
+        title_en: {type: [string, 'null']}
+        studio: {type: [string, 'null']}
+        status: {$ref: '#/components/schemas/StockStatus'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        shares: {type: integer}
+        first_air: {type: string, format: date}
+        listed_on: {type: string, format: date}
+        delisted_on: {type: [string, 'null'], format: date}
+        episodes: {type: [integer, 'null']}
+        episodes_aired: {type: integer}
+        is_long_runner: {type: boolean}
+        ipo_price: {$ref: '#/components/schemas/Money'}
+        quote:
+          type: object
+          required: [price, prev_close, change, open, high, low, open_reference, volume, turnover, market_cap, ipo_remaining]
+          properties:
+            price: {$ref: '#/components/schemas/Money'}
+            prev_close: {$ref: '#/components/schemas/Money'}
+            change: {$ref: '#/components/schemas/Ratio'}
+            open: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+            high: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+            low: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+            open_reference: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+            volume: {type: integer}
+            turnover: {$ref: '#/components/schemas/Money'}
+            market_cap: {$ref: '#/components/schemas/Money'}
+            ipo_remaining: {type: integer}
+        vcm: {$ref: '#/components/schemas/Vcm'}
+        ratios: {$ref: '#/components/schemas/Ratios'}
+        revenue_weeks:
+          type: array
+          items:
+            type: object
+            required: [week_start, revenue, by_market, dividend_per_share, episodes_aired]
+            properties:
+              week_start: {type: string, format: date}
+              revenue: {$ref: '#/components/schemas/Money'}
+              by_market:
+                type: object
+                properties:
+                  us: {$ref: '#/components/schemas/Money'}
+                  cn: {$ref: '#/components/schemas/Money'}
+                  jp: {$ref: '#/components/schemas/Money'}
+              dividend_per_share: {$ref: '#/components/schemas/Money'}
+              episodes_aired: {type: integer}
+        episode_days:
+          type: array
+          items:
+            type: object
+            required: [episode, trading_day]
+            properties: {episode: {type: integer}, trading_day: {$ref: '#/components/schemas/TradingDay'}}
+        next_episode:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [episode, airs_at]
+              properties: {episode: {type: number}, airs_at: {$ref: '#/components/schemas/Timestamp'}}
+        dividends:
+          type: array
+          items:
+            type: object
+            required: [trading_day, per_share]
+            properties: {trading_day: {$ref: '#/components/schemas/TradingDay'}, per_share: {$ref: '#/components/schemas/Money'}}
+        holders:
+          type: object
+          required: [player, committee, unissued, market_maker, npc, other]
+          description: the parts sum to shares; other = world / central bank / government accounts
+          properties:
+            other: {type: integer}
+            player: {type: integer}
+            committee: {type: integer}
+            unissued: {type: integer}
+            market_maker: {type: integer}
+            npc:
+              type: object
+              required: [total, by_style]
+              properties:
+                total: {type: integer}
+                by_style:
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      properties: {value: {type: integer}, trend: {type: integer}, news: {type: integer}, retail: {type: integer}}
+        audiences:
+          type: object
+          required: [anilist, bangumi, annict]
+          properties:
+            anilist:
+              oneOf:
+                - type: 'null'
+                - type: object
+                  properties:
+                    popularity: {type: [integer, 'null']}
+                    score: {type: [number, 'null']}
+                    genres: {type: array, items: {type: string}}
+            bangumi:
+              oneOf:
+                - type: 'null'
+                - type: object
+                  properties:
+                    id: {type: integer}
+                    collection: {type: [object, 'null'], additionalProperties: {type: integer}}
+                    score: {type: [number, 'null']}
+            annict:
+              oneOf:
+                - type: 'null'
+                - type: object
+                  properties: {id: {type: integer}, watchers: {type: [integer, 'null']}}
+        ipo: {oneOf: [{$ref: '#/components/schemas/Ipo'}, {type: 'null'}]}
+        cover_url: {type: string}
+
+    BookLevel:
+      type: object
+      required: [price, quantity, orders]
+      properties:
+        price: {$ref: '#/components/schemas/Money'}
+        quantity: {type: integer}
+        orders: {type: integer}
+    Book:
+      type: object
+      required: [trading_day, as_of, bids, asks, auction]
+      properties:
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        as_of: {type: string, format: date-time, description: millisecond precision}
+        bids: {type: array, items: {$ref: '#/components/schemas/BookLevel'}}
+        asks: {type: array, items: {$ref: '#/components/schemas/BookLevel'}}
+        auction:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [price, quantity]
+              properties:
+                price: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+                quantity: {type: integer}
+
+    PublicTrade:
+      type: object
+      required: [id, price, quantity, at, trading_day]
+      properties:
+        id: {type: integer}
+        price: {$ref: '#/components/schemas/Money'}
+        quantity: {type: integer}
+        at: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+
+    Candle:
+      type: object
+      required: [trading_day, open, high, low, close, volume, source, is_partial]
+      properties:
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        open: {$ref: '#/components/schemas/Money'}
+        high: {$ref: '#/components/schemas/Money'}
+        low: {$ref: '#/components/schemas/Money'}
+        close: {$ref: '#/components/schemas/Money'}
+        volume: {type: integer}
+        source: {$ref: '#/components/schemas/CandleSource'}
+        is_partial: {type: boolean}
+
+    IndexSeries:
+      type: object
+      required: [key, name, members, base_day, value, prev_close, change, series]
+      properties:
+        key: {$ref: '#/components/schemas/IndexKey'}
+        name: {type: string}
+        members: {type: integer}
+        base_day: {$ref: '#/components/schemas/TradingDay'}
+        value: {type: number}
+        prev_close: {type: number}
+        change: {$ref: '#/components/schemas/Ratio'}
+        series:
+          type: array
+          description: empty when series=false
+          items:
+            type: object
+            required: [trading_day, value]
+            properties: {trading_day: {$ref: '#/components/schemas/TradingDay'}, value: {type: number}}
+
+    MacroDay:
+      type: object
+      required: [trading_day, policy_rate, m2, m2_growth, injected, exported, taxes, interest, revenue_7d, demand_index]
+      properties:
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        policy_rate: {type: [number, 'null']}
+        m2: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        m2_growth: {type: [number, 'null']}
+        injected: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        exported: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        taxes: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        interest: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        revenue_7d: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        demand_index: {type: [number, 'null']}
+
+    NewsItem:
+      type: object
+      required: [id, at, trading_day, kind, category, title, body, stock]
+      properties:
+        id: {type: integer}
+        at: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        kind: {$ref: '#/components/schemas/NewsKind'}
+        category: {$ref: '#/components/schemas/NewsCategory'}
+        title: {type: string}
+        body: {type: [string, 'null']}
+        stock: {oneOf: [{$ref: '#/components/schemas/StockRef'}, {type: 'null'}]}
+
+    Ipo:
+      type: object
+      required: [stock, title_ja, status, price, sub_start, sub_end, listed_on, first_air, float_quantity,
+                 base_public_quantity, applied_quantity, applicants, result, first_day, viewer]
+      properties:
+        stock: {$ref: '#/components/schemas/StockRef'}
+        title_ja: {type: [string, 'null']}
+        status: {$ref: '#/components/schemas/IpoStatus'}
+        price: {$ref: '#/components/schemas/Money'}
+        sub_start: {type: string, format: date}
+        sub_end: {type: string, format: date}
+        listed_on: {type: string, format: date}
+        first_air: {type: string, format: date}
+        float_quantity: {type: integer}
+        base_public_quantity: {type: integer}
+        applied_quantity: {type: integer}
+        applicants: {type: integer}
+        result:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [oversubscribed, public_quantity, allotment_ratio]
+              properties:
+                oversubscribed: {type: number}
+                public_quantity: {type: integer}
+                allotment_ratio: {type: [number, 'null']}
+        first_day:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [close, change]
+              properties:
+                close: {$ref: '#/components/schemas/Money'}
+                change: {$ref: '#/components/schemas/Ratio'}
+        viewer:
+          oneOf:
+            - type: 'null'
+            - type: object
+              required: [quantity, frozen, allotted]
+              properties:
+                quantity: {type: integer}
+                frozen: {$ref: '#/components/schemas/Money'}
+                allotted: {type: [integer, 'null']}
+
+    Order:
+      type: object
+      required: [id, stock, side, type, price, quantity, filled_quantity, average_fill_price, frozen_cash, status,
+                 created_at, updated_at, trading_day]
+      properties:
+        id: {type: integer}
+        stock: {$ref: '#/components/schemas/StockRef'}
+        side: {$ref: '#/components/schemas/OrderSide'}
+        type: {$ref: '#/components/schemas/OrderType'}
+        price: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        quantity: {type: integer}
+        filled_quantity: {type: integer}
+        average_fill_price: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        frozen_cash: {$ref: '#/components/schemas/Money'}
+        status: {$ref: '#/components/schemas/OrderStatus'}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        updated_at: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+
+    MyTrade:
+      type: object
+      required: [id, order_id, stock, side, price, quantity, amount, commission, stamp_duty, at, trading_day]
+      properties:
+        id: {type: integer}
+        order_id: {type: [integer, 'null']}
+        stock: {$ref: '#/components/schemas/StockRef'}
+        side: {$ref: '#/components/schemas/OrderSide'}
+        price: {$ref: '#/components/schemas/Money'}
+        quantity: {type: integer}
+        amount: {$ref: '#/components/schemas/Money'}
+        commission: {$ref: '#/components/schemas/Money'}
+        stamp_duty: {$ref: '#/components/schemas/Money'}
+        at: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+
+    LedgerEntry:
+      type: object
+      required: [id, at, trading_day, reason, reason_label, amount, stock, ref]
+      properties:
+        id: {type: integer}
+        at: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        reason: {$ref: '#/components/schemas/LedgerReason'}
+        reason_label: {type: string, description: display label in Chinese, e.g. 分红}
+        amount: {$ref: '#/components/schemas/Money'}
+        stock: {oneOf: [{$ref: '#/components/schemas/StockRef'}, {type: 'null'}]}
+        ref: {type: [integer, 'null']}
+
+    CashSummary:
+      type: object
+      required: [cash, frozen_cash, available_cash, stock_value, total_assets]
+      properties:
+        cash: {$ref: '#/components/schemas/Money'}
+        frozen_cash: {$ref: '#/components/schemas/Money'}
+        available_cash: {$ref: '#/components/schemas/Money'}
+        stock_value: {$ref: '#/components/schemas/Money'}
+        total_assets: {$ref: '#/components/schemas/Money'}
+
+    Position:
+      type: object
+      required: [stock, quantity, available_quantity, average_cost, price, value, pnl, pnl_ratio, day_change, dividends, oldest_lot_on]
+      properties:
+        stock: {$ref: '#/components/schemas/StockRef'}
+        quantity: {type: integer}
+        available_quantity: {type: integer}
+        average_cost: {$ref: '#/components/schemas/Money'}
+        price: {$ref: '#/components/schemas/Money'}
+        value: {$ref: '#/components/schemas/Money'}
+        pnl: {$ref: '#/components/schemas/Money'}
+        pnl_ratio: {type: [number, 'null']}
+        day_change: {$ref: '#/components/schemas/Ratio'}
+        dividends: {$ref: '#/components/schemas/Money'}
+        oldest_lot_on: {type: [string, 'null'], format: date}
+
+    Me:
+      allOf:
+        - {$ref: '#/components/schemas/CashSummary'}
+        - type: object
+          required: [id, username, trading_day, initial_cash, total_return, dividends, deposit_rate, restructure]
+          properties:
+            id: {type: integer}
+            username: {type: string}
+            trading_day: {$ref: '#/components/schemas/TradingDay'}
+            initial_cash: {$ref: '#/components/schemas/Money'}
+            total_return: {$ref: '#/components/schemas/Ratio'}
+            dividends: {$ref: '#/components/schemas/Money'}
+            deposit_rate: {$ref: '#/components/schemas/Ratio'}
+            restructure:
+              type: object
+              required: [count, eligible, reason, message]
+              properties:
+                count: {type: integer}
+                eligible: {type: boolean}
+                reason: {type: [string, 'null'], enum: [not_poor, this_season, market_closed, null]}
+                message: {type: [string, 'null']}
+
+    AssetDay:
+      type: object
+      required: [trading_day, cash, stock_value, total_assets, return_index, total_return, restructured, is_partial]
+      properties:
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        cash: {$ref: '#/components/schemas/Money'}
+        stock_value: {$ref: '#/components/schemas/Money'}
+        total_assets: {$ref: '#/components/schemas/Money'}
+        return_index: {type: number, description: chain-linked across restructurings, 1.0 at registration}
+        total_return: {$ref: '#/components/schemas/Ratio'}
+        restructured: {type: boolean}
+        is_partial: {type: boolean, description: today before the daily close, at last prices}
+
+    Binding:
+      type: object
+      required: [id, platform, external_id, scopes, created_at, last_used_at]
+      properties:
+        id: {type: integer}
+        platform: {type: string, enum: [qq]}
+        external_id: {type: string}
+        display_name: {type: string, description: masked QQ number (web listing only)}
+        scopes: {type: array, items: {$ref: '#/components/schemas/Scope'}}
+        created_at: {$ref: '#/components/schemas/Timestamp'}
+        last_used_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+
+    # ---- WebSocket messages (/api/v1/ws, docs/api-v1.md §5); not attached to a path
+    WsClientMessage:
+      type: object
+      properties:
+        sub: {type: array, maxItems: 32, items: {type: string, maxLength: 40}}
+        unsub: {type: array, maxItems: 32, items: {type: string, maxLength: 40}}
+        since: {type: object, additionalProperties: {type: integer}}
+        resync: {type: array, items: {type: string}}
+        ping: {type: integer}
+    WsServerMessage:
+      oneOf:
+        - {$ref: '#/components/schemas/WsHello'}
+        - {$ref: '#/components/schemas/WsSubscribed'}
+        - {$ref: '#/components/schemas/WsQuotes'}
+        - {$ref: '#/components/schemas/WsStock'}
+        - {$ref: '#/components/schemas/WsNews'}
+        - {$ref: '#/components/schemas/WsOrder'}
+        - {$ref: '#/components/schemas/WsFill'}
+        - {$ref: '#/components/schemas/WsCash'}
+        - {$ref: '#/components/schemas/WsTime'}
+        - {$ref: '#/components/schemas/WsEvent'}
+        - {$ref: '#/components/schemas/WsReset'}
+        - {$ref: '#/components/schemas/WsPong'}
+      discriminator: {propertyName: t}
+    WsHello:
+      type: object
+      required: [t, v, server_version, me, bot, now, trading_day, phase, limits]
+      properties:
+        t: {const: hello}
+        v: {const: 1}
+        server_version: {type: string, description: reload the SPA when it differs from the build}
+        me: {type: boolean}
+        bot: {type: boolean}
+        now: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        phase: {$ref: '#/components/schemas/Phase'}
+        limits: {type: object, properties: {stocks: {type: integer}, queue: {type: integer}}}
+    WsSubscribed:
+      type: object
+      required: [t, topics, rejected]
+      properties:
+        t: {const: subscribed}
+        topics: {type: array, items: {type: string}}
+        rejected:
+          type: array
+          items:
+            type: object
+            properties:
+              topic: {type: string}
+              code: {type: string, enum: [unknown_topic, unauthenticated, forbidden, too_many_stocks, stock_not_found]}
+    WsQuotes:
+      type: object
+      required: [t, seq, full, trading_day, rows]
+      properties:
+        t: {const: quotes}
+        seq: {type: integer}
+        full: {type: boolean}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        cols: {type: array, items: {type: string}, description: 'present when full; [id, price, prev_close, volume, turnover, vcm_active]'}
+        rows: {type: array, items: {type: array, prefixItems: [{type: integer}, {type: integer}, {type: integer}, {type: integer}, {type: integer}, {type: boolean}]}}
+    WsStock:
+      type: object
+      required: [t, seq, id, full, trading_day, as_of, price, prev_close, open, high, low, volume, turnover, open_reference, bids, asks, vcm, auction, trades]
+      properties:
+        t: {const: stock}
+        seq: {type: integer}
+        id: {type: integer}
+        full: {type: boolean}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        as_of: {type: string, format: date-time}
+        price: {$ref: '#/components/schemas/Money'}
+        prev_close: {$ref: '#/components/schemas/Money'}
+        open: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        high: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        low: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        volume: {type: integer}
+        turnover: {$ref: '#/components/schemas/Money'}
+        open_reference: {oneOf: [{$ref: '#/components/schemas/Money'}, {type: 'null'}]}
+        bids: {type: array, items: {type: array, description: '[price, quantity, orders]', items: {type: integer}}}
+        asks: {type: array, items: {type: array, description: '[price, quantity, orders]', items: {type: integer}}}
+        vcm: {$ref: '#/components/schemas/Vcm'}
+        auction: {type: [object, 'null']}
+        trades: {type: array, items: {type: array, description: '[id, price, quantity, at]'}}
+    WsNews:
+      type: object
+      required: [t, seq, item]
+      properties:
+        t: {const: news}
+        seq: {type: integer}
+        item: {$ref: '#/components/schemas/NewsItem'}
+    WsOrder:
+      type: object
+      required: [t, seq, order]
+      properties:
+        t: {const: order}
+        seq: {type: integer}
+        order: {$ref: '#/components/schemas/Order'}
+    WsFill:
+      type: object
+      required: [t, seq, trade]
+      properties:
+        t: {const: fill}
+        seq: {type: integer}
+        trade: {$ref: '#/components/schemas/MyTrade'}
+    WsCash:
+      type: object
+      required: [t, seq, cash, frozen_cash, available_cash]
+      properties:
+        t: {const: cash}
+        seq: {type: integer}
+        cash: {$ref: '#/components/schemas/Money'}
+        frozen_cash: {$ref: '#/components/schemas/Money'}
+        available_cash: {$ref: '#/components/schemas/Money'}
+    WsTime:
+      type: object
+      required: [t, now, trading_day, phase, phase_ends_at, last_closed_day]
+      properties:
+        t: {const: time}
+        now: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        phase: {$ref: '#/components/schemas/Phase'}
+        phase_ends_at: {oneOf: [{$ref: '#/components/schemas/Timestamp'}, {type: 'null'}]}
+        last_closed_day: {$ref: '#/components/schemas/TradingDay'}
+    WsEvent:
+      type: object
+      required: [t, seq, kind, at, trading_day, stock, data, news_id]
+      properties:
+        t: {const: event}
+        seq: {type: integer}
+        kind:
+          type: string
+          enum: [flash, big_move, vcm, ipo_open, ipo_allotted, listed, delisting_warning, delisted, daily_close, leaderboard_weekly]
+          x-open-enum: true
+        at: {$ref: '#/components/schemas/Timestamp'}
+        trading_day: {$ref: '#/components/schemas/TradingDay'}
+        stock: {oneOf: [{$ref: '#/components/schemas/StockRef'}, {type: 'null'}]}
+        data:
+          type: object
+          additionalProperties: true
+          description: 'by kind, docs/api-v1.md §5.3.7; big_move: {rule: daily|window, change, threshold, window_minutes, price, reference_price, prev_close}'
+        news_id: {type: [integer, 'null']}
+    WsReset:
+      type: object
+      required: [t, topic]
+      properties:
+        t: {const: reset}
+        topic: {type: string}
+    WsPong:
+      type: object
+      required: [t, ping]
+      properties:
+        t: {const: pong}
+        ping: {type: integer}
