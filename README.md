@@ -130,7 +130,9 @@ bash deploy/install.sh
 
 日后更新：`bash deploy/update.sh`（拉代码、装依赖、构建前端、重启；数据库迁移在启动时自动执行，执行前先备份）。
 
-没有 Node.js 的话（Ubuntu）：
+构建前端需要 Node.js 20+；本机没有 Node 但有 Docker 时，脚本会自动用 `node:22-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换 npm 源）。
+
+想在本机装 Node.js 的话（Ubuntu）：
 
 ```bash
 curl -fsSL https://fnm.vercel.app/install | bash   # 需要代理时先 export https_proxy=...

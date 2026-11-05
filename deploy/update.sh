@@ -3,6 +3,27 @@
 # (with a backup in data/backups/ first). Run from the repo root:  bash deploy/update.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
+# Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com)
+build_web() {
+  if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
+    ( cd web && npm ci && npm run build )
+  elif command -v docker >/dev/null; then
+    local image="${NODE_IMAGE:-node:22-alpine}"
+    echo "本机没有 Node.js 20+，用容器 $image 构建前端"
+    mkdir -p "$HOME/.cache/anistock-npm"
+    docker run --rm --network host -u "$(id -u):$(id -g)" \
+      -e HOME=/tmp -e npm_config_cache=/tmp/.npm \
+      ${NPM_REGISTRY:+-e npm_config_registry="$NPM_REGISTRY"} \
+      ${https_proxy:+-e https_proxy="$https_proxy"} ${HTTPS_PROXY:+-e HTTPS_PROXY="$HTTPS_PROXY"} \
+      -v "$PWD/web:/app" -v "$HOME/.cache/anistock-npm:/tmp/.npm" -w /app \
+      "$image" sh -c "npm ci && npm run build"
+  else
+    echo "既没有 Node.js 20+，也没有 Docker：装其中一个再运行" >&2
+    return 1
+  fi
+}
 say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 UV="$(command -v uv)"
 
@@ -11,7 +32,7 @@ git pull --ff-only
 
 say "更新依赖、构建前端"
 "$UV" sync
-( cd web && npm ci && npm run build )
+build_web
 
 say "更新 systemd 服务定义"
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-server.service > ~/.config/systemd/user/anistock-server.service

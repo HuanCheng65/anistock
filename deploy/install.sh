@@ -3,6 +3,27 @@
 # Safe to re-run: every step checks before it acts. Run from the repo root:  bash deploy/install.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
+# Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com)
+build_web() {
+  if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
+    ( cd web && npm ci && npm run build )
+  elif command -v docker >/dev/null; then
+    local image="${NODE_IMAGE:-node:22-alpine}"
+    echo "本机没有 Node.js 20+，用容器 $image 构建前端"
+    mkdir -p "$HOME/.cache/anistock-npm"
+    docker run --rm --network host -u "$(id -u):$(id -g)" \
+      -e HOME=/tmp -e npm_config_cache=/tmp/.npm \
+      ${NPM_REGISTRY:+-e npm_config_registry="$NPM_REGISTRY"} \
+      ${https_proxy:+-e https_proxy="$https_proxy"} ${HTTPS_PROXY:+-e HTTPS_PROXY="$HTTPS_PROXY"} \
+      -v "$PWD/web:/app" -v "$HOME/.cache/anistock-npm:/tmp/.npm" -w /app \
+      "$image" sh -c "npm ci && npm run build"
+  else
+    echo "既没有 Node.js 20+，也没有 Docker：装其中一个再运行" >&2
+    return 1
+  fi
+}
 ROOT="$PWD"
 say()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m!! %s\033[0m\n' "$*"; }
@@ -11,10 +32,13 @@ die()  { printf '\033[1;31mxx %s\033[0m\n' "$*"; exit 1; }
 say "检查依赖"
 UV="$(command -v uv || true)"
 [ -n "$UV" ] || die "没找到 uv"
-command -v node >/dev/null || die "没找到 Node.js（需要 20 以上）。安装方法见 README『游戏网站』一节"
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$NODE_MAJOR" -ge 20 ] || die "Node.js 版本是 $(node -v)，需要 20 以上"
-echo "uv: $UV   node: $(node -v)"
+if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
+  echo "uv: $UV   node: $(node -v)"
+elif command -v docker >/dev/null; then
+  echo "uv: $UV   node: 本机没有，用 Docker 容器构建前端"
+else
+  die "构建前端需要 Node.js 20+ 或 Docker，两个都没找到"
+fi
 
 say "检查采集数据库"
 [ -f data/anistock.db ] || die "没有 data/anistock.db：采集器还没跑过，或者需要从开发机拷贝过来"
@@ -48,7 +72,7 @@ say "安装 Python 依赖"
 "$UV" sync
 
 say "构建前端"
-( cd web && npm ci && npm run build )
+build_web
 
 say "重建市场序列"
 "$UV" run sim/reconstruct.py airtimes || warn "刷新 Annict 播出时间失败，继续用已有数据"
