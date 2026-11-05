@@ -19,6 +19,7 @@ pub mod market;
 pub mod orders;
 pub mod spa;
 pub mod v2;
+pub mod ws;
 pub mod validate;
 
 use std::path::PathBuf;
@@ -43,6 +44,8 @@ pub struct AppState {
     pub reads: ReadPool,
     /// `web/dist`, if it exists at startup (v1 decides at import time)
     pub dist: Option<PathBuf>,
+    /// the real-time fan-out on the engine thread (`/api/ws`); None in tools and tests
+    pub live: Option<crossbeam_channel::Sender<crate::live::Ctl>>,
 }
 
 impl AppState {

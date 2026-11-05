@@ -21,6 +21,8 @@ const props = defineProps<{
   episodes?: { n: number; day: string }[]
   dividends?: { day: string; ps: number }[]
   wide?: boolean
+  /** trading and receiving pushes: the intraday line's last point pulses */
+  live?: boolean
 }>()
 
 const host = ref<HTMLDivElement>()
@@ -34,6 +36,7 @@ const hover = ref<{ t: string; o?: number; h?: number; l?: number; c: number; v:
 const marks = ref<{ x: number; label: string; key: string }[]>([])
 const divs = ref<{ x: number; key: string; ps: number }[]>([])
 const width = ref(0)
+const dot = ref<{ x: number; y: number; up: boolean | null } | null>(null)
 
 function hexA(hex: string, a: number) {
   const m = hex.replace('#', '')
@@ -127,6 +130,44 @@ function draw() {
   place()
 }
 
+/** A pushed trade changed the last minute or added one: extend the line in place (no full redraw). */
+let shown = 0
+function extend() {
+  const ch = chart.value
+  const pts = props.intraday ?? []
+  if (!ch || !line || !vol || props.period !== 'intraday' || !pts.length) return
+  const c = colors()
+  const i = pts.length - 1
+  const p = pts[i]
+  const pc = props.prevClose ?? pts[0].price
+  line.applyOptions({ color: p.price === pc ? c.ink2 : p.price > pc ? c.up : c.down })
+  line.update({ time: minuteTime(p.minute), value: p.price })
+  vol.update({ time: minuteTime(p.minute), value: p.volume, color: hexA(p.price >= (i ? pts[i - 1].price : pc) ? c.up : c.down, 0.35) })
+  if (shown !== pts.length) ch.timeScale().fitContent()
+  shown = pts.length
+  laterDot()
+}
+
+/** Place the dot once the chart has re-laid out its scales (next frames). */
+function laterDot() {
+  requestAnimationFrame(() => requestAnimationFrame(placeDot))
+}
+
+/** The pulsing dot on the last intraday point. */
+function placeDot() {
+  const ch = chart.value
+  const pts = props.intraday ?? []
+  if (!ch || !line || props.period !== 'intraday' || !props.live || !pts.length) {
+    dot.value = null
+    return
+  }
+  const p = pts[pts.length - 1]
+  const x = ch.timeScale().timeToCoordinate(minuteTime(p.minute))
+  const y = line.priceToCoordinate(p.price)
+  const pc = props.prevClose ?? pts[0].price
+  dot.value = x == null || y == null ? null : { x: Number(x), y: Number(y), up: p.price === pc ? null : p.price > pc }
+}
+
 /** Overlay positions for episode and dividend markers. */
 function place() {
   const ch = chart.value
@@ -180,7 +221,10 @@ onMounted(() => {
   line = ch.addLineSeries({ lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerRadius: 3 })
   vol = ch.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
   ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
-  ch.timeScale().subscribeVisibleLogicalRangeChange(() => place())
+  ch.timeScale().subscribeVisibleLogicalRangeChange(() => {
+    place()
+    placeDot()
+  })
   ch.subscribeCrosshairMove((p) => {
     if (!p.time) return (hover.value = null)
     if (props.period === 'intraday') {
@@ -199,7 +243,16 @@ onMounted(() => {
   width.value = host.value.clientWidth
   draw()
 })
-watch(() => [props.candles, props.period, props.intraday, props.episodes, props.dividends], draw)
+watch(() => [props.candles, props.period, props.intraday, props.episodes, props.dividends], () => {
+  draw()
+  shown = props.intraday?.length ?? 0
+  laterDot()
+})
+watch(() => {
+  const p = props.intraday
+  return p && p.length ? `${p.length}|${p[p.length - 1].price}|${p[p.length - 1].volume}` : ''
+}, extend)
+watch(() => props.live, laterDot)
 watch(tick, draw)
 onBeforeUnmount(() => {
   ro?.disconnect()
@@ -218,6 +271,7 @@ onBeforeUnmount(() => {
     </div>
     <div class="area">
       <div ref="host" class="chart" role="img" :aria-label="period === 'intraday' ? '分时走势' : 'K 线，标出了各集播出日和分红日'"></div>
+      <span v-if="dot" class="ldot" :class="dot.up == null ? 'flat' : dot.up ? 'up' : 'down'" :style="{ left: dot.x + 'px', top: dot.y + 'px' }" aria-hidden="true"></span>
       <svg class="over" aria-hidden="true">
         <line v-for="m in marks" :key="m.key" :x1="m.x" :x2="m.x" y1="6" y2="100%" class="ep" />
       </svg>
@@ -236,12 +290,18 @@ onBeforeUnmount(() => {
 .chart { width: 100%; height: 230px; }
 .wide .chart { height: 330px; }
 .over { position: absolute; left: 0; top: 0; width: 100%; height: calc(100% - 26px); pointer-events: none; overflow: visible; }
-.ep { stroke: var(--brand); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.55; }
+.ep { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.55; }
 .strip { position: relative; height: 32px; }
 .eplabel {
-  position: absolute; top: 2px; transform: translateX(-50%); background: var(--brand); color: #fff;
+  position: absolute; top: 2px; transform: translateX(-50%); background: var(--accent); color: #fff;
   font-size: 10px; line-height: 15px; padding: 0 4px; min-width: 18px; text-align: center; white-space: nowrap;
 }
 .wide .eplabel { font-size: 11px; line-height: 17px; font-family: var(--font); }
+.ldot { position: absolute; z-index: 2; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: var(--ink-2); pointer-events: none; transition: left 0.3s ease-out, top 0.3s ease-out; }
+.ldot.up { background: var(--up); }
+.ldot.down { background: var(--down); }
+.ldot::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: inherit; animation: ldot 1.8s ease-out infinite; }
+@keyframes ldot { 0% { transform: scale(1); opacity: 0.5; } 80%, 100% { transform: scale(3); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ldot { transition: none; } .ldot::after { animation: none; opacity: 0; } }
 .div { position: absolute; top: 22px; width: 7px; height: 7px; background: var(--ink); transform: translateX(-50%) rotate(45deg); }
 </style>

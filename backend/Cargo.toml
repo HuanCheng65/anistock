@@ -27,7 +27,8 @@ crossbeam-channel = "0.5"
 sha2 = "0.10"
 # HTTP layer (src/actor.rs, src/auth.rs, src/api/, src/loops.rs)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "fs"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 scrypt = { version = "0.11", default-features = false }
 hmac = "0.12"
 subtle = "2"

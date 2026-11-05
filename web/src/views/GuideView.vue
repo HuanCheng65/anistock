@@ -74,7 +74,7 @@ const session = useSession()
 .steps li { counter-increment: s; position: relative; padding: 14px var(--gutter) 14px calc(var(--gutter) + 34px); border-top: 1px solid var(--hair); }
 .steps li::before {
   content: counter(s); position: absolute; left: var(--gutter); top: 15px; width: 22px; height: 22px; display: grid; place-items: center;
-  background: var(--brand); color: #fff; font-weight: 600; font-size: 12px; font-family: var(--font-num);
+  background: var(--ink); color: var(--ground); font-weight: 600; font-size: 12px; font-family: var(--font-num);
 }
 .steps h2 { font-family: var(--font-serif); font-size: 17px; font-weight: 900; margin-bottom: 4px; }
 .steps p { color: var(--ink-2); font-size: 14px; line-height: 1.7; }

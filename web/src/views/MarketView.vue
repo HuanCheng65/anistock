@@ -27,9 +27,9 @@ const desk = useMedia(DESK)
 const searching = ref(false)
 const rankTab = ref('gain')
 
-const { refresh } = usePoll(() => market.refreshQuotes(), 5000)
+const { refresh } = usePoll(() => market.refreshQuotes(), 5000, 30000)
 usePoll(() => market.refreshTonight(), 300000)
-usePoll(() => market.refreshNews(40), 30000)
+usePoll(() => market.refreshNews(40), 30000, 120000)
 usePoll(() => market.refreshMacro(), 300000)
 usePoll(() => Promise.all([session.loadLeaders(), ipo.refresh()]), 60000)
 
@@ -142,8 +142,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
         <RouterLink v-for="s in watch.slice(0, 6)" :key="s.id" :to="`/stocks/${s.id}`" class="mrow" @click="remember('watch', '自选', watch)">
           <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
           <span class="clamp1">{{ s.title }}</span>
-          <span class="num">{{ money(s.price) }}</span>
-          <span class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
+          <span v-flash="s.price" class="num">{{ money(s.price) }}</span>
+          <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
         </RouterLink>
         <p v-if="!watch.length" class="none">在股票页加入自选</p>
       </section>
@@ -151,7 +151,7 @@ function remember(key: string, label: string, rows: MarketStock[]) {
       <!-- 要闻 -->
       <section class="mod m-news">
         <div class="modhead"><h2>要闻</h2><RouterLink to="/news">全部资讯</RouterLink></div>
-        <RouterLink v-for="n in news" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : '/news'" class="nrow">
+        <RouterLink v-for="n in news" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : '/news'" class="nrow" :class="{ fresh: market.fresh.has(n.id) }">
           <span class="num tm">{{ n.ts ? hm(n.ts) : n.day.slice(5) }}</span>
           <span>{{ n.title }}</span>
         </RouterLink>
@@ -167,7 +167,7 @@ function remember(key: string, label: string, rows: MarketStock[]) {
               <span class="num time" :class="{ done: a.aired }">{{ hm(a.airing_at) }}</span>
             </Cover>
             <span class="clamp1 t">{{ s!.title }}</span>
-            <span class="num" :class="dir(s!.change)">{{ pct(s!.change) }}</span>
+            <span v-flash="s!.change" class="num" :class="dir(s!.change)">{{ pct(s!.change) }}</span>
           </RouterLink>
         </div>
       </section>
@@ -180,8 +180,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
           <RouterLink v-for="s in l.rows" :key="s.id" :to="`/stocks/${s.id}`" class="mrow" @click="remember('all', '全部', l.rows)">
             <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
             <span class="clamp1">{{ s.title }}</span>
-            <span class="num">{{ k === 'turnover' ? big(s.turnover) : money(s.price) }}</span>
-            <span class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
+            <span v-flash="k === 'turnover' ? s.turnover : s.price" class="num">{{ k === 'turnover' ? big(s.turnover) : money(s.price) }}</span>
+            <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
           </RouterLink>
         </section>
         <section class="mod m-wide phone-only">
@@ -189,8 +189,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
           <RouterLink v-for="s in lists[rankTab as 'gain'].rows" :key="s.id" :to="`/stocks/${s.id}`" class="mrow" @click="remember('all', '全部', lists[rankTab as 'gain'].rows)">
             <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
             <span class="clamp1">{{ s.title }}</span>
-            <span class="num">{{ rankTab === 'turnover' ? big(s.turnover) : money(s.price) }}</span>
-            <span class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
+            <span v-flash="rankTab === 'turnover' ? s.turnover : s.price" class="num">{{ rankTab === 'turnover' ? big(s.turnover) : money(s.price) }}</span>
+            <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
           </RouterLink>
           <RouterLink :to="lists[rankTab as 'gain'].link" class="more">全部 {{ market.stocks?.length ?? '' }} 支</RouterLink>
         </section>
@@ -238,8 +238,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
         <RouterLink v-for="s in recent" :key="s.id" :to="`/stocks/${s.id}`" class="mrow">
           <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
           <span class="clamp1">{{ s.title }}</span>
-          <span class="num">{{ money(s.price) }}</span>
-          <span class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
+          <span v-flash="s.price" class="num">{{ money(s.price) }}</span>
+          <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
         </RouterLink>
       </section>
     </div>
@@ -303,7 +303,7 @@ function remember(key: string, label: string, rows: MarketStock[]) {
 .rrow { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--hair-2); font-size: 14px; }
 .rrow .num { font-size: 13px; }
 .rk { font-weight: 900; font-size: 15px; }
-.rk.first { color: var(--brand); }
+.rk.first { color: var(--ink); font-weight: 700; }
 .rrow.me { font-weight: 700; }
 .offer { display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
 .oi { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
@@ -327,4 +327,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
   .air { width: auto; }
   .ac { width: 100% !important; height: auto !important; aspect-ratio: 156 / 150; }
 }
+.nrow.fresh { animation: news-in 0.35s ease-out, news-hl 1.6s ease-out; }
+@keyframes news-in { from { transform: translateY(-8px); opacity: 0; } }
+@keyframes news-hl { from { background-color: var(--flash-neutral); } }
+@media (prefers-reduced-motion: reduce) { .nrow.fresh { animation: news-hl 1.2s steps(1, end); } }
 </style>

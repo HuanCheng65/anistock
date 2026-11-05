@@ -15,5 +15,5 @@ defineEmits<{ act: [] }>()
 
 <style scoped>
 .empty { padding: 28px var(--gutter); display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; color: var(--muted); font-size: 14px; }
-.empty.error { color: var(--up); }
+.empty.error { color: var(--danger); }
 </style>

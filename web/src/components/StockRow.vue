@@ -15,7 +15,7 @@ defineProps<{ s: MarketStock; extra?: string }>()
       <span class="num code">{{ s.code }}<template v-if="extra"> · {{ extra }}</template><span v-if="s.cooling" class="tag">冷静期</span><span v-else-if="s.new" class="tag">新上市</span></span>
     </span>
     <span class="q">
-      <span class="num px">{{ money(s.price) }}</span>
+      <span v-flash="s.price" class="num px">{{ money(s.price) }}</span>
       <ChangePill :value="s.change" />
     </span>
   </RouterLink>
@@ -27,7 +27,7 @@ defineProps<{ s: MarketStock; extra?: string }>()
 .name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .t { font-size: 15px; font-weight: 600; line-height: 1.3; }
 .code { font-size: 11px; color: var(--muted); }
-.tag { margin-left: 8px; font-family: var(--font); font-size: 11px; color: var(--brand); border: 1px solid currentColor; padding: 0 4px; }
+.tag { margin-left: 8px; font-family: var(--font); font-size: 11px; color: var(--ink-2); border: 1px solid currentColor; padding: 0 4px; }
 .q { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .px { font-size: 15px; font-weight: 500; }
 </style>

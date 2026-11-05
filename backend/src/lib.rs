@@ -25,6 +25,7 @@ pub mod store;
 pub mod actor;
 pub mod api;
 pub mod auth;
+pub mod live;
 pub mod loops;
 
 pub use config::{Clock, Config, Phase};

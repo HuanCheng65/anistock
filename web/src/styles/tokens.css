@@ -1,7 +1,15 @@
 /* AniEx design tokens. Components use these variables only.
    Light: newsprint paper. Dark: a warm dark newsprint (not an inversion). Trading areas use the
    terminal set, which stays dark in both themes.
-   Theme: follows the system unless <html data-theme="light|dark"> is set (设置 → 外观). */
+   Theme: follows the system unless <html data-theme="light|dark"> is set (设置 → 外观).
+
+   Colour semantics: one colour, one meaning.
+   - --up / --down (and --t-up / --t-down, --flash-*): price direction only, plus the buy / sell side
+     (买 red, 卖 green). Never for errors, selection, links or decoration.
+   - --danger (--t-danger): every error message. Amber, so it never reads as "price up".
+   - --accent: non-directional highlights (links, airing / episode markers, IPO progress, the player's
+     share). Selected states and focus use --ink.
+   - --brand: the AniEx logo mark only. */
 
 :root {
   /* paper */
@@ -16,7 +24,12 @@
   --grid: #E1DED6;            /* chart grid */
   --base-line: #B9B5AB;       /* dashed baseline, field border */
   --field-bg: #FFFFFF;
-  --brand: #C23A2B;
+  --brand: #C23A2B;           /* logo only */
+  --accent: #2F6FB8;
+  --danger: #A35200;
+  --flash-up: rgba(204, 47, 38, 0.18);
+  --flash-down: rgba(11, 127, 78, 0.18);
+  --flash-neutral: rgba(23, 24, 28, 0.08);
   --up: #CC2F26;
   --down: #0B7F4E;
   --pill-up: #CC2F26;
@@ -28,7 +41,7 @@
   --mk-jp: #1E8F6E;
   --hold-committee: #17181C;
   --hold-npc: #8A8E96;
-  --hold-player: #C23A2B;
+  --hold-player: #2F6FB8;
   --hold-unissued: #D9D6CE;
   --spine-ink: #FFFFFF;
 
@@ -38,8 +51,12 @@
   --t-ink: #E8E9EC;
   --t-ink-2: #9CA0A8;
   --t-ink-3: #C5C8CF;
-  --t-up: #FF5A4E;
-  --t-down: #2BC27E;
+  --t-up: #F5463B;            /* the light theme's hues, lighter for the dark surface */
+  --t-down: #29C786;
+  --t-danger: #F0A13C;
+  --t-flash-up: rgba(245, 70, 59, 0.26);
+  --t-flash-down: rgba(41, 199, 134, 0.22);
+  --t-flash-neutral: rgba(232, 233, 236, 0.10);
   --t-field: #1C1F25;
   --t-field-border: #353A44;
   --t-on-up: #1A0B09;
@@ -74,8 +91,13 @@
     --base-line: #57534B;
     --field-bg: #121110;
     --brand: #E0533F;
-    --up: #EF5B4F;
-    --down: #34B377;
+    --accent: #5B9BE0;
+    --danger: #E39A3B;
+    --flash-up: rgba(239, 76, 67, 0.24);
+    --flash-down: rgba(52, 178, 126, 0.22);
+    --flash-neutral: rgba(237, 233, 224, 0.10);
+    --up: #EF4C43;
+    --down: #34B27E;
     --pill-up: #C9362C;
     --pill-down: #17804F;
     --pill-flat: #6E6A62;
@@ -84,7 +106,7 @@
     --mk-jp: #2FAE88;
     --hold-committee: #EDE9E0;
     --hold-npc: #7D786E;
-    --hold-player: #E0533F;
+    --hold-player: #5B9BE0;
     --hold-unissued: #3E3B34;
     --t-bg: #0F1013;
     --t-edge: #262930;
@@ -105,8 +127,13 @@
   --base-line: #57534B;
   --field-bg: #121110;
   --brand: #E0533F;
-  --up: #EF5B4F;
-  --down: #34B377;
+  --accent: #5B9BE0;
+  --danger: #E39A3B;
+  --flash-up: rgba(239, 76, 67, 0.24);
+  --flash-down: rgba(52, 178, 126, 0.22);
+  --flash-neutral: rgba(237, 233, 224, 0.10);
+  --up: #EF4C43;
+  --down: #34B27E;
   --pill-up: #C9362C;
   --pill-down: #17804F;
   --pill-flat: #6E6A62;
@@ -115,7 +142,7 @@
   --mk-jp: #2FAE88;
   --hold-committee: #EDE9E0;
   --hold-npc: #7D786E;
-  --hold-player: #E0533F;
+  --hold-player: #5B9BE0;
   --hold-unissued: #3E3B34;
   --t-bg: #0F1013;
   --t-edge: #262930;

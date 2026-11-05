@@ -243,7 +243,7 @@ export interface StockDetail {
   auction?: { price: number | null; volume: number } | null
   ipo?: Ipo | null
   book: { bids: BookLevel[]; asks: BookLevel[] }
-  trades: { price: number; qty: number; ts: string }[]
+  trades: { id?: number; price: number; qty: number; ts: string }[]
   weeks: WeekRow[]
   book_value_ps: number | null
   holders: Record<string, number>

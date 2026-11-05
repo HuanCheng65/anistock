@@ -164,9 +164,19 @@ impl Actor {
     /// Start the engine thread. Dropping every `Actor` clone ends it; the handle then yields the context
     /// (after a final flush).
     pub fn start(ctx: Ctx) -> (Actor, JoinHandle<Ctx>) {
+        Actor::start_live(ctx, None)
+    }
+
+    /// Like `start`, with the real-time fan-out (`live.rs`) running on the engine thread between jobs.
+    pub fn start_live(ctx: Ctx, live: Option<crate::live::Fanout>) -> (Actor, JoinHandle<Ctx>) {
         let (tx, rx) = unbounded::<Job>();
-        let h =
-            std::thread::Builder::new().name("engine".into()).spawn(move || run(ctx, rx)).expect("spawn engine thread");
+        let h = std::thread::Builder::new()
+            .name("engine".into())
+            .spawn(move || match live {
+                Some(l) => run_live(ctx, rx, l),
+                None => run(ctx, rx),
+            })
+            .expect("spawn engine thread");
         (Actor { tx }, h)
     }
 
@@ -199,15 +209,52 @@ impl Actor {
     }
 }
 
+fn run_job(ctx: &mut Ctx, job: Job) {
+    if catch_unwind(AssertUnwindSafe(|| job(ctx))).is_err() {
+        eprintln!("engine: a job panicked; exiting so the server restarts from the database");
+        std::process::exit(70);
+    }
+}
+
 fn run(mut ctx: Ctx, rx: Receiver<Job>) -> Ctx {
     for job in rx {
-        if catch_unwind(AssertUnwindSafe(|| job(&mut ctx))).is_err() {
-            eprintln!("engine: a job panicked; exiting so the server restarts from the database");
-            std::process::exit(70);
+        run_job(&mut ctx, job);
+    }
+    final_flush(&mut ctx);
+    ctx
+}
+
+/// The job loop with the fan-out: between jobs it takes WebSocket control messages, folds the engine's
+/// changes in after every job, and runs the 100 ms tick (bench/SPEC-v2.md). The fan-out never blocks: a
+/// client whose queue is full is dropped.
+fn run_live(mut ctx: Ctx, rx: Receiver<Job>, mut live: crate::live::Fanout) -> Ctx {
+    let ctl = live.ctl.clone();
+    let mut next = std::time::Instant::now() + crate::live::TICK;
+    loop {
+        let wait = next.saturating_duration_since(std::time::Instant::now());
+        crossbeam_channel::select! {
+            recv(rx) -> job => match job {
+                Ok(job) => {
+                    run_job(&mut ctx, job);
+                    live.absorb(&ctx.engine);
+                }
+                Err(_) => break,
+            },
+            recv(ctl) -> c => if let Ok(c) = c { live.control(c, &ctx.engine) },
+            default(wait) => {}
+        }
+        let now = std::time::Instant::now();
+        if now >= next {
+            live.tick(&ctx.engine);
+            next = crate::live::advance(next, now);
         }
     }
+    final_flush(&mut ctx);
+    ctx
+}
+
+fn final_flush(ctx: &mut Ctx) {
     if let Err(e) = ctx.engine.flush() {
         eprintln!("engine: final flush failed: {e}");
     }
-    ctx
 }

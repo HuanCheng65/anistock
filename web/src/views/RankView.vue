@@ -64,10 +64,10 @@ const mine = (name: string) => name === session.me?.username
 .podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; padding-top: 22px; border-bottom: 1px solid var(--rule); }
 .pod { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
 .pod .nm { font-size: 14px; font-weight: 700; max-width: 100%; }
-.nm.me { color: var(--brand); }
+.nm.me { color: var(--accent); }
 .ret { font-size: 13px; }
 .block { width: 100%; color: #fff; display: grid; place-items: start center; padding-top: 8px; font-size: 26px; font-weight: 900; }
-.block.first { background: var(--brand); }
+.block.first { background: var(--ink); }
 .block.second { background: #4B4F58; }
 .block.third { background: #8A8E96; }
 .rrow { display: grid; grid-template-columns: 36px minmax(0, 1fr) 110px 76px; gap: 8px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair-2); align-items: baseline; font-size: 14px; }

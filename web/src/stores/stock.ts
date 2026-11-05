@@ -1,7 +1,24 @@
 // One stock's detail, candles, profile and intraday points, kept per id.
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { onLive } from '../live'
 import { api, ApiError, type Candle, type IntradayPoint, type Profile, type StockDetail } from '../api'
+
+interface LiveStock {
+  id: number
+  init: boolean
+  price: number
+  prev_close: number
+  open: number | null
+  high: number | null
+  low: number | null
+  volume: number
+  turnover: number
+  bids: [number, number, number][]
+  asks: [number, number, number][]
+  vcm: { active: boolean; until: string | null; low: number | null; high: number | null; count: number } | null
+  trades: [number, number, number, string][]
+}
 
 export const useStock = defineStore('stock', () => {
   const detail = ref<Record<number, StockDetail>>({})
@@ -36,6 +53,38 @@ export const useStock = defineStore('stock', () => {
   async function refreshIntraday(id: number) {
     intraday.value[id] = (await api.get<{ points: IntradayPoint[] }>(`/api/stocks/${id}/intraday`)).points
   }
+
+  // pushes for the open stock page (topic stock:<id>), conflated to 100 ms on the server
+  onLive('stock', (m: LiveStock) => {
+    const d = detail.value[m.id]
+    if (!d) return
+    const q = d.quote
+    q.price = m.price
+    q.prev_close = m.prev_close
+    q.open = m.open
+    q.high = m.high
+    q.low = m.low
+    q.volume = m.volume
+    q.turnover = m.turnover
+    const lv = (l: [number, number, number][]) => l.map(([price, qty, orders]) => ({ price, qty, orders }))
+    d.book = { bids: lv(m.bids), asks: lv(m.asks) }
+    d.vcm = m.vcm ?? (d.vcm ? { ...d.vcm, active: false } : undefined)
+    if (m.trades.length) {
+      d.trades = [...m.trades.map(([id, price, qty, ts]) => ({ id, price, qty, ts })), ...d.trades].slice(0, 60)
+      const pts = intraday.value[m.id]
+      if (pts) {
+        // trades arrive newest first; fold them into the minute points
+        for (const [, price, qty, ts] of [...m.trades].reverse()) {
+          const minute = ts.slice(0, 16)
+          const last = pts[pts.length - 1]
+          if (last && last.minute.slice(0, 16) === minute) {
+            last.price = price
+            last.volume += qty
+          } else if (!last || last.minute.slice(0, 16) < minute) pts.push({ minute, price, volume: qty })
+        }
+      }
+    }
+  })
 
   return { detail, candles, profile, intraday, error, refresh, refreshIntraday }
 })

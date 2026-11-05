@@ -22,28 +22,28 @@ const w = (q: number) => Math.round((q / max.value) * 100) + '%'
       <div class="col">
         <button v-for="b in bids" :key="'b' + b.price" type="button" class="lv num" @click="emit('pick', b.price)">
           <span class="bar bid" :style="{ width: w(b.qty) }"></span>
-          <span class="p tup">{{ money(b.price) }}</span><span class="q">{{ qty(b.qty) }}</span>
+          <span class="p tup">{{ money(b.price) }}</span><span v-flash.neutral="b.qty" class="q">{{ qty(b.qty) }}</span>
         </button>
       </div>
       <div class="col">
         <button v-for="a in asks" :key="'a' + a.price" type="button" class="lv num" @click="emit('pick', a.price)">
           <span class="bar ask left" :style="{ width: w(a.qty) }"></span>
-          <span class="p tdown">{{ money(a.price) }}</span><span class="q">{{ qty(a.qty) }}</span>
+          <span class="p tdown">{{ money(a.price) }}</span><span v-flash.neutral="a.qty" class="q">{{ qty(a.qty) }}</span>
         </button>
       </div>
     </template>
     <template v-else>
       <button v-for="a in asksDesc" :key="'a' + a.price" type="button" class="lv num" @click="emit('pick', a.price)">
         <span class="bar ask" :style="{ width: w(a.qty) }"></span>
-        <span class="p tdown">{{ money(a.price) }}</span><span class="q">{{ qty(a.qty) }}</span>
+        <span class="p tdown">{{ money(a.price) }}</span><span v-flash.neutral="a.qty" class="q">{{ qty(a.qty) }}</span>
       </button>
       <div class="mid num">
-        <span :class="lastCls">{{ money(last) }}</span>
+        <span v-flash="last" :class="lastCls">{{ money(last) }}</span>
         <span class="tmuted sp">{{ spread != null ? money(spread) : '' }}</span>
       </div>
       <button v-for="b in bids" :key="'b' + b.price" type="button" class="lv num" @click="emit('pick', b.price)">
         <span class="bar bid" :style="{ width: w(b.qty) }"></span>
-        <span class="p tup">{{ money(b.price) }}</span><span class="q">{{ qty(b.qty) }}</span>
+        <span class="p tup">{{ money(b.price) }}</span><span v-flash.neutral="b.qty" class="q">{{ qty(b.qty) }}</span>
       </button>
     </template>
     <p v-if="!bids.length && !asks.length" class="none tmuted">暂无委托</p>
@@ -58,11 +58,13 @@ const w = (q: number) => Math.round((q / max.value) * 100) + '%'
   position: relative; display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 4px;
   border: 0; background: transparent; color: var(--t-ink); text-align: left; width: 100%;
 }
-.bar { position: absolute; right: 0; top: 0; bottom: 0; opacity: 0.16; pointer-events: none; }
+.bar { position: absolute; right: 0; top: 0; bottom: 0; opacity: 0.16; pointer-events: none; transition: width 0.3s ease-out; }
+@media (prefers-reduced-motion: reduce) { .bar { transition: none; } }
 .bar.left { right: auto; left: 0; }
 .bar.bid { background: var(--t-up); }
 .bar.ask { background: var(--t-down); }
 .p, .q { position: relative; }
+.q { padding: 0 2px; margin: 0 -2px; }
 .tup { color: var(--t-up); }
 .tdown { color: var(--t-down); }
 .mid { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 4px; font-size: 15px; border-top: 1px solid var(--t-line); border-bottom: 1px solid var(--t-line); margin: 4px 0; }

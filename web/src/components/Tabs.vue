@@ -18,5 +18,5 @@ button {
   border: 0; background: transparent; padding: 6px 0 10px; font-size: 15px; color: var(--muted);
   border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
 }
-button[aria-selected="true"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--brand); }
+button[aria-selected="true"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
 </style>

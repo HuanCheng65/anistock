@@ -186,6 +186,13 @@ impl Engine {
         (Engine::from_snapshot(Snapshot::default(), fees, rules, Box::new(sink.clone())), sink)
     }
 
+    /// Wrap the change sink (the real-time fan-out tees the change stream; see `live.rs`).
+    pub fn wrap_sink(&mut self, f: impl FnOnce(Box<dyn ChangeSink>) -> Box<dyn ChangeSink>) {
+        self.commit();
+        let inner = std::mem::replace(&mut self.sink, Box::new(MemorySink::default()));
+        self.sink = f(inner);
+    }
+
     /// Block until every change so far is committed to the database.
     pub fn flush(&mut self) -> Result<(), String> {
         self.commit();

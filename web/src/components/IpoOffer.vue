@@ -144,7 +144,7 @@ async function submit(q: number) {
 .band .ti { grid-column: 2; }
 .band .facts, .band .demand, .band .form, .band .result { grid-column: 1 / -1; }
 .info { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.status { font-size: 12px; color: var(--brand); font-weight: 700; }
+.status { font-size: 12px; color: var(--accent); font-weight: 700; }
 .ti { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .name { font-size: 21px; font-weight: 900; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
 .name::before { content: '《'; }
@@ -160,7 +160,7 @@ async function submit(q: number) {
 .ink { color: var(--ink); }
 .heat { position: relative; height: 26px; }
 .track { position: absolute; left: 0; right: 0; top: 6px; height: 6px; background: var(--grid); }
-.fill { position: absolute; left: 0; top: 6px; height: 6px; background: var(--brand); }
+.fill { position: absolute; left: 0; top: 6px; height: 6px; background: var(--accent); }
 .tick { position: absolute; top: 0; height: 18px; border-left: 1px solid var(--ink); padding-left: 4px; font-size: 11px; color: var(--ink-2); line-height: 30px; }
 .form { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
 .row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; color: var(--t-ink-2); }
@@ -171,7 +171,7 @@ async function submit(q: number) {
 .acts .tbtn { flex: 1; height: 44px; }
 .cta { height: 44px; display: flex; align-items: center; justify-content: center; }
 .note { font-size: 12px; line-height: 1.55; color: var(--t-ink-2); }
-.note.err { color: var(--t-up); }
+.note.err { color: var(--t-danger); }
 .note.ok { color: var(--t-ink); }
 .result { border-bottom: 0; }
 @media (min-width: 1024px) {

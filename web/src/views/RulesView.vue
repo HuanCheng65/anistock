@@ -115,5 +115,5 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
 </template>
 
 <style scoped>
-.simp { display: inline-block; margin-left: 6px; font-size: 11px; padding: 0 5px; border: 1px solid var(--brand); color: var(--brand); line-height: 1.5; }
+.simp { display: inline-block; margin-left: 6px; font-size: 11px; padding: 0 5px; border: 1px solid var(--accent); color: var(--accent); line-height: 1.5; }
 </style>

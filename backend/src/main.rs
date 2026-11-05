@@ -81,7 +81,14 @@ fn main() {
 
     let cfg = Arc::new(cfg);
     let ops = EngineOps::new(&cfg);
-    let (actor, engine_thread) = Actor::start(Ctx { engine, cfg: cfg.clone(), ops: Box::new(ops) });
+    // real-time push (/api/ws): tee the engine's change stream into the fan-out on the engine thread
+    let (change_tx, change_rx) = crossbeam_channel::unbounded();
+    let (live_tx, live_rx) = crossbeam_channel::unbounded();
+    engine.wrap_sink(|inner| Box::new(anistock::live::Tee { inner, tx: change_tx }));
+    let turnover = today_turnover(&cfg.game_db, &clock.today());
+    let fanout = anistock::live::Fanout::new(clock.clone(), change_rx, live_rx, turnover);
+    let (actor, engine_thread) =
+        Actor::start_live(Ctx { engine, cfg: cfg.clone(), ops: Box::new(ops) }, Some(fanout));
     // the v2 NPC market ([market].enabled): first start migrates the database (after a backup)
     let now = clock.now().timestamp();
     match actor.call_blocking(move |ctx| {
@@ -99,6 +106,7 @@ fn main() {
         secret,
         reads: ReadPool::new(cfg.game_db.clone(), 8),
         dist,
+        live: Some(live_tx),
     });
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -112,8 +120,15 @@ fn main() {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap_or_else(|e| fail(format!("bind {addr}: {e}"), 1));
         let loops = if cfg.no_loops { vec![] } else { anistock::loops::spawn(&st) };
         eprintln!("AniStock v2 listening on http://{addr} ({workers} workers, game db {})", cfg.game_db.display());
-        let st2 = st.clone();
-        let app = axum::Router::new().fallback(move |req| dispatch(st2.clone(), req));
+        let (st2, st3) = (st.clone(), st.clone());
+        let app = axum::Router::new()
+            .route(
+                "/api/ws",
+                axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap| {
+                    anistock::api::ws::handler(st3.clone(), ws, headers)
+                }),
+            )
+            .fallback(move |req| dispatch(st2.clone(), req));
         if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await {
             eprintln!("server: {e}");
         }
@@ -129,6 +144,20 @@ fn main() {
     }
     drop(engine_thread);
     eprintln!("stopped");
+}
+
+/// Today's turnover per stock (cents), the starting point of the pushed quotes.
+fn today_turnover(db: &std::path::Path, today: &str) -> std::collections::HashMap<i64, i64> {
+    let q = || -> rusqlite::Result<std::collections::HashMap<i64, i64>> {
+        let c = rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let mut s = c.prepare("SELECT company_id, SUM(qty*price) FROM trades WHERE day=? GROUP BY company_id")?;
+        let rows = s.query_map([today], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    };
+    q().unwrap_or_else(|e| {
+        eprintln!("live: today's turnover: {e}");
+        Default::default()
+    })
 }
 
 async fn shutdown_signal() {

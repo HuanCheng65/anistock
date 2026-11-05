@@ -202,7 +202,7 @@ async function cancel(id: number) {
 .cta { height: 42px; display: flex; align-items: center; justify-content: center; }
 .note { font-size: 12px; line-height: 1.55; color: var(--t-ink-2); }
 .note.warn { color: #F2B45A; }
-.note.err { color: var(--t-up); }
+.note.err { color: var(--t-danger); }
 .note.ok { color: var(--t-ink); }
 .mine { border-top: 1px solid var(--t-line); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .ord { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: 12px; }

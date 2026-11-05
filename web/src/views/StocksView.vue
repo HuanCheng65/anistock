@@ -21,7 +21,7 @@ const route = useRoute()
 const router = useRouter()
 const searching = ref(false)
 
-const { refresh } = usePoll(() => market.refreshQuotes(), 5000)
+const { refresh } = usePoll(() => market.refreshQuotes(), 5000, 30000)
 usePoll(() => market.refreshRatios(), 60000)
 usePoll(() => (market.indices ? null : market.refreshIndices()), 300000)
 
@@ -116,7 +116,7 @@ function remember() {
               <span class="serif clamp1 t">{{ s.title }}</span>
               <span class="num code">{{ s.code }}<span v-if="s.cooling" class="tag">冷静期</span><span v-else-if="s.new" class="tag">新上市</span></span>
             </span>
-            <span class="num px">{{ money(s.price) }}</span>
+            <span v-flash="s.price" class="num px">{{ money(s.price) }}</span>
             <ChangePill v-if="metric === 'change'" :value="s.change" />
             <span v-else class="num mv">{{ fmt(s, metric) }}</span>
           </RouterLink>
@@ -143,9 +143,9 @@ function remember() {
                   <span v-if="s.cooling" class="tag">冷静期</span><span v-else-if="s.new" class="tag">新上市</span>
                 </RouterLink>
               </td>
-              <td class="num">{{ money(s.price) }}</td>
-              <td class="num" :class="dir(s.change)">{{ pct(s.change) }}</td>
-              <td class="num">{{ big(s.turnover) }}</td>
+              <td v-flash="s.price" class="num">{{ money(s.price) }}</td>
+              <td v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</td>
+              <td v-flash.neutral="s.turnover" class="num">{{ big(s.turnover) }}</td>
               <td class="num">{{ big(s.market_cap) }}</td>
               <td class="num">{{ fmt(s, 'pe') }}</td>
               <td class="num">{{ fmt(s, 'dy') }}</td>
@@ -172,7 +172,7 @@ function remember() {
 .chips button { flex: none; height: 32px; padding: 0 12px; font-size: 13px; border: 1px solid var(--base-line); background: transparent; color: var(--ink); }
 .chips button[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
 .cnt { font-size: 12px; opacity: 0.75; margin-left: 4px; }
-.tag { margin-left: 8px; font-family: var(--font); font-size: 11px; color: var(--brand); border: 1px solid currentColor; padding: 0 4px; }
+.tag { margin-left: 8px; font-family: var(--font); font-size: 11px; color: var(--ink-2); border: 1px solid currentColor; padding: 0 4px; }
 
 .phead { display: grid; grid-template-columns: minmax(0, 1fr) auto 84px; gap: 12px; align-items: baseline; padding: 6px 0; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--rule); }
 .phead .mh { display: flex; justify-content: flex-end; gap: 4px; }

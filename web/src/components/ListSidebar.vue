@@ -26,9 +26,9 @@ watch(() => props.current, async () => {
     <div ref="list" class="rows">
       <RouterLink v-for="s in rows" :key="s.id" :to="`/stocks/${s.id}`" replace class="w" :class="{ cur: s.id === current }" :aria-current="s.id === current ? 'true' : undefined" @click="$emit('pick')">
         <span class="clamp2 t">{{ s.title }}</span>
-        <span class="num px">{{ money(s.price) }}</span>
+        <span v-flash="s.price" class="num px">{{ money(s.price) }}</span>
         <span class="num code">{{ s.code }}</span>
-        <span class="num chg" :class="dir(s.change)">{{ pct(s.change) }}</span>
+        <span v-flash="s.change" class="num chg" :class="dir(s.change)">{{ pct(s.change) }}</span>
       </RouterLink>
       <p v-if="!rows.length" class="none">{{ tab === 'watch' ? '暂无自选' : tab === 'hold' ? '暂无持仓' : '暂无股票' }}</p>
     </div>
@@ -43,7 +43,7 @@ watch(() => props.current, async () => {
 .cbtn { width: 26px; height: 26px; margin: 0 6px 6px; border: 0; background: transparent; padding: 0; color: var(--muted); display: grid; place-items: center; }
 .rows { flex: 1; overflow: auto; min-height: 0; }
 .w { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; padding: 9px 14px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
-.w.cur { background: var(--ground-2); box-shadow: inset 3px 0 0 var(--brand); }
+.w.cur { background: var(--ground-2); box-shadow: inset 3px 0 0 var(--ink); }
 .w.cur .t { font-weight: 700; }
 .t { font-size: 13px; line-height: 1.4; }
 .px { font-size: 13px; text-align: right; }

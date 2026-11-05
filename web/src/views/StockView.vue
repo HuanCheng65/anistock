@@ -21,6 +21,7 @@ import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
 import { useSession } from '../stores/session'
 import { useStock } from '../stores/stock'
+import { liveState, useTopic } from '../live'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,7 +41,8 @@ const sheet = ref<'buy' | 'sell' | null>(null)
 const { refresh } = usePoll(async () => {
   await store.refresh(id.value)
   if (period.value === 'intraday') await store.refreshIntraday(id.value)
-}, 5000)
+}, 5000, 20000)
+useTopic(computed(() => (Number.isFinite(id.value) ? `stock:${id.value}` : null)))
 usePoll(() => (market.stocks ? null : market.refreshQuotes()), 60000)
 watch(period, (p) => p === 'intraday' && store.refreshIntraday(id.value).catch(() => {}))
 
@@ -72,19 +74,19 @@ const stats = computed(() => {
   if (!x) return []
   const c = (v: number | null) => (v == null ? '' : dir(v - x.prev_close))
   const base = [
-    { k: '今开', v: money(x.open), c: c(x.open) },
-    { k: '最高', v: money(x.high), c: c(x.high) },
-    { k: '最低', v: money(x.low), c: c(x.low) },
+    { k: '今开', v: money(x.open), c: c(x.open), n: x.open },
+    { k: '最高', v: money(x.high), c: c(x.high), n: x.high },
+    { k: '最低', v: money(x.low), c: c(x.low), n: x.low },
   ]
   const tail = [
-    { k: '成交量', v: qty(x.volume), c: '' },
-    { k: '成交额', v: big(x.turnover), c: '' },
-    { k: '市值', v: big(cap.value), c: '' },
+    { k: '成交量', v: qty(x.volume), c: '', n: x.volume },
+    { k: '成交额', v: big(x.turnover), c: '', n: x.turnover },
+    { k: '市值', v: big(cap.value), c: '', n: null },
   ]
   return desk.value
-    ? [...base, { k: '昨收', v: money(x.prev_close), c: '' }, ...tail,
-       { k: '市盈率(动)', v: p.value?.ratios.pe_dyn != null ? p.value.ratios.pe_dyn.toFixed(1) : '–', c: '' },
-       { k: '股息率(动)', v: p.value?.ratios.dividend_yield_dyn != null ? share(p.value.ratios.dividend_yield_dyn, 1) : '–', c: '' }]
+    ? [...base, { k: '昨收', v: money(x.prev_close), c: '', n: null }, ...tail,
+       { k: '市盈率(动)', v: p.value?.ratios.pe_dyn != null ? p.value.ratios.pe_dyn.toFixed(1) : '–', c: '', n: null },
+       { k: '股息率(动)', v: p.value?.ratios.dividend_yield_dyn != null ? share(p.value.ratios.dividend_yield_dyn, 1) : '–', c: '', n: null }]
     : [...base, ...tail]
 })
 const periods = [
@@ -125,7 +127,18 @@ const events = computed(() => {
 })
 const pos = computed(() => s.value?.position ?? null)
 const subscribing = computed(() => s.value?.status === 'subscribing')
-const vcm = computed(() => (s.value?.vcm?.active ? s.value.vcm : null))
+// the cooling-off ends at `until`: count down every second, and drop the banner when it ends
+const nowMs = ref(Date.now())
+const clockTimer = window.setInterval(() => (nowMs.value = Date.now()), 1000)
+onBeforeUnmount(() => window.clearInterval(clockTimer))
+const vcmEnd = computed(() => (s.value?.vcm?.active && s.value.vcm.until ? Date.parse(s.value.vcm.until) : null))
+const vcm = computed(() => (s.value?.vcm?.active && (vcmEnd.value == null || vcmEnd.value > nowMs.value) ? s.value.vcm : null))
+const vcmLeft = computed(() => {
+  if (vcmEnd.value == null) return ''
+  const sec = Math.max(0, Math.round((vcmEnd.value - nowMs.value) / 1000))
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`
+})
+const liveChart = computed(() => session.status?.phase === 'continuous' && liveState.value === 'open')
 const auction = computed(() => (session.status?.phase === 'auction' ? s.value?.auction ?? null : null))
 const watching = computed(() => prefs.watching(id.value))
 
@@ -198,20 +211,20 @@ function back() {
               </div>
             </div>
             <div class="price desk-only">
-              <span class="num big" :class="dir(change)">{{ money(q.price) }}</span>
-              <span class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
+              <span v-flash="q.price" class="num big" :class="dir(change)">{{ money(q.price) }}</span>
+              <span v-flash="q.price" class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
             </div>
           </section>
 
           <section class="quote">
             <div class="pline phone-only">
-              <span class="num big" :class="dir(change)">{{ money(q.price) }}</span>
-              <span class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
+              <span v-flash="q.price" class="num big" :class="dir(change)">{{ money(q.price) }}</span>
+              <span v-flash="q.price" class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
             </div>
             <dl class="stats">
-              <div v-for="x in stats" :key="x.k"><dt>{{ x.k }}</dt><dd class="num" :class="x.c">{{ x.v }}</dd></div>
+              <div v-for="x in stats" :key="x.k"><dt>{{ x.k }}</dt><dd v-flash.neutral="x.n" class="num" :class="x.c">{{ x.v }}</dd></div>
             </dl>
-            <p v-if="vcm" class="banner">冷静期至 <span class="num">{{ hm(vcm.until) }}</span>，只在 <span class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</span> 之间成交</p>
+            <p v-if="vcm" class="banner">冷静期至 <span class="num">{{ hm(vcm.until) }}</span><template v-if="vcmLeft">，剩余 <span class="num">{{ vcmLeft }}</span></template>，只在 <span class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</span> 之间成交</p>
             <p v-if="auction" class="banner">集合竞价中<template v-if="auction.price != null">，参考开盘价 <span class="num">{{ money(auction.price) }}</span>，可成交 <span class="num">{{ qty(auction.volume) }}</span> 股</template></p>
             <p v-if="s.status === 'delisted'" class="banner">已退市</p>
           </section>
@@ -224,7 +237,7 @@ function back() {
               </span>
             </Tabs>
             <KChart :candles="store.candles[id] ?? []" :period="period" :intraday="store.intraday[id]" :prev-close="q.prev_close"
-                    :episodes="p?.episodes" :dividends="p?.dividends" :wide="desk" />
+                    :episodes="p?.episodes" :dividends="p?.dividends" :wide="desk" :live="liveChart" />
           </section>
 
           <!-- phone: book and tape on the terminal surface -->
@@ -329,7 +342,7 @@ function back() {
 .step + .step { margin-left: 0; }
 .step:disabled { color: var(--hair); }
 .star { margin-left: 0; }
-.star.on { color: var(--brand); }
+.star.on { color: var(--ink); }
 
 .hero { display: flex; gap: 14px; padding: 18px var(--gutter) 16px; }
 .ht { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -339,7 +352,7 @@ function back() {
 .eps { margin-top: auto; display: flex; flex-direction: column; gap: 4px; }
 .segs { display: grid; gap: 2px; }
 .segs span { height: 5px; background: var(--hair); }
-.segs span.on { background: var(--brand); }
+.segs span.on { background: var(--accent); }
 .prog { font-size: 12px; color: var(--ink-2); }
 
 .quote { padding: 0 var(--gutter) 14px; display: flex; flex-direction: column; gap: 10px; }
@@ -349,14 +362,14 @@ function back() {
 .stats div { display: flex; justify-content: space-between; gap: 6px; min-width: 0; }
 .stats dt { color: var(--muted); white-space: nowrap; }
 .stats dd.flat { color: var(--ink); }
-.banner { font-size: 13px; color: var(--ink); border-left: 3px solid var(--brand); padding: 4px 0 4px 10px; }
+.banner { font-size: 13px; color: var(--ink); border-left: 3px solid var(--accent); padding: 4px 0 4px 10px; }
 
 .chartsec { border-top: 1px solid var(--rule); padding-top: 10px; }
 .ptabs { padding: 0 var(--gutter); gap: 18px; border-bottom: 0; margin-bottom: 4px; }
 .legend { margin-left: auto; gap: 14px; font-size: 13px; color: var(--ink-2); padding-bottom: 10px; }
 .legend.desk-only { display: none; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
-.dash { width: 12px; border-top: 1px dashed var(--brand); display: inline-block; }
+.dash { width: 12px; border-top: 1px dashed var(--accent); display: inline-block; }
 .dia { width: 7px; height: 7px; background: var(--ink); transform: rotate(45deg); display: inline-block; }
 
 .booksec { margin: 4px var(--gutter) 0; padding: 12px; }
@@ -407,7 +420,7 @@ function back() {
   .hero { padding: 22px 28px 18px; align-items: flex-end; gap: 20px; border-bottom: 1px solid var(--hair); }
   .deskmeta { display: flex !important; gap: 10px; align-items: baseline; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
   .star2 { margin-left: 6px; border: 1px solid var(--base-line); background: transparent; font-size: 12px; padding: 1px 8px; color: var(--ink-2); }
-  .star2.on { color: var(--brand); border-color: var(--brand); }
+  .star2.on { color: var(--ground); background: var(--ink); border-color: var(--ink); }
   .ht h1 { font-size: 34px; line-height: 1.2; -webkit-line-clamp: 2; }
   .ja { font-size: 13px; }
   .price { display: flex !important; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 16px; flex: none; }

@@ -128,7 +128,7 @@ async function buy() {
 .dot.on { background: var(--ink); }
 .skip { margin-left: 10px; border: 0; background: transparent; font-size: 13px; color: var(--ink-2); padding: 6px 0; }
 .head { display: flex; flex-direction: column; gap: 10px; padding: 30px 0 18px; }
-.n { font-size: 13px; color: var(--brand); }
+.n { font-size: 13px; color: var(--accent); }
 .head h1 { font-size: 30px; font-weight: 900; line-height: 1.25; }
 .head p { font-size: 15px; line-height: 1.6; color: var(--ink-2); }
 .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
@@ -139,8 +139,8 @@ async function buy() {
 .demo .b { stroke: var(--base-line); }
 .demo .heat { fill: none; stroke: var(--hold-npc); stroke-width: 2; stroke-dasharray: 4 4; }
 .demo .px { fill: none; stroke: var(--up); stroke-width: 2.4; stroke-linejoin: round; }
-.demo .ep { stroke: var(--brand); stroke-dasharray: 2 3; }
-.demo .tag { fill: var(--brand); }
+.demo .ep { stroke: var(--accent); stroke-dasharray: 2 3; }
+.demo .tag { fill: var(--accent); }
 .demo text { font-size: 11px; fill: #fff; font-family: var(--font); }
 .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); padding-top: 6px; }
 .legend span { display: flex; align-items: center; gap: 6px; }

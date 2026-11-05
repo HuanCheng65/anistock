@@ -28,6 +28,6 @@ const items = [
   display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: var(--ink-2); }
-a[aria-current="page"] { color: var(--brand); }
+a[aria-current="page"] { color: var(--ink); font-weight: 700; }
 @media (min-width: 1024px) { .bottom { display: none; } }
 </style>

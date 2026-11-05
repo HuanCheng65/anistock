@@ -22,7 +22,7 @@ const { refresh } = usePoll(async () => {
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '无法加载'
   }
-}, 30000)
+}, 30000, 120000)
 usePoll(() => Promise.all([market.stocks ? null : market.refreshQuotes(), session.me ? account.refreshPositions() : null]), 60000)
 
 const held = computed(() => new Set((account.positions ?? []).map((p) => p.company_id)))
@@ -62,7 +62,7 @@ const days = computed(() => {
       <EmptyState v-if="error && !market.news" :text="error" action="重试" tone="error" @act="refresh" />
       <section v-for="d in days" :key="d.day">
         <h2 class="dayh gutter">{{ dayLabel(d.day, session.status?.day) }}</h2>
-        <component :is="n.company_id ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : undefined" class="item gutter">
+        <component :is="n.company_id ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : undefined" class="item gutter" :class="{ fresh: market.fresh.has(n.id), hot: market.fresh.has(n.id) && newsGroup(n.kind).tone === 'flash' && n.company_id != null && held.has(n.company_id) }">
           <span class="num tm">{{ n.ts ? hm(n.ts) : '' }}</span>
           <span class="body">
             <span class="tags">
@@ -74,7 +74,7 @@ const days = computed(() => {
             <span v-if="n.company_id && market.byId.get(n.company_id)" class="stock">
               <Cover :id="n.company_id" :title="market.byId.get(n.company_id)!.title" :w="14" :h="18" :spine="false" />
               <span class="clamp1">{{ market.byId.get(n.company_id)!.title }}</span>
-              <span class="num" :class="dir(market.byId.get(n.company_id)!.change)">{{ pct(market.byId.get(n.company_id)!.change) }}</span>
+              <span v-flash="market.byId.get(n.company_id)!.change" class="num" :class="dir(market.byId.get(n.company_id)!.change)">{{ pct(market.byId.get(n.company_id)!.change) }}</span>
             </span>
           </span>
         </component>
@@ -91,15 +91,25 @@ const days = computed(() => {
 .chips button[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
 .dayh { padding-top: 14px; padding-bottom: 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); border-bottom: 1px solid var(--hair); }
 .item { display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 10px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
+/* an item that just arrived slides in; a 快讯 about a holding is highlighted a little longer */
+.item.fresh { animation: news-in 0.35s ease-out, news-hl 1.6s ease-out; }
+.item.hot { animation: news-in 0.35s ease-out, news-hot 3s ease-out; }
+@keyframes news-in { from { transform: translateY(-8px); opacity: 0; } }
+@keyframes news-hl { from { background-color: var(--flash-neutral); } }
+@keyframes news-hot { 0%, 50% { background-color: color-mix(in srgb, var(--accent) 14%, transparent); } }
+@media (prefers-reduced-motion: reduce) {
+  .item.fresh { animation: news-hl 1.2s steps(1, end); }
+  .item.hot { animation: news-hot 2.4s steps(1, end); }
+}
 .tm { font-size: 12px; color: var(--muted); padding-top: 3px; }
 .body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tags { display: flex; align-items: center; gap: 8px; }
 .kind { font-size: 11px; padding: 1px 6px; border: 1px solid currentColor; }
-.kind.flash { color: var(--brand); }
+.kind.flash { color: var(--accent); }
 .kind.notice { color: var(--ink); }
 .kind.air { color: var(--mk-us); }
 .kind.close { color: var(--ink-2); }
-.mine { font-size: 11px; color: var(--brand); }
+.mine { font-size: 11px; color: var(--accent); }
 .title { font-size: 15px; line-height: 1.5; }
 .text { font-size: 13px; color: var(--ink-2); line-height: 1.55; }
 .stock { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); min-width: 0; }

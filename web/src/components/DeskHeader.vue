@@ -43,7 +43,7 @@ const nav = [
 .cn { font-size: 13px; color: var(--ink-2); padding-left: 8px; border-left: 1px solid var(--hair); }
 nav { display: flex; gap: 28px; }
 nav a { height: var(--desk-header-h); display: flex; align-items: center; padding: 0 2px; font-size: 15px; color: var(--ink-2); }
-nav a[aria-current="page"] { color: var(--ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--brand); }
+nav a[aria-current="page"] { color: var(--ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--ink); }
 .search { margin-left: auto; width: 280px; flex: none; }
 .who { font-size: 14px; max-width: 9em; color: var(--ink); flex: none; }
 </style>
