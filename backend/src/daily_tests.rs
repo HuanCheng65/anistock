@@ -12,6 +12,13 @@ fn cfg() -> Config {
     Config::load_from(&root, |_| None).unwrap()
 }
 
+/// The config with the absolute revenue rule on (off by default until the platform history allows it).
+fn cfg_absolute() -> Config {
+    let mut c = cfg();
+    c.params.get_mut("revenue").and_then(|v| v.as_table_mut()).unwrap().insert("absolute_revenue".into(), toml::Value::Integer(1));
+    c
+}
+
 fn company(id: i64, status: &str, shares: i64, first_air: &str, listed_on: &str) -> Company {
     Company {
         id,
@@ -411,7 +418,7 @@ fn platform_case(days: i64) -> (Engine, Inputs) {
 fn the_switch_to_absolute_revenue_keeps_the_days_total() {
     // docs/v2-series.md §6: on the first day the platform size averages enough history, the scale is set so that
     // the day's total revenue is what the relative rule gives
-    let cfg = cfg();
+    let cfg = cfg_absolute();
     let (mut a, inp_short) = platform_case(30);
     let (mut b, inp_long) = platform_case(200);
     let ra = match a.run_day(&cfg, DAY, TS, &inp_short).unwrap() {
@@ -435,7 +442,7 @@ fn the_switch_to_absolute_revenue_keeps_the_days_total() {
 #[test]
 fn a_new_season_of_a_listed_series_joins_its_company() {
     // docs/v2-series.md §3.3: no new shares; a company notice; its attention enters the company's revenue
-    let cfg = cfg();
+    let cfg = cfg_absolute();
     let (mut e, _) = platform_case(200);
     let show = |id: i64, first_air: &str, aired: i64, us: f64, series: i64| {
         serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,

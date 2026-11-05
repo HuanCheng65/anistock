@@ -263,7 +263,7 @@ impl Engine {
 
         // 1. revenue
         // (v2: post-finale cn/jp days without data earn the filter's expectation, `revenue_att`)
-        let att_of = |e: &Engine, s: &ShowInputs| if cx.cfg.economy_v1 { s.att.m3() } else { e.revenue_att(s) };
+        let att_of = |e: &Engine, s: &ShowInputs| if cx.cfg.economy_v1 || !p.impute_tail { s.att.m3() } else { e.revenue_att(s) };
         let mut totals = [0.0f64; 3];
         for m in 0..3 {
             let mut t = 0.0;
@@ -574,6 +574,9 @@ impl Engine {
     /// so that the day's total revenue is unchanged (state `platform_rule`: "us,cn,jp,scale"). Inputs without a
     /// platform size keep the last one. None: the relative rule.
     fn platform_switch(&mut self, cx: &Ctx, p: &Params, totals: &V::M3, demand_day: f64) -> Option<(V::M3, f64)> {
+        if !p.absolute_revenue {
+            return None;
+        }
         let prev = self.platform_rule();
         let Some(pl) = cx.inp.platform.as_ref().map(|x| x.m3()) else { return prev };
         if pl.iter().any(|x| *x <= 0.0) {

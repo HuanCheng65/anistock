@@ -192,8 +192,11 @@ impl FilterParams {
         let path = cfg.root.join(&rel);
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut fp = FilterParams::parse(&text)?;
+        // the sequel option (docs/v2-series.md §5): off unless `valuation.sequel_option` = 1 (it needs the AniList
+        // relations the collector has only just started to keep)
         let sq = path.with_file_name("sequel.json");
-        if sq.exists() {
+        let sequel_on = cfg.param("valuation.sequel_option").and_then(|v| v.as_integer()).unwrap_or(0) == 1;
+        if sequel_on && sq.exists() {
             let t = std::fs::read_to_string(&sq).map_err(|e| format!("{}: {e}", sq.display()))?;
             fp.sequel = Some(serde_json::from_str(&t).map_err(|e| format!("{}: {e}", sq.display()))?);
         }
@@ -905,7 +908,9 @@ mod tests {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
         let cfg = Config::load_from(&root, |_| None).unwrap();
         let p = Params::from_config(&cfg).unwrap();
-        let fp = FilterParams::load(&cfg).unwrap();
+        let mut fp = FilterParams::load(&cfg).unwrap();
+        // the sequel option is off by config; the reference covers it
+        fp.sequel = Some(serde_json::from_str(&std::fs::read_to_string(root.join("sim/calibration/sequel.json")).unwrap()).unwrap());
         let today = 740000;
         let s1 = schedule(&[today - 20, today - 13, today - 6], Some(12), false);
         let s2 = schedule(&[], None, true);
@@ -957,7 +962,7 @@ mod tests {
         // absolute revenue (phase 1 step 2)
         let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), None);
         assert!((d4 / 47.96159865502023 - 1.0).abs() < 1e-13, "{d4}");
-        // the sequel option (phase 1 step 3)
+        // the sequel option (phase 1 step 3; off by config, loaded here directly)
         let sp = fp.sequel.as_ref().unwrap();
         let z = sequel_z(sp, Some(78.0), Some("LIGHT_NOVEL"), false, true);
         let zs = z + sp.beta.sequel;

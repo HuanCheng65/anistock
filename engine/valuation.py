@@ -146,7 +146,7 @@ def filter_params(p: dict) -> dict:
         fp.setdefault("ipo_risk", 0.25)
         # the sequel option's parameters (sim/fit_sequel.py), next to the filter's
         sq = path.parent / "sequel.json"
-        if sq.exists() and "sequel" not in fp:
+        if p["valuation"].get("sequel_option", 0) == 1 and sq.exists() and "sequel" not in fp:
             fp["sequel"] = json.loads(sq.read_text(encoding="utf-8"))
         _FP_CACHE[path] = fp
     return _FP_CACHE[path]

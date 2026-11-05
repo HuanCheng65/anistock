@@ -15,6 +15,7 @@ from server.config import load  # noqa: E402
 
 cfg = load()
 p = cfg.params
+p["valuation"]["sequel_option"] = 1   # (off by default; the reference covers it)
 fp = V.filter_params(p)
 M = V.MARKETS
 w = p["markets"]

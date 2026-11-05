@@ -9,6 +9,12 @@ base_params = "sim/params_recommended.toml"
 "revenue.demand_base_week" = 2500000
 # absolute revenue (docs/v2-series.md §6) once the platform size averages two seasons of the collector's history
 "revenue.platform_min_days" = 182
+# phase 1 switches (docs/v2-series.md §12): the absolute revenue rule needs 182 days of real platform history (~Dec 5)
+# and the sequel option needs the AniList relations the collector has only just started to keep: both off for now.
+# impute_tail: cn/jp post-finale days without data earn the filter's expectation (the §4.2 stopgap)
+"revenue.absolute_revenue" = 0
+"valuation.sequel_option" = 0
+"valuation.impute_tail" = 1
 "company.shares" = 10000
 "company.ipo_float" = 0.25
 "company.founder_share" = 0.75
