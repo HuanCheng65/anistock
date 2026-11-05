@@ -99,6 +99,8 @@ pub enum Change {
     RestructureInsert(Restructure),
     /// `INSERT OR REPLACE INTO player_returns`
     PlayerReturnSet(PlayerReturn),
+    /// `INSERT OR REPLACE INTO player_days` (the daily asset snapshot, written by the close)
+    PlayerDayReplace(PlayerDay),
     StateSet {
         key: String,
         value: String,
@@ -366,6 +368,13 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                  VALUES (?,?,?,?,?)",
             )?
             .execute(params![p.account_id, p.return_factor, p.segment_base, p.restructures, p.last_day])?;
+        }
+        Change::PlayerDayReplace(p) => {
+            conn.prepare_cached(
+                "INSERT OR REPLACE INTO player_days(account_id, day, cash, stock_value, return_index, restructured)
+                 VALUES (?,?,?,?,?,?)",
+            )?
+            .execute(params![p.account_id, p.day, p.cash, p.stock_value, p.return_index, p.restructured as i64])?;
         }
         Change::IpoAppDelete { company_id, account_id } => {
             conn.prepare_cached("DELETE FROM ipo_applications WHERE company_id=? AND account_id=?")?

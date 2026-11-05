@@ -2,6 +2,7 @@
 //! loading the full game state at startup. Same file and schema as v1 (`server/db.py`).
 
 pub mod persist;
+pub mod player_days;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

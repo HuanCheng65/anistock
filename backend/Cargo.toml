@@ -1,6 +1,6 @@
 [package]
 name = "anistock"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 description = "AniStock v2 game server"
 
@@ -27,7 +27,9 @@ crossbeam-channel = "0.5"
 sha2 = "0.10"
 # HTTP layer (src/actor.rs, src/auth.rs, src/api/, src/loops.rs)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "fs"] }
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws", "json", "query"] }
+utoipa = { version = "5", features = ["preserve_order"] }
+zhconv = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 scrypt = { version = "0.11", default-features = false }
 hmac = "0.12"
@@ -48,3 +50,7 @@ lto = "thin"
 [[bin]]
 name = "marketsim"
 path = "src/bin/marketsim.rs"
+
+[[bin]]
+name = "openapi"
+path = "src/bin/openapi.rs"

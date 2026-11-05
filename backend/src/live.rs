@@ -1,28 +1,26 @@
-//! Real-time push: the market-data fan-out behind `/api/ws` (`api/ws.rs`), after the load-tested design in
-//! `bench/SPEC-v2.md` / `bench/rust-v2`:
+//! Real-time push: the fan-out behind `/api/v1/ws` (`api/v1/ws.rs`, docs/api-v1.md §5), after the
+//! load-tested design in `bench/SPEC-v2.md` / `bench/rust-v2`:
 //!
 //! - **Source.** The engine's change stream: a `Tee` sink copies the row changes the engine hands to the
 //!   persister (trades, orders, balances, company market fields, news) into a channel. The engine itself
 //!   is unchanged and stays the single writer; everything here runs on the engine thread between jobs.
-//! - **Conflated stock events** (spec §1). A change on stock K only marks K dirty. Every 100 ms, each dirty
-//!   stock with subscribers is encoded once (top 5 levels, last/open/high/low, volume, turnover, VCM, and
-//!   the trades since the previous flush) and enqueued to its subscribers.
-//! - **Spread quotes snapshot** (spec §2). Every second the quotes of the stocks whose price, volume or
-//!   prev close changed are encoded once; delivery is spread over the next 10 ticks by `client id % 10`.
-//!   A new `quotes` subscriber gets the full snapshot at once.
-//! - **Initial stock snapshots are spread**: a `stock:<id>` subscription is answered on the next ticks, at
-//!   most `INIT_PER_TICK` per tick, so a burst of page loads does not land on one tick.
-//! - **Batched writes** (spec §3): the per-client writer drains its queue into one NDJSON text frame.
-//! - **Slow clients**: per-client queues hold `QUEUE` messages; a client whose queue is full is dropped
-//!   (spec), and the browser reconnects and gets a fresh snapshot. The engine never waits on a socket.
-//! - `news` and `me` (a player's own orders, fills and cash) are rare and go out as they happen.
-//!
-//! Messages (one JSON object per line):
-//!   {"t":"quotes","full":bool,"s":[[id,price,prev_close,volume,turnover,cooling], ...]}
-//!   {"t":"stock","id",...,"bids":[[p,q,n]],"asks":[...],"vcm":{...}|null,"trades":[[id,p,q,ts]]}
-//!   {"t":"news","item":{...}}      {"t":"order","order":{...}}      {"t":"fill",...}      {"t":"cash",...}
+//! - **Conflated stock events.** A change on stock K only marks K dirty. Every 100 ms, each dirty stock
+//!   with subscribers is encoded once and enqueued to its subscribers (`seq` per stock).
+//! - **Spread quotes snapshot.** Every second the rows that changed are encoded once (`seq` global);
+//!   delivery is spread over the next 10 ticks by `client id % 10`. A new or resyncing `quotes`
+//!   subscriber gets a full snapshot at once, carrying the last snapshot's `seq` (the next delta it gets
+//!   is `seq + 1`). The first build after the trading day changes is full for everyone.
+//! - **Initial stock snapshots are spread**: at most `INIT_PER_TICK` per tick. A client joins the stock's
+//!   subscriber list only when its full snapshot goes out, so it never sees a delta before the full one.
+//! - **Batched writes**: the per-client writer drains its queue into one NDJSON text frame.
+//! - **Slow clients**: per-client queues hold `QUEUE` messages; a full queue closes the connection (4008).
+//! - `news`, `events` and `me` go out as they happen. `news` and `events` keep the last 24 hours (at most
+//!   2000 each) for `since` on reconnect; outside that window the client gets `reset`.
+//! - `time` every 20 s and at once on a phase change, the 04:00 day change and a finished close.
+//! - Sessions: logout (`Ctl::Logout`) and cookie expiry (checked with `time`) close with 4001.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::ws::Utf8Bytes;
@@ -30,18 +28,26 @@ use crossbeam_channel::{Receiver, Sender};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::config::Clock;
+use crate::api::v1::events::{self, Event, EventRules, Moves, Pending};
+use crate::api::v1::types::{self as t, Money, OrderSide, StockRef};
+use crate::api::v1::ws::{WsLimits, WsRejected, WsServerMessage as M};
+use crate::config::{Clock, Config};
 use crate::engine::Engine;
 use crate::model::OrderStatus;
 use crate::store::persist::{Change, ChangeSink};
 
-/// Per-client queue (messages, not frames), as in the spec.
+/// Per-client queue (messages, not frames).
 pub const QUEUE: usize = 256;
 pub const TICK: Duration = Duration::from_millis(100);
 /// Initial stock snapshots answered per tick.
 const INIT_PER_TICK: usize = 64;
 /// Stock topics one connection may hold.
 pub const MAX_STOCKS: usize = 16;
+/// `time` every this many ticks (20 s).
+const TIME_TICKS: u64 = 200;
+const REPLAY_MAX: usize = 2000;
+const REPLAY_AGE: Duration = Duration::from_secs(24 * 3600);
+pub const QUOTE_COLS: [&str; 6] = ["id", "price", "prev_close", "volume", "turnover", "vcm_active"];
 
 /// Copies the changes the fan-out cares about, then hands every change to the real sink.
 pub struct Tee {
@@ -78,20 +84,34 @@ impl ChangeSink for Tee {
     }
 }
 
-/// Control messages from the WebSocket tasks to the engine thread.
+/// Control messages from the WebSocket tasks (and the loops) to the engine thread.
 pub enum Ctl {
-    Add { id: u64, account: Option<i64>, tx: mpsc::Sender<Utf8Bytes>, kill: oneshot::Sender<()> },
-    Sub { id: u64, topics: Vec<String> },
+    Add { id: u64, account: Option<i64>, bot: bool, exp: Option<i64>, tx: mpsc::Sender<Utf8Bytes>, kill: oneshot::Sender<u16> },
+    Sub { id: u64, topics: Vec<String>, since: HashMap<String, i64> },
     Unsub { id: u64, topics: Vec<String> },
+    Resync { id: u64, topics: Vec<String> },
+    Ping { id: u64, ping: Value },
     Del(u64),
+    /// the session of this account ended (logout): close its connections with 4001
+    Logout { account: i64 },
+    /// an event built elsewhere (the daily close's `daily_close`, `leaderboard_weekly`)
+    Emit(Pending),
+    /// send `time` now (after a close)
+    Time,
 }
 
 struct Client {
     account: Option<i64>,
+    bot: bool,
+    exp: Option<i64>,
     tx: mpsc::Sender<Utf8Bytes>,
-    kill: Option<oneshot::Sender<()>>,
+    kill: Option<oneshot::Sender<u16>>,
     quotes: bool,
+    /// skip quote deltas with seq <= this (it got a newer full snapshot)
+    quotes_after: u64,
     news: bool,
+    events_all: bool,
+    event_kinds: HashSet<String>,
     me: bool,
     stocks: Vec<i64>,
 }
@@ -104,9 +124,19 @@ struct QuoteKey {
     cooling: bool,
 }
 
+struct Replay {
+    seq: u64,
+    kind: String,
+    at: Instant,
+    text: Utf8Bytes,
+}
+
 /// The fan-out state, owned by the engine thread.
 pub struct Fanout {
     clock: Clock,
+    cfg: Arc<Config>,
+    rules: EventRules,
+    rollover_min: i64,
     changes: Receiver<Vec<Change>>,
     pub ctl: Receiver<Ctl>,
     clients: HashMap<u64, Client>,
@@ -117,26 +147,45 @@ pub struct Fanout {
     new_trades: HashMap<i64, Vec<(i64, i64, i64, String)>>,
     /// initial stock snapshots to answer: (client, stock)
     init: Vec<(u64, i64)>,
-    /// today's turnover (cents) per stock, and the day it belongs to
     turnover: HashMap<i64, i64>,
     turnover_day: String,
     snap_last: HashMap<i64, QuoteKey>,
-    snapshot: Option<Utf8Bytes>,
+    snapshot: Option<(u64, Utf8Bytes)>,
+    snapshot_day: String,
+    quotes_seq: u64,
+    stock_seq: HashMap<i64, u64>,
+    me_seq: HashMap<i64, u64>,
+    events_seq: u64,
+    news_replay: VecDeque<Replay>,
+    event_replay: VecDeque<Replay>,
+    /// (notional, qty) filled per open order since start (for `average_fill_price`)
+    fills: HashMap<i64, (i64, i64)>,
+    moves: Moves,
     tick_no: u64,
-    rm: Vec<(u64, bool)>,
+    last_phase: Option<crate::config::Phase>,
+    last_day: String,
+    rm: Vec<(u64, u16)>,
     pub dropped: u64,
 }
 
-fn yuan(c: i64) -> f64 {
-    c as f64 / 100.0
+fn text(m: &M) -> Utf8Bytes {
+    Utf8Bytes::from(serde_json::to_string(m).unwrap_or_default())
 }
 
 impl Fanout {
     /// `turnover`: today's turnover per stock (cents) from the database at startup.
-    pub fn new(clock: Clock, changes: Receiver<Vec<Change>>, ctl: Receiver<Ctl>, turnover: HashMap<i64, i64>) -> Fanout {
+    pub fn new(clock: Clock, cfg: Arc<Config>, changes: Receiver<Vec<Change>>, ctl: Receiver<Ctl>, turnover: HashMap<i64, i64>) -> Fanout {
         let day = clock.today();
+        let rollover_min = {
+            let (h, m) = cfg.game.day_rollover.split_once(':').unwrap_or(("0", "0"));
+            h.trim().parse::<i64>().unwrap_or(0) * 60 + m.trim().parse::<i64>().unwrap_or(0)
+        };
+        let now_s = clock.now().timestamp().max(0) as u64;
         Fanout {
+            rules: EventRules::from_config(&cfg),
+            cfg,
             clock,
+            rollover_min,
             changes,
             ctl,
             clients: HashMap::new(),
@@ -146,10 +195,22 @@ impl Fanout {
             new_trades: HashMap::new(),
             init: Vec::new(),
             turnover,
-            turnover_day: day,
+            turnover_day: day.clone(),
             snap_last: HashMap::new(),
             snapshot: None,
+            snapshot_day: day.clone(),
+            quotes_seq: 0,
+            stock_seq: HashMap::new(),
+            me_seq: HashMap::new(),
+            // monotonic across restarts (a restart's gap is outside every client's replay window anyway)
+            events_seq: now_s * 1000,
+            news_replay: VecDeque::new(),
+            event_replay: VecDeque::new(),
+            fills: HashMap::new(),
+            moves: Moves::default(),
             tick_no: 0,
+            last_phase: None,
+            last_day: day,
             rm: Vec::new(),
             dropped: 0,
         }
@@ -159,54 +220,185 @@ impl Fanout {
         self.clients.len()
     }
 
+    fn trading_day_of(&self, ts: &str) -> String {
+        chrono::DateTime::parse_from_rfc3339(ts)
+            .map(|dt| (dt.naive_local() - chrono::Duration::minutes(self.rollover_min)).date().format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|_| ts.get(..10).unwrap_or("").to_string())
+    }
+
+    fn phase(&self) -> crate::config::Phase {
+        self.clock.phase(&self.cfg.game, self.cfg.always_open)
+    }
+
+    fn sref(e: &Engine, id: i64) -> StockRef {
+        e.company(id).map_or(StockRef { id, code: String::new(), title: String::new() }, |c| StockRef {
+            id,
+            code: c.code.clone(),
+            title: c.title.clone(),
+        })
+    }
+
     // ------------------------------------------------------------ clients
 
     pub fn control(&mut self, c: Ctl, e: &Engine) {
         match c {
-            Ctl::Add { id, account, tx, kill } => {
+            Ctl::Add { id, account, bot, exp, tx, kill } => {
                 self.slots[(id % 10) as usize].push(id);
                 self.clients.insert(
                     id,
-                    Client { account, tx, kill: Some(kill), quotes: false, news: false, me: false, stocks: vec![] },
+                    Client {
+                        account,
+                        bot,
+                        exp,
+                        tx,
+                        kill: Some(kill),
+                        quotes: false,
+                        quotes_after: 0,
+                        news: false,
+                        events_all: false,
+                        event_kinds: HashSet::new(),
+                        me: false,
+                        stocks: vec![],
+                    },
                 );
-                let hello = json!({"t": "hello", "me": account.is_some()});
-                self.send_to(id, &Utf8Bytes::from(hello.to_string()));
+                let hello = M::Hello {
+                    v: 1,
+                    server_version: crate::api::v1::VERSION.into(),
+                    me: account.is_some(),
+                    bot,
+                    now: t::ts(self.clock.ts()),
+                    trading_day: t::day(self.clock.today()),
+                    phase: self.phase().into(),
+                    limits: WsLimits { stocks: MAX_STOCKS as i64, queue: QUEUE as i64 },
+                };
+                self.send_to(id, &text(&hello));
+                let tm = self.time_msg(e);
+                self.send_to(id, &tm);
             }
-            Ctl::Sub { id, topics } => {
-                for t in topics {
-                    self.subscribe(id, &t, e);
+            Ctl::Sub { id, topics, since } => {
+                let mut ok = Vec::new();
+                let mut rejected = Vec::new();
+                for tp in topics {
+                    match self.subscribe(id, &tp, &since, e) {
+                        Ok(()) => ok.push(tp),
+                        Err(code) => rejected.push(WsRejected { topic: tp, code: code.into() }),
+                    }
+                }
+                if self.clients.contains_key(&id) {
+                    let ack = text(&M::Subscribed { topics: ok, rejected });
+                    self.send_to(id, &ack);
                 }
             }
             Ctl::Unsub { id, topics } => {
-                for t in topics {
-                    self.unsubscribe(id, &t);
+                for tp in topics {
+                    self.unsubscribe(id, &tp);
                 }
             }
-            Ctl::Del(id) => self.remove(id, false),
+            Ctl::Resync { id, topics } => {
+                for tp in topics {
+                    if tp == "quotes" && self.clients.get(&id).is_some_and(|c| c.quotes) {
+                        self.send_full_quotes(id, e);
+                    } else if let Some(cid) = tp.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) {
+                        if self.clients.get(&id).is_some_and(|c| c.stocks.contains(&cid)) {
+                            if let Some(v) = self.stock_subs.get_mut(&cid) {
+                                v.retain(|x| *x != id);
+                            }
+                            self.init.push((id, cid));
+                        }
+                    }
+                }
+            }
+            Ctl::Ping { id, ping } => {
+                let m = text(&M::Pong { ping });
+                self.send_to(id, &m);
+            }
+            Ctl::Del(id) => self.remove(id, None),
+            Ctl::Logout { account } => {
+                let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.account == Some(account)).map(|(i, _)| *i).collect();
+                for id in ids {
+                    self.rm.push((id, 4001));
+                }
+            }
+            Ctl::Emit(p) => {
+                self.emit(p);
+                let tm = self.time_msg(e);
+                self.broadcast(&tm);
+            }
+            Ctl::Time => {
+                let tm = self.time_msg(e);
+                self.broadcast(&tm);
+            }
         }
         self.flush_removals();
     }
 
-    fn subscribe(&mut self, id: u64, topic: &str, e: &Engine) {
-        let Some(c) = self.clients.get_mut(&id) else { return };
+    fn subscribe(&mut self, id: u64, topic: &str, since: &HashMap<String, i64>, e: &Engine) -> Result<(), &'static str> {
+        let Some(c) = self.clients.get_mut(&id) else { return Err("unknown_topic") };
         match topic {
             "quotes" => {
                 if !c.quotes {
                     c.quotes = true;
-                    let full = self.encode_quotes(e, true);
-                    self.send_to(id, &full);
+                    self.send_full_quotes(id, e);
                 }
+                Ok(())
             }
-            "news" => c.news = true,
-            "me" => c.me = c.account.is_some(),
+            "news" => {
+                if !c.news {
+                    if let Some(s) = since.get("news") {
+                        self.replay_news(id, *s, e);
+                    }
+                    if let Some(c) = self.clients.get_mut(&id) {
+                        c.news = true;
+                    }
+                }
+                Ok(())
+            }
+            "me" => {
+                if c.bot {
+                    return Err("forbidden");
+                }
+                if c.account.is_none() {
+                    return Err("unauthenticated");
+                }
+                c.me = true;
+                Ok(())
+            }
+            _ if topic == "events" || topic.starts_with("events:") => {
+                let kind = topic.strip_prefix("events:").map(str::to_string);
+                if kind.as_deref() == Some("") {
+                    return Err("unknown_topic");
+                }
+                let first = !c.events_all && c.event_kinds.is_empty();
+                if first {
+                    if let Some(s) = since.get("events") {
+                        self.replay_events(id, *s, kind.as_deref());
+                    }
+                }
+                let Some(c) = self.clients.get_mut(&id) else { return Ok(()) };
+                match kind {
+                    None => c.events_all = true,
+                    Some(k) => {
+                        c.event_kinds.insert(k);
+                    }
+                }
+                Ok(())
+            }
             _ => {
-                let Some(cid) = topic.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) else { return };
-                if c.stocks.contains(&cid) || c.stocks.len() >= MAX_STOCKS || e.company(cid).is_none() {
-                    return;
+                let Some(cid) = topic.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) else {
+                    return Err("unknown_topic");
+                };
+                if c.stocks.contains(&cid) {
+                    return Ok(());
+                }
+                if e.company(cid).is_none() {
+                    return Err("stock_not_found");
+                }
+                if c.stocks.len() >= MAX_STOCKS {
+                    return Err("too_many_stocks");
                 }
                 c.stocks.push(cid);
-                self.stock_subs.entry(cid).or_default().push(id);
                 self.init.push((id, cid));
+                Ok(())
             }
         }
     }
@@ -217,6 +409,10 @@ impl Fanout {
             "quotes" => c.quotes = false,
             "news" => c.news = false,
             "me" => c.me = false,
+            "events" => c.events_all = false,
+            _ if topic.starts_with("events:") => {
+                c.event_kinds.remove(&topic["events:".len()..]);
+            }
             _ => {
                 let Some(cid) = topic.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) else { return };
                 c.stocks.retain(|x| *x != cid);
@@ -227,7 +423,7 @@ impl Fanout {
         }
     }
 
-    fn remove(&mut self, id: u64, slow: bool) {
+    fn remove(&mut self, id: u64, code: Option<u16>) {
         if let Some(mut c) = self.clients.remove(&id) {
             for cid in &c.stocks {
                 if let Some(v) = self.stock_subs.get_mut(cid) {
@@ -235,10 +431,12 @@ impl Fanout {
                 }
             }
             self.slots[(id % 10) as usize].retain(|x| *x != id);
-            if slow {
-                self.dropped += 1;
+            if let Some(code) = code {
+                if code == 4008 {
+                    self.dropped += 1;
+                }
                 if let Some(k) = c.kill.take() {
-                    let _ = k.send(());
+                    let _ = k.send(code);
                 }
             }
         }
@@ -248,22 +446,102 @@ impl Fanout {
         if let Some(c) = self.clients.get(&id) {
             match c.tx.try_send(msg.clone()) {
                 Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => self.rm.push((id, true)),
-                Err(mpsc::error::TrySendError::Closed(_)) => self.rm.push((id, false)),
+                Err(mpsc::error::TrySendError::Full(_)) => self.rm.push((id, 4008)),
+                Err(mpsc::error::TrySendError::Closed(_)) => self.rm.push((id, 0)),
             }
         }
     }
 
+    fn broadcast(&mut self, msg: &Utf8Bytes) {
+        let ids: Vec<u64> = self.clients.keys().copied().collect();
+        for id in ids {
+            self.send_to(id, msg);
+        }
+    }
+
     fn flush_removals(&mut self) {
-        for (id, slow) in std::mem::take(&mut self.rm) {
-            self.remove(id, slow);
+        for (id, code) in std::mem::take(&mut self.rm) {
+            self.remove(id, (code != 0).then_some(code));
+        }
+    }
+
+    // ------------------------------------------------------------ replay (news, events)
+
+    fn trim(buf: &mut VecDeque<Replay>) {
+        while buf.len() > REPLAY_MAX || buf.front().is_some_and(|r| r.at.elapsed() > REPLAY_AGE) {
+            buf.pop_front();
+        }
+    }
+
+    fn replay_news(&mut self, id: u64, since: i64, e: &Engine) {
+        let last = e.st.last_news_id;
+        if since >= last {
+            return;
+        }
+        Self::trim(&mut self.news_replay);
+        let covered = self.news_replay.front().is_some_and(|r| r.seq as i64 <= since + 1);
+        if !covered {
+            let m = text(&M::Reset { topic: "news".into() });
+            self.send_to(id, &m);
+            return;
+        }
+        let msgs: Vec<Utf8Bytes> = self.news_replay.iter().filter(|r| r.seq as i64 > since).map(|r| r.text.clone()).collect();
+        for m in msgs {
+            self.send_to(id, &m);
+        }
+    }
+
+    fn replay_events(&mut self, id: u64, since: i64, kind: Option<&str>) {
+        if since >= self.events_seq as i64 {
+            return;
+        }
+        Self::trim(&mut self.event_replay);
+        let covered = self.event_replay.front().is_some_and(|r| r.seq as i64 <= since + 1);
+        if !covered {
+            let m = text(&M::Reset { topic: "events".into() });
+            self.send_to(id, &m);
+            return;
+        }
+        let msgs: Vec<Utf8Bytes> = self
+            .event_replay
+            .iter()
+            .filter(|r| r.seq as i64 > since && kind.is_none_or(|k| k == r.kind))
+            .map(|r| r.text.clone())
+            .collect();
+        for m in msgs {
+            self.send_to(id, &m);
+        }
+    }
+
+    fn emit(&mut self, p: Pending) {
+        self.events_seq += 1;
+        let seq = self.events_seq;
+        let ev = Event {
+            seq,
+            kind: p.kind.clone(),
+            at: t::ts(p.at),
+            trading_day: t::day(p.trading_day),
+            stock: p.stock,
+            data: p.data,
+            news_id: p.news_id,
+        };
+        let msg = text(&M::Event(ev));
+        self.event_replay.push_back(Replay { seq, kind: p.kind.clone(), at: Instant::now(), text: msg.clone() });
+        Self::trim(&mut self.event_replay);
+        let ids: Vec<u64> = self
+            .clients
+            .iter()
+            .filter(|(_, c)| c.events_all || c.event_kinds.contains(&p.kind))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.send_to(id, &msg);
         }
     }
 
     // ------------------------------------------------------------ engine changes
 
-    /// Fold the engine's latest changes in (after every job). Stocks only get marked dirty; `news` and `me`
-    /// go out now.
+    /// Fold the engine's latest changes in (after every job).
     pub fn absorb(&mut self, e: &Engine) {
         while let Ok(batch) = self.changes.try_recv() {
             for c in batch {
@@ -277,66 +555,88 @@ impl Fanout {
         e.account(account).is_some_and(|a| a.kind == "player")
     }
 
-    fn me_ids(&self, account: i64) -> Vec<u64> {
-        self.clients.iter().filter(|(_, c)| c.me && c.account == Some(account)).map(|(id, _)| *id).collect()
-    }
-
-    fn to_account(&mut self, account: i64, msg: Value) {
-        let ids = self.me_ids(account);
-        if ids.is_empty() {
-            return;
-        }
-        let text = Utf8Bytes::from(msg.to_string());
+    fn to_account(&mut self, account: i64, make: impl FnOnce(u64) -> M) {
+        let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.me && c.account == Some(account)).map(|(id, _)| *id).collect();
+        let seq = self.me_seq.entry(account).or_default();
+        *seq += 1;
+        let msg = text(&make(*seq));
         for id in ids {
-            self.send_to(id, &text);
+            self.send_to(id, &msg);
         }
     }
 
     fn change(&mut self, c: Change, e: &Engine) {
         match c {
-            Change::TradeInsert(t) => {
-                self.dirty.insert(t.company_id);
-                if t.day != self.turnover_day {
+            Change::TradeInsert(tr) => {
+                self.dirty.insert(tr.company_id);
+                if tr.day != self.turnover_day {
                     self.turnover.clear();
-                    self.turnover_day = t.day.clone();
+                    self.turnover_day = tr.day.clone();
                 }
-                *self.turnover.entry(t.company_id).or_default() += t.price * t.qty;
-                if self.stock_subs.get(&t.company_id).is_some_and(|v| !v.is_empty()) {
-                    self.new_trades.entry(t.company_id).or_default().push((t.id, t.price, t.qty, t.ts.clone()));
+                *self.turnover.entry(tr.company_id).or_default() += tr.price * tr.qty;
+                if self.stock_subs.get(&tr.company_id).is_some_and(|v| !v.is_empty()) {
+                    self.new_trades.entry(tr.company_id).or_default().push((tr.id, tr.price, tr.qty, tr.ts.clone()));
                 }
-                let co = e.company(t.company_id);
-                for (acct, side, order) in [(t.buyer_id, "buy", t.buy_order), (t.seller_id, "sell", t.sell_order)] {
+                let notional = tr.price * tr.qty;
+                for o in [tr.buy_order, tr.sell_order].into_iter().flatten() {
+                    let f = self.fills.entry(o).or_default();
+                    f.0 += notional;
+                    f.1 += tr.qty;
+                }
+                let sref = Self::sref(e, tr.company_id);
+                for (acct, side, order) in [(tr.buyer_id, OrderSide::Buy, tr.buy_order), (tr.seller_id, OrderSide::Sell, tr.sell_order)] {
                     if Self::is_player(e, acct) {
-                        self.to_account(
-                            acct,
-                            json!({"t": "fill", "side": side, "company_id": t.company_id,
-                                   "title": co.map(|c| c.title.as_str()), "code": co.map(|c| c.code.as_str()),
-                                   "price": yuan(t.price), "qty": t.qty, "order_id": order, "ts": t.ts}),
-                        );
+                        let mt = t::MyTrade {
+                            id: tr.id,
+                            order_id: order,
+                            stock: sref.clone(),
+                            side,
+                            price: Money(tr.price),
+                            quantity: tr.qty,
+                            amount: Money(notional),
+                            commission: Money(e.fees.commission_on(notional)),
+                            stamp_duty: Money(if side == OrderSide::Sell { e.fees.stamp_on(notional) } else { 0 }),
+                            at: t::ts(tr.ts.clone()),
+                            trading_day: t::day(tr.day.clone()),
+                        };
+                        self.to_account(acct, |seq| M::Fill { seq, trade: mt });
                     }
                 }
+                self.trade_events(&tr, e);
             }
             Change::OrderUpsert(o) => {
                 self.dirty.insert(o.company_id);
                 if Self::is_player(e, o.account_id) {
-                    let co = e.company(o.company_id);
-                    self.to_account(
-                        o.account_id,
-                        json!({"t": "order", "order": {
-                            "id": o.id, "company_id": o.company_id, "side": o.side, "kind": o.kind,
-                            "price": o.price.map(yuan), "qty": o.qty, "filled": o.filled, "status": o.status,
-                            "created_at": o.created_at, "updated_at": o.updated_at,
-                            "title": co.map(|c| c.title.as_str()), "code": co.map(|c| c.code.as_str()),
-                        }, "open": o.status == OrderStatus::Open}),
-                    );
+                    let avg = self.fills.get(&o.id).filter(|f| f.1 > 0 && f.1 == o.filled).map(|f| Money(crate::exchange::py_round_div(f.0, f.1)));
+                    let order = t::Order {
+                        id: o.id,
+                        stock: Self::sref(e, o.company_id),
+                        side: if o.side == crate::model::Side::Sell { OrderSide::Sell } else { OrderSide::Buy },
+                        r#type: o.kind.as_str().into(),
+                        price: o.price.map(Money),
+                        quantity: o.qty,
+                        filled_quantity: o.filled,
+                        average_fill_price: avg,
+                        frozen_cash: Money(if o.side == crate::model::Side::Buy { o.frozen } else { 0 }),
+                        status: o.status.as_str().into(),
+                        trading_day: t::day(self.trading_day_of(&o.created_at)),
+                        created_at: t::ts(o.created_at.clone()),
+                        updated_at: t::ts(o.updated_at.clone()),
+                    };
+                    self.to_account(o.account_id, |seq| M::Order { seq, order });
+                }
+                if o.status != OrderStatus::Open {
+                    self.fills.remove(&o.id);
                 }
             }
             Change::AccountBalance { id, cash, cash_frozen } => {
                 if Self::is_player(e, id) {
-                    self.to_account(
-                        id,
-                        json!({"t": "cash", "cash": yuan(cash), "frozen": yuan(cash_frozen), "available": yuan(cash - cash_frozen)}),
-                    );
+                    self.to_account(id, |seq| M::Cash {
+                        seq,
+                        cash: Money(cash),
+                        frozen_cash: Money(cash_frozen),
+                        available_cash: Money(cash - cash_frozen),
+                    });
                 }
             }
             Change::CompanyMarket { id, .. } => {
@@ -346,43 +646,183 @@ impl Fanout {
                 self.dirty.insert(c.id);
             }
             Change::NewsInsert(n) => {
-                let code = n.company_id.and_then(|id| e.company(id)).map(|c| c.code.clone());
-                let text = Utf8Bytes::from(
-                    json!({"t": "news", "item": {"id": n.id, "day": n.day, "ts": n.ts, "kind": n.kind, "title": n.title,
-                           "body": n.body, "company_id": n.company_id, "code": code}})
-                    .to_string(),
-                );
+                let item = t::NewsItem {
+                    id: n.id,
+                    at: t::ts(n.ts.clone()),
+                    trading_day: t::day(n.day.clone()),
+                    kind: n.kind.clone(),
+                    category: t::NewsCategory::of(&n.kind),
+                    title: n.title.clone(),
+                    body: n.body.clone().filter(|b| !b.is_empty()),
+                    stock: n.company_id.map(|id| Self::sref(e, id)),
+                };
+                let msg = text(&M::News { seq: n.id as u64, item });
+                self.news_replay.push_back(Replay { seq: n.id as u64, kind: n.kind.clone(), at: Instant::now(), text: msg.clone() });
+                Self::trim(&mut self.news_replay);
                 let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.news).map(|(id, _)| *id).collect();
                 for id in ids {
-                    self.send_to(id, &text);
+                    self.send_to(id, &msg);
                 }
+                self.news_events(&n, e);
             }
             _ => {}
         }
     }
 
+    // ------------------------------------------------------------ derived events
+
+    fn pending(kind: &str, at: &str, day: &str, stock: Option<StockRef>, data: Value, news_id: Option<i64>) -> Pending {
+        Pending { kind: kind.into(), at: at.into(), trading_day: day.into(), stock, data, news_id }
+    }
+
+    fn news_events(&mut self, n: &crate::model::News, e: &Engine) {
+        let stock = n.company_id.map(|id| Self::sref(e, id));
+        let co = n.company_id.and_then(|id| e.company(id));
+        let data = match n.kind.as_str() {
+            "flash" => {
+                let (ep, s) = events::parse_flash(&n.title);
+                json!({"episode": ep, "surprise": s})
+            }
+            "vcm" => {
+                let v = co.map(|c| crate::api::v1::stocks::vcm_of(c, &n.ts));
+                json!({"low": v.as_ref().and_then(|v| v.low), "high": v.as_ref().and_then(|v| v.high),
+                       "until": v.as_ref().and_then(|v| v.until.clone()), "count_today": v.as_ref().map_or(0, |v| v.count_today)})
+            }
+            "ipo" | "allotment" => match co.map(|c| self.ipo_of(e, c, &n.day)) {
+                Some(ipo) => json!({"ipo": ipo}),
+                None => return,
+            },
+            "warning" => json!({"weeks_left": 1}),
+            "delisting" => json!({"last_price": co.map(|c| c.last_price)}),
+            _ => return,
+        };
+        let kind = match n.kind.as_str() {
+            "ipo" => "ipo_open",
+            "allotment" => "ipo_allotted",
+            "warning" => "delisting_warning",
+            "delisting" => "delisted",
+            k => k,
+        };
+        self.emit(Self::pending(kind, &n.ts, &n.day, stock, data, Some(n.id)));
+    }
+
+    /// The `Ipo` object from engine memory (no viewer).
+    fn ipo_of(&self, e: &Engine, co: &crate::model::Company, today: &str) -> t::Ipo {
+        let float_share = crate::api::v1::market::param_f64(&self.cfg, "company.ipo_float", 0.25);
+        let float_qty = (co.shares as f64 * float_share).round_ties_even() as i64;
+        let base = (float_qty as f64 * self.cfg.game.ipo_public_base).round_ties_even() as i64;
+        let apps: Vec<&crate::model::IpoApplication> = e.st.ipo_apps.values().filter(|a| a.company_id == co.id).collect();
+        let q: i64 = apps.iter().map(|a| a.qty).sum();
+        let a: i64 = apps.iter().filter_map(|a| a.allotted).sum();
+        let status = crate::api::v1::stocks::ipo_status(co, today);
+        let allotted = matches!(status, "allotted" | "listed");
+        t::Ipo {
+            stock: Self::sref(e, co.id),
+            title_ja: co.title_ja.clone(),
+            status: status.into(),
+            price: Money(co.ipo_price),
+            sub_start: co.sub_start.clone().unwrap_or_default(),
+            sub_end: co.sub_end.clone().unwrap_or_default(),
+            listed_on: co.listed_on.clone(),
+            first_air: co.first_air.clone(),
+            float_quantity: float_qty,
+            base_public_quantity: base,
+            applied_quantity: q,
+            applicants: apps.len() as i64,
+            result: allotted.then(|| t::IpoResult {
+                oversubscribed: if base != 0 { t::r6(q as f64 / base as f64) } else { 0.0 },
+                public_quantity: a,
+                allotment_ratio: (q != 0).then(|| t::r6(a as f64 / q as f64)),
+            }),
+            first_day: None,
+            viewer: None,
+        }
+    }
+
+    fn trade_events(&mut self, tr: &crate::model::Trade, e: &Engine) {
+        let Some(co) = e.company(tr.company_id) else { return };
+        let unix = chrono::DateTime::parse_from_rfc3339(&tr.ts).map(|d| d.timestamp()).unwrap_or(0);
+        let stock = Self::sref(e, tr.company_id);
+        // the first trade of a listing day
+        if co.listed_on == tr.day && e.st.day_aggs.get(&(tr.company_id, tr.day.clone())).is_some_and(|a| a.volume == tr.qty) {
+            self.emit(Self::pending("listed", &tr.ts, &tr.day, Some(stock.clone()), json!({"price": tr.price, "ipo_price": co.ipo_price}), None));
+        }
+        for data in self.moves.trade(&self.rules, tr.company_id, unix, tr.price, co.prev_close, &tr.day) {
+            self.emit(Self::pending("big_move", &tr.ts, &tr.day, Some(stock.clone()), data, None));
+        }
+    }
+
+    // ------------------------------------------------------------ time
+
+    fn time_msg(&self, e: &Engine) -> Utf8Bytes {
+        let ph = self.phase();
+        let ends = if self.cfg.always_open {
+            None
+        } else {
+            let g = &self.cfg.game;
+            let at = match ph {
+                crate::config::Phase::Auction => &g.trading_open,
+                crate::config::Phase::Continuous => &g.trading_close,
+                crate::config::Phase::Closed => &g.auction_start,
+            };
+            Some(t::ts(crate::config::format_ts(&crate::config::next_daily_step(&self.clock.now(), at))))
+        };
+        text(&M::Time {
+            now: t::ts(self.clock.ts()),
+            trading_day: t::day(self.clock.today()),
+            phase: ph.into(),
+            phase_ends_at: ends,
+            last_closed_day: e.state("last_closed").filter(|s| !s.is_empty()).map(t::day),
+        })
+    }
+
     // ------------------------------------------------------------ the 100 ms tick
 
     /// Tick k: quotes snapshot build (every 10th tick) and delivery to slot k % 10, initial stock
-    /// snapshots, then the conflated stock flush.
+    /// snapshots, the conflated stock flush, and `time`.
     pub fn tick(&mut self, e: &Engine) {
         self.absorb(e);
         let k = self.tick_no;
         self.tick_no += 1;
         let slot = (k % 10) as usize;
-        if slot == 0 {
-            self.snapshot = Some(self.encode_quotes(e, false));
+        let today = self.clock.today();
+        // time: every 20 s, and at once on a phase or day change
+        let ph = self.phase();
+        if k % TIME_TICKS == 0 || self.last_phase != Some(ph) || self.last_day != today {
+            self.last_phase = Some(ph);
+            self.last_day = today.clone();
+            let tm = self.time_msg(e);
+            self.broadcast(&tm);
+            let now = self.clock.now().timestamp();
+            let expired: Vec<u64> = self.clients.iter().filter(|(_, c)| c.exp.is_some_and(|x| x < now)).map(|(id, _)| *id).collect();
+            for id in expired {
+                self.rm.push((id, 4001));
+            }
+            self.flush_removals();
         }
-        if let Some(text) = self.snapshot.clone() {
-            let ids: Vec<u64> = self.slots[slot].iter().copied().filter(|id| self.clients[id].quotes).collect();
+        if slot == 0 {
+            let full = self.snapshot_day != today;
+            self.snapshot_day = today.clone();
+            let (rows, _) = self.quote_rows(e, full);
+            self.quotes_seq += 1;
+            let msg = text(&M::Quotes {
+                seq: self.quotes_seq,
+                full,
+                trading_day: t::day(today.clone()),
+                cols: full.then(|| QUOTE_COLS.iter().map(|s| s.to_string()).collect()),
+                rows,
+            });
+            self.snapshot = Some((self.quotes_seq, msg));
+        }
+        if let Some((seq, msg)) = self.snapshot.clone() {
+            let ids: Vec<u64> =
+                self.slots[slot].iter().copied().filter(|id| self.clients[id].quotes && self.clients[id].quotes_after < seq).collect();
             for id in ids {
-                self.send_to(id, &text);
+                self.send_to(id, &msg);
             }
             self.flush_removals();
         }
         let ts = self.clock.ts();
-        let today = self.clock.today();
-        // initial snapshots, spread
         if !self.init.is_empty() {
             let n = self.init.len().min(INIT_PER_TICK);
             let batch: Vec<(u64, i64)> = self.init.drain(..n).collect();
@@ -391,27 +831,45 @@ impl Fanout {
                 if !self.clients.get(&id).is_some_and(|c| c.stocks.contains(&cid)) {
                     continue;
                 }
-                let text = cache.entry(cid).or_insert_with(|| self.encode_stock(e, cid, &ts, &today, &[], true)).clone();
-                self.send_to(id, &text);
+                let msg = match cache.get(&cid) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let seq = *self.stock_seq.get(&cid).unwrap_or(&0);
+                        let recent: Vec<(i64, i64, i64, String)> = e
+                            .st
+                            .recent_trades
+                            .get(&cid)
+                            .map(|v| v.iter().rev().take(30).rev().map(|r| (r.id, r.price, r.qty, r.ts.clone())).collect())
+                            .unwrap_or_default();
+                        let m = self.encode_stock(e, cid, &ts, &today, &recent, true, seq);
+                        cache.insert(cid, m.clone());
+                        m
+                    }
+                };
+                self.send_to(id, &msg);
+                let subs = self.stock_subs.entry(cid).or_default();
+                if !subs.contains(&id) {
+                    subs.push(id);
+                }
             }
             self.flush_removals();
         }
-        // conflated stock events
         let dirty: Vec<i64> = self.dirty.drain().collect();
         for cid in dirty {
             let trades = self.new_trades.remove(&cid).unwrap_or_default();
             let Some(subs) = self.stock_subs.get(&cid).filter(|v| !v.is_empty()).cloned() else { continue };
-            let text = self.encode_stock(e, cid, &ts, &today, &trades, false);
+            let seq = {
+                let s = self.stock_seq.entry(cid).or_default();
+                *s += 1;
+                *s
+            };
+            let msg = self.encode_stock(e, cid, &ts, &today, &trades, false, seq);
             for id in subs {
-                self.send_to(id, &text);
+                self.send_to(id, &msg);
             }
         }
         self.new_trades.clear();
         self.flush_removals();
-    }
-
-    fn day_vol(e: &Engine, cid: i64, today: &str) -> Option<crate::engine::DayAgg> {
-        e.st.day_aggs.get(&(cid, today.to_string())).copied()
     }
 
     fn turnover_of(&self, cid: i64, today: &str) -> i64 {
@@ -422,45 +880,82 @@ impl Fanout {
         }
     }
 
-    fn encode_quotes(&mut self, e: &Engine, full: bool) -> Utf8Bytes {
+    /// Rows of the listed stocks; `full` = all of them (and the change baseline is reset).
+    fn quote_rows(&mut self, e: &Engine, full: bool) -> (Vec<Value>, usize) {
         let today = self.clock.today();
         let ts = self.clock.ts();
         let mut rows = Vec::new();
         for c in e.companies().filter(|c| c.status == "listed") {
-            let vol = Self::day_vol(e, c.id, &today).map_or(0, |a| a.volume);
+            let vol = e.st.day_aggs.get(&(c.id, today.clone())).map_or(0, |a| a.volume);
             let key = QuoteKey { price: c.last_price, prev: c.prev_close, vol, cooling: crate::exchange::cooling(c, &ts).is_some() };
             let changed = self.snap_last.get(&c.id) != Some(&key);
+            self.snap_last.insert(c.id, key);
             if !full && !changed {
                 continue;
             }
-            if !full {
-                self.snap_last.insert(c.id, key);
-            }
-            rows.push(json!([c.id, yuan(c.last_price), yuan(c.prev_close), vol, yuan(self.turnover_of(c.id, &today)), key.cooling]));
+            rows.push(json!([c.id, c.last_price, c.prev_close, vol, self.turnover_of(c.id, &today), key.cooling]));
         }
-        Utf8Bytes::from(json!({"t": "quotes", "full": full, "s": rows}).to_string())
+        let n = rows.len();
+        (rows, n)
     }
 
-    fn encode_stock(&self, e: &Engine, cid: i64, ts: &str, today: &str, trades: &[(i64, i64, i64, String)], init: bool) -> Utf8Bytes {
-        let Some(c) = e.company(cid) else { return Utf8Bytes::from_static("{}") };
-        let agg = Self::day_vol(e, cid, today);
-        let book = e.book(cid, 5);
-        let lv = |l: &Vec<crate::engine::Level>| l.iter().map(|x| json!([yuan(x.price), x.qty, x.orders])).collect::<Vec<_>>();
-        let vcm = crate::exchange::cooling(c, ts).map(|(lo, hi)| {
-            json!({"active": true, "until": c.vcm_until, "low": yuan(lo), "high": yuan(hi), "count": c.vcm_count})
-        });
-        let tr: Vec<Value> = trades.iter().rev().map(|(id, p, q, ts)| json!([id, yuan(*p), q, ts])).collect();
-        Utf8Bytes::from(
-            json!({
-                "t": "stock", "id": cid, "init": init,
-                "price": yuan(c.last_price), "prev_close": yuan(c.prev_close),
-                "open": agg.map(|a| yuan(a.open)), "high": agg.map(|a| yuan(a.high)), "low": agg.map(|a| yuan(a.low)),
-                "volume": agg.map_or(0, |a| a.volume), "turnover": yuan(self.turnover_of(cid, today)),
-                "open_ref": c.open_ref.map(yuan),
-                "bids": lv(&book.bids), "asks": lv(&book.asks), "vcm": vcm, "trades": tr,
+    /// A full quotes snapshot for one client (subscribe, resync): current values, the last delta's seq.
+    fn send_full_quotes(&mut self, id: u64, e: &Engine) {
+        let today = self.clock.today();
+        let ts = self.clock.ts();
+        let rows: Vec<Value> = e
+            .companies()
+            .filter(|c| c.status == "listed")
+            .map(|c| {
+                let vol = e.st.day_aggs.get(&(c.id, today.clone())).map_or(0, |a| a.volume);
+                json!([c.id, c.last_price, c.prev_close, vol, self.turnover_of(c.id, &today), crate::exchange::cooling(c, &ts).is_some()])
             })
-            .to_string(),
-        )
+            .collect();
+        let seq = self.quotes_seq;
+        let msg = text(&M::Quotes {
+            seq,
+            full: true,
+            trading_day: t::day(today),
+            cols: Some(QUOTE_COLS.iter().map(|s| s.to_string()).collect()),
+            rows,
+        });
+        if let Some(c) = self.clients.get_mut(&id) {
+            c.quotes_after = seq;
+        }
+        self.send_to(id, &msg);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn encode_stock(&self, e: &Engine, cid: i64, ts: &str, today: &str, trades: &[(i64, i64, i64, String)], full: bool, seq: u64) -> Utf8Bytes {
+        let Some(c) = e.company(cid) else { return Utf8Bytes::from_static("{}") };
+        let agg = e.st.day_aggs.get(&(cid, today.to_string())).copied();
+        let book = e.book(cid, 5);
+        let lv = |l: &Vec<crate::engine::Level>| l.iter().map(|x| json!([x.price, x.qty, x.orders])).collect::<Vec<_>>();
+        let auction = (self.phase() == crate::config::Phase::Auction).then(|| {
+            let (p, v) = e.auction_price(cid, c.prev_close);
+            t::AuctionIndication { price: p.map(Money), quantity: v }
+        });
+        let tr: Vec<Value> = trades.iter().rev().map(|(id, p, q, ts)| json!([id, p, q, ts])).collect();
+        text(&M::Stock {
+            seq,
+            id: cid,
+            full,
+            trading_day: t::day(today),
+            as_of: t::ts(self.clock.now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string()),
+            price: Money(c.last_price),
+            prev_close: Money(c.prev_close),
+            open: agg.map(|a| Money(a.open)),
+            high: agg.map(|a| Money(a.high)),
+            low: agg.map(|a| Money(a.low)),
+            volume: agg.map_or(0, |a| a.volume),
+            turnover: Money(self.turnover_of(cid, today)),
+            open_reference: c.open_ref.map(Money),
+            bids: lv(&book.bids),
+            asks: lv(&book.asks),
+            vcm: crate::api::v1::stocks::vcm_of(c, ts),
+            auction,
+            trades: tr,
+        })
     }
 }
 
@@ -473,8 +968,7 @@ pub fn advance(prev: Instant, now: Instant) -> Instant {
     n
 }
 
-/// Join `first` with whatever is already queued (no waiting), newline-separated, at most `QUEUE` messages
-/// (spec §3; from bench/rust-v2).
+/// Join `first` with whatever is already queued (no waiting), newline-separated, at most `QUEUE` messages.
 pub fn batch(first: Utf8Bytes, rx: &mut mpsc::Receiver<Utf8Bytes>) -> Utf8Bytes {
     let Ok(second) = rx.try_recv() else {
         return first;

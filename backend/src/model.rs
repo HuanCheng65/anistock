@@ -278,3 +278,14 @@ pub struct Restructure {
     pub sold: i64,
     pub injected: i64,
 }
+
+/// A `player_days` row: a player's assets after one daily close.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlayerDay {
+    pub account_id: i64,
+    pub day: String,
+    pub cash: i64,
+    pub stock_value: i64,
+    pub return_index: f64,
+    pub restructured: bool,
+}

@@ -41,7 +41,23 @@ fn main() {
         fail(format!("{} missing: run `uv run python -m server.seed` first", cfg.game_db.display()), 1);
     }
     match store::migrate(&cfg.game_db) {
-        Ok(applied) if !applied.is_empty() => eprintln!("applied database migrations: {applied:?}"),
+        Ok(applied) if !applied.is_empty() => {
+            eprintln!("applied database migrations: {applied:?}");
+            if applied.iter().any(|m| m.starts_with("V6__")) {
+                let initial = (cfg.game.initial_cash * 100.0).round_ties_even() as i64;
+                let res = store::connect(&cfg.game_db)
+                    .and_then(|mut c| Ok(store::player_days::backfill(&mut c, initial, &cfg.game.day_rollover)?));
+                match res {
+                    Ok(store::player_days::Backfill::Written { days, players, rows }) => {
+                        eprintln!("player_days: backfilled {rows} rows ({players} players, {days} days)")
+                    }
+                    Ok(store::player_days::Backfill::Skipped(why)) => {
+                        eprintln!("player_days: no backfill ({why}); snapshots start at the next close")
+                    }
+                    Err(e) => eprintln!("player_days: backfill failed ({e}); snapshots start at the next close"),
+                }
+            }
+        }
         Ok(_) => {}
         Err(e) => fail(format!("{}: {e}", cfg.game_db.display()), 1),
     }
@@ -86,7 +102,7 @@ fn main() {
     let (live_tx, live_rx) = crossbeam_channel::unbounded();
     engine.wrap_sink(|inner| Box::new(anistock::live::Tee { inner, tx: change_tx }));
     let turnover = today_turnover(&cfg.game_db, &clock.today());
-    let fanout = anistock::live::Fanout::new(clock.clone(), change_rx, live_rx, turnover);
+    let fanout = anistock::live::Fanout::new(clock.clone(), cfg.clone(), change_rx, live_rx, turnover);
     let (actor, engine_thread) =
         Actor::start_live(Ctx { engine, cfg: cfg.clone(), ops: Box::new(ops) }, Some(fanout));
     // the v2 NPC market ([market].enabled): first start migrates the database (after a backup)
@@ -107,7 +123,12 @@ fn main() {
         reads: ReadPool::new(cfg.game_db.clone(), 8),
         dist,
         live: Some(live_tx),
+        v1: anistock::api::v1::V1State::new(&cfg),
     });
+    anistock::api::v1::search::refresh(&st);
+    if st.v1.bots.is_empty() {
+        eprintln!("ANISTOCK_BOT_TOKENS is not set: bot endpoints refuse every token");
+    }
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers.max(1))
@@ -120,15 +141,9 @@ fn main() {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap_or_else(|e| fail(format!("bind {addr}: {e}"), 1));
         let loops = if cfg.no_loops { vec![] } else { anistock::loops::spawn(&st) };
         eprintln!("AniStock v2 listening on http://{addr} ({workers} workers, game db {})", cfg.game_db.display());
-        let (st2, st3) = (st.clone(), st.clone());
-        let app = axum::Router::new()
-            .route(
-                "/api/ws",
-                axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap| {
-                    anistock::api::ws::handler(st3.clone(), ws, headers)
-                }),
-            )
-            .fallback(move |req| dispatch(st2.clone(), req));
+        let st2 = st.clone();
+        let app = anistock::api::v1::router(st.clone()).fallback(move |req| dispatch(st2.clone(), req));
+        let app = app.into_make_service_with_connect_info::<SocketAddr>();
         if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await {
             eprintln!("server: {e}");
         }

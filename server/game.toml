@@ -104,3 +104,21 @@ mm_event_widen = 2.0           # air windows, fresh events, the first half hour
 fund_floor = 0.3               # fund flows (§6)
 fund_ceiling = 1.2
 fund_weekly_cap = 0.1
+
+[api.rate_limit]
+# API v1 token buckets (docs/api-v1.md §2.12): requests per second and burst per subject
+player_rps = 10
+player_burst = 20
+bot_rps = 30
+bot_burst = 60
+anon_rps = 10
+anon_burst = 20
+auth_per_min = 10             # login / register per IP
+bind_per_hour = 5             # bind-code redemptions per QQ number
+ws_per_ip = 8                 # concurrent WebSocket connections per IP
+
+[api.events]
+# bot events (docs/api-v1.md §5.3.7): big_move thresholds
+big_move_daily = 0.10         # |change vs prev close| crosses each multiple of this
+big_move_window = 0.05        # |change vs the price window_min minutes ago|
+big_move_window_min = 30

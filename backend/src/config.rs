@@ -89,6 +89,8 @@ pub struct Config {
     pub game: GameRules,
     /// The raw `[game]` table, for keys not modelled in `GameRules`.
     pub game_raw: toml::Table,
+    /// `[api]` of game.toml (API v1: rate limits, events); empty when missing
+    pub api_raw: toml::Table,
     pub npc: NpcConfig,
     /// `[market]`: the v2 NPC market (defaults when the section is absent; disabled by default)
     pub market: crate::market::MarketConfig,
@@ -218,6 +220,7 @@ impl Config {
             no_loops: env("ANISTOCK_NO_LOOPS").as_deref() == Some("1"),
             // development/difftest only: the v1 economy rules (see `economy_v1`)
             economy_v1: env("ANISTOCK_ECONOMY_V1").as_deref() == Some("1"),
+            api_raw: raw.get("api").and_then(|v| v.as_table()).cloned().unwrap_or_default(),
             game,
             game_raw,
         })
@@ -238,6 +241,20 @@ impl Config {
     }
 
     /// A parameter by dotted path, e.g. `param("company.shares")`.
+    /// A number from `[api]` by dotted path (`rate_limit.player_rps`), else `default`.
+    pub fn api_f64(&self, path: &str, default: f64) -> f64 {
+        let mut parts = path.split('.');
+        let mut v = parts.next().and_then(|p| self.api_raw.get(p));
+        for p in parts {
+            v = v.and_then(|x| x.as_table()).and_then(|t| t.get(p));
+        }
+        match v {
+            Some(toml::Value::Float(f)) => *f,
+            Some(toml::Value::Integer(i)) => *i as f64,
+            _ => default,
+        }
+    }
+
     pub fn param(&self, path: &str) -> Option<&toml::Value> {
         let mut parts = path.split('.');
         let mut v = self.params.get(parts.next()?)?;

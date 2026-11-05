@@ -68,10 +68,13 @@ pub(crate) struct Book {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TradeRef {
-    day: String,
-    ts: String,
-    price: i64,
+pub struct TradeRef {
+    pub day: String,
+    pub ts: String,
+    pub price: i64,
+    /// trade id and quantity (the live push's recent trades)
+    pub id: i64,
+    pub qty: i64,
 }
 
 /// Per-day trade aggregate of one company (candles; v1 reads it from `trades`).
@@ -1123,7 +1126,7 @@ impl Engine {
         if recent.last().is_some_and(|t| t.day.as_str() < day) {
             recent.retain(|t| t.day.as_str() >= day);
         }
-        recent.push(TradeRef { day: day.to_string(), ts: ts.to_string(), price: tp });
+        recent.push(TradeRef { day: day.to_string(), ts: ts.to_string(), price: tp, id: trade_id, qty: q });
         self.st
             .day_aggs
             .entry((company_id, day.to_string()))
@@ -1283,7 +1286,7 @@ impl State {
         for (c, ts) in &s.recent_trades {
             st.recent_trades.insert(
                 *c,
-                ts.iter().map(|t| TradeRef { day: t.day.clone(), ts: t.ts.clone(), price: t.price }).collect(),
+                ts.iter().map(|t| TradeRef { day: t.day.clone(), ts: t.ts.clone(), price: t.price, id: t.id, qty: t.qty }).collect(),
             );
         }
         for (k, a) in &s.day_aggs {

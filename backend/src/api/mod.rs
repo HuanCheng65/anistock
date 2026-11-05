@@ -19,8 +19,8 @@ pub mod market;
 pub mod orders;
 pub mod spa;
 pub mod v2;
-pub mod ws;
 pub mod validate;
+pub mod v1;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -46,6 +46,8 @@ pub struct AppState {
     pub dist: Option<PathBuf>,
     /// the real-time fan-out on the engine thread (`/api/ws`); None in tools and tests
     pub live: Option<crossbeam_channel::Sender<crate::live::Ctl>>,
+    /// API v1 state (rate limits, bot tokens, search names, side writer)
+    pub v1: v1::V1State,
 }
 
 impl AppState {
@@ -89,19 +91,24 @@ impl ReadPool {
     }
 
     pub fn with<R>(&self, f: impl FnOnce(&Connection) -> Result<R, ApiError>) -> Result<R, ApiError> {
+        self.run(f).map_err(sql)?
+    }
+
+    /// Run `f` on a pooled connection inside one read transaction.
+    pub fn run<R>(&self, f: impl FnOnce(&Connection) -> R) -> rusqlite::Result<R> {
         let pooled = self.idle.lock().unwrap().pop();
         let conn = match pooled {
             Some(c) => c,
-            None => self.open().map_err(sql)?,
+            None => self.open()?,
         };
-        conn.execute_batch("BEGIN").map_err(sql)?;
+        conn.execute_batch("BEGIN")?;
         let r = f(&conn);
         let _ = conn.execute_batch("COMMIT");
         let mut idle = self.idle.lock().unwrap();
         if idle.len() < self.max_idle {
             idle.push(conn);
         }
-        r
+        Ok(r)
     }
 }
 

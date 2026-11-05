@@ -527,6 +527,7 @@ impl Engine {
         self.out.push(Change::MacroDayReplace(row));
         self.do_set_state("rate", &repr(rate));
         self.do_set_state("last_closed", &day);
+        self.snapshot_players(&day, (cx.cfg.game.initial_cash * 100.0).round_ties_even() as i64);
         self.check_invariants()?;
         Ok(rate)
     }
@@ -1059,6 +1060,36 @@ impl Engine {
             ),
         );
         Ok(s.id)
+    }
+
+    /// One `player_days` row per player: assets after this close, chain-linked return index (V6).
+    fn snapshot_players(&mut self, day: &str, initial: i64) {
+        let rows: Vec<PlayerDay> = self
+            .st
+            .accounts
+            .values()
+            .filter(|a| a.kind == "player")
+            .map(|a| {
+                let stock: i64 = self
+                    .holdings_of(a.id)
+                    .map(|h| h.qty * self.st.companies.get(&h.company_id).map_or(0, |c| c.last_price))
+                    .sum();
+                let pr = self.st.player_returns.get(&a.id);
+                let (factor, base) = pr.map_or((1.0, initial), |p| (p.return_factor, p.segment_base));
+                let total = a.cash + stock;
+                PlayerDay {
+                    account_id: a.id,
+                    day: day.to_string(),
+                    cash: a.cash,
+                    stock_value: stock,
+                    return_index: if base > 0 { factor * total as f64 / base as f64 } else { factor },
+                    restructured: pr.is_some_and(|p| p.last_day == day),
+                }
+            })
+            .collect();
+        for r in rows {
+            self.out.push(Change::PlayerDayReplace(r));
+        }
     }
 
     /// Forget per-day aggregates the next closes no longer need.

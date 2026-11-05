@@ -137,6 +137,7 @@ pub async fn catch_up(st: &Arc<AppState>) -> Result<Option<usize>, String> {
             Ok(r) => {
                 if matches!(r?, crate::daily::CloseOutcome::Closed(_)) {
                     closed += 1;
+                    after_close(st, &d.format("%Y-%m-%d").to_string()).await;
                 }
             }
             Err(_) => return Ok(None),
@@ -158,4 +159,44 @@ pub async fn catch_up(st: &Arc<AppState>) -> Result<Option<usize>, String> {
         }
     }
     Ok(Some(closed))
+}
+
+/// After a close: the `daily_close` event (and `leaderboard_weekly` after a Sunday), `time` to every
+/// connection, and the search names rebuilt (the collector refreshed its snapshots before the close).
+async fn after_close(st: &Arc<AppState>, day: &str) {
+    let _ = st.actor.call(|ctx| ctx.engine.flush()).await;
+    let (st2, d) = (st.clone(), day.to_string());
+    let events = tokio::task::spawn_blocking(move || {
+        crate::api::v1::search::refresh(&st2);
+        st2.reads.run(|c| {
+            let mut out = Vec::new();
+            let at = st2.clock.ts();
+            if let Ok(v) = crate::api::v1::events::daily_close(c, &d) {
+                out.push(("daily_close", v));
+            }
+            let sunday = chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")
+                .is_ok_and(|x| chrono::Datelike::weekday(&x) == chrono::Weekday::Sun);
+            if sunday {
+                if let Ok(v) = crate::api::v1::events::leaderboard_weekly(c, &d) {
+                    out.push(("leaderboard_weekly", v));
+                }
+            }
+            (out, at)
+        })
+    })
+    .await;
+    let Some(live) = &st.live else { return };
+    if let Ok(Ok((evs, at))) = events {
+        for (kind, data) in evs {
+            let _ = live.send(crate::live::Ctl::Emit(crate::api::v1::events::Pending {
+                kind: kind.into(),
+                at: at.clone(),
+                trading_day: day.to_string(),
+                stock: None,
+                data,
+                news_id: None,
+            }));
+        }
+    }
+    let _ = live.send(crate::live::Ctl::Time);
 }
