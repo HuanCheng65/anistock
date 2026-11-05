@@ -189,7 +189,8 @@ impl Engine {
         self.commit();
         let saved: State = self.st.clone();
         let companies: Vec<Company> = self.st.companies.values().filter(|c| c.status == "listed").cloned().collect();
-        let listed: Vec<&ShowInputs> = companies.iter().filter_map(|c| inputs.show(c.id)).collect();
+        // every work of the listed companies (a company is a series: docs/v2-series.md §3)
+        let listed: Vec<&ShowInputs> = companies.iter().flat_map(|c| self.works_of(c.id)).filter_map(|w| inputs.show(w)).collect();
         let mut cx = Ctx {
             cfg,
             p,
@@ -286,13 +287,28 @@ impl Engine {
         }
         for c in cx.companies.clone() {
             let Some(s) = cx.inp.show(c.id) else { continue };
+            // the company's revenue sums its works'
+            let works: Vec<&ShowInputs> = self.works_of(c.id).into_iter().filter_map(|w| cx.inp.show(w)).collect();
             let (rev, split): (i64, Vec<i64>) = match &abs {
                 Some((pl, sc)) => {
-                    let parts = crate::vfilter::absolute_parts(&s.att.m3(), pl, *sc, &p.market_weights, &p);
+                    let mut parts = [0.0; 3];
+                    for x in &works {
+                        let q = crate::vfilter::absolute_parts(&x.att.m3(), pl, *sc, &p.market_weights, &p);
+                        for m in 0..3 {
+                            parts[m] += q[m];
+                        }
+                    }
                     (pround((parts[0] + parts[1] + parts[2]) * 100.0), parts.iter().map(|x| pround(x * 100.0)).collect())
                 }
                 None => {
-                    let (share, parts) = V::blended_share(&s.att.m3(), &totals, &p.market_weights);
+                    let (mut share, mut parts) = (0.0, [0.0; 3]);
+                    for x in &works {
+                        let (sh, q) = V::blended_share(&x.att.m3(), &totals, &p.market_weights);
+                        share += sh;
+                        for m in 0..3 {
+                            parts[m] += q[m];
+                        }
+                    }
                     (pround(demand_day * share * 100.0), parts.iter().map(|x| pround(demand_day * x * 100.0)).collect())
                 }
             };
@@ -410,8 +426,10 @@ impl Engine {
                 eprintln!("valuation: {msg}");
             }
             for c in &cx.companies {
-                if let Some(s) = cx.inp.show(c.id) {
-                    self.valuation_step(&fp, &p, s, &day, &ts);
+                for w in self.works_of(c.id) {
+                    if let Some(s) = cx.inp.show(w) {
+                        self.valuation_step(&fp, &p, s, &day, &ts);
+                    }
                 }
             }
             // shows in their subscription window have a value too (the offer is priced off it)
@@ -997,10 +1015,46 @@ impl Engine {
         let tomorrow = cx.d + Duration::days(1);
         let lead = cx.p.ipo_lead_days;
         let window = cx.g().ipo_subscription_days;
-        let existing: HashSet<i64> = self.st.companies.keys().copied().collect();
+        let existing: HashSet<i64> = self.st.companies.keys().chain(self.st.company_works.keys()).copied().collect();
         let inp = cx.inp;
+        // the series of the listed companies (docs/v2-series.md §3.3): a new season of one joins its company
+        let mut series: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        if !cx.cfg.economy_v1 {
+            let mut listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+            listed.sort_unstable();
+            for c in listed {
+                for w in self.works_of(c) {
+                    if let Some(k) = inp.show(w).and_then(|x| x.series) {
+                        series.entry(k).or_insert(c);
+                    }
+                }
+            }
+        }
         for s in &inp.shows {
-            if existing.contains(&s.id) || s.excluded().is_some() || s.popularity_end < cx.g().min_listing_popularity {
+            if existing.contains(&s.id) || s.excluded().is_some() {
+                continue;
+            }
+            if let Some(&c) = s.series.and_then(|k| series.get(&k)) {
+                // a new season of a listed series: no new shares, a company notice; its attention joins the company
+                let first_air = date(&s.first_air)?;
+                if first_air - Duration::days(lead + window) > tomorrow {
+                    continue;
+                }
+                self.st.company_works.insert(s.id, c);
+                self.out.push(Change::CompanyWork { work_id: s.id, company_id: c, joined_on: cx.day.clone() });
+                let name = inp.cn_titles.get(&s.id).cloned().unwrap_or_else(|| s.title_ja.clone());
+                let co = self.st.companies[&c].title.clone();
+                self.push_news(
+                    &cx.ts,
+                    &cx.day,
+                    "sequel",
+                    Some(c),
+                    format!("《{name}》{} 月 {} 日开播", first_air.month(), first_air.day()),
+                    format!("《{co}》的新一季。热度计入公司营收和估值，不发行新股。"),
+                );
+                continue;
+            }
+            if s.popularity_end < cx.g().min_listing_popularity {
                 continue;
             }
             let first_air = date(&s.first_air)?;

@@ -119,6 +119,8 @@ pub(crate) struct State {
     pub penny_days: HashMap<i64, i64>,
     /// the valuation filter's state per (company, market index)
     pub jstate: HashMap<i64, crate::vclose::JState>,
+    /// work -> company for the works a company owns besides its first (V8)
+    pub company_works: BTreeMap<i64, i64>,
     /// players who have restructured: their chain-linked return (crate::restructure)
     pub player_returns: BTreeMap<i64, PlayerReturn>,
     pub last_order_id: i64,
@@ -1265,6 +1267,7 @@ impl State {
             gov_taxes: s.gov_taxes.clone(),
             penny_days: s.penny_days.clone(),
             jstate: s.jstate.clone(),
+            company_works: s.company_works.clone(),
             player_returns: s.player_returns.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,

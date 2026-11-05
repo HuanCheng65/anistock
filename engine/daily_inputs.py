@@ -58,6 +58,9 @@ File format (JSON, one object):
         sequel          an announced sequel not yet aired, from the relations known on D, else null (phase 1;
                         engine/daily_inputs.py `series_facts`): {"id", "announced" (the first day the relation was
                         seen), "premieres" [days, equally likely], "exact" (an announced day)}
+        series          the series key (engine/series.py: SEQUEL/PREQUEL among TV/ONA/films, plus sim/series.json;
+                        the smallest AniList id in the series); a new season of a listed series joins its company
+                        instead of listing (phase 1)
         expected        {"us","cn","jp"}  expected attention on D: `att` once the show has real data, else the
                         per-market max of `att` and the audience-based pre-air estimate (expected-share
                         denominator, IPO pricing, fair values)
@@ -218,6 +221,9 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
     relations = relations or {}
     from engine import valuation as V
     lags = V.filter_params(p).get("sequel", {}).get("lag_days", [])
+    from engine.series import load_exceptions, series_keys
+    known = {i: [e for d, e in snaps if d <= day] for i, snaps in relations.items()}
+    keys = series_keys({i: v[-1] for i, v in known.items() if v}, [s.id for s in shows], load_exceptions())
     out = []
     for s in shows:
         att = E.market_att(s, day, rv, markets)
@@ -246,6 +252,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "source": s.source,
             **series_facts(s.id, relations, day, lags),
             "top_pop": top_decile(shows, s),
+            "series": keys[s.id],
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
     plat, n = platform_size(shows, markets, day, p)
@@ -331,6 +338,7 @@ class ShowInputs:
     prequel: bool = False                  # phase 1
     top_pop: bool = False                  # phase 1
     sequel: dict | None = None             # phase 1
+    series: int | None = None              # phase 1
 
 
 @dataclass(frozen=True)

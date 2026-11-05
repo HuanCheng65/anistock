@@ -50,6 +50,18 @@ pub struct JState {
     /// an announced sequel: its id, the announcement day and its premiere day(s) (day numbers)
     #[serde(default)]
     pub sequel: Option<(i64, i64, Vec<i64>)>,
+    /// the work's first air day, episode count, long-runner flag and air days (from the inputs): the shape of a
+    /// work that is not its company's first (docs/v2-series.md §3)
+    #[serde(default)]
+    pub meta: Option<WorkMeta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkMeta {
+    pub first_air: i64,
+    pub episodes: Option<i64>,
+    pub long: bool,
+    pub air: Vec<i64>,
 }
 
 fn one() -> f64 {
@@ -77,6 +89,7 @@ impl JState {
             seq_z: 0.0,
             seq_zs: 0.0,
             sequel: None,
+            meta: None,
         }
     }
     fn var(&self, m: usize) -> f64 {
@@ -171,6 +184,43 @@ impl Engine {
             (Some(n), Some(&last)) if (aired.len() as i64) < n && today - last >= 14 => Some(aired.len() as i64),
             _ => episodes,
         }
+    }
+
+    /// The works a company owns besides its first (V8 company_works), in id order.
+    pub fn works_extra(&self, company: i64) -> Vec<i64> {
+        self.st.company_works.iter().filter(|(_, c)| **c == company).map(|(w, _)| *w).collect()
+    }
+
+    /// Every work of a company: its first (the company id), then the others.
+    pub fn works_of(&self, company: i64) -> Vec<i64> {
+        let mut v = vec![company];
+        v.extend(self.works_extra(company));
+        v
+    }
+
+    fn meta_of(s: &ShowInputs) -> Option<WorkMeta> {
+        Some(WorkMeta {
+            first_air: day_no(&s.first_air)?,
+            episodes: s.episodes,
+            long: s.long_runner,
+            air: s.air_dates.iter().filter_map(|d| day_no(d)).collect(),
+        })
+    }
+
+    /// A work's schedule, first air day and long-runner flag: the company's own for its first work, else from the
+    /// work's state.
+    fn work_shape(&self, c: &Company, w: i64, p: &Params) -> (Vec<i64>, i64, bool) {
+        if w == c.id {
+            return self.shape(c, p);
+        }
+        let Some(m) = self.st.jstate.get(&w).and_then(|j| j.meta.clone()) else { return self.shape(c, p) };
+        let today = self.st.jstate.get(&w).and_then(|j| day_no(&j.day)).unwrap_or(m.first_air);
+        let episodes = Self::planned_episodes(m.episodes.or(if m.long { None } else { Some(p.default_episodes) }), &m.air, today);
+        let mut air = m.air.clone();
+        if air.is_empty() && !m.long {
+            air.push(m.first_air);
+        }
+        (F::schedule(&air, episodes, m.long), m.first_air, m.long)
     }
 
     fn shape(&self, c: &Company, p: &Params) -> (Vec<i64>, i64, bool) {
@@ -360,6 +410,7 @@ impl Engine {
             j.seq_z = seq_z;
             j.seq_zs = seq_zs;
             j.sequel = sequel.clone();
+            j.meta = Self::meta_of(s);
             j
         };
         let cur = self.st.jstate.get(&s.id).cloned();
@@ -413,6 +464,7 @@ impl Engine {
         };
         st.day = day.into();
         st.post = post;
+        st.meta = Self::meta_of(s);
         st.tail_mult = mult;
         st.seq_z = seq_z;
         st.seq_zs = seq_zs;
@@ -496,6 +548,19 @@ impl Engine {
             });
             Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
             out.insert(c.id, path);
+            for w in self.works_extra(c.id) {
+                let Some(js) = self.st.jstate.get(&w) else { continue };
+                let (sched, first_air, long) = self.work_shape(c, w, p);
+                let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
+                    if js.active[m] {
+                        F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
+                    } else {
+                        vec![0.0; h]
+                    }
+                });
+                Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
+                out.insert(w, path);
+            }
         }
         out
     }
@@ -633,14 +698,32 @@ impl Engine {
         std::array::from_fn(|m| totals[m].iter().zip(&own[m]).map(|(t, o)| t + o).collect())
     }
 
+    /// One work's part of its company's value per share (yuan): its expected revenue, its long tail and, for the
+    /// series' latest work only, the sequel option; `book` (cents) is added once, with the company's first work.
     #[allow(clippy::too_many_arguments)]
-    fn value_of(&self, fp: &FilterParams, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64) -> i64 {
-        let book = self.account_of("company", c.id).map_or(0, |a| self.st.accounts[&a].cash);
-        let (sched, _, long) = self.shape(c, p);
-        let mult = self.st.jstate.get(&c.id).map_or(1.0, |j| j.tail_mult);
+    fn work_value(&self, fp: &FilterParams, c: &Company, w: i64, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64, book: i64, option: bool) -> f64 {
+        let js = self.st.jstate.get(&w);
+        let (sched, first_air, long) = self.work_shape(c, w, p);
+        let mult = js.map_or(1.0, |j| j.tail_mult);
         let tails = Self::tail_ends(fp, &sched, long, today, mult);
-        let extra = self.st.jstate.get(&c.id).and_then(|js| self.sequel_extra(fp, p, js, &sched, long, day_no(&c.first_air).unwrap_or(0), today, rate));
-        let v = F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, c.long_runner != 0, &tails, self.platform_rule(), extra.as_ref());
+        let extra = if option { js.and_then(|js| self.sequel_extra(fp, p, js, &sched, long, first_air, today, rate)) } else { None };
+        F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, long, &tails, self.platform_rule(), extra.as_ref())
+    }
+
+    /// A company's value per share (cents): the sum over its works (docs/v2-series.md §3.2). `paths`: the other
+    /// works' expected attention.
+    #[allow(clippy::too_many_arguments)]
+    fn value_of(&self, fp: &FilterParams, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64, paths: Option<&HashMap<i64, [Vec<f64>; 3]>>) -> i64 {
+        let book = self.account_of("company", c.id).map_or(0, |a| self.st.accounts[&a].cash);
+        let others: Vec<(i64, &[Vec<f64>; 3])> =
+            self.works_extra(c.id).into_iter().filter_map(|w| Some((w, paths?.get(&w)?))).collect();
+        // the sequel option belongs to the series' latest work
+        let first = |w: i64| self.work_shape(c, w, p).1;
+        let latest = others.iter().map(|(w, _)| *w).fold(c.id, |a, w| if first(w) > first(a) { w } else { a });
+        let mut v = self.work_value(fp, c, c.id, own, totals, p, rate, a_ref, today, book, latest == c.id);
+        for (w, o) in others {
+            v += self.work_value(fp, c, w, o, totals, p, rate, a_ref, today, 0, latest == w);
+        }
         ((v * 100.0).round_ties_even() as i64).max(1)
     }
 
@@ -658,7 +741,7 @@ impl Engine {
             }
         });
         Self::fill_preair(&mut own[0], today, first_air, js.last_obs[0]);
-        Some(self.value_of(fp, c, &own, totals, p, rate, a_ref, today))
+        Some(self.value_of(fp, c, &own, totals, p, rate, a_ref, today, None))
     }
 
     /// Hidden values of every listed company with a filter state (cents), and the market totals used.
@@ -669,7 +752,7 @@ impl Engine {
             // the us total over days 7..90 ahead, by group: shows premiered 30+ days ago, recent/upcoming, long-runners
             let mut g = [0.0f64; 3];
             for (id, pth) in &paths {
-                let c = &self.st.companies[id];
+                let Some(c) = self.st.companies.get(id) else { continue };
                 let fa = day_no(&c.first_air).unwrap_or(0);
                 let k = if c.long_runner != 0 { 2 } else if today - fa >= 30 { 0 } else { 1 };
                 g[k] += pth[0][6..90.min(pth[0].len())].iter().sum::<f64>();
@@ -685,8 +768,9 @@ impl Engine {
         let trace_all = std::env::var("SIM_TRACE").is_ok_and(|v| v == "all");
         let trace: Option<i64> = std::env::var("SIM_TRACE").ok().and_then(|v| v.parse().ok());
         for (id, own) in &paths {
-            let c = &self.st.companies[id];
-            let v = self.value_of(fp, c, own, &totals, p, rate, a_ref, today);
+            // a company's first work; its other works are summed in
+            let Some(c) = self.st.companies.get(id) else { continue };
+            let v = self.value_of(fp, c, own, &totals, p, rate, a_ref, today, Some(&paths));
             if trace_all || trace == Some(*id) {
                 let st: Vec<String> = (0..3)
                     .map(|m| match self.st.jstate.get(id) {
@@ -889,7 +973,7 @@ impl Engine {
         let paths = self.paths(&fp, &p, today);
         let totals = self.totals_from(&paths, &fp, today);
         let new = match paths.get(&company) {
-            Some(own) => self.value_of(&fp, &c, own, &totals, &p, rate, a_ref, today),
+            Some(own) => self.value_of(&fp, &c, own, &totals, &p, rate, a_ref, today, Some(&paths)),
             None => old,
         };
         self.st.companies.get_mut(&company).unwrap().fair_value = new;

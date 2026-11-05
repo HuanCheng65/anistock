@@ -79,6 +79,9 @@ pub struct ShowInputs {
     /// an announced sequel not yet aired (phase 1, docs/v2-series.md §5.2)
     #[serde(default)]
     pub sequel: Option<SequelInputs>,
+    /// the series key (engine/series.py: the smallest AniList id of the series) (phase 1, docs/v2-series.md §3)
+    #[serde(default)]
+    pub series: Option<i64>,
 }
 
 /// An announced sequel: its AniList id, the day the relation first appeared, and its premiere day(s): the

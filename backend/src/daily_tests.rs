@@ -431,3 +431,40 @@ fn the_switch_to_absolute_revenue_keeps_the_days_total() {
     let rev = |e: &Engine, id: i64| e.st.company_days.get(&(id, DAY.to_string())).unwrap().revenue;
     assert_ne!(rev(&a, 1), rev(&b, 1));
 }
+
+#[test]
+fn a_new_season_of_a_listed_series_joins_its_company() {
+    // docs/v2-series.md §3.3: no new shares; a company notice; its attention enters the company's revenue
+    let cfg = cfg();
+    let (mut e, _) = platform_case(200);
+    let show = |id: i64, first_air: &str, aired: i64, us: f64, series: i64| {
+        serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,
+            "first_air": first_air, "episodes": 12, "episodes_known": true, "long_runner": false,
+            "popularity_end": 9000, "aired": aired, "has_real_data": aired > 0, "series": series,
+            "att": {"us": us, "cn": 0.0, "jp": 0.0}, "expected": {"us": us, "cn": 0.0, "jp": 0.0}})
+    };
+    let inp = |day: &str, s3_us: f64| {
+        Inputs::parse(
+            &serde_json::to_string(&serde_json::json!({
+                "day": day, "cn_titles": {}, "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": 200,
+                "shows": [show(1, "2026-10-01", 6, 3000.0, 1), show(2, "2026-10-01", 6, 1200.0, 2),
+                          show(3, "2026-11-20", 0, s3_us, 1)]
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    assert!(matches!(e.run_day(&cfg, DAY, TS, &inp(DAY, 0.0)).unwrap(), CloseOutcome::Closed(_)));
+    assert_eq!(e.st.company_works.get(&3), Some(&1));
+    assert!(e.company(3).is_none(), "no new listing");
+    assert_eq!(e.works_of(1), vec![1, 3]);
+    // the next day the new season's pre-air attention earns for company 1
+    let day2 = "2026-11-09";
+    assert!(matches!(e.run_day(&cfg, day2, "2026-11-09T06:30:00+08:00", &inp(day2, 500.0)).unwrap(), CloseOutcome::Closed(_)));
+    let (pl, sc) = e.platform_rule().unwrap();
+    let p = Params::from_config(&cfg).unwrap();
+    let one = |us: f64| crate::vfilter::absolute_parts(&[us, 0.0, 0.0], &pl, sc, &p.market_weights, &p)[0];
+    let want = pround((one(3000.0) + one(500.0)) * 100.0);
+    let got = e.st.company_days.get(&(1, day2.to_string())).unwrap().revenue;
+    assert!((got - want).abs() <= 1, "{got} vs {want}");
+}

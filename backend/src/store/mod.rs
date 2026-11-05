@@ -215,6 +215,8 @@ pub struct Snapshot {
     /// the joint valuation filter's state (table valuation_joint, migration V3; converted from the per-market
     /// valuation_state of V2 when empty)
     pub jstate: std::collections::HashMap<i64, crate::vclose::JState>,
+    /// work (AniList id) -> company, for the works a company owns besides its first (table company_works, V8)
+    pub company_works: BTreeMap<i64, i64>,
     /// players who have restructured (table player_returns, migration V4)
     pub player_returns: BTreeMap<i64, PlayerReturn>,
     pub max_order_id: i64,
@@ -503,6 +505,14 @@ fn load_daily(conn: &Connection, s: &mut Snapshot) -> DbResult<()> {
             } else {
                 done.insert(c);
             }
+        }
+    }
+    if table_exists(conn, "company_works")? {
+        let mut st = conn.prepare("SELECT work_id, company_id FROM company_works")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (w, c) = row?;
+            s.company_works.insert(w, c);
         }
     }
     if table_exists(conn, "valuation_joint")? {
