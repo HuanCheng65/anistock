@@ -29,6 +29,46 @@ announcement proxy; a Bangumi sample of ~380 subjects with episode and subject c
 - **Announcement effect on the prequel's us attention** (306 announcements ≥ 30 days after the finale): first week
   ×1.29 (median; 36% above ×1.5), back to ×1.06 in weeks 2–3 and ×0.98 after: a one-week spike, no lasting lift.
 
+## Sources
+
+| source | history | long tail | sequels |
+|---|---|---|---|
+| AniList `Page.mediaTrends` | daily trending/popularity/inProgress back to 2014–18, finished shows included (days without activity have no row) | yes, in the game's us metric (2·adds + trending) | SEQUEL relations with dates; the sequel entry's first trend day as the announcement date |
+| Bangumi episode comments | every comment with its time, one request per episode | measurable but ~0 after the finale | no |
+| Bangumi subject (collection) comments | `updatedAt`, deep paging | yes, proxy for new collections | no |
+| Bangumi `/collects` | offset capped at 500 | current rate only | no |
+| Annict | not fetched yet (token is server-only) | `records(orderBy CREATED_AT)` on first/last episode, 2–4 requests per work | no |
+
+Bangumi sample: 411 of 550 planned subjects (stratified by start year; resumable with `--sample N`).
+
+## Caveats
+
+- **Platform growth:** raw ratios are inflated and rise again after 60 months; the platform index is noisy and is
+  smoothed over 3 quarters.
+- **Survivorship:** the scope is popularity ≥ 3,000 today, so older cohorts hold more tail survivors; the top-half
+  check suggests a small effect.
+- **Cumulative vs activity:** popularity is cumulative, so its daily difference is net list adds; inProgress is a
+  stale stock and unused. In the tail most attention is adds (~0.2) rather than trending (~0.05).
+- **Announcement date:** the first trend day can precede (placeholder entry) or follow the official announcement; the
+  pre-window is flat, so no systematic lead.
+- **Censoring:** every k-year rate uses only shows whose finale is at least k years old; the headline tail excludes
+  shows with any sequel.
+- **Bangumi proxy:** collection comments carry the last-edit time and come from a subset of collectors; Bangumi's own
+  growth is not deflated.
+- **Popularity and sequels is U-shaped** (top decile 59% within 3 years, middle 14–19%, bottom 43%), so a linear term
+  comes out ~0; use a top-decile flag instead.
+
+## Recommendation
+
+1. us tail ≈ 0.025 + 0.14·e^(−t / 7 months) of the in-season mean (within ~10% of the medians from 1 to 96 months),
+   scaled by score and ONA; replaces ×0.94/week.
+2. cn tail from Bangumi collection-count differences (~0.10 of in-season after 12 months). With episode comments as the
+   only cn metric the honest cn tail is ~0.
+3. jp: us shape until a server-side Annict records backfill.
+4. Sequel option from score, is-sequel, a top-decile popularity flag and light-novel source; mostly resolved at the
+   finale, then a yearly hazard; sequel attention ≈ 0.6× the prequel; the announcement is a one-week event.
+5. Not supported by the data: studio effects, source material remaining, a jp tail, anything before 2018.
+
 ## Full output
 
 <!-- shows with us tail data: 1636 -->
