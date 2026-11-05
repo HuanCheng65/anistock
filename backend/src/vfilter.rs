@@ -780,6 +780,24 @@ pub type PlatformRule = Option<(M3, f64)>;
 /// applies to (0: in force; later: a scheduled switch, the days before it under the relative rule).
 pub type ValueRule = Option<(M3, f64, usize)>;
 
+/// The relative rule's revenue per unit of attention per market for given market totals: demand × the market's
+/// renormalised weight ÷ its total (0 for a market without any).
+fn per_unit(tt: &M3, weights: &M3, a_ref: f64, p: &Params) -> M3 {
+    let mut wsum = 0.0;
+    let mut any = false;
+    for m in 0..3 {
+        if tt[m] > 0.0 {
+            wsum += weights[m];
+            any = true;
+        }
+    }
+    if !any || wsum == 0.0 {
+        wsum = 1.0;
+    }
+    let dd = demand_day(tt[0], a_ref, p);
+    std::array::from_fn(|m| if tt[m] > 0.0 { dd * (weights[m] / wsum) / tt[m] } else { 0.0 })
+}
+
 /// Per-share value (yuan) from the attention paths (Python `value_from_paths`).
 #[allow(clippy::too_many_arguments)]
 pub fn value_from_paths(
@@ -803,12 +821,18 @@ pub fn value_from_paths(
     let mut pv = 0.0;
     let mut f = 1.0;
     let mut last = 0.0;
+    let sw = platform.as_ref().map_or(0, |x| x.2);
+    // a scheduled switch: the relative rule's revenue per unit of attention on the switch day, held from then on
+    let mut frozen: Option<M3> = None;
     for j in 0..h {
         f *= disc;
         let o = [own[0][j], own[1][j], own[2][j]];
-        if let Some((pl, sc, _)) = platform.as_ref().filter(|x| j >= x.2) {
+        if let Some((pl, sc, _)) = platform.as_ref().filter(|_| sw == 0) {
             let parts = absolute_parts(&o, pl, *sc, weights, p);
             last = (parts[0] + parts[1] + parts[2]) * keep / shares as f64;
+        } else if platform.is_some() && j >= sw {
+            let fz = *frozen.get_or_insert_with(|| per_unit(&[totals[0][j], totals[1][j], totals[2][j]], weights, a_ref, p));
+            last = (fz[0] * o[0] + fz[1] * o[1] + fz[2] * o[2]) * keep / shares as f64;
         } else {
             let tt = [totals[0][j], totals[1][j], totals[2][j]];
             let (share, _) = blended_share(&o, &tt, weights);
@@ -822,32 +846,26 @@ pub fn value_from_paths(
         pv += last * f * g / (1.0 - g);
     } else if h > 0 && (tails.iter().any(|t| t.is_some()) || extra.is_some()) {
         // beyond the horizon: revenue per unit of attention at the last day's, attention along the long tail
-        let tt = [totals[0][h - 1], totals[1][h - 1], totals[2][h - 1]];
-        let mut wsum = 0.0;
-        let mut any = false;
+        let rel = per_unit(&[totals[0][h - 1], totals[1][h - 1], totals[2][h - 1]], weights, a_ref, p);
         for m in 0..3 {
-            if tt[m] > 0.0 {
-                wsum += weights[m];
-                any = true;
-            }
-        }
-        if !any || wsum == 0.0 {
-            wsum = 1.0;
-        }
-        let dd = demand_day(tt[0], a_ref, p);
-        for m in 0..3 {
-            let per = match &platform {
-                Some((pl, sc, _)) => {
+            let per = match (&platform, &frozen) {
+                (Some((pl, sc, _)), _) if sw == 0 => {
                     if pl[m] <= 0.0 {
                         continue;
                     }
                     p.demand_base_week / 7.0 * sc * weights[m] / pl[m] * keep / shares as f64
                 }
-                None => {
-                    if tt[m] <= 0.0 {
+                (_, Some(fz)) => {
+                    if fz[m] <= 0.0 {
                         continue;
                     }
-                    dd * (weights[m] / wsum) / tt[m] * keep / shares as f64
+                    fz[m] * keep / shares as f64
+                }
+                _ => {
+                    if totals[m][h - 1] <= 0.0 {
+                        continue;
+                    }
+                    rel[m] * keep / shares as f64
                 }
             };
             if let Some((tl, mult, t_last)) = tails[m] {
@@ -953,6 +971,9 @@ mod tests {
         assert!(close(e1, 185259.0513666545) && close(e4, 1742.2312048492163) && close(e5, 1147.126310729848), "{e1} {e4} {e5}");
         let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), Some(&[e1, e4, e5]));
         assert!(close(g, 77.11087942749784), "{g}");
+        // a scheduled switch 30 days ahead
+        let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 30)), None);
+        assert!(close(swv, 115.54210008676702), "{swv}");
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
         assert!(close(e6, 3944.0391922594135), "{e6}");

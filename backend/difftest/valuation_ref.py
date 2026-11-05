@@ -66,5 +66,7 @@ e5 = V.sequel_extra(fp, "jp", 2.0, 0.03, today, fin4, s4[0], z, zs, disc, [today
 print("z", repr(z), "e1", repr(e1), "e4", repr(e4), "e5", repr(e5))
 ex = {"us": e1, "cn": e4, "jp": e5}
 print("g", repr(V.value_from_paths(own4, tot4, w, 110925.85, p, 10000, 4321, 0.03, False, tails, plat, ex)))
+# a scheduled switch 30 days ahead: the relative rule until then, its per-unit revenue of that day held after
+print("sw", repr(V.value_from_paths(own4, tot4, w, 110925.85, p, 10000, 4321, 0.03, False, tails, (plat[0], plat[1], 30))))
 # relations not collected: the option is not updated as time passes (phase 1 fix)
 print("e6", repr(V.sequel_extra(fp, "cn", 3.0, 0.2, today, fin4, s4[0], z, zs, disc, None, False)))

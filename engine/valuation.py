@@ -585,13 +585,25 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     pv = 0.0
     f = 1.0
     last = 0.0
+    sw = platform[2] if platform is not None and len(platform) > 2 else 0
+    frozen = None   # a scheduled switch: the revenue per unit of attention on the switch day, held from then on
     for j in range(h):
         f *= disc
         o = {m: own[m][j] for m in MARKETS}
-        if platform is not None and j >= (platform[2] if len(platform) > 2 else 0):
-            # (a scheduled switch: the days before it under the relative rule, from it on the absolute one)
+        if platform is not None and sw == 0:
             parts = absolute_parts(o, platform[0], platform[1], weights, rv)
             last = (parts["us"] + parts["cn"] + parts["jp"]) * keep / shares
+        elif platform is not None and j >= sw:
+            # the switch's scale makes the switch day's revenue what the relative rule gives, and the absolute rule
+            # then keeps each market's revenue per unit of attention (the platform expected to stay as it is): so
+            # from the switch day on, the relative rule's per-unit revenue of that day, held
+            if frozen is None:
+                tt = {m: totals[m][j] for m in MARKETS}
+                live = [m for m in MARKETS if tt[m] > 0]
+                wsum = sum(weights[m] for m in live) or 1.0
+                dd = demand_day(tt["us"], a_ref, rv)
+                frozen = {m: dd * (weights[m] / wsum) / tt[m] if m in live else 0.0 for m in MARKETS}
+            last = (frozen["us"] * o["us"] + frozen["cn"] * o["cn"] + frozen["jp"] * o["jp"]) * keep / shares
         else:
             tt = {m: totals[m][j] for m in MARKETS}
             share, _ = blended_share(o, tt, weights)
@@ -605,16 +617,20 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
         # beyond the horizon: the attention follows the long tail, each market's revenue per unit of attention
         # as on the last day; `extra`: attention-days already discounted to today (the sequel option), valued at the
         # same revenue per unit of attention
-        if platform is None:
+        if platform is None or (sw > 0 and frozen is None):
             tt = {m: totals[m][h - 1] for m in MARKETS}
             live = [m for m in MARKETS if tt[m] > 0]
             wsum = sum(weights[m] for m in live) or 1.0
             dd = demand_day(tt["us"], a_ref, rv)
         for m in MARKETS:
-            if platform is not None:
+            if platform is not None and sw == 0:
                 if platform[0][m] <= 0:
                     continue
                 per = rv["demand_base_week"] / 7 * platform[1] * weights[m] / platform[0][m] * keep / shares
+            elif frozen is not None:
+                if frozen[m] <= 0:
+                    continue
+                per = frozen[m] * keep / shares
             else:
                 if m not in live:
                     continue
