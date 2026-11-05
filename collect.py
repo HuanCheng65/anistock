@@ -39,7 +39,9 @@ import httpx
 
 TZ = ZoneInfo("Asia/Shanghai")  # "day" boundaries are defined in this zone
 USER_AGENT = "anistock-collector/0.1 (anime club market game)"
-KEEP_TRACKING_DAYS = 180  # keep snapshotting a work this long after it was last discovered
+KEEP_TRACKING_DAYS = 180  # full snapshots (episode lists) this long after a work was last discovered; after that the
+                          # work stays tracked for good in a lighter "tail" mode (docs/v2-series.md §4.2: revenue in the
+                          # long tail needs daily data for as long as the company is listed)
 MIN_ANILIST_POPULARITY = 1000  # RELEASING filter, keeps out tiny shows
 MIN_ANNICT_WATCHERS = 30
 
@@ -212,10 +214,16 @@ class Store:
             (source, str(external_id), title, str(mal_id) if mal_id else None, self.day, self.day),
         )
 
-    def tracked(self, source: str) -> list[str]:
+    def tracked(self, source: str, tail: bool | None = False) -> list[str]:
+        """Works to snapshot today. tail=False: discovered within KEEP_TRACKING_DAYS (full snapshots);
+        tail=True: older ones (the long tail, lighter snapshots); tail=None: all."""
         cutoff = (date.fromisoformat(self.day) - timedelta(days=KEEP_TRACKING_DAYS)).isoformat()
-        rows = self.db.execute(
-            "SELECT external_id FROM works WHERE source=? AND last_discovered>=?", (source, cutoff))
+        if tail is None:
+            rows = self.db.execute("SELECT external_id FROM works WHERE source=?", (source,))
+        else:
+            op = "<" if tail else ">="
+            rows = self.db.execute(
+                f"SELECT external_id FROM works WHERE source=? AND last_discovered{op}?", (source, cutoff))
         return [r[0] for r in rows]
 
     def snapshot(self, source: str, kind: str, external_id, data) -> None:
@@ -278,7 +286,9 @@ def collect_bangumi(store: Store) -> str:
             discovered += 1
     store.commit()
 
-    ids = store.tracked("bgm")
+    recent = store.tracked("bgm")
+    tail = set(store.tracked("bgm", tail=True))
+    ids = recent + sorted(tail)
     ok = failed = 0
     for sid in ids:
         try:
@@ -288,6 +298,12 @@ def collect_bangumi(store: Store) -> str:
                 continue
             r.raise_for_status()
             store.snapshot("bgm", "subject", sid, r.json())
+            if sid in tail:
+                # long tail: the collection counts (the cn tail metric) are in the subject; episode comments have
+                # stopped by then, so skip the two episode requests
+                store.commit()
+                ok += 1
+                continue
 
             # main episodes only (type=0); long-runners have 1000+ eps, so take the latest 100
             first = http.request("GET", f"{BGM}/v0/episodes",
@@ -306,7 +322,7 @@ def collect_bangumi(store: Store) -> str:
             log.warning("bgm subject %s failed: %s", sid, e)
     if ok == 0 and ids:
         raise RuntimeError(f"all {len(ids)} bangumi subjects failed")
-    return f"discovered={discovered} tracked={len(ids)} ok={ok} failed={failed}"
+    return f"discovered={discovered} tracked={len(recent)} tail={len(tail)} ok={ok} failed={failed}"
 
 
 # ---------------------------------------------------------------- AniList
@@ -388,7 +404,7 @@ def collect_anilist_season(store: Store, spec: str) -> str:
     """One-off: register a past season's shows (e.g. 2026-summer) and backfill their trends.
 
     Finished shows drop out of the daily RELEASING listing, so a season that already ended
-    is only reachable this way. Once registered they get the normal 180-day tracking.
+    is only reachable this way. Once registered they are tracked like any other work.
     """
     year_s, _, season = spec.partition("-")
     year = int(year_s)
@@ -426,7 +442,7 @@ def collect_anilist(store: Store, backfill: bool) -> str:
     store.commit()
 
     # registry items that fell out of today's listings (finished shows in their long tail)
-    missing = [int(i) for i in store.tracked("anilist") if int(i) not in found]
+    missing = [int(i) for i in store.tracked("anilist", tail=None) if int(i) not in found]
     for i in range(0, len(missing), 50):
         for m in _anilist_pages(http, {"ids": missing[i:i + 50]}):
             found[m["id"]] = m
@@ -438,10 +454,50 @@ def collect_anilist(store: Store, backfill: bool) -> str:
             store.trend(mid, node)
     store.commit()
 
+    rel = collect_anilist_relations(http, store, list(found))
+
     filled = 0
     if backfill:
         filled = _backfill_trends(http, store, list(found), season_start(*previous_season(year, season)))
-    return f"media={len(found)} missing_refetched={len(missing)} backfilled_trend_rows={filled}"
+    return f"media={len(found)} missing_refetched={len(missing)} relations={rel} backfilled_trend_rows={filled}"
+
+
+RELATIONS_QUERY = """
+query ($ids: [Int], $page: Int) {
+  Page(page: $page, perPage: 50) {
+    pageInfo { hasNextPage }
+    media(id_in: $ids, type: ANIME) {
+      id
+      relations {
+        edges {
+          relationType
+          node { id type format status episodes popularity startDate { year month day } endDate { year month day }
+                 title { native romaji } }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def collect_anilist_relations(http: Http, store: Store, ids: list[int]) -> int:
+    """Each tracked work's related entries (snapshot kind 'relations'): series grouping (docs/v2-series.md §3.1) and
+    sequel announcements, i.e. a new SEQUEL entry that has not aired yet (§5.2). A separate query keeps the main
+    listing query under AniList's complexity limit."""
+    n = 0
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        try:
+            data = http.graphql(ANILIST, RELATIONS_QUERY, {"ids": chunk, "page": 1})
+        except Exception as e:  # relations are an extra; the day's media snapshots are already stored
+            log.warning("anilist relations %s..: %s", chunk[0], e)
+            continue
+        for m in data["Page"]["media"]:
+            store.snapshot("anilist", "relations", m["id"], m["relations"])
+            n += 1
+        store.commit()
+    return n
 
 
 # ---------------------------------------------------------------- Annict
@@ -573,7 +629,7 @@ def collect_annict(store: Store) -> str | None:
     discovered = discover_annict(http, store)
 
     extra = [int(x) for x in os.environ.get("ANNICT_EXTRA_IDS", "").replace(" ", "").split(",") if x]
-    missing = sorted(({int(i) for i in store.tracked("annict")} | set(extra)) - set(found))
+    missing = sorted(({int(i) for i in store.tracked("annict", tail=None)} | set(extra)) - set(found))
     for i in range(0, len(missing), 25):
         res = http.graphql(ANNICT, ANNICT_SEARCH, {"ids": missing[i:i + 25]})["searchWorks"]
         for w in res["nodes"]:

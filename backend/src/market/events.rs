@@ -36,6 +36,9 @@ pub struct Event {
     pub half_life_h: f64,
     /// the news headline shown in the game
     pub title: String,
+    /// revisions: the log change of the public value (sign included)
+    #[serde(default)]
+    pub change: f64,
 }
 
 impl Event {

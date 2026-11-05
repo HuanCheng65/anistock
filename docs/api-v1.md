@@ -625,9 +625,11 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "last_closed_day": "2026-11-05",
   "launched_on": "2026-11-04",
   "policy_rate": 0.03,
-  "deposit_rate": 0.02
+  "deposit_rate": 0.02,
+  "sentiment": "neutral"
 }
 ```
+- `sentiment`：当天的市场情绪档位（封闭枚举）`cold` 冷淡 / `neutral` 平稳 / `hot` 火热，交易日内不变；NPC 市场或情绪层未开启时为 null。只给档位，不给数值（docs/v2-sentiment.md）。
 - `phase_ends_at`、`next_phase`：当前阶段何时结束、之后是什么。休市时 `phase_ends_at` = `next_open_at`。开发开关 `ANISTOCK_ALWAYS_OPEN` 下两者为 null。
 - `next_open_at`：下一次集合竞价开始的时间（交易中时也给出，方便显示“下次开盘”）。
 - 旧字段 `trading`（布尔）删除，用 `phase != "closed"`；`day` 改名 `trading_day`；`auction_start`/`open`/`close`/`rollover`/`rules` 移到 `/rules`。

@@ -1128,6 +1128,7 @@ export interface components {
             phase_ends_at: null | components["schemas"]["Timestamp"];
             /** Format: double */
             policy_rate: number;
+            sentiment: null | components["schemas"]["Sentiment"];
             trading_day: components["schemas"]["TradingDay"];
         };
         Me: {
@@ -1501,6 +1502,11 @@ export interface components {
             items: components["schemas"]["SearchHit"][];
             query: string;
         };
+        /**
+         * @description 市场情绪档位（封闭）：冷淡 / 平稳 / 火热
+         * @enum {string}
+         */
+        Sentiment: "cold" | "neutral" | "hot";
         StockDetail: {
             audiences: components["schemas"]["Audiences"];
             cover_url: string;

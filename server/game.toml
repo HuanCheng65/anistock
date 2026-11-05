@@ -104,6 +104,15 @@ mm_event_widen = 2.0           # air windows, fresh events, the first half hour
 fund_floor = 0.3               # fund flows (§6)
 fund_ceiling = 1.2
 fund_weekly_cap = 0.1
+# Sentiment layer batch 1 (docs/v2-sentiment.md): acts only through retail, trend and news agents' orders, never
+# on the hidden value. Random strengths, durations and occurrences are hashed from the seed and the server
+# secret (deterministic, survive restarts, not computable from this file).
+sentiment_strength = 0.15      # market sentiment (Baker–Wurgler), daily AR(1), half-life 14 days: at +1 sd the
+                               # average stock's retail buy share 50% -> 57% and sizes +16%; cold stocks up to
+                               # 4x as sensitive as hot ones; bands 冷淡/平稳/火热 at ±0.67 sd (quartiles)
+attention = 0.25               # attention buying (Barber–Odean): retail buy share 62% at a mean-strength episode
+attention_rank_n = 6           # 上热榜 = the market page's top-6 gainers / losers lists
+reaction = true                # under/over-reaction (Barberis–Shleifer–Vishny) of the news agents to revisions
 
 [api.rate_limit]
 # API v1 token buckets (docs/api-v1.md §2.12): requests per second and burst per subject
