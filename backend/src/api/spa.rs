@@ -1,16 +1,21 @@
-//! The built frontend (`web/dist`), served like v1: `/assets/*` through Starlette `StaticFiles`
-//! (404 `{"detail":"Not Found"}` for anything outside the folder or missing; 304 on a matching
-//! `If-None-Match`), every other GET through the catch-all: `api/...` -> 404 `没有这个接口`, an existing
-//! file inside `web/dist` -> that file, else `index.html`.
+//! The built frontend (`web/dist`): `/assets/*` (404 for anything outside the folder or missing; 304 on
+//! a matching `If-None-Match`), and every other GET through the catch-all: an existing file inside
+//! `web/dist` -> that file, else `index.html`. API paths never reach here (`api::fallback`).
 
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use axum::body::Body;
-use axum::http::{HeaderValue, Method, Response, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use md5::{Digest, Md5};
 
-use super::{detail, Req};
+/// A plain-text status response (static files only; the API answers JSON).
+pub fn plain(status: u16, text: &'static str) -> Response<Body> {
+    let mut r = Response::new(Body::from(text));
+    *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    r.headers_mut().insert("content-type", HeaderValue::from_static("text/plain; charset=utf-8"));
+    r
+}
 
 /// `mimetypes.guess_type` for what a Vite build contains; Starlette adds `charset=utf-8` to `text/*`.
 fn content_type(p: &Path) -> String {
@@ -52,7 +57,7 @@ fn content_type(p: &Path) -> String {
 async fn file_response(path: &Path, if_none_match: Option<&str>) -> Response<Body> {
     let (meta, bytes) = match (tokio::fs::metadata(path).await, tokio::fs::read(path).await) {
         (Ok(m), Ok(b)) => (m, b),
-        _ => return super::detail(500, "Internal Server Error"),
+        _ => return plain(500, "Internal Server Error"),
     };
     let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).unwrap_or_default();
     // CPython st_mtime: (double)sec + nsec * 1e-9
@@ -104,27 +109,24 @@ fn normpath(parts: &str) -> PathBuf {
 }
 
 /// `/assets/<rest>` (Starlette `StaticFiles(directory=web/dist/assets)`).
-pub async fn asset(dist: &Path, rest: &str, r: &Req) -> Response<Body> {
-    if r.method != Method::GET && r.method != Method::HEAD {
-        return detail(405, "Method Not Allowed");
+pub async fn asset(dist: &Path, rest: &str, method: &Method, headers: &HeaderMap) -> Response<Body> {
+    if method != Method::GET && method != Method::HEAD {
+        return plain(405, "Method Not Allowed");
     }
-    let Ok(dir) = std::fs::canonicalize(dist.join("assets")) else { return detail(404, "Not Found") };
+    let Ok(dir) = std::fs::canonicalize(dist.join("assets")) else { return plain(404, "Not Found") };
     let rel = normpath(&rest.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/"));
     let full = dir.join(&rel);
     let full = std::fs::canonicalize(&full).unwrap_or(full);
     if !full.starts_with(&dir) || !full.is_file() {
-        return detail(404, "Not Found");
+        return plain(404, "Not Found");
     }
-    let inm = r.headers.get("if-none-match").and_then(|v| v.to_str().ok());
+    let inm = headers.get("if-none-match").and_then(|v| v.to_str().ok());
     file_response(&full, inm).await
 }
 
 /// The SPA catch-all `GET /{path:path}`.
 pub async fn catch_all(dist: &Path, path: &str) -> Response<Body> {
     let path = path.strip_prefix('/').unwrap_or(path);
-    if path.starts_with("api/") {
-        return detail(404, "没有这个接口");
-    }
     let f = dist.join(path);
     if !path.is_empty() && f.is_file() {
         if let Ok(real) = std::fs::canonicalize(&f) {

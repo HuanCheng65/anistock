@@ -557,6 +557,9 @@ impl Fanout {
 
     fn to_account(&mut self, account: i64, make: impl FnOnce(u64) -> M) {
         let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.me && c.account == Some(account)).map(|(id, _)| *id).collect();
+        if ids.is_empty() {
+            return; // nobody listening: no encoding (the seq only has to be consecutive per connection)
+        }
         let seq = self.me_seq.entry(account).or_default();
         *seq += 1;
         let msg = text(&make(*seq));

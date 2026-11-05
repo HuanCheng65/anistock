@@ -3,8 +3,7 @@
 
 mod common;
 
-use anistock::api::json::J;
-use anistock::api::market::leaderboard_rows;
+use anistock::api::v1::account::ranked;
 use anistock::model::Company;
 use anistock::restructure::{check, linked_return, Refusal};
 use common::{Fx, DAY, TS};
@@ -169,17 +168,16 @@ fn the_linked_return_keeps_the_loss() {
     // then +10% on the new segment
     fx.e.transfer(world, a, 1_000_000, "test", DAY, TS, None, None);
     let c = fx.db();
-    let rows = leaderboard_rows(&c, INITIAL).unwrap();
-    let get = |j: &J, k: &str| j.get(k).cloned().unwrap();
-    let names: Vec<J> = rows.iter().map(|r| get(r, "username")).collect();
-    let pos = |n: &str| names.iter().position(|x| *x == J::Str(n.into())).unwrap();
+    let rows = ranked(&c, INITIAL, None).unwrap_or_else(|e| panic!("{}", e.message));
+    let names: Vec<&str> = rows.iter().map(|r| r.user.username.as_str()).collect();
+    let pos = |n: &str| names.iter().position(|x| *x == n).unwrap();
     // a has more assets (110,000 vs 50,000) but ranks below b
     assert!(pos("b") < pos("a"), "{names:?}");
+    assert_eq!(rows[pos("b")].rank, pos("b") as i64 + 1);
     let ra = &rows[pos("a")];
-    let J::Float(ret) = get(ra, "return_pct") else { panic!() };
-    assert!((ret - (0.09 * 1.1 - 1.0)).abs() < 1e-12, "{ret}");
-    assert_eq!(get(ra, "restructures"), J::Int(1));
-    assert_eq!(get(&rows[pos("b")], "restructures"), J::Int(0));
-    let J::Float(rb) = get(&rows[pos("b")], "return_pct") else { panic!() };
-    assert_eq!(rb, (50_000.0 - 100_000.0) / 100_000.0);
+    // the API rounds ratios to 6 decimals
+    assert!((ra.r#return - (0.09 * 1.1 - 1.0)).abs() < 1e-6, "{}", ra.r#return);
+    assert_eq!(ra.restructures, 1);
+    assert_eq!(rows[pos("b")].restructures, 0);
+    assert_eq!(rows[pos("b")].r#return, -0.5);
 }

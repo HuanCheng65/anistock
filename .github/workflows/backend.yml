@@ -6,9 +6,9 @@ on:
   push:
     tags: ["v*"]
     branches: [main]
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", "web/src/api/**", ".github/workflows/backend.yml"]
   pull_request:
-    paths: ["backend/**", ".github/workflows/backend.yml"]
+    paths: ["backend/**", "web/src/api/**", ".github/workflows/backend.yml"]
   workflow_dispatch:
 
 permissions:
@@ -46,6 +46,11 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+      - name: API types are current (web/src/api/openapi.json; regenerate with `npm run gen:api` in web/)
+        run: |
+          cargo run --locked --quiet --bin openapi > "$RUNNER_TEMP/openapi.json"
+          diff -u ../web/src/api/openapi.json "$RUNNER_TEMP/openapi.json"
 
       - name: Build the static binary
         # rusqlite's bundled SQLite is compiled with musl-gcc (musl-tools)

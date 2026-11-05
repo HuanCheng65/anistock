@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 # %h = your home directory; assumes the repo is cloned to ~/anistock. deploy/update.sh downloads the
 # binary from the GitHub release into bin/; the Python venv is still used by the daily close (engine/
-# daily_inputs.py) and the collector. Roll back to v1: ANISTOCK_SERVER=v1 bash deploy/update.sh
+# daily_inputs.py) and the collector.
 WorkingDirectory=%h/anistock
 # defaults; ANISTOCK_HOST / ANISTOCK_PORT in .env override them (EnvironmentFile is read after Environment)
 Environment=ANISTOCK_HOST=127.0.0.1

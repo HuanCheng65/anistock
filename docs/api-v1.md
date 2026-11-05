@@ -1,6 +1,6 @@
 # 安易 AniEx 公开接口 v1（设计）
 
-状态：**开放问题已全部决定（2026-11-06），待实现**。决定记录见 §8。本文只是设计，不改代码。对象：网页前端（`web/`）和以后的 QQ 机器人（Koishi 插件）。机器可读的版本见 `docs/api-v1.openapi.yaml`（结构和字段以本文为准，两者不一致时改 yaml）。
+状态：**已实现（v0.4.0）**。决定记录见 §8，实现时和设计不同的地方见 §9。对象：网页前端（`web/`）和以后的 QQ 机器人（Koishi 插件）。机器可读的版本由代码生成：服务器上的 `/api/v1/openapi.json`，仓库里的 `web/src/api/openapi.json`（`cd web && npm run gen:api` 重新生成，同时生成 TS 类型 `web/src/api/schema.d.ts`）。评审用的手写 yaml 已删除。
 
 > 命名提醒：本文的 **API v1** 指新的 `/api/v1/*` 接口。它和“v1 Python 服务器”（`server/app.py`，FastAPI）不是一回事。下文把后者称为 **Python 服务器**，把现在 `/api/*` 下逐字节兼容它的 21 个接口称为**旧接口**，`/api/v2/*` 和 `/api/covers` 称为 **v2 只读接口**。
 
@@ -1301,7 +1301,7 @@ v1（三种消息共用 `me` 主题的 `seq`）：
 | `delisting_warning` | 退市预警 | `{"weeks_left": 1}` | 有 |
 | `delisted` | 退市 | `{"last_price"}` | 有 |
 | `daily_close` | 日结完成 | 见下 | 无 |
-| `leaderboard_weekly` | 每周最后一个交易日日结后（周榜结算） | `{"from_day", "to_day", "top": [<排行榜的前 10 项>]}` | 无 |
+| `leaderboard_weekly` | 周日的日结之后（周榜结算；市场每天都交易，一周按周一到周日的交易日算） | `{"from_day", "to_day", "top": [<排行榜的前 10 项>]}` | 无 |
 
 `daily_close` 的 `data`：
 ```json
@@ -1314,7 +1314,7 @@ v1（三种消息共用 `me` 主题的 `seq`）：
 ```
 （`top_gainers`、`top_losers` 各 3 支。）
 
-`big_move` 的两条规则（阈值在 `game.toml` 的 `[events]` 里可调，触发时写进 `data`，机器人不用自己知道配置）：
+`big_move` 的两条规则（阈值在 `game.toml` 的 `[api.events]` 里可调，触发时写进 `data`，机器人不用自己知道配置）：
 
 | `rule` | 条件 | `reference_price` | 去重 |
 |---|---|---|---|
@@ -1410,7 +1410,7 @@ Koishi 本身是常驻进程，主动连出去不需要公网地址或回调鉴�
 - WebSocket 消息定义成一个 `#[serde(tag = "t")]` 的 Rust 枚举，同样 `derive(ToSchema)`，在 OpenAPI 的 `components.schemas` 里登记为 `WsServerMessage`、`WsClientMessage`（不挂路径），前端和机器人从同一个文件生成类型。
 - 生成的 `web/src/api/schema.d.ts` 提交进仓库；CI 重新生成并 `git diff --exit-code`，接口变了而类型没更新就失败。
 - 机器人插件引用同一个生成文件（发布成一个只有类型的小包，或者直接复制，接口稳定后再考虑）。
-- `docs/api-v1.openapi.yaml` 是这份设计的手写版本，用于评审；实现后由生成的 `openapi.json` 取代，届时删除 yaml。
+- `docs/api-v1.openapi.yaml` 是这份设计的手写版本，用于评审；已由生成的 `openapi.json` 取代并删除。CI（`.github/workflows/backend.yml`）重新生成 `openapi.json` 并和仓库里的比较。
 
 ---
 
@@ -1561,3 +1561,49 @@ Koishi 本身是常驻进程，主动连出去不需要公网地址或回调鉴�
 - `holders.npc.by_style` 在 NPC 市场能按主体类型给出持股之前为 null。
 - 破产重整的流水 `reason` 名称以重整分支的实现为准。
 - 资产快照回填能否对上当前账户状态（§4.5.10）；对不上时只从迁移当天开始记录。
+
+---
+
+## 9. 实现记录（v0.4.0）
+
+实现按 §7.2 的顺序在一个分支里完成。下面是和上文设计不同、或者设计没有写到而实现时定下来的地方；上文相应位置已经同步修改的不再重复。
+
+### 9.1 与设计不同的地方
+
+| # | 位置 | 设计 | 实现 | 原因 |
+|---|---|---|---|---|
+| I1 | §5.3.7 | 阈值在 `game.toml` 的 `[events]` | `[api.events]`（`big_move_daily`、`big_move_window`、`big_move_window_min`）；限流在 `[api.rate_limit]` | 和 NPC 市场的 `[market]`、引擎事件分开；所有 API 配置在一个 `[api]` 表下 |
+| I2 | §5.3.7 | `leaderboard_weekly` 在“每周最后一个交易日” | 周日的日结之后 | 市场每天交易，没有“周五收盘”；周榜的一周 = 周一到周日的交易日，和 `period=week` 的起点一致 |
+| I3 | §4.2.1 | `holders.npc.by_style` 在 NPC 市场给出前为 null | 有 NPC 市场账户时按账户名前缀（价值型、趋势型、消息型、散户型）给出，否则 null | NPC 市场已经上线，账户名就带主体类型 |
+| I4 | §4.2.1 | `holders` 各项之和等于 `shares` | 持有记录之和不足 `shares` 时，差额计入 `unissued` | 从未发出的股份不在任何账户里 |
+| I5 | §5.3.7 | `flash` 的 `data: {episode, surprise}` | 从资讯标题解析，`surprise` 精确到 1%（标题上的精度） | NPC 市场发快讯时不另存这两个数；不为一个事件改动 `market/` |
+| I6 | §2.9 | 错误目录 | 加 `order_rejected`（422）：引擎拒绝了委托、但不属于目录里任何一种时的兜底，`message` 是引擎原文 | 正常情况下不出现（下单前已经逐项检查）；客户端照常显示 `message` |
+| I7 | §4.5.9 | `restructure_not_eligible` 的文案只给了 `not_poor` | `this_season`：“本季已经重整过一次”；`market_closed`：“连续交易时段才能申请重整” | 补全 |
+| I8 | §4.5.5 | `stock_not_tradable` 文案“这支股票已退市” | 认购中的股票：“这支股票还没有上市”，`details.status` 区分 | 认购中的股票不能下单，但没有退市 |
+| I9 | §4.5.5 | `Idempotency-Key` 24 小时去重 | 记在内存里，服务器重启后清空 | 重启时客户端的请求本来就会失败重试；不值得为它建表 |
+| I10 | §3.3 | 没有绑定 → 403 `not_bound` | 只要带了 `X-Act-As` 而查不到绑定，任何接口都返回 `not_bound`（公开接口也一样） | 机器人带错头部时尽早发现 |
+| I11 | §3.4 | 密码至少 6 位 | 另加上限 128 位（`too_long`） | scrypt 的输入不设上限没有意义 |
+| I12 | §4.4 | `IpoStatus` 有 `cancelled` | 不会出现 | 游戏里没有取消发行的机制；值保留在开放枚举里 |
+| I13 | §5.2 | `ping` 原样回 | `pong.ping` 在 OpenAPI 里是整数 | 规范示例就是 Unix 秒 |
+| I14 | §5.3.1 | 连接后第一条是 `hello` | `hello` 之后紧跟一条 `time` | 客户端马上知道阶段和最近日结，不用等 20 秒 |
+| I15 | §2.12 | 限流按 IP | 反向代理后面按 `X-Real-IP`，没有时取 `X-Forwarded-For` 的**最后一项**（代理追加的那一项），只在对端是本机时信任这两个头 | 第一项可以由客户端伪造 |
+| I16 | §4.5.10 | 回填重放成交和流水 | 持仓重放：成交、新股中签（按缴款流水的日子）、破产重整和退市（按对应流水的日子清零）；现金重放全部流水。只要有一个玩家对不上就整体放弃回填（日志写明哪个账号、哪一项） | 没有成交记录的股份变动只有这几种 |
+
+### 9.2 设计没写、实现时定下来的
+
+- **开发开关** `ANISTOCK_NO_RATE_LIMIT=1`：关掉所有限流，只给本地测试和自动化检查用（和 `ANISTOCK_ALWAYS_OPEN` 同类）。
+- **机器人令牌**：`.env` 的 `ANISTOCK_BOT_TOKENS=name:token[,name:token]`，令牌至少 16 个字符；只保存 SHA-256，常数时间比较。
+- **绑定表的写入**：`bind_codes`、`bindings` 不是游戏状态，由 API 用一条单独的连接写（`busy_timeout` 5 秒），不经过引擎线程。
+- **行情 `full` 的 `seq`**：订阅或 `resync` 时单发给这条连接的全量快照带的是最近一次增量的 `seq`，之后这条连接跳过这一号增量、从下一号开始收。这样 `seq` 对每条连接仍然连续，也不会把较旧的增量盖到较新的全量上。
+- **个股 `full`**：连接在全量快照发出时才进入这支股票的推送名单，所以不会先收到增量再收到全量。`trades` 是本交易日最近 30 笔（W5：开发中的实现原来不带，已补上）。
+- **`events` 的 `seq`**：启动时从 Unix 秒 × 1000 开始，重启后仍然递增；重启前的序号都在新进程的补发缓冲之外，带 `since` 重连会收到 `reset`。
+- **`/me/orders` 里的 `average_fill_price`** 从这笔委托的成交算；WebSocket 的 `order` 消息里，只有服务器从启动起看到了这笔委托的全部成交时才给出，否则为 null（客户端以 REST 为准）。
+- **压测**：`bench/loadgen` 压的是 `bench/` 下的原型服务器（`/ws?sym=`），不连游戏服务器，所以不需要改成 v1 格式；v1 推送的行为用脚本化客户端检查（§7.3 第 4 项）。
+
+### 9.3 新旧等价核对的结果（§7.3，第 6 步，一次性）
+
+在 API 差分测试的种子数据库上，冻结时钟的四个场景（`open` 10:00 常开、`auction` 08:50、`closed` 23:30（夜盘中）、`closed0500` 05:00 休市），同一个服务器程序的两份实例：一份只收旧接口的请求，一份只收 v1 的请求。读接口按 §7.7 换算后逐值比较，写操作（限价买卖、成交、市价单、撤单、新股认购改量撤回、注册）分别走两套接口后比较全部表。
+
+- 4468 个值相等，**0 处差异**；四个场景的数据库全部表一致。
+- 允许的差异（662 处，三类）：比例按 6 位小数舍入（旧 v2 只读接口是 4 位）；`IpoStatus` 区分 `upcoming`/`listed`（旧接口只有 `open`/`allotted`）；受众数据的形状（删掉的字段、`collection` 补全为五项，以及采集快照里 `"genres": null` 时旧接口整块丢掉 AniList 数据、v1 当作没有类型）。
+- 脚本 `backend/difftest/v1_equiv.py` 在核对后随旧接口一起删除（提交历史里保留）。

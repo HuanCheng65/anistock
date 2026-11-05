@@ -200,16 +200,18 @@ async fn resolve(st: &Arc<AppState>, headers: &HeaderMap) -> R<Caller> {
     })
 }
 
-/// The client address: the peer, or (behind the local reverse proxy) `X-Real-IP` / `X-Forwarded-For`.
+/// The client address: the peer, or (only when the peer is the local reverse proxy) `X-Real-IP`, else
+/// the last `X-Forwarded-For` entry.
 pub fn client_ip(peer: Option<SocketAddr>, headers: &HeaderMap) -> String {
     let peer_ip = peer.map(|p| p.ip());
     if peer_ip.is_none_or(|ip| ip.is_loopback()) {
         if let Some(v) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
             return v.trim().to_string();
         }
+        // the last entry is the one the local proxy appended; earlier ones come from the client
         if let Some(v) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-            if let Some(first) = v.split(',').next() {
-                return first.trim().to_string();
+            if let Some(last) = v.rsplit(',').next().map(str::trim).filter(|s| !s.is_empty()) {
+                return last.to_string();
             }
         }
     }

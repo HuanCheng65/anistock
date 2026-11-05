@@ -152,13 +152,7 @@ bash deploy/update.sh                           # 拉代码 → 下载程序 →
 
 发布新版本（在开发机上）：`git tag v2.0.1 && git push origin v2.0.1`，等 GitHub Actions 的 backend 工作流跑完（几分钟），再在服务器上运行 `update.sh`。
 
-回滚到 v1：
-
-```bash
-ANISTOCK_SERVER=v1 bash deploy/update.sh        # 换回 Python 版的服务定义并重启，数据库直接沿用
-```
-
-v2 写过的数据库 v1 可以直接读写（表结构相同）。如果想退回切换前的状态，先停服，再把 `data/backups/game-before-v2-*.db` 拷回 `data/game.db`（会丢掉切换之后的所有交易）。
+回滚：服务启动时执行数据库迁移之前会自动备份到 `data/backups/`。要退回上一个版本，先停服，把迁移前的备份拷回 `data/game.db`，再用 `ANISTOCK_VERSION=上一个版本 bash deploy/update.sh` 装回旧程序（会丢掉升级之后的所有交易，所以只在升级后很短的时间内有意义）。Python 版服务器（`server/app.py`）已经不能在当前数据库上运行，不再作为回退手段。
 
 构建前端需要 Node.js 20+；本机没有 Node 但有 Docker 时，脚本会自动用 `node:24-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换 npm 源）。
 
@@ -192,6 +186,7 @@ server {
     location / {
         proxy_pass http://127.0.0.1:18620;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         # WebSocket（实时推送）
@@ -202,9 +197,11 @@ server {
 }
 ```
 
-反代必须和游戏服务在同一台机器上：服务只信任来自 `127.0.0.1` 的 `X-Forwarded-For`，用它识别玩家的真实 IP。
+反代必须和游戏服务在同一台机器上：服务只信任来自 `127.0.0.1` 的 `X-Real-IP`（没有时用 `X-Forwarded-For` 的最后一项），用它识别玩家的真实 IP（限流按 IP 计数）。实时推送在 `/api/v1/ws`；如果反代给 WebSocket 单独写了 `location`，路径要跟着改（旧的 `/api/ws` 已经删除）。
 
 浏览器打开域名，用邀请码注册（邀请码在 `.env` 的 `ANISTOCK_INVITE`）。
+
+QQ 机器人（Koishi 插件）用公开接口 `/api/v1`（文档：`docs/api-v1.md`，机器可读：`/api/v1/openapi.json`）。给机器人发令牌：在 `.env` 里加 `ANISTOCK_BOT_TOKENS=koishi:一串至少 16 位的随机字符`（可以写多个，逗号分隔），重启服务。限流数字在 `server/game.toml` 的 `[api.rate_limit]` 里。
 
 - 每天 06:30 服务端自动结算前一天（采集器 06:00 先跑）；服务停过也会在启动后补上错过的日子
 - 每天 08:45–09:00 开盘集合竞价，09:00 至次日 04:00 连续交易（交易日在 04:00 切换），可在 `server/game.toml` 里改；交易规则（冷静期、新股认购等）见设计文档
@@ -212,7 +209,7 @@ server {
 - 新一季的番刚上来时显示的是日文名：在开发机上跑一次 `sim/match.py --search` 并提交，就会换成 Bangumi 的中文名
 - 更新代码后：`bash deploy/update.sh`（v2 需要下载对应版本的程序，不要只 `git pull` 后重启）
 - 重新开服（**会删除所有玩家**）：`uv run python -m server.seed --force`
-- 表结构变化用迁移脚本管理（`server/migrations/`，yoyo-migrations）：服务启动时自动执行未执行过的迁移，执行前先把数据库备份到 `data/backups/`。已发布的迁移文件不要再改，有变化就加新文件
+- 表结构变化用迁移脚本管理（`backend/migrations/`，refinery）：服务启动时自动执行未执行过的迁移，执行前先把数据库备份到 `data/backups/`。已发布的迁移文件不要再改，有变化就加新文件
 - 每天日结后自动备份一次游戏数据库到 `data/backups/`，保留最近 7 天
 
 ### 每季开始时（手动）
@@ -229,7 +226,9 @@ git add sim/matches.json tracked_extra.json && git commit -m "Match new season" 
 ### 本地开发
 
 ```bash
-ANISTOCK_ALWAYS_OPEN=1 uv run uvicorn server.app:app --port 18620 --reload  # 后端，忽略交易时间
-cd web && npm run dev                                                       # 前端，/api 代理到 18620
-uv run pytest                                                               # 撮合和分红的单元测试
+cd backend && ANISTOCK_ALWAYS_OPEN=1 cargo run --release   # 后端，忽略交易时间（端口 18620）
+cd web && npm run dev                                      # 前端，/api 代理到 18620
+cd web && npm run gen:api                                  # 接口改动后重新生成 src/api/openapi.json 和 schema.d.ts
+cd backend && cargo test                                   # 后端测试
+uv run pytest                                              # 经济模型和采集器的单元测试
 ```

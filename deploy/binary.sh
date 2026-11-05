@@ -5,15 +5,9 @@
 #
 #   ANISTOCK_VERSION=v2.0.0   which release (default: the tag checked out, else the latest release)
 #   ANISTOCK_REPO=owner/name  where the releases are (default: from `git remote get-url origin`)
-#   ANISTOCK_SERVER=v1        keep running the v1 Python server instead (rollback; nothing is downloaded)
 #   https_proxy               used for the downloads when set (curl reads it)
 
 BIN_ASSET="anistock-x86_64-linux-musl"
-
-server_kind() { if [ "${ANISTOCK_SERVER:-v2}" = "v1" ]; then echo v1; else echo v2; fi; }
-
-# the systemd unit for the chosen server
-server_unit_file() { if [ "$(server_kind)" = "v1" ]; then echo deploy/anistock-server-v1.service; else echo deploy/anistock-server.service; fi; }
 
 release_repo() {
   if [ -n "${ANISTOCK_REPO:-}" ]; then echo "$ANISTOCK_REPO"; return; fi
@@ -59,7 +53,8 @@ install_binary() {
   echo "已安装 bin/anistock $version"
 }
 
-# Is the installed systemd unit the v1 Python server?
+# Is the installed systemd unit still the v1 Python server (an install from before v0.2.0)? It is replaced
+# by the Rust server once; there is no way back to it.
 installed_unit_is_v1() { grep -q uvicorn ~/.config/systemd/user/anistock-server.service 2>/dev/null; }
 
 # Consistent copy of the game database (SQLite backup API; safe while it is in use).

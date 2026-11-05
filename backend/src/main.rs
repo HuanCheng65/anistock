@@ -1,5 +1,6 @@
-//! AniStock v2 game server: a drop-in replacement for the v1 Python server (same port, database,
-//! frontend, cookies and passwords).
+//! AniStock (安易 AniEx) game server: the public API v1 (`/api/v1`, docs/api-v1.md), the real-time push
+//! (`/api/v1/ws`) and the web app from `web/dist`, on the game database (passwords and session cookies
+//! are compatible with every earlier release).
 //!
 //!     ANISTOCK_HOST=127.0.0.1 ANISTOCK_PORT=18620 anistock
 //!
@@ -7,19 +8,20 @@
 //! ANISTOCK_GAME_DB, ANISTOCK_ALWAYS_OPEN, ANISTOCK_NO_LOOPS, ANISTOCK_ROOT):
 //!   ANISTOCK_HOST / ANISTOCK_PORT   listen address (default 127.0.0.1:18620, like the systemd unit)
 //!   ANISTOCK_WORKERS                tokio worker threads (default 2)
+//!   ANISTOCK_BOT_TOKENS             bot tokens for the QQ bot, `name:token[,name:token]` (docs/api-v1.md §3.2)
 //!   ANISTOCK_FREEZE_TIME            development only: pin the game clock (and session times) to an ISO
-//!                                   timestamp, e.g. 2026-11-05T10:00:00+08:00 (the API difftest uses it)
+//!                                   timestamp, e.g. 2026-11-05T10:00:00+08:00
+//!   ANISTOCK_NO_RATE_LIMIT=1        development only: no API rate limits
 //!
 //! Threads: the tokio workers (HTTP), tokio's blocking pool (SQLite reads, scrypt), the engine thread
-//! (`actor`), the persistence thread. v1 ran behind uvicorn `--proxy-headers`; v1 never reads the client
-//! address, so v2 ignores X-Forwarded-For (X-Forwarded-Proto is only used in the slash redirect, which
-//! exists only when web/dist is missing).
+//! (`actor`, with the push fan-out between jobs), the persistence thread. Behind the local reverse proxy
+//! the client address comes from X-Real-IP (else the last X-Forwarded-For entry), for the per-IP limits.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anistock::actor::{Actor, Ctx, EngineOps};
-use anistock::api::{dispatch, AppState, ReadPool};
+use anistock::api::{fallback, AppState, ReadPool};
 use anistock::{auth, store, Clock, Config, Engine};
 
 fn env(k: &str) -> Option<String> {
@@ -97,7 +99,7 @@ fn main() {
 
     let cfg = Arc::new(cfg);
     let ops = EngineOps::new(&cfg);
-    // real-time push (/api/ws): tee the engine's change stream into the fan-out on the engine thread
+    // real-time push (/api/v1/ws): tee the engine's change stream into the fan-out on the engine thread
     let (change_tx, change_rx) = crossbeam_channel::unbounded();
     let (live_tx, live_rx) = crossbeam_channel::unbounded();
     engine.wrap_sink(|inner| Box::new(anistock::live::Tee { inner, tx: change_tx }));
@@ -142,7 +144,7 @@ fn main() {
         let loops = if cfg.no_loops { vec![] } else { anistock::loops::spawn(&st) };
         eprintln!("AniStock v2 listening on http://{addr} ({workers} workers, game db {})", cfg.game_db.display());
         let st2 = st.clone();
-        let app = anistock::api::v1::router(st.clone()).fallback(move |req| dispatch(st2.clone(), req));
+        let app = anistock::api::v1::router(st.clone()).fallback(move |req| fallback(st2.clone(), req));
         let app = app.into_make_service_with_connect_info::<SocketAddr>();
         if let Err(e) = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await {
             eprintln!("server: {e}");

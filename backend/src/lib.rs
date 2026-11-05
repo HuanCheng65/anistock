@@ -1,7 +1,8 @@
 //! AniStock v2 game server core: configuration, storage, and the in-memory exchange engine.
 //!
-//! Rules and data are identical to v1 (`server/`): same SQLite schema and file, same ids, same rounding,
-//! same player-facing messages. See `docs/v2-architecture.md`.
+//! The exchange rules started as a port of v1 (`server/`) and are still checked against it by the engine
+//! and close difftests (`backend/difftest/`). The HTTP API is API v1 (docs/api-v1.md). See
+//! `docs/v2-architecture.md`.
 
 pub mod config;
 pub mod daily;

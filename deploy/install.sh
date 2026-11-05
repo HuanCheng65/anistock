@@ -2,15 +2,19 @@
 # First-time install of the AniStock game server on the box that already runs the collector.
 # Safe to re-run: every step checks before it acts. Run from the repo root:  bash deploy/install.sh
 #   ANISTOCK_VERSION=vX.Y.Z  install that release of the game server (default: the checked-out tag, else latest)
-#   ANISTOCK_SERVER=v1       install the v1 Python server instead
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/binary.sh
 
 # Port the game server listens on: ANISTOCK_PORT in .env, else 18620 (same default as the systemd unit)
 game_port() { local p; p="$(grep -E '^ANISTOCK_PORT=[0-9]+' .env 2>/dev/null | tail -1 | cut -d= -f2)"; echo "${p:-18620}"; }
-# Our /api/status has "launched_on"; anything else on the port is another program
-is_ours() { curl -s --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/api/status" | grep -q '"launched_on"'; }
+# Ours: /api/internal/health (v0.4.0+) has "engine_lag_ms"; a release before v0.4.0 still answers /api/status
+# with "launched_on" (the running server during an update). Anything else on the port is another program.
+is_ours() {
+  local u="http://127.0.0.1:$(game_port)"
+  curl -s --max-time 3 --noproxy '*' "$u/api/internal/health" | grep -q '"engine_lag_ms"' ||
+    curl -s --max-time 3 --noproxy '*' "$u/api/status" | grep -q '"launched_on"'
+}
 wait_ours() { for _ in $(seq 1 40); do is_ours && return 0; sleep 1; done; return 1; }
 port_taken_by_other() {
   curl -s -o /dev/null --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/" && ! is_ours
@@ -114,14 +118,12 @@ else
   "$UV" run python -m server.seed
 fi
 
-if [ "$(server_kind)" = "v2" ]; then
-  say "下载游戏服务程序"
-  install_binary || die "游戏服务程序下载失败（需要代理时先 export https_proxy=...）"
-  if installed_unit_is_v1; then
-    say "从 v1 切换到 v2：停服并备份数据库"
-    systemctl --user stop anistock-server || true
-    backup_game_db before-v2
-  fi
+say "下载游戏服务程序"
+install_binary || die "游戏服务程序下载失败（需要代理时先 export https_proxy=...）"
+if installed_unit_is_v1; then
+  say "从 v1 切换到 v2：停服并备份数据库"
+  systemctl --user stop anistock-server || true
+  backup_game_db before-v2
 fi
 
 say "检查端口"
@@ -132,7 +134,7 @@ echo "使用端口 $(game_port)"
 
 say "安装 systemd 服务"
 mkdir -p ~/.config/systemd/user
-sed "s#%h/.local/bin/uv#$UV#" "$(server_unit_file)" > ~/.config/systemd/user/anistock-server.service
+sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-server.service > ~/.config/systemd/user/anistock-server.service
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-collect.service > ~/.config/systemd/user/anistock-collect.service
 cp deploy/anistock-collect.timer ~/.config/systemd/user/
 systemctl --user daemon-reload

@@ -120,12 +120,9 @@ pub fn read_session(secret: &[u8], token: Option<&str>, now: f64) -> Session {
     }
 }
 
-/// Python `int(str)` for the values a signed cookie can hold (sign, digits, underscores, whitespace).
+/// An integer field of a signed cookie (an optional sign and digits).
 fn py_int(s: &str) -> Option<i64> {
-    match crate::api::validate::parse_int_str(s)? {
-        crate::api::validate::BigInt::Small(v) if !s.contains('.') => Some(v),
-        _ => None,
-    }
+    s.trim().parse::<i64>().ok()
 }
 
 /// `Set-Cookie` of v1 `set_cookie` (Starlette `Response.set_cookie(..., max_age, httponly, samesite="lax")`).
