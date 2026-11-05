@@ -42,6 +42,7 @@ clock = Clock(cfg.tz)
 LOCK = asyncio.Lock()
 conn: sqlite3.Connection | None = None
 ALWAYS_OPEN = os.environ.get("ANISTOCK_ALWAYS_OPEN") == "1"
+SECRET = cfg.secret      # replaced at startup by a random key stored in the game DB if ANISTOCK_SECRET is unset
 SESSION_DAYS = 30
 
 
@@ -95,7 +96,7 @@ def check_pw(pw: str, stored: str) -> bool:
 def make_session(account_id: int) -> str:
     exp = int(time.time()) + SESSION_DAYS * 86400
     payload = f"{account_id}.{exp}"
-    sig = hmac.new(cfg.secret, payload.encode(), hashlib.sha256).hexdigest()
+    sig = hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
 
@@ -106,7 +107,7 @@ def read_session(token: str | None) -> int | None:
         aid, exp, sig = token.split(".")
     except ValueError:
         return None
-    good = hmac.new(cfg.secret, f"{aid}.{exp}".encode(), hashlib.sha256).hexdigest()
+    good = hmac.new(SECRET, f"{aid}.{exp}".encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, good) or int(exp) < time.time():
         return None
     return int(aid)
@@ -151,9 +152,11 @@ async def npc_loop() -> None:
 
 
 def refresh_inputs() -> None:
-    """Rebuild the derived market series before a close: match new shows, refresh air times, rebuild."""
+    """Rebuild the derived market series before a close: refresh Annict air times (~10 requests), rebuild.
+    Matching new shows across platforms (sim/match.py --search) is a season-start task: it rewrites
+    tracked files, so it is run by hand and committed, never by the server."""
     py = sys.executable
-    for args in (["sim/match.py"], ["sim/reconstruct.py", "airtimes"], ["sim/reconstruct.py", "build"]):
+    for args in (["sim/reconstruct.py", "airtimes"], ["sim/reconstruct.py", "build"]):
         try:
             r = subprocess.run([py, *args], cwd=ROOT, capture_output=True, text=True, timeout=900)
             if r.returncode:
@@ -194,12 +197,18 @@ async def daily_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global conn
+    global conn, SECRET
     if not cfg.game_db.exists():
         raise SystemExit(f"{cfg.game_db} missing: run `uv run python -m server.seed` first")
     conn = gdb.connect(cfg.game_db)
     if cfg.secret == b"dev-only-secret-change-me":
-        log.warning("ANISTOCK_SECRET is not set: sessions use a development key")
+        # never sign sessions with a key that is in the source code: keep a random one in the game DB
+        key = gdb.get_state(conn, "session_secret")
+        if not key:
+            key = secrets.token_hex(32)
+            gdb.set_state(conn, "session_secret", key)
+        SECRET = bytes.fromhex(key)
+        log.warning("ANISTOCK_SECRET is not set: using a random key stored in the game database")
     tasks = [] if os.environ.get("ANISTOCK_NO_LOOPS") == "1" else [asyncio.create_task(npc_loop()), asyncio.create_task(daily_loop())]
     yield
     for t in tasks:
@@ -600,6 +609,8 @@ if DIST.exists():
 
     @app.get("/{path:path}")
     async def spa(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404, "没有这个接口")
         f = DIST / path
         if path and f.is_file() and DIST in f.resolve().parents:
             return FileResponse(f)

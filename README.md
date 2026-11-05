@@ -110,3 +110,63 @@ uv run sim/report.py                     # -> sim/out/report.html
 - 换参数跑对照方案：`uv run sim/simulate.py --set central_bank.max_step=0.01 --out sim/out/result_fastcb.json`
 - `data/derived/` 和 `sim/out/` 是本地生成的，不进 git
 - `sim/reconstruct.py check` 会把重建结果和 AniList 做交叉验证
+
+## 游戏网站（server/ + web/）
+
+规则和设计依据见 [`docs/game-design.md`](docs/game-design.md)。
+
+### 部署（在服务器上按顺序做，每一步都不能跳过）
+
+```bash
+cd ~/anistock
+git pull
+
+# 1. 采集数据库要是最新的：夏季番回填、补充的 Bangumi 条目、海贼王新篇章都在里面。
+#    二选一：从开发机拷贝 data/anistock.db 过来覆盖；或者在服务器上补跑（约 40 分钟）：
+#    uv run collect.py --season 2026-summer && uv run collect.py
+
+# 2. .env 里填上 ANISTOCK_SECRET（随机串）和 ANISTOCK_INVITE（社团邀请码），见 .env.example
+
+# 3. 安装依赖、重建市场序列（只发约 10 次 Annict 请求）
+uv sync
+uv run sim/reconstruct.py airtimes
+uv run sim/reconstruct.py build
+
+# 4. 构建前端（需要 Node 20+；npm 慢的话：npm config set registry https://registry.npmmirror.com）
+cd web && npm ci && npm run build && cd ..
+
+# 5. 开服：用 7 月以来的数据回放生成历史行情（会创建 data/game.db）
+uv run python -m server.seed
+
+# 6. 常驻运行（systemd 用户服务，端口 8080）
+cp deploy/anistock-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now anistock-server
+journalctl --user -u anistock-server -n 50 --no-pager
+```
+
+浏览器打开 `http://服务器地址:8080`，用邀请码注册。
+
+- 每天 06:30 服务端自动结算前一天（采集器 06:00 先跑）；服务停过也会在启动后补上错过的日子
+- 交易时间 09:00–23:00，可在 `server/game.toml` 里改
+- 更新代码后：`git pull && uv sync && (cd web && npm ci && npm run build) && systemctl --user restart anistock-server`
+- 重新开服（**会删除所有玩家**）：`uv run python -m server.seed --force`
+
+### 每季开始时（手动）
+
+新番上来后，跨平台匹配需要联网搜索，而且会改动仓库里的文件，所以不在服务器上自动跑：
+
+```bash
+uv run sim/match.py --search      # 在开发机上运行
+git add sim/matches.json tracked_extra.json && git commit -m "Match new season" && git push
+```
+
+服务器 `git pull` 之后，采集器和游戏都会用上新的匹配结果。
+
+### 本地开发
+
+```bash
+ANISTOCK_ALWAYS_OPEN=1 uv run uvicorn server.app:app --port 8080 --reload   # 后端，忽略交易时间
+cd web && npm run dev                                                       # 前端，/api 代理到 8080
+uv run pytest                                                               # 撮合和分红的单元测试
+```

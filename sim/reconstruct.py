@@ -34,6 +34,7 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "anistock.db"
 DERIVED = ROOT / "data" / "derived"
+CALIBRATION = ROOT / "sim" / "calibration"   # tracked in git: small aggregate curves, costly to re-measure
 UA = "anistock-collector/0.1 (anime club market game)"
 MAX_AGE = 28  # maturity curve horizon, days
 
@@ -246,8 +247,8 @@ def cmd_calibrate() -> None:
         "bgm": {"episodes": len(bg_ages), "fraction_by_day": _curve(bg_ages)},
         "note": "fraction of the day-28 count reached by day offset d (index). Aggregates only.",
     }
-    DERIVED.mkdir(parents=True, exist_ok=True)
-    (DERIVED / "maturity.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
+    CALIBRATION.mkdir(parents=True, exist_ok=True)
+    (CALIBRATION / "maturity.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
     for k in ("annict", "bgm"):
         f = out[k]["fraction_by_day"]
         print(f"{k}: n={out[k]['episodes']}  day0={f[0]:.0%} day1={f[1]:.0%} day3={f[3]:.0%} "
@@ -311,7 +312,7 @@ def _fallback_airtimes(m: dict, fetched: dict[int, datetime]) -> dict[int, dict[
 
 def episode_series(min_age: float = 3.0) -> dict[str, dict[int, list[tuple[datetime, float, float]]]]:
     """Per market: AniList id -> [(air time, matured count, age days)] for episodes at least min_age old."""
-    cur = json.loads((DERIVED / "maturity.json").read_text(encoding="utf-8"))
+    cur = json.loads((CALIBRATION / "maturity.json").read_text(encoding="utf-8"))
     m = matches()
     an_by_work = {r["annict"]: int(k) for k, r in m.items() if "annict" in r}
     bg_by_subject = {r["bgm"]: int(k) for k, r in m.items() if "bgm" in r}

@@ -41,13 +41,17 @@ def load() -> Config:
     for k, v in raw.get("overrides", {}).items():
         _set(params, k, v)
     game = raw["game"]
-    secret = os.environ.get("ANISTOCK_SECRET", "")
+    secret = os.environ.get("ANISTOCK_SECRET", "").strip()
+    invite = os.environ.get("ANISTOCK_INVITE", "").strip()
+    for name, v in (("ANISTOCK_SECRET", secret), ("ANISTOCK_INVITE", invite)):
+        if v.startswith("#"):
+            raise SystemExit(f"{name} looks like a comment ({v[:20]}...): put comments on their own line in .env")
     return Config(
         params=params, game=game, npc=raw["npc"], tz=ZoneInfo(game["timezone"]),
         collector_db=Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db")),
         game_db=Path(os.environ.get("ANISTOCK_GAME_DB", ROOT / "data" / "game.db")),
         secret=(secret or "dev-only-secret-change-me").encode(),
-        invite_code=os.environ.get("ANISTOCK_INVITE", "anistock"),
+        invite_code=invite or "anistock",
     )
 
 

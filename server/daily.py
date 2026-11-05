@@ -200,11 +200,16 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
             if d.weekday() == 6:
                 maybe_delist(conn, cfg, day, ts, c, s, total_week_rev, summary)
 
-        # 6. candles and next day's reference price
+        # 6. orders are good for the day only (当日有效); the IPO offer stays on the book
+        for o in conn.execute("""SELECT o.* FROM orders o JOIN accounts a ON a.id = o.account_id
+                                 WHERE o.status='open' AND a.kind != 'company'""").fetchall():
+            ex._close(conn, o, "cancelled", ts)
+
+        # 7. candles and next day's reference price
         for c in conn.execute("SELECT * FROM companies WHERE status='listed'").fetchall():
             close_candle(conn, c, day)
 
-        # 7. new listings for tomorrow
+        # 8. new listings for tomorrow
         list_new(conn, cfg, day, ts, shows, listed_shows, markets, aud, rate, demand_week)
 
         m2 = conn.execute(f"SELECT COALESCE(SUM(cash),0) FROM accounts WHERE kind IN {MARKET_KINDS}").fetchone()[0]
