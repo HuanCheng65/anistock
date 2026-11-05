@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BrandMark from '../components/BrandMark.vue'
 import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api'
@@ -35,7 +36,7 @@ async function submit() {
 <template>
   <main class="page login">
     <section class="intro">
-      <span class="seal" aria-hidden="true">番</span>
+      <BrandMark :size="44" />
       <h1>AniStock 番剧交易所</h1>
       <p class="muted">每部新番都是一家上市公司。真实观众的热度就是它的营收，营收每周按持股分红。看好哪部番，就买它的股票。</p>
     </section>
@@ -69,10 +70,6 @@ async function submit() {
 .login { max-width: 420px; padding-top: 32px; }
 .intro { display: flex; flex-direction: column; gap: 10px; padding: 8px 4px 4px; }
 .intro h1 { font-size: 24px; font-weight: 700; }
-.seal {
-  width: 44px; height: 44px; display: grid; place-items: center; background: var(--seal); color: #fff;
-  border-radius: 4px; font-size: 26px; font-weight: 700; font-family: "Songti SC", "SimSun", "Noto Serif SC", serif;
-}
 .form { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .center { text-align: center; }
 </style>

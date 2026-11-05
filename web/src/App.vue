@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BrandMark from './components/BrandMark.vue'
 import { computed, onMounted, onBeforeUnmount } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { useSession } from './stores/session'
@@ -28,7 +29,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
   <header class="topbar">
     <div class="topbar-inner">
       <RouterLink to="/" class="brand" aria-label="AniStock 首页">
-        <span class="seal" aria-hidden="true">番</span>
+        <BrandMark :size="26" />
         <span class="word">AniStock</span>
       </RouterLink>
       <div class="state" v-if="session.status">
@@ -69,11 +70,6 @@ onBeforeUnmount(() => window.clearInterval(timer))
   display: flex; align-items: center; gap: 12px;
 }
 .brand { display: flex; align-items: center; gap: 8px; color: var(--ink); }
-.seal {
-  width: 26px; height: 26px; display: grid; place-items: center;
-  background: var(--seal); color: #fff; border-radius: 3px;
-  font-size: 15px; font-weight: 700; font-family: "Songti SC", "SimSun", "Noto Serif SC", serif;
-}
 .word { font-weight: 700; letter-spacing: 0.02em; font-size: 16px; }
 .state { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
 .sep { color: var(--rule-strong); }
