@@ -767,6 +767,9 @@ impl Engine {
     }
 
     fn maybe_delist(&mut self, cx: &mut Ctx, c: &Company, s: &ShowInputs, total_week_rev: i64) -> Result<(), String> {
+        if !cx.cfg.economy_v1 {
+            return self.maybe_delist_series(cx, c);
+        }
         let finished = V::finished(s.aired, s.episodes, s.long_runner);
         let week_ago = iso(cx.d - Duration::days(7));
         let week_rev: i64 = self
@@ -778,6 +781,50 @@ impl Engine {
             .map(|(_, r)| r.revenue)
             .sum();
         let low = finished && (week_rev as f64) < cx.g().delist_revenue_share * (total_week_rev.max(1) as f64);
+        let weeks = if low { c.low_weeks + 1 } else { 0 };
+        self.st.companies.get_mut(&c.id).unwrap().low_weeks = weeks;
+        self.mark_company(c.id);
+        if weeks < cx.g().delist_after_weeks {
+            return Ok(());
+        }
+        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
+    }
+
+    /// Delisting of a series (docs/v2-series.md §9): every work finished, the last week's revenue under
+    /// `delist_tail_share` of the median weekly revenue of the companies with a work on air, and a sequel
+    /// announcement within three years less likely than `delist_sequel_p` (no announced sequel), for
+    /// `delist_after_weeks` Sundays in a row. Liquidation at book value per share, as before.
+    fn maybe_delist_series(&mut self, cx: &mut Ctx, c: &Company) -> Result<(), String> {
+        let week_ago = iso(cx.d - Duration::days(7));
+        let week_rev = |e: &Engine, id: i64| -> i64 {
+            e.st.company_days
+                .range((id, String::new())..)
+                .take_while(|(k, _)| k.0 == id)
+                .filter(|(k, _)| k.1.as_str() > week_ago.as_str())
+                .map(|(_, r)| r.revenue)
+                .sum()
+        };
+        let airing = |e: &Engine, id: i64| {
+            e.works_of(id).into_iter().any(|w| cx.inp.show(w).is_some_and(|x| x.aired >= 1 && !V::finished(x.aired, x.episodes, x.long_runner)))
+        };
+        let mut on_air: Vec<i64> = cx.companies.iter().filter(|x| airing(self, x.id)).map(|x| week_rev(self, x.id)).collect();
+        on_air.sort_unstable();
+        let reference = if on_air.is_empty() { 0 } else { on_air[on_air.len() / 2] };
+        let works = self.works_of(c.id);
+        let all_finished = works.iter().all(|w| cx.inp.show(*w).is_some_and(|x| V::finished(x.aired, x.episodes, x.long_runner)));
+        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+        let today = crate::vclose::day_no(&cx.day).unwrap_or(0);
+        // the series' latest work carries the sequel chance
+        let latest = works.iter().filter_map(|w| self.valuation_state(*w).map(|j| (j, *w))).max_by_key(|(j, _)| j.meta.as_ref().map_or(0, |m| m.first_air));
+        let sequel_p = match (latest, &fp.sequel) {
+            (Some((j, _)), _) if j.sequel.is_some() => 1.0,
+            (Some((j, _)), Some(sp)) => {
+                let fin = j.meta.as_ref().and_then(|m| m.air.last().copied()).unwrap_or(today);
+                crate::vfilter::sequel_within(sp, j.seq_z, today - fin, 3.0)
+            }
+            _ => 0.0,
+        };
+        let low = all_finished && reference > 0 && (week_rev(self, c.id) as f64) < cx.p.delist_tail_share * reference as f64 && sequel_p < cx.p.delist_sequel_p;
         let weeks = if low { c.low_weeks + 1 } else { 0 };
         self.st.companies.get_mut(&c.id).unwrap().low_weeks = weeks;
         self.mark_company(c.id);

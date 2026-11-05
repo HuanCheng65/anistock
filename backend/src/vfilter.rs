@@ -671,6 +671,12 @@ pub fn announce_schedule(sp: &SequelParams, z: f64, t_now: i64) -> Vec<(i64, f64
     out
 }
 
+/// P(a sequel is announced within `years` of today), `t_now` days after the finale, none announced so far.
+pub fn sequel_within(sp: &SequelParams, z: f64, t_now: i64, years: f64) -> f64 {
+    let end = t_now as f64 + 365.0 * years;
+    announce_schedule(sp, z, t_now).iter().filter(|(t, _)| (*t as f64) <= end).map(|(_, p)| p).sum()
+}
+
 /// Python `season_value`.
 pub fn season_value(fp: &FilterParams, m: usize, disc: f64) -> f64 {
     let Some(sp) = &fp.sequel else { return 0.0 };
