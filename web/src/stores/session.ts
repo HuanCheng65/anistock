@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { api, ApiError, type Me, type Status } from '../api'
+import { api, ApiError, type LeaderRow, type Me, type Status } from '../api'
 
 export const useSession = defineStore('session', () => {
   const me = ref<Me | null>(null)
   const status = ref<Status | null>(null)
   const checked = ref(false)
+  const leaders = ref<LeaderRow[] | null>(null)
 
   async function loadMe() {
     try {
@@ -26,6 +27,10 @@ export const useSession = defineStore('session', () => {
     }
   }
 
+  async function loadLeaders() {
+    leaders.value = (await api.get<{ players: LeaderRow[] }>('/api/leaderboard')).players
+  }
+
   async function login(username: string, password: string) {
     await api.post('/api/login', { username, password })
     await loadMe()
@@ -41,5 +46,5 @@ export const useSession = defineStore('session', () => {
     me.value = null
   }
 
-  return { me, status, checked, loadMe, loadStatus, login, register, logout }
+  return { me, status, checked, leaders, loadMe, loadStatus, loadLeaders, login, register, logout }
 })

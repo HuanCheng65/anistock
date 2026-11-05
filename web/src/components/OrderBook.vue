@@ -1,55 +1,71 @@
 <script setup lang="ts">
+// Five levels each side, on the terminal surface. "split": bids | asks side by side (phone);
+// "stack": asks above the last price, bids below (desktop). A price fills the order form.
 import { computed } from 'vue'
 import type { BookLevel } from '../api'
-import { money } from '../format'
+import { money, qty } from '../format'
 
-const props = defineProps<{ bids: BookLevel[]; asks: BookLevel[]; prevClose: number }>()
+const props = defineProps<{ bids: BookLevel[]; asks: BookLevel[]; layout: 'split' | 'stack'; last?: number; prevClose?: number }>()
 const emit = defineEmits<{ pick: [price: number] }>()
-
-const asks = computed(() => {
-  const a = props.asks.slice(0, 5)
-  return Array.from({ length: 5 }, (_, i) => a[4 - i] ?? null).map((lv, i) => ({ lv, label: `卖${5 - i}` }))
-})
-const bids = computed(() => {
-  const b = props.bids.slice(0, 5)
-  return Array.from({ length: 5 }, (_, i) => ({ lv: b[i] ?? null, label: `买${i + 1}` }))
-})
-const maxQty = computed(() => Math.max(1, ...props.bids.map((b) => b.qty), ...props.asks.map((a) => a.qty)))
-const cls = (p: number) => (p > props.prevClose ? 'up' : p < props.prevClose ? 'down' : 'flat')
-const empty = computed(() => !props.bids.length && !props.asks.length)
+const max = computed(() => Math.max(1, ...props.bids.map((b) => b.qty), ...props.asks.map((a) => a.qty)))
+const bids = computed(() => props.bids.slice(0, 5))
+const asks = computed(() => props.asks.slice(0, 5))
+const asksDesc = computed(() => [...asks.value].reverse())
+const spread = computed(() => (props.bids[0] && props.asks[0] ? props.asks[0].price - props.bids[0].price : null))
+const lastCls = computed(() => (props.last == null || props.prevClose == null ? '' : props.last > props.prevClose ? 'tup' : props.last < props.prevClose ? 'tdown' : ''))
+const w = (q: number) => Math.round((q / max.value) * 100) + '%'
 </script>
 
 <template>
-  <div class="book">
-    <div v-for="row in asks" :key="row.label" class="lvl" :class="{ clickable: row.lv }" @click="row.lv && emit('pick', row.lv.price)">
-      <span class="lab">{{ row.label }}</span>
-      <span class="px num" :class="row.lv ? cls(row.lv.price) : ''">{{ row.lv ? money(row.lv.price) : '–' }}</span>
-      <span class="qty num">{{ row.lv ? row.lv.qty : '' }}</span>
-      <span class="bar ask" :style="{ width: row.lv ? (row.lv.qty / maxQty) * 100 + '%' : 0 }"></span>
-    </div>
-    <div class="mid"></div>
-    <div v-for="row in bids" :key="row.label" class="lvl" :class="{ clickable: row.lv }" @click="row.lv && emit('pick', row.lv.price)">
-      <span class="lab">{{ row.label }}</span>
-      <span class="px num" :class="row.lv ? cls(row.lv.price) : ''">{{ row.lv ? money(row.lv.price) : '–' }}</span>
-      <span class="qty num">{{ row.lv ? row.lv.qty : '' }}</span>
-      <span class="bar bid" :style="{ width: row.lv ? (row.lv.qty / maxQty) * 100 + '%' : 0 }"></span>
-    </div>
-    <p v-if="empty" class="small muted note">盘口暂时是空的：开市后做市商约 20 秒内挂出报价。集合竞价时段的挂单要到开盘才撮合。</p>
-    <p v-else class="small muted note">点价格可以填入下单框</p>
+  <div class="book" :class="layout">
+    <template v-if="layout === 'split'">
+      <div class="col">
+        <button v-for="b in bids" :key="'b' + b.price" type="button" class="lv num" @click="emit('pick', b.price)">
+          <span class="bar bid" :style="{ width: w(b.qty) }"></span>
+          <span class="p tup">{{ money(b.price) }}</span><span class="q">{{ qty(b.qty) }}</span>
+        </button>
+      </div>
+      <div class="col">
+        <button v-for="a in asks" :key="'a' + a.price" type="button" class="lv num" @click="emit('pick', a.price)">
+          <span class="bar ask left" :style="{ width: w(a.qty) }"></span>
+          <span class="p tdown">{{ money(a.price) }}</span><span class="q">{{ qty(a.qty) }}</span>
+        </button>
+      </div>
+    </template>
+    <template v-else>
+      <button v-for="a in asksDesc" :key="'a' + a.price" type="button" class="lv num" @click="emit('pick', a.price)">
+        <span class="bar ask" :style="{ width: w(a.qty) }"></span>
+        <span class="p tdown">{{ money(a.price) }}</span><span class="q">{{ qty(a.qty) }}</span>
+      </button>
+      <div class="mid num">
+        <span :class="lastCls">{{ money(last) }}</span>
+        <span class="tmuted sp">{{ spread != null ? money(spread) : '' }}</span>
+      </div>
+      <button v-for="b in bids" :key="'b' + b.price" type="button" class="lv num" @click="emit('pick', b.price)">
+        <span class="bar bid" :style="{ width: w(b.qty) }"></span>
+        <span class="p tup">{{ money(b.price) }}</span><span class="q">{{ qty(b.qty) }}</span>
+      </button>
+    </template>
+    <p v-if="!bids.length && !asks.length" class="none tmuted">暂无委托</p>
   </div>
 </template>
 
 <style scoped>
-.book { font-size: 13px; }
-.lvl { position: relative; display: grid; grid-template-columns: 3em 1fr auto; gap: 8px; padding: 3px 4px; align-items: center; }
-.lvl.clickable { cursor: pointer; }
-.lvl.clickable:hover { background: var(--surface-2); }
-.lab { color: var(--muted); font-size: 12px; }
-.px { text-align: right; }
-.qty { text-align: right; min-width: 4em; color: var(--ink-2); }
-.bar { position: absolute; right: 0; top: 2px; bottom: 2px; opacity: 0.12; pointer-events: none; }
-.bar.ask { background: var(--down); }
-.bar.bid { background: var(--up); }
-.mid { border-top: 1px dashed var(--rule-strong); margin: 4px 0; }
-.note { margin-top: 6px; }
+.book.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.col { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 2px; }
+.lv {
+  position: relative; display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 4px;
+  border: 0; background: transparent; color: var(--t-ink); text-align: left; width: 100%;
+}
+.bar { position: absolute; right: 0; top: 0; bottom: 0; opacity: 0.16; pointer-events: none; }
+.bar.left { right: auto; left: 0; }
+.bar.bid { background: var(--t-up); }
+.bar.ask { background: var(--t-down); }
+.p, .q { position: relative; }
+.tup { color: var(--t-up); }
+.tdown { color: var(--t-down); }
+.mid { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 4px; font-size: 15px; border-top: 1px solid var(--t-line); border-bottom: 1px solid var(--t-line); margin: 4px 0; }
+.sp { font-size: 12px; }
+.none { grid-column: 1 / -1; font-size: 12px; padding: 4px; }
 </style>

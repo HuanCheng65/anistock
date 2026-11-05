@@ -18,6 +18,7 @@ pub mod json;
 pub mod market;
 pub mod orders;
 pub mod spa;
+pub mod v2;
 pub mod validate;
 
 use std::path::PathBuf;
@@ -336,6 +337,10 @@ pub async fn dispatch(st: Arc<AppState>, req: Request<AxBody>) -> Response<AxBod
 }
 
 async fn route(st: &Arc<AppState>, r: &Req, raw_query: Option<&str>) -> Response<AxBody> {
+    // read-only endpoints for the redesigned frontend (outside v1's API)
+    if let Some(resp) = v2::route(st, r).await {
+        return resp;
+    }
     // Starlette: the first full match wins; else the first route matching the path only gives 405
     let mut partial: Option<&str> = None;
     for (m, pat, ep) in ROUTES {

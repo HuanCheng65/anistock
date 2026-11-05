@@ -1,0 +1,133 @@
+/* Base styles and shared primitives. Hairline rules, no cards or shadows. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  text-size-adjust: 100%;
+}
+a { color: inherit; text-decoration: none; }
+@media (hover: hover) { a:hover { color: var(--brand); } }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+input, select { font: inherit; color: inherit; }
+h1, h2, h3 { margin: 0; line-height: 1.3; }
+p { margin: 0; }
+dl, dd { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.serif { font-family: var(--font-serif); }
+.clamp1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--ink); }
+.muted { color: var(--muted); }
+.ink2 { color: var(--ink-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* page frame */
+.page { padding-bottom: calc(var(--nav-h) + 24px + env(safe-area-inset-bottom, 0px)); min-width: 0; }
+.gutter { padding-left: var(--gutter); padding-right: var(--gutter); }
+.section { border-top: 1px solid var(--rule); }
+.desk-only { display: none !important; }
+@media (min-width: 1024px) {
+  .page { padding-bottom: 48px; }
+  .phone-only { display: none !important; }
+  .desk-only { display: revert !important; }
+}
+
+/* page header (phone) */
+.pagehead {
+  display: flex; align-items: center; gap: 10px;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) var(--gutter) 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.pagehead h1 { font-family: var(--font-serif); font-size: 22px; font-weight: 900; }
+.pagehead.back { padding: calc(8px + env(safe-area-inset-top, 0px)) 8px 8px; gap: 4px; }
+.pagehead.back h1 { font-size: 20px; }
+.iconbtn {
+  width: 40px; height: 40px; display: grid; place-items: center; flex: none;
+  border: 0; background: transparent; color: var(--ink); padding: 0;
+}
+
+/* section titles */
+.h2 { font-family: var(--font-serif); font-size: 18px; font-weight: 900; }
+
+/* buttons (paper) */
+.btn {
+  height: 44px; padding: 0 18px; border: 0; background: var(--ink); color: var(--ground);
+  font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--base-line); font-weight: 500; }
+.btn.small { height: 32px; padding: 0 12px; font-size: 13px; }
+.btn.block { width: 100%; }
+.btn:disabled { opacity: 0.45; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--brand); font-size: 13px; }
+.linkbtn:disabled { color: var(--muted); }
+
+/* fields (paper) */
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.input {
+  height: 46px; border: 1px solid var(--base-line); background: var(--field-bg); color: var(--ink);
+  font-size: 16px; padding: 0 12px; width: 100%; min-width: 0; border-radius: 0;
+}
+.input:focus { outline: 2px solid var(--ink); outline-offset: -1px; }
+
+/* inline messages */
+.msg { font-size: 13px; line-height: 1.5; }
+.msg.error { color: var(--up); }
+.msg.ok { color: var(--ink-2); }
+
+/* terminal surfaces */
+.term { background: var(--t-bg); color: var(--t-ink); box-shadow: 0 0 0 1px var(--t-edge); }
+.term .tmuted { color: var(--t-ink-2); }
+.term .tup { color: var(--t-up); }
+.term .tdown { color: var(--t-down); }
+.tinput {
+  height: 36px; background: var(--t-field); border: 1px solid var(--t-field-border); color: var(--t-ink);
+  font-size: 14px; padding: 0 10px; width: 100%; min-width: 0; border-radius: 0;
+}
+.tinput:focus { outline: 1px solid var(--t-ink-2); outline-offset: 0; }
+.tbtn { border: 0; height: 42px; font-size: 15px; font-weight: 700; }
+.tbtn.buy { background: var(--t-up); color: var(--t-on-up); }
+.tbtn.sell { background: var(--t-down); color: var(--t-on-down); }
+.tbtn.plain { background: transparent; color: var(--t-ink-3); border: 1px solid var(--t-field-border); font-weight: 500; }
+.tbtn:disabled { opacity: 0.4; }
+
+/* skeleton */
+.skel { background: var(--hair-2); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.5; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+/* definition grids used across pages: label over value */
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.facts > div { padding: 10px 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.facts dt { font-size: 12px; color: var(--muted); }
+.facts dd { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 15px; }
+
+/* simple tables */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { font-weight: 400; font-size: 12px; color: var(--muted); text-align: right; padding: 6px 0 6px 8px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+.table td { text-align: right; padding: 10px 0 10px 8px; border-bottom: 1px solid var(--hair-2); white-space: nowrap; }
+.table th:first-child, .table td:first-child { text-align: left; padding-left: 0; }
+
+/* long-form pages (规则, 新手指南) */
+.doc { max-width: 760px; margin: 0 auto; }
+.doc .lede { padding: 16px var(--gutter) 14px; font-size: 14px; color: var(--ink-2); line-height: 1.7; }
+.doc .lede.serif { font-size: 22px; font-weight: 900; color: var(--ink); line-height: 1.4; }
+.doc .sec { border-top: 1px solid var(--rule); padding: 14px var(--gutter) 16px; }
+.doc .sec h2 { font-family: var(--font-serif); font-size: 18px; font-weight: 900; margin-bottom: 8px; }
+.doc .sec ul, .doc .sec ol { padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.7; color: var(--ink-2); }
+.doc .sec ul { list-style: disc; }
+.doc .sec ol { list-style: decimal; }
+.doc .foot { padding: 14px var(--gutter); font-size: 12px; color: var(--muted); line-height: 1.6; border-top: 1px solid var(--hair); }
+@media (min-width: 1024px) { .doc .pagehead.back { display: flex; } }

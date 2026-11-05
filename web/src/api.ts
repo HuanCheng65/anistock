@@ -18,7 +18,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {
-    throw new ApiError(0, '连不上服务器，请检查网络后重试')
+    throw new ApiError(0, '无法连接服务器，检查网络后重试')
   }
   let data: any = null
   const text = await res.text()
@@ -30,24 +30,53 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
   }
   if (!res.ok) {
-    let msg = '请求失败'
+    let msg = '无法完成操作，稍后重试'
     const d = data?.detail
-    if (typeof d === 'string') msg = d
+    if (typeof d === 'string') msg = rewrite(d)
     else if (Array.isArray(d) && d.length) msg = translateValidation(d[0])
-    else if (res.status >= 500) msg = '服务器出错了，请稍后再试'
+    else if (res.status >= 500) msg = '服务器暂时无法响应，稍后重试'
     throw new ApiError(res.status, msg)
   }
   return data as T
 }
 
+/** The server's messages are fixed by the v1 API; show them in the site's wording (docs/copywriting.md). */
+const MESSAGES: Record<string, string> = {
+  '邀请码不对，请向社团管理员索取': '邀请码不正确，可以向社团管理员索取',
+  '用户名或密码不对': '用户名或密码不正确',
+  '这个用户名已经有人用了': '用户名已有人使用',
+  '请先登录': '登录后可用',
+  '价格格式不对': '价格格式不正确',
+  '价格最多两位小数，且必须大于 0': '价格需大于 0，最多两位小数',
+  '找不到这笔委托': '委托不存在',
+  '这笔委托已经结束，不能撤单': '委托已结束，无法撤单',
+  '集合竞价阶段只接受限价单': '集合竞价时段只接受限价委托',
+  '可卖股数不足': '可卖数量不足',
+  '认购已经截止，不能撤回': '认购已截止，无法撤回',
+  '这支新股不在认购期': '不在认购期',
+  '没有这支股票': '股票不存在',
+  '没有这个接口': '无法完成操作，稍后重试',
+  '买卖方向不对': '买卖方向不正确',
+  '委托类型不对': '委托类型不正确',
+  '限价单需要价格': '限价委托需要填写价格',
+}
+function rewrite(m: string): string {
+  if (MESSAGES[m]) return MESSAGES[m]
+  if (m.startsWith('现在休市')) return m.replace('现在休市', '休市中')
+  if (m.startsWith('价格太离谱了')) return m.replace('价格太离谱了', '价格超出范围')
+  return m
+}
+
 function translateValidation(e: any): string {
   const field = Array.isArray(e?.loc) ? e.loc[e.loc.length - 1] : ''
   const names: Record<string, string> = { username: '用户名', password: '密码', qty: '数量', price: '价格', invite: '邀请码' }
-  const name = names[field] ?? '输入'
+  const name = names[field] ?? '输入内容'
+  if (field === 'username' && (e?.type === 'string_too_short' || e?.type === 'string_too_long')) return '用户名需为 2–20 个字符'
+  if (field === 'password' && e?.type === 'string_too_short') return '密码至少 6 位'
   if (e?.type === 'string_too_short') return `${name}太短`
   if (e?.type === 'string_too_long') return `${name}太长`
-  if (e?.type?.startsWith('greater_than')) return `${name}必须大于 0`
-  return `${name}格式不对`
+  if (e?.type?.startsWith('greater_than')) return `${name}需大于 0`
+  return `${name}格式不正确`
 }
 
 export const api = {
@@ -293,4 +322,60 @@ export interface Ipo {
   status: 'open' | 'allotted'
   my: { qty: number; allotted: number | null } | null
   result: { oversubscribed: number; public_qty: number; ratio: number } | null
+}
+
+// ---------------------------------------------------------------- v2 (read-only, outside v1)
+
+export interface IndexSeries {
+  key: 'all' | 'season' | 'long'
+  name: string
+  members: number
+  base_day: string
+  value: number
+  prev: number
+  change: number
+  series: [string, number][]
+}
+
+export interface Indices {
+  indices: IndexSeries[]
+  breadth: { up: number; flat: number; down: number }
+  season_start: string
+}
+
+export interface Airing {
+  company_id: number
+  episode: number
+  airing_at: string
+  aired: boolean
+}
+
+export interface Profile {
+  episodes: { n: number; day: string }[]
+  next_episode: { episode: number; airing_at: string } | null
+  dividends: { day: string; ps: number }[]
+  ratios: { pe: number | null; dividend_yield: number | null; pb: number | null }
+  holders: { committee: number; npc: number; player: number; unissued: number }
+  shares: number
+}
+
+export interface Listing {
+  id: number
+  title: string
+  listed_on: string
+  ipo_price: number
+  first_close: number | null
+  first_change: number | null
+  ratio: number | null
+}
+
+export interface Listings {
+  recent: Listing[]
+  upcoming: { id: number; title: string; sub_start: string; first_air: string }[]
+}
+
+export interface IntradayPoint {
+  minute: string
+  price: number
+  volume: number
 }

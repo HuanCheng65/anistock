@@ -1,60 +1,147 @@
-// Number formatting in Chinese conventions.
+// Number, percent and time formatting (docs/copywriting.md §6).
+// Negatives use U+2212; up = "+", flat has no sign. Large counts use 万 / 亿; exact amounts use commas.
 
+export const MINUS = '−'
+const DASH = '–'
+
+function fixed(v: number, digits: number): string {
+  return Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+}
+
+/** Exact amount: 84,213.50 (negatives with −). */
 export function money(v: number | null | undefined, digits = 2): string {
-  if (v == null || Number.isNaN(v)) return '–'
-  return v.toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  if (v == null || Number.isNaN(v)) return DASH
+  const s = fixed(v, digits)
+  return v < 0 && s !== fixed(0, digits) ? MINUS + s : s
 }
 
-/** Large amounts as 万 / 亿 */
-export function big(v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return '–'
-  const a = Math.abs(v)
-  if (a >= 1e8) return (v / 1e8).toFixed(2) + '亿'
-  if (a >= 1e4) return (v / 1e4).toFixed(a >= 1e6 ? 0 : 1) + '万'
-  return v.toFixed(0)
-}
-
-export function pct(v: number | null | undefined, digits = 2, sign = true): string {
-  if (v == null || Number.isNaN(v)) return '–'
-  const s = (v * 100).toFixed(digits) + '%'
-  return sign && v > 0 ? '+' + s : s
-}
-
+/** Signed amount: +2,318.40 / −1.20 / 0.00 */
 export function signed(v: number | null | undefined, digits = 2): string {
-  if (v == null || Number.isNaN(v)) return '–'
-  return (v > 0 ? '+' : '') + money(v, digits)
+  if (v == null || Number.isNaN(v)) return DASH
+  const s = fixed(v, digits)
+  if (s === fixed(0, digits)) return s
+  return (v > 0 ? '+' : MINUS) + s
 }
 
-export function dir(v: number | null | undefined): 'up' | 'down' | 'flat' {
-  if (v == null || Math.abs(v) < 1e-12) return 'flat'
+/** Ratio as signed percent: 0.0961 -> +9.61% */
+export function pct(v: number | null | undefined, digits = 2): string {
+  if (v == null || Number.isNaN(v)) return DASH
+  const s = Math.abs(v * 100).toFixed(digits)
+  if (Number(s) === 0) return s + '%'
+  return (v > 0 ? '+' : MINUS) + s + '%'
+}
+
+/** Ratio as unsigned percent: 0.46 -> 46% */
+export function share(v: number | null | undefined, digits = 0): string {
+  if (v == null || Number.isNaN(v)) return DASH
+  return (v * 100).toFixed(digits) + '%'
+}
+
+/** Integer count with commas: 1,824 */
+export function qty(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return DASH
+  return (v < 0 ? MINUS : '') + Math.abs(Math.round(v)).toLocaleString('en-US')
+}
+
+/** Compact: under 1万 as is, then 1.2万, 1.2亿 */
+export function big(v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return DASH
+  const a = Math.abs(v)
+  const sign = v < 0 ? MINUS : ''
+  if (a >= 1e8) return sign + trim1(a / 1e8) + '亿'
+  if (a >= 1e4) return sign + trim1(a / 1e4) + '万'
+  return sign + Math.round(a).toLocaleString('en-US')
+}
+function trim1(x: number): string {
+  return x >= 1000 ? Math.round(x).toLocaleString('en-US') : x.toFixed(1)
+}
+
+export type Dir = 'up' | 'down' | 'flat'
+export function dir(v: number | null | undefined): Dir {
+  if (v == null || Math.abs(v) < 5e-5) return 'flat'
   return v > 0 ? 'up' : 'down'
 }
 
-export function episodes(aired: number, total: number | null, longRunner: boolean): string {
-  if (longRunner || total == null) return aired ? `第 ${aired} 集` : '未开播'
-  if (!aired) return `未开播 · 共 ${total} 集`
-  if (aired >= total) return `已完结 · ${total} 集`
-  return `${aired} / ${total} 集`
+// ---------------------------------------------------------------- time
+
+/** Parse "2026-11-05T21:14:08+08:00". */
+function parse(ts: string): Date {
+  return new Date(ts)
+}
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** Game-local wall clock pieces straight from the ISO string (the server sends local offsets). */
+function parts(ts: string) {
+  return { y: ts.slice(0, 4), mo: ts.slice(5, 7), d: ts.slice(8, 10), hm: ts.slice(11, 16), hms: ts.slice(11, 19) }
 }
 
-export function time(ts: string): string {
-  // "2026-11-05T10:00:00+08:00" -> "11-05 10:00"
-  return ts.slice(5, 16).replace('T', ' ')
+/** Trade time: HH:mm:ss */
+export function hms(ts: string | null | undefined): string {
+  return ts ? parts(ts).hms : DASH
 }
 
-export function shortDate(d: string): string {
-  return d.slice(5)
+/** HH:mm */
+export function hm(ts: string | null | undefined): string {
+  return ts ? parts(ts).hm : DASH
 }
 
-export function airingIn(epochSeconds: number): string {
-  const ms = epochSeconds * 1000 - Date.now()
-  const d = new Date(epochSeconds * 1000)
-  const when = `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  if (ms <= 0) return when
-  const h = Math.floor(ms / 3600000)
-  if (h < 24) return `${when}（${h} 小时后）`
-  return `${when}（${Math.floor(h / 24)} 天后）`
+/** §6: 刚刚 / N 秒前 / N 分钟前 (same hour) / 今天 HH:mm / MM-dd HH:mm / yyyy-MM-dd HH:mm */
+export function when(ts: string | null | undefined, today?: string): string {
+  if (!ts) return DASH
+  const t = parse(ts).getTime()
+  const diff = (Date.now() - t) / 1000
+  if (diff >= 0 && diff < 10) return '刚刚'
+  if (diff >= 0 && diff < 60) return `${Math.floor(diff)} 秒前`
+  if (diff >= 0 && diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  const p = parts(ts)
+  const day = ts.slice(0, 10)
+  const now = today ?? localDay()
+  if (day === now) return `今天 ${p.hm}`
+  if (p.y === now.slice(0, 4)) return `${p.mo}-${p.d} ${p.hm}`
+  return `${day} ${p.hm}`
 }
+
+/** Day label for grouping: 今天 / 昨天 / MM-dd / yyyy-MM-dd */
+export function dayLabel(day: string, today?: string): string {
+  const now = today ?? localDay()
+  if (day === now) return '今天'
+  if (day === addDays(now, -1)) return '昨天'
+  if (day.slice(0, 4) === now.slice(0, 4)) return day.slice(5)
+  return day
+}
+
+/** Short day for lists: 今天 / MM-dd */
+export function shortDay(day: string, today?: string): string {
+  const now = today ?? localDay()
+  if (day === now) return '今天'
+  if (day.slice(0, 4) === now.slice(0, 4)) return day.slice(5)
+  return day
+}
+
+export function localDay(d = new Date()): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+export function addDays(day: string, n: number): string {
+  const d = new Date(day + 'T12:00:00')
+  d.setDate(d.getDate() + n)
+  return localDay(d)
+}
+
+const WEEK = ['日', '一', '二', '三', '四', '五', '六']
+/** 11 月 5 日 星期四 */
+export function longDate(day: string): string {
+  const d = new Date(day + 'T12:00:00')
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 星期${WEEK[d.getDay()]}`
+}
+
+/** 周四 22:00 from an ISO timestamp */
+export function weekdayTime(ts: string): string {
+  const d = new Date(ts.slice(0, 10) + 'T12:00:00')
+  return `周${WEEK[d.getDay()]} ${parts(ts).hm}`
+}
+
+// ---------------------------------------------------------------- labels
 
 export const LEDGER_REASON: Record<string, string> = {
   dividend: '分红',
@@ -65,24 +152,32 @@ export const LEDGER_REASON: Record<string, string> = {
   transfer: '财政补贴',
   grant: '初始资金',
   delisting: '退市返还',
-  ipo: '新股缴款',
+  ipo: '新股认购缴款',
   ipo_refund: '认购退款',
+  trade: '成交',
 }
 
-export const NEWS_KIND: Record<string, string> = {
-  ipo: '新股认购',
-  premiere: '开播',
-  finale: '完结',
-  dividend: '分红',
-  rate: '央行',
-  delisting: '退市',
-  vcm: '冷静期',
-  allotment: '配售结果',
-  system: '公告',
+/** News kinds grouped into the four badges of the 资讯 page. */
+export const NEWS_GROUP: Record<string, { label: string; tone: 'flash' | 'notice' | 'air' | 'close' }> = {
+  vcm: { label: '快讯', tone: 'flash' },
+  premiere: { label: '放送', tone: 'air' },
+  finale: { label: '放送', tone: 'air' },
+  ipo: { label: '公告', tone: 'notice' },
+  allotment: { label: '公告', tone: 'notice' },
+  delisting: { label: '公告', tone: 'notice' },
+  system: { label: '公告', tone: 'notice' },
+  dividend: { label: '日结', tone: 'close' },
+  rate: { label: '日结', tone: 'close' },
 }
-
-export function hhmm(ts: string | null | undefined): string {
-  return ts ? ts.slice(11, 16) : '–'
+export function newsGroup(kind: string) {
+  return NEWS_GROUP[kind] ?? { label: '公告', tone: 'notice' as const }
 }
 
 export const PHASE_LABEL: Record<string, string> = { auction: '集合竞价', continuous: '交易中', closed: '休市' }
+
+/** Episode progress text: 5 / 12, 第 1180 集, 未开播 */
+export function episodeText(aired: number, total: number | null, longRunner: boolean): string {
+  if (!aired) return '未开播'
+  if (longRunner || total == null) return `第 ${aired} 集`
+  return `${Math.min(aired, total)} / ${total}`
+}

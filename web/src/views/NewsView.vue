@@ -1,62 +1,106 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { api, ApiError, type NewsItem } from '../api'
+import { ApiError, type NewsItem } from '../api'
+import Cover from '../components/Cover.vue'
+import EmptyState from '../components/EmptyState.vue'
 import { usePoll } from '../composables/usePoll'
-import { NEWS_KIND } from '../format'
+import { dayLabel, dir, hm, newsGroup, pct } from '../format'
+import { useAccount } from '../stores/account'
+import { useMarket } from '../stores/market'
+import { useSession } from '../stores/session'
 
-const items = ref<NewsItem[] | null>(null)
+const market = useMarket()
+const account = useAccount()
+const session = useSession()
+const chip = ref('all')
 const error = ref('')
-const kind = ref('all')
-usePoll(async () => {
+const { refresh } = usePoll(async () => {
   try {
-    items.value = (await api.get<{ news: NewsItem[] }>('/api/news?limit=150')).news
+    await market.refreshNews(150)
     error.value = ''
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '加载失败'
+    error.value = e instanceof ApiError ? e.message : '无法加载'
   }
 }, 30000)
-const shown = computed(() => (items.value ?? []).filter((n) => kind.value === 'all' || n.kind === kind.value))
-const kinds = ['all', 'ipo', 'allotment', 'premiere', 'finale', 'dividend', 'vcm', 'rate', 'delisting', 'system']
+usePoll(() => Promise.all([market.stocks ? null : market.refreshQuotes(), session.me ? account.refreshPositions() : null]), 60000)
+
+const held = computed(() => new Set((account.positions ?? []).map((p) => p.company_id)))
+const chips = computed(() => {
+  const groups = new Set((market.news ?? []).map((n) => newsGroup(n.kind).label))
+  const out = [{ key: 'all', label: '全部' }]
+  if (session.me && held.value.size) out.push({ key: 'mine', label: '持仓相关' })
+  for (const g of ['快讯', '公告', '放送', '日结']) if (groups.has(g)) out.push({ key: g, label: g })
+  return out
+})
+const items = computed(() =>
+  (market.news ?? []).filter((n) => {
+    if (chip.value === 'all') return true
+    if (chip.value === 'mine') return n.company_id != null && held.value.has(n.company_id)
+    return newsGroup(n.kind).label === chip.value
+  }),
+)
+const days = computed(() => {
+  const out: { day: string; items: NewsItem[] }[] = []
+  for (const n of items.value) {
+    const last = out[out.length - 1]
+    if (last && last.day === n.day) last.items.push(n)
+    else out.push({ day: n.day, items: [n] })
+  }
+  return out
+})
 </script>
 
 <template>
-  <main class="page">
-    <div class="chips" role="group" aria-label="新闻类型">
-      <button v-for="k in kinds" :key="k" type="button" class="chip" :aria-pressed="kind === k" @click="kind = k">{{ k === 'all' ? '全部' : NEWS_KIND[k] }}</button>
+  <main class="page newspage">
+    <header class="pagehead phone-only"><h1>资讯</h1></header>
+    <div class="wrap">
+      <div class="chips gutter" role="group" aria-label="类型">
+        <button v-for="c in chips" :key="c.key" type="button" :aria-pressed="chip === c.key" @click="chip = c.key">{{ c.label }}</button>
+      </div>
+      <EmptyState v-if="error && !market.news" :text="error" action="重试" tone="error" @act="refresh" />
+      <section v-for="d in days" :key="d.day">
+        <h2 class="dayh gutter">{{ dayLabel(d.day, session.status?.day) }}</h2>
+        <component :is="n.company_id ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.company_id ? `/stock/${n.company_id}` : undefined" class="item gutter">
+          <span class="num tm">{{ n.ts ? hm(n.ts) : '' }}</span>
+          <span class="body">
+            <span class="tags">
+              <span class="kind" :class="newsGroup(n.kind).tone">{{ newsGroup(n.kind).label }}</span>
+              <span v-if="n.company_id && held.has(n.company_id)" class="mine">持仓</span>
+            </span>
+            <span class="title">{{ n.title }}</span>
+            <span v-if="n.body" class="text">{{ n.body }}</span>
+            <span v-if="n.company_id && market.byId.get(n.company_id)" class="stock">
+              <Cover :id="n.company_id" :title="market.byId.get(n.company_id)!.title" :w="14" :h="18" :spine="false" />
+              <span class="clamp1">{{ market.byId.get(n.company_id)!.title }}</span>
+              <span class="num" :class="dir(market.byId.get(n.company_id)!.change)">{{ pct(market.byId.get(n.company_id)!.change) }}</span>
+            </span>
+          </span>
+        </component>
+      </section>
+      <EmptyState v-if="market.news && !items.length" text="暂无资讯" />
+      <div v-if="!market.news && !error" class="gutter"><div v-for="i in 4" :key="i" class="skel" style="height: 60px; margin: 14px 0"></div></div>
     </div>
-    <p v-if="error" class="notice error">{{ error }}</p>
-    <section class="panel">
-      <ul v-if="shown.length" class="feed">
-        <li v-for="n in shown" :key="n.id">
-          <div class="when small">
-            <span class="kind" :class="n.kind">{{ NEWS_KIND[n.kind] ?? n.kind }}</span>
-            <span class="muted num">{{ n.day }}</span>
-            <RouterLink v-if="n.company_id" :to="`/stock/${n.company_id}`" class="num">{{ n.code }}</RouterLink>
-          </div>
-          <b>{{ n.title }}</b>
-          <p v-if="n.body" class="small muted">{{ n.body }}</p>
-        </li>
-      </ul>
-      <p v-else-if="items" class="empty">暂时没有这类新闻</p>
-      <div v-else class="panel-body"><div class="skeleton" style="height: 140px"></div></div>
-    </section>
   </main>
 </template>
 
 <style scoped>
-.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.chip { flex: none; height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--rule-strong); background: var(--surface); font-size: 13px; cursor: pointer; color: var(--ink-2); }
-.chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
-.feed { list-style: none; margin: 0; padding: 0; }
-.feed li { display: flex; flex-direction: column; gap: 3px; padding: 12px; border-bottom: 1px solid var(--rule); }
-.feed li:last-child { border-bottom: none; }
-.when { display: flex; gap: 8px; align-items: center; }
-.kind { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: var(--surface-2); color: var(--ink-2); font-weight: 600; }
-.kind.ipo, .kind.allotment { background: var(--seal); color: #fff; }
-.kind.vcm { background: var(--warn-bg); color: var(--warn); }
-.kind.rate { background: var(--ink); color: var(--surface); }
-.kind.dividend { color: var(--up); background: var(--up-bg); }
-.kind.premiere { color: var(--accent); }
-.kind.delisting { color: var(--down); background: var(--down-bg); }
+.chips { display: flex; gap: 8px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair); overflow-x: auto; scrollbar-width: none; }
+.chips button { flex: none; height: 30px; padding: 0 12px; font-size: 13px; border: 1px solid var(--base-line); background: transparent; color: var(--ink); }
+.chips button[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.dayh { padding-top: 14px; padding-bottom: 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); border-bottom: 1px solid var(--hair); }
+.item { display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 10px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
+.tm { font-size: 12px; color: var(--muted); padding-top: 3px; }
+.body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tags { display: flex; align-items: center; gap: 8px; }
+.kind { font-size: 11px; padding: 1px 6px; border: 1px solid currentColor; }
+.kind.flash { color: var(--brand); }
+.kind.notice { color: var(--ink); }
+.kind.air { color: var(--mk-us); }
+.kind.close { color: var(--ink-2); }
+.mine { font-size: 11px; color: var(--brand); }
+.title { font-size: 15px; line-height: 1.5; }
+.text { font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+.stock { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+@media (min-width: 1024px) { .wrap { max-width: 760px; margin: 0 auto; } }
 </style>

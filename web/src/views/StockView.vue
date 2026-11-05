@@ -1,331 +1,390 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
-import { api, ApiError, type Candle, type StockDetail } from '../api'
-import CandleChart from '../components/CandleChart.vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import BottomNav from '../components/BottomNav.vue'
+import Cover from '../components/Cover.vue'
+import EmptyState from '../components/EmptyState.vue'
+import Icon from '../components/Icon.vue'
+import IpoOffer from '../components/IpoOffer.vue'
+import KChart, { type Period } from '../components/KChart.vue'
 import OrderBook from '../components/OrderBook.vue'
-import OrderPanel from '../components/OrderPanel.vue'
+import OrderForm from '../components/OrderForm.vue'
 import RevenueBars from '../components/RevenueBars.vue'
-import IpoCard from '../components/IpoCard.vue'
-import { useSession } from '../stores/session'
+import Tabs from '../components/Tabs.vue'
+import TradeTape from '../components/TradeTape.vue'
+import WatchAside from '../components/WatchAside.vue'
+import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
-import { airingIn, big, dir, episodes, hhmm, money, NEWS_KIND, pct, shortDate, signed, time } from '../format'
+import { big, dir, hm, money, pct, qty, share, shortDay, signed, weekdayTime } from '../format'
+import { useMarket } from '../stores/market'
+import { usePrefs } from '../stores/prefs'
+import { useSession } from '../stores/session'
+import { useStock } from '../stores/stock'
 
 const route = useRoute()
+const router = useRouter()
+const store = useStock()
+const market = useMarket()
+const prefs = usePrefs()
 const session = useSession()
+const desk = useMedia(DESK)
 const id = computed(() => Number(route.params.id))
-const s = ref<StockDetail | null>(null)
-const candles = ref<Candle[]>([])
-const error = ref('')
+
+const period = ref<Period>('day')
 const pick = ref<{ price: number; n: number } | null>(null)
-const cancelling = ref<number | null>(null)
-const actionMsg = ref('')
-let candleAt = 0
+const sheet = ref<'buy' | 'sell' | null>(null)
 
-async function load() {
-  try {
-    s.value = await api.get<StockDetail>(`/api/stocks/${id.value}`)
-    error.value = ''
-    if (Date.now() - candleAt > 30000 || !candles.value.length) {
-      candles.value = (await api.get<{ candles: Candle[] }>(`/api/stocks/${id.value}/candles`)).candles
-      candleAt = Date.now()
-    }
-  } catch (e) {
-    error.value = e instanceof ApiError ? (e.status === 404 ? '没有这支股票' : e.message) : '加载失败'
-  }
-}
-const { refresh } = usePoll(load, 5000)
+const { refresh } = usePoll(async () => {
+  await store.refresh(id.value)
+  if (period.value === 'intraday') await store.refreshIntraday(id.value)
+}, 5000)
+usePoll(() => (market.stocks ? null : market.refreshQuotes()), 60000)
+watch(period, (p) => p === 'intraday' && store.refreshIntraday(id.value).catch(() => {}))
 
-async function afterOrder() {
-  candleAt = 0
-  await refresh()
-}
-
-async function cancel(orderId: number) {
-  cancelling.value = orderId
-  actionMsg.value = ''
-  try {
-    await api.del(`/api/orders/${orderId}`)
-    await refresh()
-  } catch (e) {
-    actionMsg.value = e instanceof ApiError ? e.message : '撤单失败'
-  } finally {
-    cancelling.value = null
-  }
-}
-
-function onPick(price: number) {
-  pick.value = { price, n: (pick.value?.n ?? 0) + 1 }
-}
-
-const q = computed(() => s.value?.quote)
+const s = computed(() => store.detail[id.value] ?? null)
+const p = computed(() => store.profile[id.value] ?? null)
+const q = computed(() => s.value?.quote ?? null)
+const err = computed(() => store.error[id.value] ?? '')
 const change = computed(() => (q.value && q.value.prev_close ? (q.value.price - q.value.prev_close) / q.value.prev_close : 0))
-const aired = computed(() => s.value?.weeks.length ? Math.max(...s.value.weeks.map((w) => w.aired)) : 0)
-const dividends = computed(() => (s.value?.weeks ?? []).filter((w) => w.dividend_ps > 0).slice().reverse())
-const lastDividend = computed(() => dividends.value[0] ?? null)
-const holders = computed(() => {
-  const h = s.value?.holders ?? {}
-  const total = s.value?.shares || 1
-  const players = (h.player ?? 0) + (h.noise ?? 0)
-  return {
-    committee: (h.committee ?? 0) / total,
-    mm: (h.mm ?? 0) / total,
-    players: players / total,
-    unsold: (h.company ?? 0) / total,
-  }
+const aired = computed(() => {
+  const w = s.value?.weeks ?? []
+  return w.length ? Math.max(...w.map((x) => x.aired)) : 0
 })
-const bgm = computed(() => s.value?.audiences.bangumi)
-const ani = computed(() => s.value?.audiences.anilist)
-const annict = computed(() => s.value?.audiences.annict)
+const segs = computed(() => {
+  const n = s.value?.episodes
+  if (!n || s.value?.long_runner || n > 52) return null
+  return Array.from({ length: n }, (_, i) => i < aired.value)
+})
+const progress = computed(() => {
+  const st = s.value
+  if (!st) return ''
+  if (!aired.value) return '未开播'
+  if (st.long_runner || !st.episodes) return `第 ${aired.value} 集`
+  return `${Math.min(aired.value, st.episodes)} / ${st.episodes}`
+})
+const slot = computed(() => (p.value?.next_episode ? weekdayTime(p.value.next_episode.airing_at) : ''))
+const cap = computed(() => (s.value && q.value ? q.value.price * s.value.shares : 0))
+const stats = computed(() => {
+  const x = q.value
+  if (!x) return []
+  const c = (v: number | null) => (v == null ? '' : dir(v - x.prev_close))
+  const base = [
+    { k: '今开', v: money(x.open), c: c(x.open) },
+    { k: '最高', v: money(x.high), c: c(x.high) },
+    { k: '最低', v: money(x.low), c: c(x.low) },
+  ]
+  const tail = [
+    { k: '成交量', v: qty(x.volume), c: '' },
+    { k: '成交额', v: big(x.turnover), c: '' },
+    { k: '市值', v: big(cap.value), c: '' },
+  ]
+  return desk.value
+    ? [...base, { k: '昨收', v: money(x.prev_close), c: '' }, ...tail, { k: '市盈率', v: p.value?.ratios.pe != null ? p.value.ratios.pe.toFixed(1) : '–', c: '' }]
+    : [...base, ...tail]
+})
+const periods = [
+  { key: 'intraday', label: '分时' },
+  { key: 'day', label: '日 K' },
+  { key: 'week', label: '周 K' },
+  { key: 'month', label: '月 K' },
+]
+const periodModel = computed({ get: () => period.value as string, set: (v: string) => (period.value = v as Period) })
+
+const holders = computed(() => {
+  const h = p.value?.holders
+  const total = p.value?.shares || s.value?.shares || 1
+  if (!h) return null
+  return [
+    { k: '制作委员会', v: h.committee / total, c: 'var(--hold-committee)' },
+    { k: 'NPC', v: h.npc / total, c: 'var(--hold-npc)' },
+    { k: '玩家', v: h.player / total, c: 'var(--hold-player)' },
+    { k: '待发行', v: h.unissued / total, c: 'var(--hold-unissued)' },
+  ].filter((x) => x.v > 0 || x.k !== '待发行')
+})
+const ratios = computed(() => {
+  const r = p.value?.ratios
+  return [
+    { k: '市盈率', v: r?.pe != null ? r.pe.toFixed(1) : '–' },
+    { k: '股息率', v: r?.dividend_yield != null ? share(r.dividend_yield, 1) : '–' },
+    { k: '市净率', v: r?.pb != null ? r.pb.toFixed(2) : '–' },
+  ]
+})
+const events = computed(() => {
+  const out: { d: string; t: string; key: string }[] = []
+  for (const n of s.value?.news ?? []) out.push({ d: n.day, t: n.title, key: 'n' + n.id })
+  for (const e of p.value?.episodes ?? []) out.push({ d: e.day, t: e.n === 1 && !s.value?.long_runner ? '首播' : `第 ${e.n} 集播出`, key: 'e' + e.n })
+  for (const d of p.value?.dividends ?? []) out.push({ d: d.day, t: `分红每股 ${money(d.ps)}`, key: 'd' + d.day })
+  return out.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0)).slice(0, 8)
+})
+const pos = computed(() => s.value?.position ?? null)
 const subscribing = computed(() => s.value?.status === 'subscribing')
 const vcm = computed(() => (s.value?.vcm?.active ? s.value.vcm : null))
 const auction = computed(() => (session.status?.phase === 'auction' ? s.value?.auction ?? null : null))
+const watching = computed(() => prefs.watching(id.value))
+
+function onPick(price: number) {
+  pick.value = { price, n: (pick.value?.n ?? 0) + 1 }
+  if (!desk.value && !sheet.value) sheet.value = 'buy'
+}
+async function afterOrder() {
+  await refresh()
+  session.loadMe().catch(() => {})
+}
+function back() {
+  if (window.history.state?.back) router.back()
+  else router.push('/')
+}
 </script>
 
 <template>
-  <main class="page stock">
-    <RouterLink to="/" class="small back">← 行情</RouterLink>
-    <p v-if="error" class="notice error">{{ error }}</p>
+  <main class="page stockpage" :class="{ sub: subscribing }">
+    <header class="pagehead back phone-only">
+      <button type="button" class="iconbtn" aria-label="返回" @click="back"><Icon name="back" /></button>
+      <span class="num code">{{ s?.code }}</span>
+      <button v-if="s" type="button" class="iconbtn star" :class="{ on: watching }" :aria-label="watching ? '移出自选' : '加入自选'" :aria-pressed="watching" @click="prefs.toggle(id)">
+        <Icon name="watch" :size="21" :fill="watching" />
+      </button>
+    </header>
 
-    <template v-if="s && q">
-      <!-- quote strip -->
-      <section class="panel quote">
-        <div class="qtitle">
-          <h1>{{ s.title }}</h1>
-          <p v-if="s.title_ja && s.title_ja !== s.title" class="ja small muted">{{ s.title_ja }}</p>
-          <div class="meta small">
-            <span class="num muted">{{ s.code }}</span>
-            <span v-if="subscribing" class="tag ipo">认购中</span>
-            <span v-if="vcm" class="tag new">冷静期</span>
-            <span v-if="s.long_runner" class="tag long">长篇</span>
-            <span v-if="s.status !== 'listed'" class="tag long">已退市</span>
-            <span class="muted" v-if="s.studio">{{ s.studio }}</span>
-            <span class="muted" v-if="s.title_en">{{ s.title_en }}</span>
+    <div class="frame">
+      <WatchAside class="desk-only left" :current="id" />
+
+      <div class="center">
+        <EmptyState v-if="err && !s" :text="err" action="返回行情" to="/" tone="error" />
+        <template v-else-if="s && q">
+          <section class="hero">
+            <Cover :id="s.id" :title="s.title" :w="desk ? 92 : 96" :h="desk ? 128 : 134" :size="desk ? 18 : 19" />
+            <div class="ht">
+              <div class="deskmeta desk-only">
+                <span class="num">{{ s.code }}</span><span v-if="s.studio">{{ s.studio }}</span><span v-if="slot">{{ slot }}</span><span class="num">{{ progress }}</span>
+                <button type="button" class="star2" :class="{ on: watching }" :aria-pressed="watching" @click="prefs.toggle(id)">{{ watching ? '已自选' : '加入自选' }}</button>
+              </div>
+              <h1 class="serif">{{ s.title }}</h1>
+              <div v-if="s.title_ja && s.title_ja !== s.title" class="ja clamp2">{{ s.title_ja }}</div>
+              <div class="studio phone-only" v-if="s.studio || slot">{{ [s.studio, slot].filter(Boolean).join(' · ') }}</div>
+              <div class="eps phone-only">
+                <div v-if="segs" class="segs" :style="{ gridTemplateColumns: `repeat(${segs.length}, minmax(0, 1fr))` }">
+                  <span v-for="(on, i) in segs" :key="i" :class="{ on }"></span>
+                </div>
+                <div class="num prog">{{ progress }}</div>
+              </div>
+            </div>
+            <div class="price desk-only">
+              <span class="num big" :class="dir(change)">{{ money(q.price) }}</span>
+              <span class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
+            </div>
+          </section>
+
+          <section class="quote">
+            <div class="pline phone-only">
+              <span class="num big" :class="dir(change)">{{ money(q.price) }}</span>
+              <span class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
+            </div>
+            <dl class="stats">
+              <div v-for="x in stats" :key="x.k"><dt>{{ x.k }}</dt><dd class="num" :class="x.c">{{ x.v }}</dd></div>
+            </dl>
+            <p v-if="vcm" class="banner">冷静期至 <span class="num">{{ hm(vcm.until) }}</span>，只在 <span class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</span> 之间成交</p>
+            <p v-if="auction" class="banner">集合竞价中<template v-if="auction.price != null">，参考开盘价 <span class="num">{{ money(auction.price) }}</span>，可成交 <span class="num">{{ qty(auction.volume) }}</span> 股</template></p>
+            <p v-if="s.status === 'delisted'" class="banner">已退市</p>
+          </section>
+
+          <section v-if="(store.candles[id] ?? []).length || !subscribing" class="chartsec">
+            <Tabs v-model="periodModel" :items="periods" label="周期" :size="14" class="ptabs">
+              <span class="legend desk-only">
+                <span><i class="dash"></i>播出</span>
+                <span><i class="dia"></i>分红</span>
+              </span>
+            </Tabs>
+            <KChart :candles="store.candles[id] ?? []" :period="period" :intraday="store.intraday[id]" :prev-close="q.prev_close"
+                    :episodes="p?.episodes" :dividends="p?.dividends" :wide="desk" />
+          </section>
+
+          <!-- phone: book and tape on the terminal surface -->
+          <section v-if="!subscribing" class="term booksec phone-only">
+            <OrderBook :bids="s.book.bids" :asks="s.book.asks" layout="split" @pick="onPick" />
+            <TradeTape :trades="s.trades" :limit="5" class="tape" />
+          </section>
+
+          <section v-if="subscribing && s.ipo" class="sec gutter ipo phone-only">
+            <h2 class="h2">新股认购</h2>
+            <IpoOffer :ipo="s.ipo" :episodes="s.episodes" compact @changed="refresh" />
+          </section>
+
+          <div class="cols">
+            <section class="sec gutter">
+              <h2 class="h2">营收</h2>
+              <RevenueBars v-if="s.weeks.length" :weeks="s.weeks" :h="desk ? 110 : 96" />
+              <p v-else class="muted small">暂无营收</p>
+              <dl class="facts ratios">
+                <div v-for="r in ratios" :key="r.k"><dt>{{ r.k }}</dt><dd>{{ r.v }}</dd></div>
+              </dl>
+            </section>
+            <section class="sec gutter events">
+              <h2 class="h2">动态</h2>
+              <div v-for="e in events" :key="e.key" class="ev">
+                <span class="num d">{{ shortDay(e.d, session.status?.day) }}</span>
+                <span>{{ e.t }}</span>
+              </div>
+              <p v-if="!events.length" class="muted small">暂无动态</p>
+            </section>
           </div>
-        </div>
-        <div class="qprice">
-          <span class="price num" :class="dir(change)">{{ money(q.price) }}</span>
-          <span class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}　{{ pct(change) }}</span>
-        </div>
-        <dl class="qstats small">
-          <div><dt>今开</dt><dd class="num">{{ money(q.open) }}</dd></div>
-          <div><dt>最高</dt><dd class="num" :class="q.high != null ? dir(q.high - q.prev_close) : ''">{{ money(q.high) }}</dd></div>
-          <div><dt>最低</dt><dd class="num" :class="q.low != null ? dir(q.low - q.prev_close) : ''">{{ money(q.low) }}</dd></div>
-          <div><dt>昨收</dt><dd class="num">{{ money(q.prev_close) }}</dd></div>
-          <div><dt>开盘参考</dt><dd class="num">{{ money(q.open_ref) }}</dd></div>
-          <div><dt>今日冷静期</dt><dd class="num">{{ s.vcm?.count ?? 0 }} 次</dd></div>
-          <div><dt>成交量</dt><dd class="num">{{ q.volume }} 股</dd></div>
-          <div><dt>成交额</dt><dd class="num">{{ big(q.turnover) }}</dd></div>
-        </dl>
-        <p v-if="vcm" class="banner vcm" role="status">
-          <b>冷静期 · 至 {{ hhmm(vcm.until) }}</b>
-          <span>可成交区间 <b class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</b>。价格短时间内波动过大，暂时只允许在这个区间里成交。</span>
-        </p>
-        <p v-if="auction" class="banner auction" role="status">
-          <b>集合竞价中</b>
-          <span v-if="auction.price != null">参考开盘价 <b class="num">{{ money(auction.price) }}</b> · 可成交 <b class="num">{{ auction.volume }}</b> 股 · {{ session.status?.open }} 统一撮合</span>
-          <span v-else>暂时没有可成交的买卖单；{{ session.status?.open }} 时若仍无成交，以昨收为开盘价</span>
-        </p>
-        <p v-if="subscribing" class="banner auction">
-          <b>新股认购中</b><span>还没上市交易。认购截止当天日结时分配，次日上市。</span>
-        </p>
-      </section>
 
-      <div class="cols">
-        <div class="col main">
-          <section class="panel">
-            <div class="panel-head"><h2>日 K</h2><span class="small muted">上市 {{ s.listed_on }} · 发行价 {{ money(s.ipo_price) }}</span></div>
-            <div class="panel-body"><CandleChart :candles="candles" /></div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head"><h2>基本面</h2><span class="small muted">营收来自真实观众热度</span></div>
-            <div class="panel-body fund">
-              <RevenueBars v-if="s.weeks.length" :weeks="s.weeks" />
-              <p v-else class="empty">还没有营收记录</p>
-              <dl class="facts small">
-                <div><dt>播出</dt><dd>{{ episodes(aired, s.episodes, s.long_runner) }}</dd></div>
-                <div><dt>首播</dt><dd class="num">{{ s.first_air }}</dd></div>
-                <div v-if="ani?.next_episode"><dt>下一集</dt><dd>第 {{ ani.next_episode.episode }} 集 · {{ airingIn(ani.next_episode.airingAt) }}</dd></div>
-                <div><dt>每股净资产</dt><dd class="num">{{ money(s.book_value_ps) }}</dd></div>
-                <div><dt>最近分红</dt><dd class="num">{{ lastDividend ? `${money(lastDividend.dividend_ps)}（${shortDate(lastDividend.week)} 那周）` : '暂无' }}</dd></div>
-                <div><dt>总股本</dt><dd class="num">{{ s.shares.toLocaleString('zh-CN') }} 股</dd></div>
+          <div class="cols">
+            <section v-if="holders" class="sec gutter">
+              <h2 class="h2">股东</h2>
+              <div class="hbar" role="img" :aria-label="holders.map((h) => `${h.k} ${share(h.v)}`).join('，')">
+                <span v-for="h in holders" :key="h.k" :style="{ flex: Math.max(h.v, 0.0001), background: h.c }"></span>
+              </div>
+              <div class="hleg">
+                <span v-for="h in holders" :key="h.k">{{ h.k }} <span class="num ink">{{ share(h.v) }}</span></span>
+              </div>
+            </section>
+            <section v-if="pos" class="sec gutter">
+              <h2 class="h2">持仓</h2>
+              <dl class="facts">
+                <div><dt>数量</dt><dd>{{ qty(pos.qty) }}</dd></div>
+                <div><dt>成本</dt><dd>{{ money(pos.avg_cost) }}</dd></div>
+                <div><dt>市值</dt><dd>{{ money(pos.value) }}</dd></div>
+                <div><dt>盈亏</dt><dd :class="dir(pos.pnl)">{{ signed(pos.pnl) }}</dd></div>
+                <div><dt>盈亏比例</dt><dd :class="dir(pos.pnl)">{{ pct(pos.pnl_pct) }}</dd></div>
+                <div><dt>累计分红</dt><dd>{{ money(pos.dividends) }}</dd></div>
               </dl>
-              <div class="holders small">
-                <span class="label">持股结构</span>
-                <div class="hbar" role="img" :aria-label="`制作委员会 ${pct(holders.committee, 0, false)}，流通 ${pct(1 - holders.committee, 0, false)}`">
-                  <span :style="{ width: holders.committee * 100 + '%', background: 'var(--rule-strong)' }"></span>
-                  <span :style="{ width: holders.players * 100 + '%', background: 'var(--accent)' }"></span>
-                  <span :style="{ width: holders.mm * 100 + '%', background: 'var(--s-jp)' }"></span>
-                  <span :style="{ width: holders.unsold * 100 + '%', background: 'var(--seal)' }"></span>
-                </div>
-                <div class="hlegend">
-                  <span><i style="background: var(--rule-strong)"></i>制作委员会 {{ pct(holders.committee, 0, false) }}</span>
-                  <span><i style="background: var(--accent)"></i>玩家与散户 {{ pct(holders.players, 0, false) }}</span>
-                  <span><i style="background: var(--s-jp)"></i>做市商 {{ pct(holders.mm, 0, false) }}</span>
-                  <span v-if="holders.unsold"><i style="background: var(--seal)"></i>待发行 {{ pct(holders.unsold, 0, false) }}</span>
-                </div>
-                <p class="muted">制作委员会代表真实世界的版权方，它分到的红利流出游戏；股价远高于价值时它会减持。</p>
-              </div>
-              <div class="aud small">
-                <span class="label">观众规模（三个市场的数据源）</span>
-                <div class="audgrid">
-                  <div>
-                    <span class="mk" style="color: var(--s-us)">欧美 · AniList</span>
-                    <span class="num">{{ ani?.popularity != null ? big(ani.popularity) + ' 人收藏' : '–' }}</span>
-                    <span class="muted" v-if="ani?.score">评分 {{ ani.score }}</span>
-                  </div>
-                  <div>
-                    <span class="mk" style="color: var(--s-cn)">中国 · Bangumi</span>
-                    <template v-if="bgm?.collection">
-                      <span class="num">在看 {{ big(bgm.collection.doing ?? 0) }} · 想看 {{ big(bgm.collection.wish ?? 0) }}</span>
-                      <span class="muted">看过 {{ big(bgm.collection.collect ?? 0) }} · 抛弃 {{ big(bgm.collection.dropped ?? 0) }}<template v-if="bgm.score"> · 评分 {{ bgm.score }}</template></span>
-                    </template>
-                    <span v-else class="muted">没有这部番的数据</span>
-                  </div>
-                  <div>
-                    <span class="mk" style="color: var(--s-jp)">日本 · Annict</span>
-                    <span class="num">{{ annict?.watchers != null ? big(annict.watchers) + ' 人关注' : '–' }}</span>
-                  </div>
-                </div>
-              </div>
-              <div v-if="dividends.length" class="divs small">
-                <span class="label">分红记录（每股）</span>
-                <div class="divlist">
-                  <span v-for="d in dividends.slice(0, 12)" :key="d.week" class="num">{{ shortDate(d.week) }} <b>{{ money(d.dividend_ps) }}</b></span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="panel" v-if="s.news.length">
-            <div class="panel-head"><h2>公司公告</h2></div>
-            <ul class="news">
-              <li v-for="n in s.news" :key="n.id">
-                <span class="small muted">{{ n.day }} · {{ NEWS_KIND[n.kind] ?? n.kind }}</span>
-                <b>{{ n.title }}</b>
-                <span v-if="n.body" class="small muted">{{ n.body }}</span>
-              </li>
-            </ul>
-          </section>
-        </div>
-
-        <div class="col side">
-          <section class="panel" v-if="subscribing">
-            <div class="panel-head"><h2>认购</h2><RouterLink to="/ipo" class="small">全部新股 →</RouterLink></div>
-            <div class="panel-body">
-              <IpoCard v-if="s.ipo" :ipo="s.ipo" compact @changed="refresh" />
-              <p v-else class="empty">认购信息暂时拿不到，请到“新股”页查看</p>
-            </div>
-          </section>
-          <section class="panel trade" v-else>
-            <div class="panel-head"><h2>交易</h2></div>
-            <div class="panel-body tradegrid">
-              <OrderPanel :stock="s" :pick="pick" @placed="afterOrder" />
-              <OrderBook :bids="s.book.bids" :asks="s.book.asks" :prev-close="q.prev_close" @pick="onPick" />
-            </div>
-          </section>
-
-          <section class="panel" v-if="s.position || s.my_orders?.length">
-            <div class="panel-head"><h2>我的</h2></div>
-            <div class="panel-body mine">
-              <dl v-if="s.position" class="facts small">
-                <div><dt>持有</dt><dd class="num">{{ s.position.qty }} 股（可卖 {{ s.position.available }}）</dd></div>
-                <div><dt>成本价</dt><dd class="num">{{ money(s.position.avg_cost) }}</dd></div>
-                <div><dt>市值</dt><dd class="num">{{ money(s.position.value) }}</dd></div>
-                <div><dt>浮动盈亏</dt><dd class="num" :class="dir(s.position.pnl)">{{ signed(s.position.pnl) }}（{{ pct(s.position.pnl_pct) }}）</dd></div>
-                <div><dt>累计分红</dt><dd class="num up">{{ money(s.position.dividends) }}</dd></div>
-                <div><dt>含分红总盈亏</dt><dd class="num" :class="dir(s.position.pnl + s.position.dividends)">{{ signed(s.position.pnl + s.position.dividends) }}</dd></div>
-              </dl>
-              <div v-if="s.my_orders?.length">
-                <span class="label">本股委托</span>
-                <ul class="orders">
-                  <li v-for="o in s.my_orders" :key="o.id">
-                    <span :class="o.side === 'buy' ? 'up' : 'down'">{{ o.side === 'buy' ? '买' : '卖' }}</span>
-                    <span class="num">{{ money(o.price) }} × {{ o.qty }}</span>
-                    <span class="num muted">已成 {{ o.filled }}</span>
-                    <button type="button" class="linkbtn" :disabled="cancelling === o.id" @click="cancel(o.id)">{{ cancelling === o.id ? '撤单中' : '撤单' }}</button>
-                  </li>
-                </ul>
-              </div>
-              <p v-if="actionMsg" class="notice error">{{ actionMsg }}</p>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-head"><h2>最近成交</h2></div>
-            <table class="grid" v-if="s.trades.length">
-              <thead><tr><th>时间</th><th>价格</th><th>股数</th></tr></thead>
-              <tbody>
-                <tr v-for="(t, i) in s.trades.slice(0, 12)" :key="i">
-                  <td class="num muted">{{ time(t.ts) }}</td>
-                  <td class="num" :class="dir(t.price - q.prev_close)">{{ money(t.price) }}</td>
-                  <td class="num">{{ t.qty }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <p v-else class="empty">还没有成交</p>
-          </section>
+            </section>
+          </div>
+        </template>
+        <div v-else class="gutter" style="padding-top: 18px">
+          <div class="skel" style="height: 134px"></div>
+          <div class="skel" style="height: 230px; margin-top: 16px"></div>
         </div>
       </div>
-    </template>
 
-    <template v-else-if="!error">
-      <div class="panel" style="padding: 16px"><div class="skeleton" style="height: 90px"></div></div>
-      <div class="panel" style="padding: 16px"><div class="skeleton" style="height: 260px"></div></div>
+      <aside v-if="s && q" class="desk-only right term" aria-label="交易">
+        <template v-if="!subscribing">
+          <section class="tsec"><OrderBook :bids="s.book.bids" :asks="s.book.asks" layout="stack" :last="q.price" :prev-close="q.prev_close" @pick="onPick" /></section>
+          <section class="tsec"><OrderForm :stock="s" :pick="pick" @placed="afterOrder" /></section>
+          <section class="tsec last"><TradeTape :trades="s.trades" :limit="12" /></section>
+        </template>
+        <section v-else-if="s.ipo" class="tsec ipodesk">
+          <IpoOffer :ipo="s.ipo" :episodes="s.episodes" compact @changed="refresh" />
+        </section>
+      </aside>
+    </div>
+
+    <BottomNav v-if="subscribing" />
+    <!-- phone trade bar and order sheet -->
+    <template v-if="s && q && !subscribing && !desk">
+      <div class="tradebar term">
+        <div class="cash">
+          <span>可用资金</span>
+          <span class="num">{{ session.me ? money(s.available_cash ?? 0) : '–' }}</span>
+        </div>
+        <button type="button" class="tbtn sell" @click="sheet = 'sell'">卖出</button>
+        <button type="button" class="tbtn buy" @click="sheet = 'buy'">买入</button>
+      </div>
+      <div v-if="sheet" class="scrim" @click.self="sheet = null">
+        <div class="sheet term" role="dialog" aria-label="下单">
+          <div class="sheethead">
+            <span class="clamp1 serif">{{ s.title }}</span>
+            <span class="num" :class="change > 0 ? 'tup' : change < 0 ? 'tdown' : ''">{{ money(q.price) }}</span>
+            <button type="button" class="iconbtn x" aria-label="关闭" @click="sheet = null"><Icon name="close" :size="20" /></button>
+          </div>
+          <OrderForm :stock="s" :pick="pick" :initial-side="sheet" @placed="afterOrder" />
+        </div>
+      </div>
     </template>
   </main>
 </template>
 
 <style scoped>
-.back { color: var(--ink-2); }
-.quote { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.qtitle h1 { font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
-.ja { margin-top: 2px; overflow-wrap: anywhere; }
-.meta { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 4px; }
-.qprice { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-.price { font-size: 30px; font-weight: 700; line-height: 1; }
-.banner { display: flex; flex-direction: column; gap: 2px; font-size: 13px; padding: 8px 10px; border-radius: var(--radius); border-left: 3px solid; }
-.banner.vcm { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
-.banner.auction { background: var(--surface-2); color: var(--ink-2); border-color: var(--accent); }
-.banner b { color: inherit; }
-.qstats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 10px; margin: 0; }
-.qstats div { display: flex; flex-direction: column; }
-.qstats dt { color: var(--muted); }
-.qstats dd { margin: 0; }
+.code { font-size: 13px; color: var(--ink-2); }
+.star { margin-left: auto; }
+.star.on { color: var(--brand); }
 
-.cols { display: flex; flex-direction: column; gap: 12px; }
-.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.side { order: -1; }
-@media (min-width: 900px) {
-  .cols { display: grid; grid-template-columns: minmax(0, 1fr) 380px; align-items: start; }
-  .side { order: 0; position: sticky; top: 60px; }
-  .qstats { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.hero { display: flex; gap: 14px; padding: 18px var(--gutter) 16px; }
+.ht { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ht h1 { font-size: 22px; font-weight: 900; line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ja { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.studio { font-size: 13px; color: var(--ink-2); }
+.eps { margin-top: auto; display: flex; flex-direction: column; gap: 4px; }
+.segs { display: grid; gap: 2px; }
+.segs span { height: 5px; background: var(--hair); }
+.segs span.on { background: var(--brand); }
+.prog { font-size: 12px; color: var(--ink-2); }
+
+.quote { padding: 0 var(--gutter) 14px; display: flex; flex-direction: column; gap: 10px; }
+.pline { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; font-size: 15px; }
+.big { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 8px; column-gap: 12px; font-size: 12px; }
+.stats div { display: flex; justify-content: space-between; gap: 6px; min-width: 0; }
+.stats dt { color: var(--muted); white-space: nowrap; }
+.stats dd.flat { color: var(--ink); }
+.banner { font-size: 13px; color: var(--ink); border-left: 3px solid var(--brand); padding: 4px 0 4px 10px; }
+
+.chartsec { border-top: 1px solid var(--rule); padding-top: 10px; }
+.ptabs { padding: 0 var(--gutter); gap: 18px; border-bottom: 0; margin-bottom: 4px; }
+.legend { margin-left: auto; gap: 14px; font-size: 13px; color: var(--ink-2); padding-bottom: 10px; }
+.legend.desk-only { display: none; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
+.dash { width: 12px; border-top: 1px dashed var(--brand); display: inline-block; }
+.dia { width: 7px; height: 7px; background: var(--ink); transform: rotate(45deg); display: inline-block; }
+
+.booksec { margin: 4px var(--gutter) 0; padding: 12px; }
+.tape { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--t-line); }
+
+.sec { border-top: 1px solid var(--rule); padding-top: 14px; padding-bottom: 14px; display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+.cols .sec + .sec { margin-top: 0; }
+.ratios { border-top: 1px solid var(--hair); margin-top: 4px; }
+.events { gap: 0; }
+.events .h2 { margin-bottom: 6px; }
+.ev { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hair-2); font-size: 14px; line-height: 1.45; }
+.ev .d { flex: none; width: 44px; font-size: 12px; color: var(--muted); padding-top: 2px; }
+.small { font-size: 13px; }
+.hbar { display: flex; height: 10px; gap: 2px; }
+.hleg { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); }
+.ink { color: var(--ink); }
+
+.tradebar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 10px;
+  padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom, 0px));
 }
+.cash { flex: 1; display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: var(--t-ink-2); min-width: 0; }
+.cash .num { font-size: 14px; color: var(--t-ink); }
+.tradebar .tbtn { width: 96px; height: 44px; }
+.scrim { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-end; }
+.sheet { width: 100%; max-height: 92vh; overflow: auto; padding: 4px var(--gutter) calc(16px + env(safe-area-inset-bottom, 0px)); }
+.sheethead { display: flex; align-items: center; gap: 10px; padding: 6px 0 8px; font-size: 15px; }
+.sheethead .serif { flex: 1; min-width: 0; font-weight: 600; }
+.x { color: var(--t-ink-2); margin-right: -10px; }
+.tup { color: var(--t-up); }
+.tdown { color: var(--t-down); }
+.page.stockpage { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+.page.stockpage.sub { padding-bottom: calc(var(--nav-h) + 24px + env(safe-area-inset-bottom, 0px)); }
 
-.tradegrid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; }
-@media (max-width: 380px) { .tradegrid { grid-template-columns: 1fr; } }
-
-.fund { display: flex; flex-direction: column; gap: 14px; }
-.facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
-.facts div { display: flex; flex-direction: column; min-width: 0; }
-.facts dt { color: var(--muted); }
-.facts dd { margin: 0; overflow-wrap: anywhere; }
-.holders, .aud, .divs { display: flex; flex-direction: column; gap: 6px; }
-.hbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--surface-2); }
-.hbar span { display: block; height: 100%; }
-.hlegend { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); }
-.hlegend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
-.audgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-.audgrid > div { display: flex; flex-direction: column; gap: 1px; padding: 8px; background: var(--surface-2); border-radius: 4px; }
-.mk { font-weight: 600; font-size: 12px; }
-.divlist { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink-2); }
-.divlist b { color: var(--up); font-weight: 600; }
-.news { list-style: none; margin: 0; padding: 0; }
-.news li { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
-.news li:last-child { border-bottom: none; }
-.mine { display: flex; flex-direction: column; gap: 10px; }
-.orders { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; }
-.orders li { display: grid; grid-template-columns: 1.5em 1fr auto auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--rule); }
-.orders li:last-child { border-bottom: none; }
+@media (min-width: 1024px) {
+  .page.stockpage { padding-bottom: 0; }
+  .frame { display: grid; grid-template-columns: 260px minmax(0, 1fr) 340px; align-items: start; }
+  .left { border-right: 1px solid var(--hair); position: sticky; top: var(--desk-header-h); max-height: calc(100vh - var(--desk-header-h)); overflow: auto; }
+  .center { --gutter: 28px; min-width: 0; padding-bottom: 48px; }
+  .right { position: sticky; top: var(--desk-header-h); max-height: calc(100vh - var(--desk-header-h)); overflow: auto; min-height: calc(100vh - var(--desk-header-h)); box-shadow: none; }
+  .tsec { padding: 12px 16px; border-bottom: 1px solid var(--t-line); }
+  .tsec.last { border-bottom: 0; }
+  .ipodesk { --ink: var(--t-ink); --ink-2: var(--t-ink-2); --muted: var(--t-ink-2); --hair: var(--t-line); --grid: var(--t-line); color: var(--t-ink); }
+  .hero { padding: 22px 28px 18px; align-items: flex-end; gap: 20px; border-bottom: 1px solid var(--hair); }
+  .deskmeta { display: flex !important; gap: 10px; align-items: baseline; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
+  .star2 { margin-left: 6px; border: 1px solid var(--base-line); background: transparent; font-size: 12px; padding: 1px 8px; color: var(--ink-2); }
+  .star2.on { color: var(--brand); border-color: var(--brand); }
+  .ht h1 { font-size: 34px; line-height: 1.2; -webkit-line-clamp: 2; }
+  .ja { font-size: 13px; }
+  .price { display: flex !important; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 16px; flex: none; }
+  .price .big { font-size: 46px; line-height: 1; }
+  .quote { padding: 10px 28px; border-bottom: 1px solid var(--hair); }
+  .stats { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 12px; }
+  .stats div { flex-direction: column; gap: 2px; }
+  .stats dd { font-size: 14px; }
+  .chartsec { border-top: 0; padding-top: 8px; }
+  .legend.desk-only { display: inline-flex !important; }
+  .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--rule); margin-top: 6px; }
+  .cols .sec { border-top: 0; margin-top: 0; padding-top: 16px; padding-bottom: 16px; }
+  .cols .sec:first-child { border-right: 1px solid var(--hair); }
+}
 </style>
