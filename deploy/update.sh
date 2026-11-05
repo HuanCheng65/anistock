@@ -4,6 +4,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Port the game server listens on: ANISTOCK_PORT in .env, else 18620 (same default as the systemd unit)
+game_port() { local p; p="$(grep -E '^ANISTOCK_PORT=[0-9]+' .env 2>/dev/null | tail -1 | cut -d= -f2)"; echo "${p:-18620}"; }
+# Our /api/status has "launched_on"; anything else on the port is another program
+is_ours() { curl -s --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/api/status" | grep -q '"launched_on"'; }
+wait_ours() { for _ in $(seq 1 40); do is_ours && return 0; sleep 1; done; return 1; }
+port_taken_by_other() {
+  curl -s -o /dev/null --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/" && ! is_ours
+}
+
 # Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
 # Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com),
 # and the docker command with DOCKER="sudo docker" if your user is not in the docker group.
@@ -11,7 +20,7 @@ build_web() {
   if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
     ( cd web && npm ci && npm run build )
   elif command -v docker >/dev/null; then
-    local image="${NODE_IMAGE:-node:22-alpine}"
+    local image="${NODE_IMAGE:-node:24-alpine}"
     echo "本机没有 Node.js 20+，用容器 $image 构建前端"
     if ! ${DOCKER:-docker} info >/dev/null 2>&1; then
       echo "当前用户不能访问 Docker。用 DOCKER=\"sudo docker\" 重新运行本脚本，或者把自己加入 docker 组" >&2
@@ -46,11 +55,12 @@ cp deploy/anistock-collect.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 
 say "重启游戏服务"
+if port_taken_by_other; then
+  echo "端口 $(game_port) 被别的程序占用：在 .env 里设置 ANISTOCK_PORT=其他端口" >&2; exit 1
+fi
 systemctl --user restart anistock-server
-for _ in $(seq 1 30); do
-  curl -s -o /dev/null --noproxy '*' http://127.0.0.1:8080/api/status && break
-  sleep 1
-done
-curl -s --noproxy '*' http://127.0.0.1:8080/api/status >/dev/null \
-  && printf '\033[1;32m更新完成\033[0m\n' \
-  || { journalctl --user -u anistock-server -n 40 --no-pager; exit 1; }
+if wait_ours; then
+  printf '\033[1;32m更新完成（端口 %s）\033[0m\n' "$(game_port)"
+else
+  journalctl --user -u anistock-server -n 40 --no-pager; exit 1
+fi

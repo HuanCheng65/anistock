@@ -130,17 +130,51 @@ bash deploy/install.sh
 
 日后更新：`bash deploy/update.sh`（拉代码、装依赖、构建前端、重启；数据库迁移在启动时自动执行，执行前先备份）。
 
-构建前端需要 Node.js 20+；本机没有 Node 但有 Docker 时，脚本会自动用 `node:22-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换 npm 源）。
+构建前端需要 Node.js 20+；本机没有 Node 但有 Docker 时，脚本会自动用 `node:24-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换 npm 源）。
 
 想在本机装 Node.js 的话（Ubuntu）：
 
 ```bash
 curl -fsSL https://fnm.vercel.app/install | bash   # 需要代理时先 export https_proxy=...
-fnm install 22 && fnm default 22
+fnm install 24 && fnm default 24
 npm config set registry https://registry.npmmirror.com   # npm 下载慢时
 ```
 
-浏览器打开 `http://服务器地址:8080`，用邀请码注册。
+游戏服务默认只监听本机 `127.0.0.1:18620`（端口在 `.env` 的 `ANISTOCK_PORT` 里改），对外通过反向代理绑定域名。国内服务器的域名走 80/443 端口需要先备案。
+
+Caddy（自动申请 HTTPS 证书）：
+
+```
+stock.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:18620
+}
+```
+
+Nginx：
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name stock.example.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    location / {
+        proxy_pass http://127.0.0.1:18620;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # WebSocket（实时推送）
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+反代必须和游戏服务在同一台机器上：服务只信任来自 `127.0.0.1` 的 `X-Forwarded-For`，用它识别玩家的真实 IP。
+
+浏览器打开域名，用邀请码注册（邀请码在 `.env` 的 `ANISTOCK_INVITE`）。
 
 - 每天 06:30 服务端自动结算前一天（采集器 06:00 先跑）；服务停过也会在启动后补上错过的日子
 - 每天 08:45–09:00 开盘集合竞价，09:00–23:00 连续交易，可在 `server/game.toml` 里改；交易规则（冷静期、新股认购等）见设计文档
@@ -165,7 +199,7 @@ git add sim/matches.json tracked_extra.json && git commit -m "Match new season" 
 ### 本地开发
 
 ```bash
-ANISTOCK_ALWAYS_OPEN=1 uv run uvicorn server.app:app --port 8080 --reload   # 后端，忽略交易时间
-cd web && npm run dev                                                       # 前端，/api 代理到 8080
+ANISTOCK_ALWAYS_OPEN=1 uv run uvicorn server.app:app --port 18620 --reload  # 后端，忽略交易时间
+cd web && npm run dev                                                       # 前端，/api 代理到 18620
 uv run pytest                                                               # 撮合和分红的单元测试
 ```

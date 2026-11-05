@@ -1,6 +1,6 @@
 """AniStock game server.
 
-    uv run uvicorn server.app:app --host 0.0.0.0 --port 8080
+    uv run uvicorn server.app:app --host 127.0.0.1 --port 18620
 
 Env: ANISTOCK_SECRET (cookie signing, required in production), ANISTOCK_INVITE (club invite code),
 ANISTOCK_DB / ANISTOCK_GAME_DB (paths), ANISTOCK_ALWAYS_OPEN=1 (ignore trading hours, for testing),

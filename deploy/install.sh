@@ -4,6 +4,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Port the game server listens on: ANISTOCK_PORT in .env, else 18620 (same default as the systemd unit)
+game_port() { local p; p="$(grep -E '^ANISTOCK_PORT=[0-9]+' .env 2>/dev/null | tail -1 | cut -d= -f2)"; echo "${p:-18620}"; }
+# Our /api/status has "launched_on"; anything else on the port is another program
+is_ours() { curl -s --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/api/status" | grep -q '"launched_on"'; }
+wait_ours() { for _ in $(seq 1 40); do is_ours && return 0; sleep 1; done; return 1; }
+port_taken_by_other() {
+  curl -s -o /dev/null --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/" && ! is_ours
+}
+
 # Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
 # Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com),
 # and the docker command with DOCKER="sudo docker" if your user is not in the docker group.
@@ -11,7 +20,7 @@ build_web() {
   if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
     ( cd web && npm ci && npm run build )
   elif command -v docker >/dev/null; then
-    local image="${NODE_IMAGE:-node:22-alpine}"
+    local image="${NODE_IMAGE:-node:24-alpine}"
     echo "本机没有 Node.js 20+，用容器 $image 构建前端"
     if ! ${DOCKER:-docker} info >/dev/null 2>&1; then
       echo "当前用户不能访问 Docker。用 DOCKER=\"sudo docker\" 重新运行本脚本，或者把自己加入 docker 组" >&2
@@ -90,6 +99,12 @@ else
   "$UV" run python -m server.seed
 fi
 
+say "检查端口"
+if port_taken_by_other; then
+  die "端口 $(game_port) 已经被别的程序占用：在 .env 里设置 ANISTOCK_PORT=其他端口 后重新运行"
+fi
+echo "使用端口 $(game_port)"
+
 say "安装 systemd 服务"
 mkdir -p ~/.config/systemd/user
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-server.service > ~/.config/systemd/user/anistock-server.service
@@ -102,17 +117,12 @@ systemctl --user restart anistock-server
 loginctl enable-linger "$USER" 2>/dev/null || warn "enable-linger 失败：退出 SSH 后服务可能停止，请让管理员执行 sudo loginctl enable-linger $USER"
 
 say "等待服务启动"
-for _ in $(seq 1 30); do
-  curl -s -o /dev/null --noproxy '*' http://127.0.0.1:8080/api/status && break
-  sleep 1
-done
-if curl -s --noproxy '*' http://127.0.0.1:8080/api/status >/dev/null; then
-  IP="$(curl -s --max-time 5 --noproxy '*' https://ipinfo.io/ip 2>/dev/null || hostname -I | awk '{print $1}')"
+if wait_ours; then
   printf '\n\033[1;32m上线完成。\033[0m\n'
-  echo "访问：http://$IP:8080   （云服务器防火墙/安全组要放行 8080 端口）"
+  echo "游戏服务只监听本机：http://127.0.0.1:$(game_port)，请用反向代理（Caddy / Nginx）绑定域名对外提供，配置示例见 README"
   echo "邀请码：$(grep '^ANISTOCK_INVITE=' .env | cut -d= -f2)"
   echo "日志：journalctl --user -u anistock-server -f"
 else
   journalctl --user -u anistock-server -n 40 --no-pager || true
-  die "服务没起来，日志在上面"
+  die "服务没起来（端口 $(game_port)），日志在上面"
 fi
