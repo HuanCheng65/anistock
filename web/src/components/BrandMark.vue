@@ -4,9 +4,11 @@ defineProps<{ size?: number }>()
 
 <template>
   <svg :width="size ?? 28" :height="size ?? 28" viewBox="0 0 64 64" aria-hidden="true" class="brand-mark">
-    <path d="M32 2C32.9 7.6 34.4 9.1 40 10C34.4 10.9 32.9 12.4 32 18C31.1 12.4 29.6 10.9 24 10C29.6 9.1 31.1 7.6 32 2Z" fill="currentColor" />
-    <path d="M27 21H35L21 58H12Z" fill="currentColor" />
-    <path d="M37 21H45L53 58H44Z" fill="var(--seal)" />
+    <g transform="translate(32 31.5) scale(0.991) translate(-32.44 -32.91)">
+      <path d="M36 1 C37.12 9.4 39 11.65 46 13 C39 14.35 37.12 16.6 36 25 C34.88 16.6 33 14.35 26 13 C33 11.65 34.88 9.4 36 1 Z" fill="currentColor" />
+      <path d="M27 25H35L21 58H12Z" fill="currentColor" />
+      <path d="M37 25H45L53 58H44Z" fill="var(--seal)" />
+    </g>
   </svg>
 </template>
 
