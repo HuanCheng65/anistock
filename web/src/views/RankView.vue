@@ -44,13 +44,14 @@ const mine = (name: string) => name === session.me?.username
         <div v-for="p in podium" :key="p.rank" class="pod">
           <span class="nm clamp1" :class="{ me: mine(p.username) }">{{ p.username }}</span>
           <span class="num ret" :class="dir(p.return_pct)">{{ pct(p.return_pct) }}</span>
+          <span v-if="p.restructures" class="rs">重整 {{ p.restructures }} 次</span>
           <div class="block" :class="p.tone" :style="{ height: p.h + 'px' }"><span class="serif">{{ p.rank }}</span></div>
         </div>
       </section>
       <div v-if="rows.length" class="rrow head gutter"><span></span><span></span><span>总资产</span><span>收益率</span></div>
       <div v-for="r in rest" :key="r.username" class="rrow gutter" :class="{ me: mine(r.username) }">
         <span class="num rk">{{ r.rank }}</span>
-        <span class="clamp1 nm">{{ r.username }}</span>
+        <span class="clamp1 nm">{{ r.username }}<span v-if="r.restructures" class="rs">重整 {{ r.restructures }} 次</span></span>
         <span class="num">{{ money(r.total) }}</span>
         <span class="num" :class="dir(r.return_pct)">{{ pct(r.return_pct) }}</span>
       </div>
@@ -74,6 +75,8 @@ const mine = (name: string) => name === session.me?.username
 .rrow.head { padding-top: 10px; padding-bottom: 6px; font-size: 12px; color: var(--muted); border-bottom-color: var(--hair); }
 .rrow.me { background: var(--ground-2); font-weight: 700; }
 .rk { color: var(--ink-2); }
+.rs { font-size: 12px; font-weight: 400; color: var(--muted); }
+.nm .rs { margin-left: 8px; }
 .nm { font-size: 15px; }
 @media (min-width: 1024px) {
   .podium { max-width: 520px; padding-top: 0; border-bottom: 0; margin-bottom: 24px; }

@@ -99,6 +99,10 @@ export interface Me {
   return_pct: number
   dividends: number
   deposit_rate: number
+  /** 破产重整: times so far, whether allowed now, and why not */
+  restructures: number
+  can_restructure: boolean
+  restructure_reason: string | null
 }
 
 export interface Status {
@@ -295,6 +299,7 @@ export interface LeaderRow {
   username: string
   total: number
   return_pct: number
+  restructures: number
 }
 
 export interface MacroDay {

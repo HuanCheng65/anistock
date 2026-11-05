@@ -14,6 +14,7 @@ pub mod model;
 pub mod npc;
 pub mod pyfmt;
 pub mod pyrandom;
+pub mod restructure;
 pub mod sim;
 pub mod valuation;
 pub mod vclose;

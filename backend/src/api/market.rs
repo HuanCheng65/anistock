@@ -579,44 +579,49 @@ pub async fn ipos(st: &Arc<AppState>, r: &Req) -> ApiResult {
 pub async fn leaderboard(st: &Arc<AppState>) -> ApiResult {
     let st2 = st.clone();
     st.read(move |c| {
-        let initial = match game(&st2.cfg, "initial_cash") {
-            J::Int(i) => i as f64,
-            J::Float(f) => f,
-            _ => return Err(super::internal("initial_cash")),
-        };
-        let accts: Vec<(i64, J, i64)> = {
-            let mut s = c.prepare("SELECT id, username, cash FROM accounts WHERE kind='player'").map_err(sql)?;
-            let it = s.query_map([], |r| Ok((get_i64(r, "id"), col(r, "username"), get_i64(r, "cash")))).map_err(sql)?;
-            it.collect::<Result<_, _>>().map_err(sql)?
-        };
-        let mut rows: Vec<(f64, J)> = Vec::new();
-        for (id, username, cash) in accts {
-            let stock: i64 = c
-                .query_row(
-                    "SELECT COALESCE(SUM(h.qty * co.last_price),0) FROM holdings h
-                     JOIN companies co ON co.id=h.company_id WHERE h.account_id=?",
-                    [id],
-                    |r| r.get(0),
-                )
-                .map_err(sql)?;
-            let total = cash + stock;
-            let t = total as f64 / 100.0;
-            rows.push((t, obj! {"username" => username, "total" => yuan(total),
-                                "return_pct" => (div(total, 100) - initial) / initial}));
+        if !matches!(game(&st2.cfg, "initial_cash"), J::Int(_) | J::Float(_)) {
+            return Err(super::internal("initial_cash"));
         }
-        // rows.sort(key=lambda r: -r["total"]): stable, descending
-        rows.sort_by(|a, b| (-a.0).partial_cmp(&-b.0).unwrap_or(std::cmp::Ordering::Equal));
-        let out: Vec<J> = rows
-            .into_iter()
-            .enumerate()
-            .map(|(i, (_, mut j))| {
-                j.set("rank", (i + 1) as i64);
-                j
-            })
-            .collect();
+        let out = leaderboard_rows(c, super::account::initial_cents(&st2))?;
         Ok(Reply::ok(obj! {"players" => J::Arr(out)}))
     })
     .await
+}
+
+/// The 总榜 rows, ranked by the chain-linked return (crate::restructure::linked_return); for players who
+/// never restructured that is v1's order by total assets.
+pub fn leaderboard_rows(c: &Connection, initial_cents: i64) -> Result<Vec<J>, ApiError> {
+    let accts: Vec<(i64, J, i64)> = {
+        let mut s = c.prepare("SELECT id, username, cash FROM accounts WHERE kind='player'").map_err(sql)?;
+        let it = s.query_map([], |r| Ok((get_i64(r, "id"), col(r, "username"), get_i64(r, "cash")))).map_err(sql)?;
+        it.collect::<Result<_, _>>().map_err(sql)?
+    };
+    let mut rows: Vec<(f64, J)> = Vec::new();
+    for (id, username, cash) in accts {
+        let stock: i64 = c
+            .query_row(
+                "SELECT COALESCE(SUM(h.qty * co.last_price),0) FROM holdings h
+                 JOIN companies co ON co.id=h.company_id WHERE h.account_id=?",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let total = cash + stock;
+        let (factor, base, count, _) = super::account::player_return(c, id, initial_cents)?;
+        let ret = crate::restructure::linked_return(factor, base, total);
+        rows.push((ret, obj! {"username" => username, "total" => yuan(total), "return_pct" => ret,
+                              "restructures" => count}));
+    }
+    // stable, descending
+    rows.sort_by(|a, b| (-a.0).partial_cmp(&-b.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(rows
+        .into_iter()
+        .enumerate()
+        .map(|(i, (_, mut j))| {
+            j.set("rank", (i + 1) as i64);
+            j
+        })
+        .collect())
 }
 
 /// `GET /api/news?limit=50`

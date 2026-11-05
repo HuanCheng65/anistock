@@ -214,6 +214,8 @@ pub struct Snapshot {
     /// the joint valuation filter's state (table valuation_joint, migration V3; converted from the per-market
     /// valuation_state of V2 when empty)
     pub jstate: std::collections::HashMap<i64, crate::vclose::JState>,
+    /// players who have restructured (table player_returns, migration V4)
+    pub player_returns: BTreeMap<i64, PlayerReturn>,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -374,6 +376,21 @@ pub fn load(conn: &Connection) -> DbResult<Snapshot> {
         s.state.insert(k, v);
     }
     load_daily(conn, &mut s)?;
+    for p in conn
+        .prepare("SELECT account_id, return_factor, segment_base, restructures, last_day FROM player_returns")?
+        .query_map([], |r| {
+            Ok(PlayerReturn {
+                account_id: r.get(0)?,
+                return_factor: r.get(1)?,
+                segment_base: r.get(2)?,
+                restructures: r.get(3)?,
+                last_day: r.get(4)?,
+            })
+        })?
+    {
+        let p = p?;
+        s.player_returns.insert(p.account_id, p);
+    }
     s.max_order_id = max_id(conn, "orders")?;
     s.max_trade_id = max_id(conn, "trades")?;
     s.max_ledger_id = max_id(conn, "ledger")?;

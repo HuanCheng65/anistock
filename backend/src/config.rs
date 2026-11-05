@@ -41,6 +41,13 @@ pub struct GameRules {
     pub ipo_subscription_days: i64,
     pub ipo_public_base: f64,
     pub ipo_clawback: Vec<(f64, f64)>,
+    /// 破产重整: total assets under this share of `initial_cash` may restructure (crate::restructure)
+    #[serde(default = "restructure_threshold")]
+    pub restructure_threshold: f64,
+}
+
+fn restructure_threshold() -> f64 {
+    0.1
 }
 
 impl GameRules {

@@ -41,6 +41,9 @@ min_listing_popularity = 3000  # AniList list entries
 ipo_subscription_days = 3      # subscription window, ending the day before listing
 ipo_public_base = 0.5          # share of the float offered to players (HK base is 10%; scaled up for a small club)
 ipo_clawback = [[15, 0.7], [50, 0.8], [100, 0.9]]   # [oversubscription multiple, public share of the float]
+# 破产重整 (voluntary, once per season): total assets under this share of initial_cash may sell every holding
+# to the world account at the last price and top cash up to initial_cash; the 总榜 return stays chain-linked
+restructure_threshold = 0.1
 
 [npc]
 market_maker_cash = 30000      # 币 per market maker (one per stock)

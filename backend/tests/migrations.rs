@@ -59,7 +59,10 @@ fn yoyo_database_is_baselined_not_migrated() {
         .unwrap();
     }
     // V1 is baselined (not run); the later migrations run, after a backup
-    assert_eq!(store::migrate(&path).unwrap(), vec!["V2__valuation_state".to_string(), "V3__valuation_joint".to_string()]);
+    assert_eq!(
+        store::migrate(&path).unwrap(),
+        ["V2__valuation_state", "V3__valuation_joint", "V4__player_restructure"].map(String::from).to_vec()
+    );
     assert!(store::migrate(&path).unwrap().is_empty());
     let c = store::connect(&path).unwrap();
     let n: i64 = c.query_row("SELECT COUNT(*) FROM refinery_schema_history WHERE version=1", [], |r| r.get(0)).unwrap();

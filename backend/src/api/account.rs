@@ -188,36 +188,101 @@ pub fn totals(c: &Connection, account_id: i64) -> Result<(Vec<(String, J)>, i64)
     Ok((kv, cash + stock))
 }
 
+/// `game.initial_cash` in cents.
+pub fn initial_cents(st: &AppState) -> i64 {
+    (st.cfg.game.initial_cash * 100.0).round_ties_even() as i64
+}
+
+/// A player's `player_returns` row: (return_factor, segment_base cents, restructures, last_day). Without a
+/// row: factor 1, base = initial cash, never restructured.
+pub fn player_return(
+    c: &Connection,
+    account_id: i64,
+    initial_cents: i64,
+) -> Result<(f64, i64, i64, Option<String>), ApiError> {
+    let row = c
+        .query_row(
+            "SELECT return_factor, segment_base, restructures, last_day FROM player_returns WHERE account_id=?",
+            [account_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, Some(r.get(3)?))),
+        )
+        .optional()
+        .map_err(sql)?;
+    Ok(row.unwrap_or((1.0, initial_cents, 0, None)))
+}
+
+/// The `/api/me` object.
+fn me_json(st: &AppState, c: &Connection, p: &Player) -> Result<J, ApiError> {
+    let (t, total_cents) = totals(c, p.id)?;
+    let initial = super::game(&st.cfg, "initial_cash");
+    if !matches!(initial, J::Int(_) | J::Float(_)) {
+        return Err(internal("initial_cash"));
+    }
+    let initial_c = initial_cents(st);
+    let rate = super::state_rate(c)?;
+    let divs = c
+        .query_row("SELECT COALESCE(SUM(amount),0) AS v FROM ledger WHERE to_id=? AND reason='dividend'", [p.id], |r| {
+            Ok(col(r, "v"))
+        })
+        .map_err(sql)?;
+    let (factor, base, count, last_day) = player_return(c, p.id, initial_c)?;
+    let eligible = crate::restructure::check(
+        total_cents,
+        initial_c,
+        st.cfg.game.restructure_threshold,
+        last_day.as_deref(),
+        &st.clock.today(),
+    )
+    .and_then(|()| match st.phase() {
+        crate::config::Phase::Continuous => Ok(()),
+        _ => Err(crate::restructure::Refusal::MarketClosed),
+    });
+    let mut kv = vec![("id".to_string(), J::Int(p.id)), ("username".to_string(), p.username.clone())];
+    kv.extend(t);
+    kv.push(("initial".into(), initial));
+    kv.push(("return_pct".into(), J::Float(crate::restructure::linked_return(factor, base, total_cents))));
+    kv.push(("dividends".into(), yuan(divs)));
+    kv.push(("deposit_rate".into(), J::Float(super::deposit_rate(&st.cfg, rate))));
+    kv.push(("restructures".into(), J::Int(count)));
+    kv.push(("can_restructure".into(), J::Bool(eligible.is_ok())));
+    kv.push(("restructure_reason".into(), eligible.err().map_or(J::Null, |e| J::Str(e.message()))));
+    Ok(J::Obj(kv))
+}
+
 /// `GET /api/me`
 pub async fn me(st: &Arc<AppState>, r: &Req) -> ApiResult {
     let p = current_player(st, r).await?;
     let st2 = st.clone();
-    st.read(move |c| {
-        let (t, total_cents) = totals(c, p.id)?;
-        let initial = super::game(&st2.cfg, "initial_cash");
-        let initial_f = match initial {
-            J::Int(i) => i as f64,
-            J::Float(f) => f,
-            _ => return Err(internal("initial_cash")),
-        };
-        let rate = super::state_rate(c)?;
-        let divs = c
-            .query_row(
-                "SELECT COALESCE(SUM(amount),0) AS v FROM ledger WHERE to_id=? AND reason='dividend'",
-                [p.id],
-                |r| Ok(col(r, "v")),
-            )
-            .map_err(sql)?;
-        let total = total_cents as f64 / 100.0;
-        let mut kv = vec![("id".to_string(), J::Int(p.id)), ("username".to_string(), p.username.clone())];
-        kv.extend(t);
-        kv.push(("initial".into(), initial));
-        kv.push(("return_pct".into(), J::Float((total - initial_f) / initial_f)));
-        kv.push(("dividends".into(), yuan(divs)));
-        kv.push(("deposit_rate".into(), J::Float(super::deposit_rate(&st2.cfg, rate))));
-        Ok(Reply::ok(J::Obj(kv)))
-    })
-    .await
+    st.read(move |c| Ok(Reply::ok(me_json(&st2, c, &p)?))).await
+}
+
+/// `POST /api/me/restructure`: 破产重整 (crate::restructure). Returns the new `/api/me`.
+///
+/// Only during continuous trading: the holdings go to the world account at the last price, and while the
+/// market is closed that price is stale (overnight news has not reached it yet), so a player could dump
+/// shares they know will open lower.
+pub async fn restructure(st: &Arc<AppState>, r: &Req) -> ApiResult {
+    let p = current_player(st, r).await?;
+    if st.phase() != crate::config::Phase::Continuous {
+        return Err(http(400, crate::restructure::Refusal::MarketClosed.message()));
+    }
+    let (day, ts) = (st.clock.today(), st.clock.ts());
+    let (initial_c, threshold, id) = (initial_cents(st), st.cfg.game.restructure_threshold, p.id);
+    st.actor
+        .call(move |ctx| -> Result<(), ApiError> {
+            let e = &mut ctx.engine;
+            let res = e.restructure(id, initial_c, threshold, &day, &ts);
+            e.flush().map_err(internal)?;
+            match res {
+                Ok(_) => Ok(()),
+                Err(crate::restructure::Refusal::Broken(why)) => Err(internal(why)),
+                Err(refusal) => Err(http(400, refusal.message())),
+            }
+        })
+        .await
+        .map_err(|_| internal("engine stopped"))??;
+    let st2 = st.clone();
+    st.read(move |c| Ok(Reply::ok(me_json(&st2, c, &p)?))).await
 }
 
 /// `GET /api/portfolio`

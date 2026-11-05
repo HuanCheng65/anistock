@@ -253,3 +253,28 @@ pub struct Candle {
     /// live | replay
     pub source: String,
 }
+
+/// `player_returns`: the chain-linked (time-weighted) return of a player who has restructured. A player
+/// without a row has factor 1, base = the starting cash, no restructurings.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PlayerReturn {
+    pub account_id: i64,
+    /// product of the closed segments' end assets / start assets
+    pub return_factor: f64,
+    /// the current segment's starting assets, cents
+    pub segment_base: i64,
+    pub restructures: i64,
+    /// trading day of the latest restructuring
+    pub last_day: String,
+}
+
+/// A `restructures` row (the database assigns the id).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Restructure {
+    pub account_id: i64,
+    pub day: String,
+    pub ts: String,
+    pub assets_before: i64,
+    pub sold: i64,
+    pub injected: i64,
+}

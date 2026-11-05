@@ -5,6 +5,7 @@ import { ApiError } from '../api'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
+import RestructureEntry from '../components/RestructureEntry.vue'
 import Tabs from '../components/Tabs.vue'
 import { usePoll } from '../composables/usePoll'
 import { dir, LEDGER_REASON, money, pct, qty, signed, when } from '../format'
@@ -82,6 +83,7 @@ async function cancel(id: number) {
           <div class="num sub">
             <span><span class="sans muted">今日 </span><span :class="dir(today)">{{ signed(today) }}</span></span>
             <span><span class="sans muted">累计 </span><span :class="dir(me.return_pct)">{{ pct(me.return_pct) }}</span></span>
+            <span v-if="me.restructures" class="sans muted">重整 {{ me.restructures }} 次</span>
           </div>
         </section>
         <dl v-if="me" class="facts split gutter">
@@ -89,6 +91,7 @@ async function cancel(id: number) {
           <div><dt>市值</dt><dd>{{ money(me.stock_value) }}</dd></div>
           <div><dt>浮动盈亏</dt><dd :class="dir(floating)">{{ signed(floating) }}</dd></div>
         </dl>
+        <RestructureEntry v-if="me" :me="me" />
         <nav class="menu desk-only" aria-label="更多">
           <RouterLink to="/rank"><span>排行</span><span class="num v">{{ rank ? `第 ${rank} 名` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/ipo"><span>新股认购</span><span class="v">{{ pending ? `${pending} 笔待配售` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>

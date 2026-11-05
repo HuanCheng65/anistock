@@ -174,6 +174,7 @@ export const LEDGER_REASON: Record<string, string> = {
   delisting: '退市返还',
   ipo: '新股认购缴款',
   ipo_refund: '认购退款',
+  restructure: '破产重整',
   trade: '成交',
 }
 

@@ -95,6 +95,10 @@ pub enum Change {
         allotted: i64,
     },
     NewsInsert(News),
+    /// `INSERT INTO restructures` (id assigned by the database)
+    RestructureInsert(Restructure),
+    /// `INSERT OR REPLACE INTO player_returns`
+    PlayerReturnSet(PlayerReturn),
     StateSet {
         key: String,
         value: String,
@@ -349,6 +353,19 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                  VALUES (?,?,?,?,?,?)",
             )?
             .execute(params![a.company_id, a.account_id, a.qty, a.frozen, a.allotted, a.created_at])?;
+        }
+        Change::RestructureInsert(r) => {
+            conn.prepare_cached(
+                "INSERT INTO restructures(account_id, day, ts, assets_before, sold, injected) VALUES (?,?,?,?,?,?)",
+            )?
+            .execute(params![r.account_id, r.day, r.ts, r.assets_before, r.sold, r.injected])?;
+        }
+        Change::PlayerReturnSet(p) => {
+            conn.prepare_cached(
+                "INSERT OR REPLACE INTO player_returns(account_id, return_factor, segment_base, restructures, last_day)
+                 VALUES (?,?,?,?,?)",
+            )?
+            .execute(params![p.account_id, p.return_factor, p.segment_base, p.restructures, p.last_day])?;
         }
         Change::IpoAppDelete { company_id, account_id } => {
             conn.prepare_cached("DELETE FROM ipo_applications WHERE company_id=? AND account_id=?")?
