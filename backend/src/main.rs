@@ -34,7 +34,7 @@ fn fail(msg: impl std::fmt::Display, code: i32) -> ! {
 }
 
 fn main() {
-    let cfg = Config::load().unwrap_or_else(|e| fail(format!("config: {e}"), 2));
+    let mut cfg = Config::load().unwrap_or_else(|e| fail(format!("config: {e}"), 2));
     let host = env("ANISTOCK_HOST").unwrap_or_else(|| "127.0.0.1".into());
     let port: u16 = env("ANISTOCK_PORT").map_or(18620, |p| p.trim().parse().unwrap_or_else(|_| fail("ANISTOCK_PORT", 2)));
     let workers: usize = env("ANISTOCK_WORKERS").map_or(2, |w| w.trim().parse().unwrap_or_else(|_| fail("ANISTOCK_WORKERS", 2)));
@@ -70,6 +70,9 @@ fn main() {
     let stored = engine.state("session_secret").map(str::to_string);
     let secret = auth::resolve_secret(&cfg.secret, stored, |k| engine.set_state("session_secret", k))
         .unwrap_or_else(|e| fail(e, 1));
+    // the market's sentiment draws are salted with the same key: without ANISTOCK_SECRET the public dev key
+    // would let anyone compute them from the repository
+    cfg.secret = secret.clone();
     engine.flush().unwrap_or_else(|e| fail(format!("persist: {e}"), 1));
 
     let clock = match env("ANISTOCK_FREEZE_TIME") {
