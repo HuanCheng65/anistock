@@ -78,31 +78,34 @@ async function submit(q: number) {
 </script>
 
 <template>
-  <article class="offer">
-    <div v-if="!compact" class="top">
-      <Cover :id="ipo.id" :title="ipo.title" :w="84" :h="118" :size="17" />
-      <div class="ti">
-        <RouterLink :to="`/stock/${ipo.id}`" class="serif name">{{ ipo.title }}</RouterLink>
-        <div class="meta">首播 <span class="num">{{ ipo.first_air.slice(5) }}</span><template v-if="episodes"> · 全 {{ episodes }} 集</template></div>
-        <div class="price"><span class="num">{{ money(ipo.ipo_price) }}</span><span class="muted">发行价</span></div>
+  <article class="offer" :class="{ compact, band: !compact }">
+    <Cover v-if="!compact" class="oc" :id="ipo.id" :title="ipo.title" :w="84" :h="118" :size="17" />
+    <div class="info">
+      <div v-if="!compact" class="ti">
+        <span class="status desk-only">{{ open ? '认购中' : '已配售' }}</span>
+        <RouterLink :to="`/stocks/${ipo.id}`" class="serif name">{{ ipo.title }}</RouterLink>
+        <div class="meta phone-only">首播 <span class="num">{{ ipo.first_air.slice(5) }}</span><template v-if="episodes"> · 全 {{ episodes }} 集</template></div>
+        <div class="price phone-only"><span class="num">{{ money(ipo.ipo_price) }}</span><span class="muted">发行价</span></div>
       </div>
-    </div>
 
-    <dl class="facts">
-      <div><dt>公开发售</dt><dd>{{ fmtQty(open ? publicQty : ipo.result?.public_qty ?? publicQty) }} 股</dd></div>
-      <div><dt>截止</dt><dd>{{ closeText }}</dd></div>
-      <div><dt>上市</dt><dd>{{ ipo.listed_on.slice(5) }}</dd></div>
-    </dl>
+      <dl class="facts" :class="{ five: !compact }">
+        <div v-if="!compact" class="desk-only"><dt>发行价</dt><dd>{{ money(ipo.ipo_price) }}</dd></div>
+        <div><dt>公开发售</dt><dd>{{ fmtQty(open ? publicQty : ipo.result?.public_qty ?? publicQty) }} 股</dd></div>
+        <div><dt>截止</dt><dd>{{ closeText }}</dd></div>
+        <div><dt>上市</dt><dd>{{ ipo.listed_on.slice(5) }}</dd></div>
+        <div v-if="!compact" class="desk-only"><dt>首播</dt><dd>{{ ipo.first_air.slice(5) }}</dd></div>
+      </dl>
 
-    <div class="demand">
-      <div class="dline">
-        <span>超额认购 <b class="num">{{ heat.toFixed(1) }}</b> 倍</span>
-        <span class="ink2">公开发售 <span class="num ink">{{ share(publicShare) }}</span></span>
-      </div>
-      <div class="heat" role="img" :aria-label="`超额认购 ${heat.toFixed(1)} 倍`">
-        <div class="track"></div>
-        <div class="fill" :style="{ width: heatX + '%' }"></div>
-        <span v-for="t in [['15×', 34], ['50×', 62], ['100×', 90]]" :key="t[0]" class="tick num" :style="{ left: t[1] + '%' }">{{ t[0] }}</span>
+      <div class="demand">
+        <div class="dline">
+          <span>超额认购 <b class="num">{{ heat.toFixed(1) }}</b> 倍</span>
+          <span class="ink2">公开发售 <span class="num ink">{{ share(publicShare) }}</span></span>
+        </div>
+        <div class="heat" role="img" :aria-label="`超额认购 ${heat.toFixed(1)} 倍`">
+          <div class="track"></div>
+          <div class="fill" :style="{ width: heatX + '%' }"></div>
+          <span v-for="t in [['15×', 34], ['50×', 62], ['100×', 90]]" :key="t[0]" class="tick num" :style="{ left: t[1] + '%' }">{{ t[0] }}</span>
+        </div>
       </div>
     </div>
 
@@ -135,7 +138,13 @@ async function submit(q: number) {
 
 <style scoped>
 .offer { display: flex; flex-direction: column; gap: 16px; }
-.top { display: flex; gap: 14px; }
+.offer.band { display: grid; grid-template-columns: 84px minmax(0, 1fr); column-gap: 14px; row-gap: 16px; }
+.band .info { display: contents; }
+.band .oc { grid-column: 1; }
+.band .ti { grid-column: 2; }
+.band .facts, .band .demand, .band .form, .band .result { grid-column: 1 / -1; }
+.info { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.status { font-size: 12px; color: var(--brand); font-weight: 700; }
 .ti { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .name { font-size: 21px; font-weight: 900; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
 .name::before { content: '《'; }
@@ -165,4 +174,13 @@ async function submit(q: number) {
 .note.err { color: var(--t-up); }
 .note.ok { color: var(--t-ink); }
 .result { border-bottom: 0; }
+@media (min-width: 1024px) {
+  .offer.band { grid-template-columns: 120px minmax(0, 1fr) 400px; column-gap: 32px; align-items: start; }
+  .band .oc { width: 120px !important; height: 168px !important; }
+  .band .info { display: flex; grid-column: 2; }
+  .band .ti { gap: 4px; }
+  .band .name { font-size: 28px; }
+  .band .form, .band .result { grid-column: 3; grid-row: 1; }
+  .facts.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
 </style>

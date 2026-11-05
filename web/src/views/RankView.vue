@@ -33,11 +33,12 @@ const mine = (name: string) => name === session.me?.username
 
 <template>
   <main class="page rankpage">
-    <header class="pagehead back">
+    <header class="pagehead back phone-only">
       <BackButton />
       <h1>排行</h1>
     </header>
-    <div class="wrap">
+    <div class="container">
+      <h1 class="pagetitle desk-only">排行</h1>
       <EmptyState v-if="error && !session.leaders" :text="error" action="重试" tone="error" @act="refresh" />
       <section v-if="podium.length" class="podium gutter">
         <div v-for="p in podium" :key="p.rank" class="pod">
@@ -74,5 +75,9 @@ const mine = (name: string) => name === session.me?.username
 .rrow.me { background: var(--ground-2); font-weight: 700; }
 .rk { color: var(--ink-2); }
 .nm { font-size: 15px; }
-@media (min-width: 1024px) { .wrap { max-width: 760px; margin: 0 auto; } }
+@media (min-width: 1024px) {
+  .podium { max-width: 520px; padding-top: 0; border-bottom: 0; margin-bottom: 24px; }
+  .rrow { grid-template-columns: 60px minmax(0, 1fr) 200px 140px; }
+  .rrow.head { border-top: 1px solid var(--rule); }
+}
 </style>

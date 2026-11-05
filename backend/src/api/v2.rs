@@ -5,6 +5,8 @@
 //! - `GET /api/v2/tonight`               episodes airing in today's broadcast day
 //! - `GET /api/v2/stocks/{id}/profile`   episode air days, dividends, ratios, holders by kind
 //! - `GET /api/v2/listings`              recent listings (IPO price, first-day close, allotment ratio)
+//! - `GET /api/v2/ratios`                市盈率 / 股息率 for every listed stock (the 股票 table)
+//! - `GET /api/v2/macro`                 daily market-wide revenue: 7-day sum and the demand index
 //! - `GET /api/covers/{id}`              the work's Bangumi cover, fetched once and cached on disk
 //!
 //! ## Indices
@@ -52,6 +54,8 @@ pub async fn route(st: &Arc<AppState>, r: &Req) -> Option<Response<Body>> {
         "indices" => indices(st).await,
         "tonight" => tonight(st).await,
         "listings" => listings(st).await,
+        "ratios" => ratios(st).await,
+        "macro" => macro_series(st).await,
         _ => match rest.strip_prefix("stocks/").and_then(|s| s.strip_suffix("/profile")) {
             Some(id) => match id.parse::<i64>() {
                 Ok(id) => profile(st, id).await,
@@ -463,9 +467,10 @@ async fn listings(st: &Arc<AppState>) -> Result<Value, ApiError> {
         let today = st2.clock.today();
         let t = NaiveDate::parse_from_str(&today, "%Y-%m-%d").map_err(|e| super::internal(e.to_string()))?;
         let since = (t - chrono::Duration::days(60)).format("%Y-%m-%d").to_string();
+        let base_share = param_f64(&st2.cfg, "company.ipo_float", 0.25) * st2.cfg.game.ipo_public_base;
         let mut s = c
             .prepare(
-                "SELECT co.id, co.title, co.listed_on, co.ipo_price, co.sub_start,
+                "SELECT co.id, co.title, co.listed_on, co.ipo_price, co.sub_start, co.shares,
                    (SELECT close FROM candles k WHERE k.company_id=co.id AND k.day>=co.listed_on AND k.source='live' ORDER BY k.day LIMIT 1) first_close,
                    (SELECT SUM(qty) FROM ipo_applications a WHERE a.company_id=co.id) applied,
                    (SELECT SUM(allotted) FROM ipo_applications a WHERE a.company_id=co.id) allotted
@@ -476,14 +481,17 @@ async fn listings(st: &Arc<AppState>) -> Result<Value, ApiError> {
         let rows = s
             .query_map([&since], |r| {
                 let ipo: i64 = r.get(3)?;
-                let first: Option<i64> = r.get(5)?;
-                let applied: Option<i64> = r.get(6)?;
-                let allotted: Option<i64> = r.get(7)?;
+                let shares: i64 = r.get(5)?;
+                let first: Option<i64> = r.get(6)?;
+                let applied: Option<i64> = r.get(7)?;
+                let allotted: Option<i64> = r.get(8)?;
+                let base = (shares as f64 * base_share).round();
                 Ok(json!({
                     "id": r.get::<_, i64>(0)?, "title": r.get::<_, String>(1)?, "listed_on": r.get::<_, String>(2)?,
                     "ipo_price": cents(ipo),
                     "first_close": first.map(cents),
                     "first_change": first.filter(|_| ipo > 0).map(|f| r4(f as f64 / ipo as f64 - 1.0)),
+                    "oversubscribed": applied.filter(|_| base > 0.0).map(|a| r4(a as f64 / base)),
                     "ratio": match (applied, allotted) { (Some(a), Some(b)) if a > 0 => Some(r4(b as f64 / a as f64)), _ => None },
                 }))
             })
@@ -611,4 +619,67 @@ fn fetch_cover(st: &AppState, id: i64, path: &std::path::Path) -> Option<Vec<u8>
     }
     std::fs::rename(&tmp, path).ok()?;
     Some(bytes)
+}
+
+// ---------------------------------------------------------------- bulk ratios and market-wide revenue
+
+/// Same definitions as `profile`, for every listed company in one pass.
+async fn ratios(st: &Arc<AppState>) -> Result<Value, ApiError> {
+    let st2 = st.clone();
+    st.read(move |c| {
+        let cfg = &st2.cfg;
+        let t = NaiveDate::parse_from_str(&st2.clock.today(), "%Y-%m-%d").map_err(|e| super::internal(e.to_string()))?;
+        let s365 = (t - chrono::Duration::days(365)).format("%Y-%m-%d").to_string();
+        let cost = param_f64(cfg, "company.operating_cost_ratio", 0.5);
+        let tax = param_f64(cfg, "company.corp_tax", 0.25);
+        let mut s = c
+            .prepare(
+                "SELECT co.id, co.shares, co.last_price,
+                   COALESCE((SELECT SUM(revenue) FROM company_days d WHERE d.company_id=co.id AND d.day>?1), 0),
+                   COALESCE((SELECT SUM(dividend_ps) FROM company_days d WHERE d.company_id=co.id AND d.day>?1), 0)
+                 FROM companies co WHERE co.status='listed'",
+            )
+            .map_err(sql)?;
+        let rows = s
+            .query_map([&s365], |r| {
+                let (id, shares, price, rev, dps): (i64, i64, i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?);
+                let eps = rev as f64 * (1.0 - cost) * (1.0 - tax) / shares.max(1) as f64;
+                Ok(json!({
+                    "id": id,
+                    "pe": if eps > 0.0 && price > 0 { Some(r4(price as f64 / eps)) } else { None },
+                    "dividend_yield": if dps > 0 && price > 0 { Some(r4(dps as f64 / price as f64)) } else { None },
+                }))
+            })
+            .map_err(sql)?;
+        let out: Vec<Value> = rows.collect::<Result<_, _>>().map_err(sql)?;
+        Ok(json!({"rows": out, "season_start": quarter_start(&st2.clock.today())}))
+    })
+    .await
+}
+
+/// Market-wide revenue per day (last 90 days): the trailing 7-day sum, and the demand index =
+/// that sum / `revenue.demand_base_week` (1.00 = the economy's base weekly demand).
+async fn macro_series(st: &Arc<AppState>) -> Result<Value, ApiError> {
+    let st2 = st.clone();
+    st.read(move |c| {
+        let base = param_f64(&st2.cfg, "revenue.demand_base_week", 0.0) * 100.0; // cents
+        let mut s = c.prepare("SELECT day, SUM(revenue) FROM company_days GROUP BY day ORDER BY day").map_err(sql)?;
+        let days: Vec<(String, i64)> = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(sql)?
+            .collect::<Result<_, _>>()
+            .map_err(sql)?;
+        let mut week = Vec::new();
+        let mut demand = Vec::new();
+        for i in 6..days.len() {
+            let sum: i64 = days[i - 6..=i].iter().map(|d| d.1).sum();
+            week.push(json!([days[i].0, cents(sum)]));
+            if base > 0.0 {
+                demand.push(json!([days[i].0, r4(sum as f64 / base)]));
+            }
+        }
+        let keep = |v: Vec<Value>| -> Vec<Value> { let n = v.len(); v.into_iter().skip(n.saturating_sub(90)).collect() };
+        Ok(json!({"revenue_week": keep(week), "demand": keep(demand)}))
+    })
+    .await
 }

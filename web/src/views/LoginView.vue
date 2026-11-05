@@ -70,7 +70,7 @@ async function submit() {
 
     <p class="foot">
       <template v-if="reg">注册后获得 100,000 币。</template>游戏币与真实货币无关，不能充值或提现。
-      <RouterLink to="/" class="look">去看行情</RouterLink>
+      <RouterLink to="/" class="look">去看市场</RouterLink>
     </p>
   </main>
 </template>

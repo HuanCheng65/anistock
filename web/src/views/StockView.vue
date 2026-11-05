@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BottomNav from '../components/BottomNav.vue'
 import Cover from '../components/Cover.vue'
@@ -12,9 +12,10 @@ import OrderForm from '../components/OrderForm.vue'
 import RevenueBars from '../components/RevenueBars.vue'
 import Tabs from '../components/Tabs.vue'
 import TradeTape from '../components/TradeTape.vue'
-import WatchAside from '../components/WatchAside.vue'
+import ListSidebar from '../components/ListSidebar.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
+import { useStockNav } from '../composables/useStockNav'
 import { big, dir, hm, money, pct, qty, share, shortDay, signed, weekdayTime } from '../format'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
@@ -28,6 +29,8 @@ const market = useMarket()
 const prefs = usePrefs()
 const session = useSession()
 const desk = useMedia(DESK)
+const wide = useMedia('(min-width: 1180px)')
+const drawer = ref(false)
 const id = computed(() => Number(route.params.id))
 
 const period = ref<Period>('day')
@@ -130,6 +133,20 @@ async function afterOrder() {
   await refresh()
   session.loadMe().catch(() => {})
 }
+const nav = useStockNav(id)
+function go(sid: number | undefined) {
+  if (sid) router.replace(`/stocks/${sid}`)
+}
+function onKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+  if (e.altKey || e.ctrlKey || e.metaKey) return
+  if (e.key === 'ArrowUp' && nav.prev.value) { e.preventDefault(); go(nav.prev.value.id) }
+  if (e.key === 'ArrowDown' && nav.next.value) { e.preventDefault(); go(nav.next.value.id) }
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+watch(id, () => (drawer.value = false))
 function back() {
   if (window.history.state?.back) router.back()
   else router.push('/')
@@ -141,21 +158,28 @@ function back() {
     <header class="pagehead back phone-only">
       <button type="button" class="iconbtn" aria-label="返回" @click="back"><Icon name="back" /></button>
       <span class="num code">{{ s?.code }}</span>
+      <button type="button" class="iconbtn step" aria-label="上一支" :disabled="!nav.prev.value" @click="go(nav.prev.value?.id)"><Icon name="back" :size="20" /></button>
+      <button type="button" class="iconbtn step" aria-label="下一支" :disabled="!nav.next.value" @click="go(nav.next.value?.id)"><Icon name="chevron" :size="20" /></button>
       <button v-if="s" type="button" class="iconbtn star" :class="{ on: watching }" :aria-label="watching ? '移出自选' : '加入自选'" :aria-pressed="watching" @click="prefs.toggle(id)">
         <Icon name="watch" :size="21" :fill="watching" />
       </button>
     </header>
 
-    <div class="frame">
-      <WatchAside class="desk-only left" :current="id" />
+    <div class="frame" :class="{ collapsed: prefs.sideCollapsed && wide }">
+      <ListSidebar v-if="wide && !prefs.sideCollapsed" v-model:tab="nav.tab.value" class="left" :rows="nav.rows.value" :tabs="nav.tabs.value" :current="id" collapsible @collapse="prefs.sideCollapsed = true" />
+      <div v-else-if="wide" class="left rail0"><button type="button" class="cbtn" aria-label="展开列表" @click="prefs.sideCollapsed = false"><Icon name="chevron" :size="16" /></button></div>
+      <div v-if="drawer && desk && !wide" class="scrim dscrim" @click.self="drawer = false">
+        <ListSidebar v-model:tab="nav.tab.value" class="drawer" :rows="nav.rows.value" :tabs="nav.tabs.value" :current="id" @pick="drawer = false" />
+      </div>
 
       <div class="center">
-        <EmptyState v-if="err && !s" :text="err" action="返回行情" to="/" tone="error" />
+        <EmptyState v-if="err && !s" :text="err" action="返回股票" to="/stocks" tone="error" />
         <template v-else-if="s && q">
           <section class="hero">
             <Cover :id="s.id" :title="s.title" :w="desk ? 92 : 96" :h="desk ? 128 : 134" :size="desk ? 18 : 19" />
             <div class="ht">
               <div class="deskmeta desk-only">
+                <button v-if="!wide" type="button" class="star2" @click="drawer = true">列表</button>
                 <span class="num">{{ s.code }}</span><span v-if="s.studio">{{ s.studio }}</span><span v-if="slot">{{ slot }}</span><span class="num">{{ progress }}</span>
                 <button type="button" class="star2" :class="{ on: watching }" :aria-pressed="watching" @click="prefs.toggle(id)">{{ watching ? '已自选' : '加入自选' }}</button>
               </div>
@@ -297,7 +321,10 @@ function back() {
 
 <style scoped>
 .code { font-size: 13px; color: var(--ink-2); }
-.star { margin-left: auto; }
+.step { margin-left: auto; width: 36px; }
+.step + .step { margin-left: 0; }
+.step:disabled { color: var(--hair); }
+.star { margin-left: 0; }
 .star.on { color: var(--brand); }
 
 .hero { display: flex; gap: 14px; padding: 18px var(--gutter) 16px; }
@@ -362,8 +389,12 @@ function back() {
 
 @media (min-width: 1024px) {
   .page.stockpage { padding-bottom: 0; }
-  .frame { display: grid; grid-template-columns: 260px minmax(0, 1fr) 340px; align-items: start; }
-  .left { border-right: 1px solid var(--hair); position: sticky; top: var(--desk-header-h); max-height: calc(100vh - var(--desk-header-h)); overflow: auto; }
+  .frame { display: grid; grid-template-columns: minmax(0, 1fr) 340px; align-items: start; max-width: calc(var(--container) + 64px); margin: 0 auto; padding: 0 32px; }
+  .left { border-right: 1px solid var(--hair); position: sticky; top: var(--desk-header-h); height: calc(100vh - var(--desk-header-h)); }
+  .rail0 { display: flex; justify-content: center; padding-top: 10px; }
+  .cbtn { width: 26px; height: 26px; border: 0; background: transparent; padding: 0; color: var(--muted); display: grid; place-items: center; }
+  .dscrim { align-items: stretch; justify-content: flex-start; }
+  .drawer { width: 300px; background: var(--ground); height: 100%; padding-top: 8px; }
   .center { --gutter: 28px; min-width: 0; padding-bottom: 48px; }
   .right { position: sticky; top: var(--desk-header-h); max-height: calc(100vh - var(--desk-header-h)); overflow: auto; min-height: calc(100vh - var(--desk-header-h)); box-shadow: none; }
   .tsec { padding: 12px 16px; border-bottom: 1px solid var(--t-line); }
@@ -386,5 +417,9 @@ function back() {
   .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--rule); margin-top: 6px; }
   .cols .sec { border-top: 0; margin-top: 0; padding-top: 16px; padding-bottom: 16px; }
   .cols .sec:first-child { border-right: 1px solid var(--hair); }
+}
+@media (min-width: 1180px) {
+  .frame { grid-template-columns: 248px minmax(0, 1fr) 340px; }
+  .frame.collapsed { grid-template-columns: 36px minmax(0, 1fr) 340px; }
 }
 </style>

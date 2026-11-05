@@ -54,14 +54,15 @@ const days = computed(() => {
 <template>
   <main class="page newspage">
     <header class="pagehead phone-only"><h1>资讯</h1></header>
-    <div class="wrap">
+    <div class="container">
+      <h1 class="pagetitle desk-only">资讯</h1>
       <div class="chips gutter" role="group" aria-label="类型">
         <button v-for="c in chips" :key="c.key" type="button" :aria-pressed="chip === c.key" @click="chip = c.key">{{ c.label }}</button>
       </div>
       <EmptyState v-if="error && !market.news" :text="error" action="重试" tone="error" @act="refresh" />
       <section v-for="d in days" :key="d.day">
         <h2 class="dayh gutter">{{ dayLabel(d.day, session.status?.day) }}</h2>
-        <component :is="n.company_id ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.company_id ? `/stock/${n.company_id}` : undefined" class="item gutter">
+        <component :is="n.company_id ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : undefined" class="item gutter">
           <span class="num tm">{{ n.ts ? hm(n.ts) : '' }}</span>
           <span class="body">
             <span class="tags">
@@ -102,5 +103,13 @@ const days = computed(() => {
 .title { font-size: 15px; line-height: 1.5; }
 .text { font-size: 13px; color: var(--ink-2); line-height: 1.55; }
 .stock { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); min-width: 0; }
-@media (min-width: 1024px) { .wrap { max-width: 760px; margin: 0 auto; } }
+@media (min-width: 1024px) {
+  .chips { padding-top: 0; }
+  .item { grid-template-columns: 64px minmax(0, 1fr); padding-top: 14px; padding-bottom: 14px; }
+  .body { display: grid; grid-template-columns: 72px minmax(0, 1fr) 320px; grid-template-areas: "tags title stock" "tags text stock"; column-gap: 20px; row-gap: 4px; align-items: start; }
+  .tags { grid-area: tags; padding-top: 2px; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .title { grid-area: title; }
+  .text { grid-area: text; }
+  .stock { grid-area: stock; justify-self: end; max-width: 320px; }
+}
 </style>

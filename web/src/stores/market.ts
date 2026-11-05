@@ -2,7 +2,7 @@
 // Each domain has a refresh method; views poll them now, a push channel can call the same setters later.
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, type Airing, type Indices, type MarketStock, type NewsItem } from '../api'
+import { api, type Airing, type Indices, type MacroDay, type MacroSeries, type MarketStock, type NewsItem, type Ratios } from '../api'
 
 export const useMarket = defineStore('market', () => {
   const stocks = ref<MarketStock[] | null>(null)
@@ -10,6 +10,10 @@ export const useMarket = defineStore('market', () => {
   const tonight = ref<Airing[] | null>(null)
   const news = ref<NewsItem[] | null>(null)
   const error = ref('')
+  const ratios = ref<Ratios | null>(null)
+  const macro = ref<MacroSeries | null>(null)
+  const macroDays = ref<MacroDay[] | null>(null)
+  const ratioById = computed(() => new Map((ratios.value?.rows ?? []).map((r) => [r.id, r])))
 
   const byId = computed(() => new Map((stocks.value ?? []).map((s) => [s.id, s])))
 
@@ -40,5 +44,21 @@ export const useMarket = defineStore('market', () => {
     news.value = (await api.get<{ news: NewsItem[] }>(`/api/news?limit=${limit}`)).news
   }
 
-  return { stocks, indices, tonight, news, error, byId, refreshQuotes, refreshIndices, refreshTonight, refreshNews }
+  async function refreshRatios() {
+    try {
+      ratios.value = await api.get<Ratios>('/api/v2/ratios')
+    } catch {
+      /* the table shows – */
+    }
+  }
+  async function refreshMacro() {
+    const [a, b] = await Promise.all([
+      api.get<MacroSeries>('/api/v2/macro').catch(() => null),
+      api.get<{ days: MacroDay[] }>('/api/macro').then((r) => r.days).catch(() => null),
+    ])
+    macro.value = a
+    macroDays.value = b
+  }
+
+  return { ratios, ratioById, macro, macroDays, refreshRatios, refreshMacro, stocks, indices, tonight, news, error, byId, refreshQuotes, refreshIndices, refreshTonight, refreshNews }
 })

@@ -42,7 +42,7 @@ function done() {
     </label>
     <ul v-if="hits.length && (open || !compact)" class="hits" role="listbox">
       <li v-for="s in hits" :key="s.id">
-        <RouterLink :to="`/stock/${s.id}`" @click="done">
+        <RouterLink :to="`/stocks/${s.id}`" @click="done">
           <span class="clamp1 t">{{ s.title }}</span>
           <span class="num code">{{ s.code }}</span>
           <span class="num px" :class="dir(s.change)">{{ money(s.price) }} {{ pct(s.change) }}</span>

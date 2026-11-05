@@ -54,12 +54,12 @@ function finish(to?: string) {
 async function buy() {
   const s = chosen.value
   if (!s) return finish()
-  if (!trading.value || !buyQty.value) return finish(`/stock/${s.id}`)
+  if (!trading.value || !buyQty.value) return finish(`/stocks/${s.id}`)
   busy.value = true
   error.value = ''
   try {
     await api.post<PlaceResult>('/api/orders', { company_id: s.id, side: 'buy', kind: 'market', qty: buyQty.value, price: null })
-    finish(`/stock/${s.id}`)
+    finish(`/stocks/${s.id}`)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '无法提交委托'
   } finally {
@@ -125,7 +125,7 @@ async function buy() {
       <p v-if="error" class="msg error">{{ error }}</p>
       <button v-if="step < 2" type="button" class="btn block cta" @click="next">下一步</button>
       <button v-else-if="trading && chosen" type="button" class="btn block cta buy" :disabled="busy" @click="buy">买入 {{ qty(buyQty) }} 股</button>
-      <button v-else type="button" class="btn block cta" @click="finish(chosen ? `/stock/${chosen.id}` : '/')">去看行情</button>
+      <button v-else type="button" class="btn block cta" @click="finish(chosen ? `/stocks/${chosen.id}` : '/stocks')">去看股票</button>
     </div>
   </main>
 </template>

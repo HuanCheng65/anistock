@@ -1,6 +1,7 @@
 // Stroke icon paths (24×24), from the mockups.
 export const ICON = {
   market: 'M3 17l5-6 4 3 8-9',
+  stocks: 'M5 7h14M5 12h14M5 17h14',
   watch: 'M12 4l2.5 5.2 5.5.8-4 3.9.9 5.6L12 16.9 7.1 19.5l.9-5.6-4-3.9 5.5-.8z',
   ipo: 'M5 8h14v11H5zM9 8V5h6v3M12 12v4M10 14h4',
   news: 'M5 5h14v14H5zM8 9h8M8 13h8M8 17h5',

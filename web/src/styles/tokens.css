@@ -54,7 +54,8 @@
   /* layout */
   --nav-h: 64px;
   --gutter: 16px;
-  --desk-header-h: 52px;
+  --desk-header-h: 56px;
+  --container: 1360px;
 
   color-scheme: light;
 }

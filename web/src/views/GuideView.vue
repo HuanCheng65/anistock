@@ -43,7 +43,7 @@ const session = useSession()
     <section class="sec">
       <h2>第一笔交易怎么下</h2>
       <ol>
-        <li>在行情里找到一部你在追的番，打开它的股票页。</li>
+        <li>在“股票”里找到一部你在追的番，打开它的股票页。</li>
         <li>选“买入”，填写数量。价格可以直接选盘口里最低的卖价，它会填入价格栏。</li>
         <li>提交后能成交的部分立即成交，其余部分留在盘口等待，随时可以撤单。</li>
         <li>没成交的委托在每天早上的日结时自动撤销。没有涨跌停，大额委托用限价委托更稳妥。</li>
@@ -61,7 +61,7 @@ const session = useSession()
     </section>
 
     <div class="cta">
-      <RouterLink to="/" class="btn">去看行情</RouterLink>
+      <RouterLink to="/stocks" class="btn">去看股票</RouterLink>
       <RouterLink v-if="!session.me" to="/login" class="btn ghost">注册</RouterLink>
       <RouterLink to="/ipo" class="btn ghost">新股认购</RouterLink>
       <RouterLink to="/rules" class="btn ghost">规则</RouterLink>

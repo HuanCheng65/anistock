@@ -36,7 +36,7 @@ const last = computed(() => days.value?.[days.value.length - 1])
 <template>
   <main class="page doc">
     <header class="pagehead back">
-      <BackButton />
+      <BackButton fallback="/" />
       <h1>宏观</h1>
     </header>
     <dl class="facts g4 gutter">

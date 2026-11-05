@@ -3,8 +3,8 @@ import { RouterLink, useRoute } from 'vue-router'
 import Icon from './Icon.vue'
 const route = useRoute()
 const items = [
-  { key: 'market', to: '/', label: '行情', icon: 'market' },
-  { key: 'watch', to: '/watch', label: '自选', icon: 'watch' },
+  { key: 'market', to: '/', label: '市场', icon: 'market' },
+  { key: 'stocks', to: '/stocks', label: '股票', icon: 'stocks' },
   { key: 'ipo', to: '/ipo', label: '新股', icon: 'ipo' },
   { key: 'news', to: '/news', label: '资讯', icon: 'news' },
   { key: 'me', to: '/me', label: '我的', icon: 'me' },
@@ -13,7 +13,7 @@ const items = [
 
 <template>
   <nav class="bottom" aria-label="主导航">
-    <RouterLink v-for="n in items" :key="n.key" :to="n.to" :aria-current="route.meta.tab === n.key || (n.key === 'me' && route.meta.tab === 'rank') ? 'page' : undefined">
+    <RouterLink v-for="n in items" :key="n.key" :to="n.to" :aria-current="route.meta.tab === n.key ? 'page' : undefined">
       <Icon :name="n.icon" />
       <span>{{ n.label }}</span>
     </RouterLink>

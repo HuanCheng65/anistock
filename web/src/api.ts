@@ -366,7 +366,18 @@ export interface Listing {
   ipo_price: number
   first_close: number | null
   first_change: number | null
+  oversubscribed: number | null
   ratio: number | null
+}
+
+export interface Ratios {
+  rows: { id: number; pe: number | null; dividend_yield: number | null }[]
+  season_start: string
+}
+
+export interface MacroSeries {
+  revenue_week: [string, number][]
+  demand: [string, number][]
 }
 
 export interface Listings {

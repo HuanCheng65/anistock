@@ -8,7 +8,7 @@ defineProps<{ s: MarketStock; extra?: string }>()
 </script>
 
 <template>
-  <RouterLink :to="`/stock/${s.id}`" class="row">
+  <RouterLink :to="`/stocks/${s.id}`" class="row">
     <Cover :id="s.id" :title="s.title" :w="36" :h="50" :spine="false" />
     <span class="name">
       <span class="serif clamp2 t">{{ s.title }}</span>

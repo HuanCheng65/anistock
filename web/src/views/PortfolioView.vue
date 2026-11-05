@@ -10,10 +10,12 @@ import { usePoll } from '../composables/usePoll'
 import { dir, LEDGER_REASON, money, pct, qty, signed, when } from '../format'
 import { useAccount } from '../stores/account'
 import { useIpo } from '../stores/ipo'
+import { usePrefs } from '../stores/prefs'
 import { useSession } from '../stores/session'
 
 const session = useSession()
 const account = useAccount()
+const prefs = usePrefs()
 const ipo = useIpo()
 const tab = ref('pos')
 const error = ref('')
@@ -35,13 +37,16 @@ usePoll(() => Promise.all([session.loadLeaders(), ipo.refresh()]), 60000)
 watch(tab, () => refresh())
 
 const me = computed(() => session.me)
+function rememberHold() {
+  prefs.context = { key: 'hold', label: '持仓', ids: positions.value.map((p) => p.company_id) }
+}
 const positions = computed(() => account.positions ?? [])
 const today = computed(() => positions.value.reduce((a, p) => a + (p.value - p.value / (1 + (p.day_change || 0))), 0))
 const floating = computed(() => positions.value.reduce((a, p) => a + p.pnl, 0))
 const rank = computed(() => session.leaders?.find((r) => r.username === me.value?.username)?.rank ?? null)
 const pending = computed(() => (ipo.ipos ?? []).filter((i) => i.status === 'open' && i.my?.qty).length)
 const tabs = computed(() => [
-  { key: 'pos', label: '持仓' },
+  { key: 'pos', label: positions.value.length ? `持仓 ${positions.value.length}` : '持仓' },
   { key: 'orders', label: account.orders?.length ? `委托 ${account.orders.length}` : '委托' },
   { key: 'trades', label: '成交' },
   { key: 'ledger', label: '资金明细' },
@@ -89,7 +94,6 @@ async function cancel(id: number) {
           <RouterLink to="/ipo"><span>新股认购</span><span class="v">{{ pending ? `${pending} 笔待配售` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/guide"><span>新手指南</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/rules"><span>规则</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
-          <RouterLink to="/macro"><span>宏观</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/settings"><span>设置</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
         </nav>
       </div>
@@ -101,26 +105,56 @@ async function cancel(id: number) {
 
         <template v-if="tab === 'pos'">
           <template v-if="account.positions">
-            <RouterLink v-for="p in positions" :key="p.company_id" :to="`/stock/${p.company_id}`" class="hold">
+            <RouterLink v-for="p in positions" :key="p.company_id" :to="`/stocks/${p.company_id}`" class="hold phone-only" @click="rememberHold">
               <Cover :id="p.company_id" :title="p.title" :w="36" :h="50" :spine="false" class="hc" />
               <span class="serif clamp1 t">{{ p.title }}</span>
               <span class="num r v">{{ money(p.value) }}</span>
               <span class="num m">{{ qty(p.qty) }} 股 · 成本 {{ money(p.avg_cost) }}<template v-if="p.dividends > 0"> · 分红 {{ money(p.dividends) }}</template></span>
               <span class="num r m" :class="dir(p.pnl)">{{ signed(p.pnl) }}&nbsp;&nbsp;{{ pct(p.pnl_pct) }}</span>
             </RouterLink>
-            <EmptyState v-if="!positions.length" text="暂无持仓" action="去看行情" to="/" />
+            <table v-if="positions.length" class="table desk-only htable">
+              <thead><tr><th>名称</th><th>持仓</th><th>可卖</th><th>成本</th><th>现价</th><th>市值</th><th>盈亏</th><th>今日</th><th>分红</th></tr></thead>
+              <tbody>
+                <tr v-for="p in positions" :key="p.company_id">
+                  <td class="tt"><RouterLink :to="`/stocks/${p.company_id}`" class="hn" @click="rememberHold"><Cover :id="p.company_id" :title="p.title" :w="24" :h="34" :spine="false" /><span class="serif clamp1">{{ p.title }}</span></RouterLink></td>
+                  <td class="num">{{ qty(p.qty) }}</td>
+                  <td class="num">{{ qty(p.available) }}</td>
+                  <td class="num">{{ money(p.avg_cost) }}</td>
+                  <td class="num">{{ money(p.price) }}</td>
+                  <td class="num">{{ money(p.value) }}</td>
+                  <td class="num" :class="dir(p.pnl)">{{ signed(p.pnl) }}</td>
+                  <td class="num" :class="dir(p.day_change)">{{ pct(p.day_change) }}</td>
+                  <td class="num">{{ money(p.dividends) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <EmptyState v-if="!positions.length" text="暂无持仓" action="去看股票" to="/stocks" />
           </template>
           <div v-else class="gutter"><div v-for="i in 3" :key="i" class="skel" style="height: 50px; margin: 12px 0"></div></div>
         </template>
 
         <template v-else-if="tab === 'orders'">
-          <div v-for="o in account.orders ?? []" :key="o.id" class="ord">
-            <RouterLink :to="`/stock/${o.company_id}`" class="serif clamp1 t">{{ o.title }}</RouterLink>
+          <table v-if="account.orders?.length" class="table desk-only htable">
+            <thead><tr><th>名称</th><th>方向</th><th>价格</th><th>数量</th><th>已成交</th><th>时间</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="o in account.orders" :key="o.id">
+                <td class="tt"><RouterLink :to="`/stocks/${o.company_id}`" class="serif clamp1">{{ o.title }}</RouterLink></td>
+                <td :class="o.side === 'buy' ? 'up' : 'down'">{{ o.side === 'buy' ? '买入' : '卖出' }}</td>
+                <td class="num">{{ o.price != null ? money(o.price) : '市价' }}</td>
+                <td class="num">{{ qty(o.qty) }}</td>
+                <td class="num">{{ qty(o.filled) }}</td>
+                <td class="num muted">{{ when(o.created_at, session.status?.day) }}</td>
+                <td><button type="button" class="linkbtn" :disabled="cancelling === o.id" @click="cancel(o.id)">{{ cancelling === o.id ? '撤单中' : '撤单' }}</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-for="o in account.orders ?? []" :key="o.id" class="ord phone-only">
+            <RouterLink :to="`/stocks/${o.company_id}`" class="serif clamp1 t">{{ o.title }}</RouterLink>
             <span class="oside" :class="o.side === 'buy' ? 'up' : 'down'">{{ o.side === 'buy' ? '买入' : '卖出' }}</span>
             <span class="num m">{{ o.price != null ? money(o.price) : '市价' }} · 已成交 {{ qty(o.filled) }}/{{ qty(o.qty) }}</span>
             <button type="button" class="linkbtn" :disabled="cancelling === o.id" @click="cancel(o.id)">{{ cancelling === o.id ? '撤单中' : '撤单' }}</button>
           </div>
-          <EmptyState v-if="account.orders && !account.orders.length" text="暂无委托" action="去看行情" to="/" />
+          <EmptyState v-if="account.orders && !account.orders.length" text="暂无委托" action="去看股票" to="/stocks" />
         </template>
 
         <template v-else-if="tab === 'trades'">
@@ -129,7 +163,7 @@ async function cancel(id: number) {
               <thead><tr><th></th><th>价格</th><th>数量</th><th>时间</th></tr></thead>
               <tbody>
                 <tr v-for="t in account.trades" :key="t.id + t.side">
-                  <td class="tt"><RouterLink :to="`/stock/${t.company_id}`" class="clamp1"><span :class="t.side === 'buy' ? 'up' : 'down'">{{ t.side === 'buy' ? '买' : '卖' }}</span> {{ t.title }}</RouterLink></td>
+                  <td class="tt"><RouterLink :to="`/stocks/${t.company_id}`" class="clamp1"><span :class="t.side === 'buy' ? 'up' : 'down'">{{ t.side === 'buy' ? '买' : '卖' }}</span> {{ t.title }}</RouterLink></td>
                   <td class="num">{{ money(t.price) }}</td>
                   <td class="num">{{ qty(t.qty) }}</td>
                   <td class="num muted">{{ when(t.ts, session.status?.day) }}</td>
@@ -137,7 +171,7 @@ async function cancel(id: number) {
               </tbody>
             </table>
           </div>
-          <EmptyState v-if="account.trades && !account.trades.length" text="暂无成交" action="去看行情" to="/" />
+          <EmptyState v-if="account.trades && !account.trades.length" text="暂无成交" action="去看股票" to="/stocks" />
         </template>
 
         <template v-else>
@@ -161,7 +195,6 @@ async function cancel(id: number) {
           <RouterLink to="/ipo"><span>新股认购</span><span class="v">{{ pending ? `${pending} 笔待配售` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/guide"><span>新手指南</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/rules"><span>规则</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
-          <RouterLink to="/macro"><span>宏观</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
         </nav>
       </div>
     </div>
@@ -197,10 +230,15 @@ async function cancel(id: number) {
 .chev { margin-left: 6px; color: var(--hold-npc); }
 
 @media (min-width: 1024px) {
-  .frame { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 360px minmax(0, 1fr); align-items: start; }
-  .side { border-right: 1px solid var(--hair); min-height: calc(100vh - var(--desk-header-h)); --gutter: 24px; }
-  .main { --gutter: 28px; min-width: 0; }
-  .summary { padding-top: 24px; }
+  .frame { max-width: calc(var(--container) + 64px); margin: 0 auto; padding: 0 32px; display: grid; grid-template-columns: 340px minmax(0, 1fr); column-gap: 40px; align-items: start; }
+  .side { --gutter: 0px; position: sticky; top: var(--desk-header-h); padding-bottom: 24px; }
+  .main { --gutter: 0px; min-width: 0; padding-top: 18px; padding-bottom: 48px; }
+  .summary { padding-top: 28px; }
+  .total { font-size: 38px; }
+  .htable td { padding-top: 12px; padding-bottom: 12px; font-size: 14px; }
+  .tt .hn { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--ink); }
+  .hn .serif, .tt .serif { font-weight: 600; min-width: 0; }
+  .tt { width: 30%; }
   .menu.desk-only { display: flex !important; }
 }
 </style>

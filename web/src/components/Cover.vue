@@ -10,7 +10,11 @@ const props = withDefaults(defineProps<{ id: number; title: string; w: number; h
 
 const TONES = ['#3E5C76', '#7A4E3A', '#5E6B3C', '#7C2F3B', '#4A3E66', '#2F6A5A', '#8A6A2B', '#9C3B2C', '#4B6C8C', '#2E3A2E', '#3D7E8C', '#2D4470', '#B4572E', '#2B2F4A', '#8C3D6B', '#5A4A3A']
 const tone = computed(() => TONES[Math.abs(props.id * 2654435761) % TONES.length])
-const short = computed(() => spineText(props.title))
+const short = computed(() => {
+  const t = spineText(props.title)
+  const fit = Math.max(1, Math.floor((props.h - 20) / (props.size * 1.17)))
+  return [...t].slice(0, fit).join('')
+})
 
 const missing = (globalThis as any).__aniexNoCover ?? ((globalThis as any).__aniexNoCover = new Set<number>())
 const failed = ref(missing.has(props.id))
@@ -43,7 +47,7 @@ function spineText(t: string): string {
 .cover { position: relative; flex: none; display: block; overflow: hidden; color: var(--spine-ink); }
 .spine {
   position: absolute; top: 10px; left: 8px; writing-mode: vertical-rl; font-weight: 900; line-height: 1.15;
-  overflow: hidden; letter-spacing: 0.02em; white-space: nowrap;
+  overflow: hidden; letter-spacing: 0.02em;
 }
 img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.2s; }
 img.on { opacity: 1; }
