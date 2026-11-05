@@ -42,6 +42,7 @@ md-5 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 codegen-units = 1

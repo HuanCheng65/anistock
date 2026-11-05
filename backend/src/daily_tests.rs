@@ -252,6 +252,23 @@ fn a_failed_close_changes_nothing() {
     assert!(matches!(e.run_day(&cfg, DAY, TS, &fixed).unwrap(), CloseOutcome::Skipped));
     assert_eq!(e.state("last_closed"), Some(DAY));
     e.check_invariants().unwrap();
+    // the close wrote the player's asset snapshot (V6) in its own batch, once
+    e.flush().unwrap();
+    let days: Vec<PlayerDay> = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|c| match c {
+            Change::PlayerDayReplace(d) => Some(d.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(days.len(), 1, "{days:?}");
+    let d = &days[0];
+    assert_eq!((d.account_id, d.day.as_str(), d.cash, d.stock_value, d.restructured), (p, DAY, cash(&e, p), 0, false));
+    let initial = (cfg.game.initial_cash * 100.0).round_ties_even();
+    assert!((d.return_index - cash(&e, p) as f64 / initial).abs() < 1e-12, "{d:?}");
 }
 
 /// Company 2 open for subscription from 2026-11-06 to 2026-11-09, and a player with `cash` cents.
