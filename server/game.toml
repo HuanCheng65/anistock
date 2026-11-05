@@ -65,7 +65,9 @@ noise_trade_prob = 0.15        # per tick per noise trader
 # backend/src/market/config.rs. On since v0.3.0 (false: the v1 NPCs, npc.rs).
 enabled = true
 seed = 20261105
-n_value = 240                  # population (§2)
+n_value = 720                  # population (§2); 3x value agents since v0.3.4: with a price-anchored
+                               # market maker the value agents alone pull prices to value
+grow_cash_scale = 0.33         # agents added to a running population start with a third of the cash
 n_trend = 120
 n_news = 60
 n_retail = 180
@@ -80,13 +82,25 @@ bias_sigma = 0.05              # spread of the value agents' views (§4)
 bias_half_life_days = 4.0
 event_shock = 0.12             # belief shift of a magnitude-10 official event
 mm_target_frac = 0.2           # market maker keeps 20% of the float (§8)
+# Designated market maker (v0.3.4, liquidity study in docs/v2-npc-market.md §11): quotes around the market
+# price (not the hidden value), stock lent by the rights holders, a minimum quote size, size skew by inventory,
+# wider and smaller around scheduled information
+mm_anchor_to_price = 1.0
+mm_loan_frac = 0.2             # rights holders lend 20% of the shares to the market maker
+mm_cash = 50000.0
 mm_rate = 20.0
-mm_base_spread = 0.008
+mm_base_spread = 0.006
 mm_vol_mult = 2.0
 mm_quote_frac = 0.005
-mm_levels = 3
-mm_anchor_to_price = 0.3
-mm_cash = 10000.0
+mm_quote_min = 1500.0          # a quote unit is at least 1,500 币 (level k quotes k units)
+mm_levels = 5
+mm_level_step = 0.5
+mm_inventory_skew = 0.0        # no price shading (it compounds with a last-price anchor) ...
+mm_size_skew = 0.7             # ... the size skews instead
+mm_inventory_cap = 3.0
+mm_toxicity_mult = 2.0
+mm_event_widen = 2.0           # air windows, fresh events, the first half hour
+# adaptive liquidity (adapt_*, docs/v2-npc-market.md §11) stays off
 fund_floor = 0.3               # fund flows (§6)
 fund_ceiling = 1.2
 fund_weekly_cap = 0.1

@@ -43,10 +43,17 @@ pub enum BotKind {
     IpoAll,
     /// hold the market, but sell everything on Sunday evening (before the dividend) and buy back on Monday
     ExDividend,
+    /// adaptive liquidity: show large resting orders 1.5% either side of the mid in the three hottest stocks
+    /// (they count as human depth, so the market maker and the retail/trend agents step back), refreshed
+    /// every 30 minutes, and keep what fills
+    SpoofScare,
+    /// adaptive liquidity: post bids 5% under and offers 5% over the last price in the ten hottest stocks,
+    /// refreshed hourly, and wait for NPC flow to fill them
+    BadPrice,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 16] {
+    pub fn all() -> [BotKind; 18] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -64,6 +71,8 @@ impl BotKind {
             BotKind::Fan30,
             BotKind::FanLong,
             BotKind::IpoAll,
+            BotKind::SpoofScare,
+            BotKind::BadPrice,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -84,6 +93,8 @@ impl BotKind {
             BotKind::FanLong => "fan_long_0.3",
             BotKind::IpoAll => "ipo_all",
             BotKind::ExDividend => "ex_dividend",
+            BotKind::SpoofScare => "spoof_scare",
+            BotKind::BadPrice => "bad_price",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -513,6 +524,49 @@ impl Bot {
                 }
                 if s >= 22 * 3600 + 3000 {
                     self.state = 0;
+                }
+            }
+            BotKind::SpoofScare => {
+                if s % 1800 != 0 {
+                    return;
+                }
+                let wealth = self.wealth(e);
+                for c in hottest(e, heat, 3) {
+                    e.cancel_all(acct, c, &ts);
+                    let b = e.book(c, 1);
+                    let (Some(bid), Some(ask)) = (b.bids.first().map(|l| l.price), b.asks.first().map(|l| l.price)) else {
+                        continue;
+                    };
+                    let mid = (bid + ask) / 2;
+                    let lo = (mid * 985 / 1000).max(1);
+                    let hi = mid * 1015 / 1000 + 1;
+                    let q = affordable(e, (wealth / 6).min(e.available_cash(acct)), lo);
+                    if place(e, acct, c, "buy", "limit", q, Some(lo), t) {
+                        self.trades_placed += 1;
+                    }
+                    let free = e.available_shares(acct, c);
+                    if place(e, acct, c, "sell", "limit", free, Some(hi), t) {
+                        self.trades_placed += 1;
+                    }
+                }
+            }
+            BotKind::BadPrice => {
+                if s % 3600 != 0 {
+                    return;
+                }
+                let wealth = self.wealth(e);
+                for c in hottest(e, heat, 10) {
+                    e.cancel_all(acct, c, &ts);
+                    let Some(p) = e.company(c).map(|x| x.last_price).filter(|p| *p > 0) else { continue };
+                    let lo = (p * 95 / 100).max(1);
+                    let q = affordable(e, (wealth / 12).min(e.available_cash(acct)), lo);
+                    if place(e, acct, c, "buy", "limit", q, Some(lo), t) {
+                        self.trades_placed += 1;
+                    }
+                    let free = e.available_shares(acct, c);
+                    if place(e, acct, c, "sell", "limit", free, Some(p * 105 / 100 + 1), t) {
+                        self.trades_placed += 1;
+                    }
                 }
             }
             BotKind::Spoof => {

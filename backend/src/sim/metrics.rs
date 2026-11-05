@@ -53,6 +53,9 @@ pub struct Recorder {
     events: Vec<(i64, i64, String, i8, f64)>,
     npc: HashSet<i64>,
     mm_accounts: HashSet<i64>,
+    /// the market makers' cash and inventory at the start (their buy-and-hold benchmark)
+    mm_start_cash: i64,
+    mm_start_holdings: HashMap<i64, i64>,
     wealth0: (i64, i64),
     npc_income: i64,
     /// transfers and interest received by the NPC agents (a passive holder gets them too)
@@ -154,6 +157,8 @@ impl Recorder {
             events: Vec::new(),
             npc: npc.clone(),
             mm_accounts,
+            mm_start_cash: 0,
+            mm_start_holdings: HashMap::new(),
             wealth0: (0, 0),
             npc_income: 0,
             npc_unearned: 0,
@@ -187,6 +192,12 @@ impl Recorder {
 
     pub fn start_wealth(&mut self, e: &Engine, m: &Market) {
         self.wealth0 = (m.npc_wealth(e).0, self.mm_wealth(e));
+        for a in &self.mm_accounts {
+            self.mm_start_cash += e.account(*a).map_or(0, |x| x.cash);
+            for h in e.holdings_of(*a) {
+                *self.mm_start_holdings.entry(h.company_id).or_default() += h.qty;
+            }
+        }
         for a in &m.agents {
             self.start_cash += e.account(a.account).map_or(0, |x| x.cash);
             for h in e.holdings_of(a.account) {
@@ -611,6 +622,7 @@ impl Recorder {
                     "deviation_ar1": phi,
                     "deviation_half_life_days": half_life,
                     "deviation_sd": dev_sd,
+                    "deviation_abs_median": median(cs.iter().filter_map(|c| dev.get(c)).flatten().map(|x| x.abs()).collect()),
                     "spread_median": quantile(&mut sp, 0.5),
                     "spread_p90": quantile(&mut sp, 0.9),
                     "two_sided_share": two.0 as f64 / two.1.max(1) as f64,
@@ -724,6 +736,15 @@ impl Recorder {
             passive += *q as f64 * (px + net);
         }
         let actual = (w_agents - self.npc_fund) as f64;
+        // the market makers against holding their starting inventory (delisted shares count as 0): what
+        // dealing earned or lost, without the inventory's price drift
+        let mm_hold: i64 = self.mm_start_cash
+            + self
+                .mm_start_holdings
+                .iter()
+                .map(|(c, q)| q * e.company(*c).filter(|co| co.status == "listed").map_or(0, |co| co.last_price))
+                .sum::<i64>();
+        let mm_dealing = w_mm - self.mm_fund - self.mm_income - mm_hold;
         let npc = json!({
             "passive_end": passive / 100.0,
             "passive_return": passive / self.wealth0.0.max(1) as f64 - 1.0,
@@ -742,6 +763,7 @@ impl Recorder {
             "mm_fund_net": self.mm_fund as f64 / 100.0,
             "mm_trading_pnl": mm_trading as f64 / 100.0,
             "mm_trading_pnl_pct": mm_trading as f64 / self.wealth0.1.max(1) as f64,
+            "mm_dealing_pnl": mm_dealing as f64 / 100.0,
             "fund_in": m.stats.fund_in as f64 / 100.0,
             "fund_out": m.stats.fund_out as f64 / 100.0,
         });

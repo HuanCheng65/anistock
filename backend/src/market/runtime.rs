@@ -85,6 +85,32 @@ impl MarketRuntime {
         } else {
             self.market.attach_population(e);
         }
+        // a changed stock loan, cash level or population is applied to the running database: back it up first
+        let listed = e.companies().filter(|c| c.status == "listed").count();
+        let grow = {
+            let want = self.market.population_counts(listed);
+            let mut have = [0usize; 4];
+            for a in &self.market.agents {
+                have[a.kind as usize] += 1;
+            }
+            (0..4).any(|k| want[k] > have[k])
+        };
+        if (grow || self.market.designation_pending(e)) && e.db_path().is_some() {
+            let stem = cfg.game_db.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let dir = cfg.game_db.parent().map(Path::to_path_buf).unwrap_or_default().join("backups");
+            let dest = e.backup_to(&dir.join(format!("{stem}-before-mm-designation-{stamp}.db")))?;
+            eprintln!("npc market: designating the market makers, database backed up to {}", dest.display());
+        }
+        if grow {
+            let (day, ts) = (day_of(now), ts_of(now));
+            e.begin_batch();
+            let n = self.market.grow_population(e, &day, &ts);
+            e.end_batch();
+            e.check_invariants()?;
+            eprintln!("npc market: {n} agents added to reach the configured population");
+        }
+        self.designate(e, now)?;
         let params = Params::from_config(cfg)?;
         if let Some(last) = e.state("last_closed").map(str::to_string) {
             if let Ok(inp) = Inputs::read(&crate::inputs::default_path(cfg, &last)) {
@@ -140,6 +166,19 @@ impl MarketRuntime {
         self.market.rebalance_float(e, &day, &ts);
         e.set_state("npc_market", "1");
         e.end_batch();
+        e.check_invariants()
+    }
+
+    /// The designated market makers' stock loan and cash (`Market::designate_market_makers`): at every start
+    /// (a changed `mm_loan_frac` / `mm_cash` applies to a running database) and after every close (new
+    /// listings). One batch; nothing happens when nothing changed.
+    fn designate(&mut self, e: &mut Engine, now: i64) -> Result<(), String> {
+        e.begin_batch();
+        let moved = self.market.designate_market_makers(e, &day_of(now), &ts_of(now));
+        e.end_batch();
+        if moved > 0 {
+            eprintln!("npc market: {moved} shares placed with the market makers by the rights holders");
+        }
         e.check_invariants()
     }
 
@@ -208,6 +247,7 @@ impl MarketRuntime {
             self.market.post_event(e, ev, kind);
         }
         self.market.note_revisions(e, t_close);
+        self.designate(e, t_close)?;
         self.market.fund_flows(e, &day, &ts);
         self.market.prune(t_close);
         let params = Params::from_config(cfg)?;

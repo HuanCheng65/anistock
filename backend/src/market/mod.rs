@@ -96,6 +96,18 @@ struct MmState {
     var_rate: f64,
     last_p: f64,
     last_t: i64,
+    /// inventory at the last requote, and an EWMA of the net shares it bought (+) or sold (-) since, in
+    /// quote units: one-sided flow is the toxicity a dealer widens against
+    last_inv: Option<i64>,
+    /// EWMA of what its recent fills lost by the next requote (markout), in quote units of notional
+    toxicity: f64,
+    /// human activity in the stock: player-traded notional at the last requote (engine counter), and an
+    /// EWMA of the rate, 币 per hour; players' resting depth near the mid, 币
+    human_flow_seen: Option<i64>,
+    human_rate: f64,
+    human_depth: f64,
+    /// last price at the previous requote
+    last_quote_p: f64,
 }
 
 /// Counters for reports.
@@ -286,6 +298,30 @@ impl Market {
         a
     }
 
+    /// Scheduled or fresh information about `c` at `t`: from 1 h before an episode airs until 2 h after its
+    /// 热度快讯 is due, 2 h after any event, and the first half hour of the session (after the close's
+    /// revisions). All of it is public.
+    fn info_window(&self, c: i64, t: i64) -> bool {
+        let (_, s) = local(t);
+        if (8 * 3600 + 45 * 60..9 * 3600 + 30 * 60).contains(&s) {
+            return true;
+        }
+        let after = ((self.cfg.flash_delay_h + 2.0) * 3600.0) as i64;
+        if self.air.get(&c).is_some_and(|ts| ts.iter().any(|&at| t >= at - 3600 && t <= at + after)) {
+            return true;
+        }
+        self.events.iter().any(|e| e.company_id == c && t >= e.at && t - e.at <= 7200)
+    }
+
+    /// Adaptive liquidity: the retail and trend agents' activity in `c`, ×`adapt_rate_max` when no human
+    /// trades or rests orders there, down to ×`adapt_rate_min` when humans are busy (their traded notional
+    /// per hour plus resting depth, against `adapt_activity_ref` 币).
+    pub fn rate_mult(&self, c: i64) -> f64 {
+        let (lo, hi) = (self.cfg.adapt_rate_min, self.cfg.adapt_rate_max);
+        let h = self.mms.get(&c).map_or(0.0, |m| m.human_rate + m.human_depth);
+        lo + (hi - lo) * (-h / self.cfg.adapt_activity_ref.max(1.0)).exp()
+    }
+
     fn prune_events(&mut self, t: i64) {
         self.events.retain(|e| t - e.at < 8 * DAY);
     }
@@ -371,6 +407,67 @@ impl Market {
         }
     }
 
+    /// Grow a running population to the configured counts (`population_counts` for the stocks listed now):
+    /// the missing agents of each type are appended as a new block (recorded in `npc_population_extra`, so
+    /// `attach_population` finds them after a restart), with `grow_cash_scale` of the configured starting
+    /// cash from the world account and no shares. A population is never shrunk. Returns the number added.
+    pub fn grow_population(&mut self, engine: &mut Engine, day: &str, ts: &str) -> usize {
+        let listed: Vec<i64> = engine.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        let want = self.population_counts(listed.len());
+        let mut have = [0usize; 4];
+        for a in &self.agents {
+            have[a.kind as usize] += 1;
+        }
+        let add: Vec<usize> = (0..4).map(|k| want[k].saturating_sub(have[k])).collect();
+        if add.iter().all(|&n| n == 0) {
+            return 0;
+        }
+        let world = engine.special("world").expect("world account");
+        // a large population appearing at once with full cash lifts the price level (measured in marketsim
+        // --grow): the new agents start smaller
+        let scale = self.cfg.grow_cash_scale;
+        let kinds = [
+            (AgentKind::Value, add[0], self.cfg.cash_value * scale),
+            (AgentKind::Trend, add[1], self.cfg.cash_trend * scale),
+            (AgentKind::News, add[2], self.cfg.cash_news * scale),
+            (AgentKind::Retail, add[3], self.cfg.cash_retail * scale),
+        ];
+        for (kind, n, cash) in kinds {
+            for _ in 0..n {
+                let i = self.agents.len();
+                let h = |k: u64| unit(hash(&[self.cfg.seed, 0xa6e7, i as u64, k]));
+                let name = format!("{}NPC-{:04}", kind.label(), i + 1);
+                let account = engine.create_account("npc", &name, None, None, None, ts);
+                let start_cash = (cash * 100.0 * (0.5 + h(1))).round() as i64;
+                engine.transfer(world, account, start_cash, "npc_fund_in", day, ts, None, None);
+                let nw = self.cfg.watch_min + ((h(2) * (self.cfg.watch_max - self.cfg.watch_min + 1) as f64) as usize);
+                let watch = self.draw_watch(&listed, nw, i as u64);
+                let lb = self.cfg.trend_lookback_min;
+                self.agents.push(Agent {
+                    kind,
+                    account,
+                    watch,
+                    start_cash,
+                    threshold: match kind {
+                        AgentKind::Trend => lerp(self.cfg.trend_threshold, h(3)),
+                        _ => lerp(self.cfg.value_threshold, h(3)),
+                    },
+                    aggression: lerp(self.cfg.value_aggression, h(4)),
+                    lookback_s: (60.0 * (lb[0].ln() + (lb[1].ln() - lb[0].ln()) * h(5)).exp()) as i64,
+                });
+                let t = self.now.max(0) + self.next_gap(i);
+                self.schedule.push(Reverse((t, Actor::Agent(i as u32))));
+            }
+        }
+        let mut extra = engine.state("npc_population_extra").unwrap_or("").to_string();
+        if !extra.is_empty() {
+            extra.push(';');
+        }
+        extra.push_str(&format!("{},{},{},{},{}", add[0], add[1], add[2], add[3], scale));
+        engine.set_state("npc_population_extra", &extra);
+        add.iter().sum()
+    }
+
     /// Agents per type for `listed` stocks: the configured counts scaled by listed / `population_reference`
     /// (the calibration's universe), at least a tenth of them.
     pub fn population_counts(&self, listed: usize) -> [usize; 4] {
@@ -416,6 +513,20 @@ impl Market {
             (AgentKind::Retail, n[3], self.cfg.cash_retail),
         ];
         self.agents.clear();
+        // blocks appended later by `grow_population`, in order
+        let mut kinds = kinds.to_vec();
+        for block in engine.state("npc_population_extra").unwrap_or("").split(';').filter(|b| !b.is_empty()) {
+            // counts per type, then the cash scale the block was funded with
+            let f: Vec<&str> = block.split(',').map(str::trim).collect();
+            let x: Vec<usize> = f.iter().take(4).filter_map(|p| p.parse().ok()).collect();
+            let scale: f64 = f.get(4).and_then(|p| p.parse().ok()).unwrap_or(1.0);
+            if x.len() == 4 {
+                kinds.push((AgentKind::Value, x[0], self.cfg.cash_value * scale));
+                kinds.push((AgentKind::Trend, x[1], self.cfg.cash_trend * scale));
+                kinds.push((AgentKind::News, x[2], self.cfg.cash_news * scale));
+                kinds.push((AgentKind::Retail, x[3], self.cfg.cash_retail * scale));
+            }
+        }
         for (kind, n, cash) in kinds {
             for _ in 0..n {
                 let i = self.agents.len();
@@ -479,7 +590,18 @@ impl Market {
             if !self.mms.contains_key(&c) {
                 if let Some(acct) = engine.account_of("mm", c) {
                     let p = engine.company(c).map_or(1.0, |x| x.last_price as f64);
-                    self.mms.insert(c, MmState { account: acct, var_rate: 0.0, last_p: p, last_t: now });
+                    self.mms.insert(c, MmState {
+                        account: acct,
+                        var_rate: 0.0,
+                        last_p: p,
+                        last_t: now,
+                        last_inv: None,
+                        toxicity: 0.0,
+                        human_flow_seen: None,
+                        human_rate: 0.0,
+                        human_depth: 0.0,
+                        last_quote_p: 0.0,
+                    });
                     let first = now + self.rng.exp(self.cfg.mm_rate / 3600.0) as i64;
                     self.schedule.push(Reverse((first, Actor::Mm(c))));
                 }
@@ -536,8 +658,25 @@ impl Market {
     /// Candidate gap (seconds) for agent `i` at the bounding rate; acceptance thins it (`accept`).
     fn next_gap(&mut self, i: usize) -> i64 {
         let kind = self.agents[i].kind;
-        let rate = self.base_rate(kind) * self.peak(kind) / 3600.0;
+        let rate = self.base_rate(kind) * self.peak(kind) * self.adapt_bound(kind) / 3600.0;
         (self.rng.exp(rate).ceil() as i64).max(1)
+    }
+
+    /// Bounding factor of the adaptive rate (retail and trend only; value agents are the anchor).
+    fn adapt_bound(&self, kind: AgentKind) -> f64 {
+        match kind {
+            AgentKind::Retail | AgentKind::Trend => self.cfg.adapt_rate_max.max(1.0),
+            _ => 1.0,
+        }
+    }
+
+    /// Thinning of a retail or trend agent's action by the stock's adaptive rate.
+    fn adapt_accept(&mut self, i: usize, c: i64) -> bool {
+        let bound = self.adapt_bound(self.agents[i].kind);
+        if bound == 1.0 && self.cfg.adapt_rate_min == 1.0 {
+            return true;
+        }
+        self.rng.f64() < self.rate_mult(c) / bound
     }
 
     fn news_pressure(&self, i: usize, t: i64) -> f64 {
@@ -758,6 +897,9 @@ impl Market {
             return;
         }
         let Some(c) = self.choose_stock(i, t, engine) else { return };
+        if !self.adapt_accept(i, c) {
+            return;
+        }
         let a = self.agents[i].clone();
         let rules = engine.rules;
         let now_p = engine.company(c).unwrap().last_price.max(1);
@@ -845,6 +987,9 @@ impl Market {
 
     fn act_retail(&mut self, engine: &mut Engine, i: usize, t: i64) {
         let Some(c) = self.choose_stock(i, t, engine) else { return };
+        if !self.adapt_accept(i, c) {
+            return;
+        }
         let a = self.agents[i].clone();
         let rules = engine.rules;
         let p = engine.company(c).unwrap().last_price.max(1) as f64;
@@ -895,31 +1040,112 @@ impl Market {
         st.last_p = p;
         st.last_t = t;
         let sigma5 = (st.var_rate * 300.0).sqrt();
+        let p_prev = st.last_quote_p;
+        st.last_quote_p = p;
 
         engine.cancel_all(acct, c, &ts);
+        let held = engine.holding(acct, c).map_or(0, |h| h.qty);
+        let unit_cents = (co.shares as f64 * self.cfg.mm_quote_frac * p).max(self.cfg.mm_quote_min * 100.0).max(1.0);
+        let human_half = 0.5f64.powf(dt / (self.cfg.adapt_half_life_min * 60.0));
+        let flow_now = engine.player_flow(c);
+        let st = self.mms.get_mut(&c).unwrap();
+        // adverse selection: what the shares it bought (sold) since the last requote lost by now (markout)
+        let net = st.last_inv.map_or(0, |l| held - l) as f64;
+        st.last_inv = Some(held);
+        let markout = if p_prev > 0.0 { net * (p - p_prev) } else { 0.0 };
+        st.toxicity = decay * st.toxicity + (1.0 - decay) * (-markout).max(0.0) / unit_cents;
+        let toxicity = st.toxicity;
+        // human activity: players' traded notional per hour (EWMA)
+        let dflow = st.human_flow_seen.map_or(0, |f| (flow_now - f).max(0)) as f64 / 100.0;
+        st.human_flow_seen = Some(flow_now);
+        st.human_rate = human_half * st.human_rate + (1.0 - human_half) * dflow * 3600.0 / dt;
         let fair = co.fair_value as f64;
         let a = self.cfg.mm_anchor_to_price;
         let reference = if fair > 0.0 { (1.0 - a) * fair + a * p } else { p };
         let inv = engine.available_shares(acct, c);
-        let target = ((co.shares as f64 * self.ipo_float * self.cfg.mm_target_frac).round() as i64).max(1);
+        let target = self.mm_target(&co).max(1);
         let x = ((inv - target) as f64 / target as f64).clamp(-1.0, 1.0);
         let center = reference * (-self.cfg.mm_inventory_skew * 0.1 * x).exp();
-        let half = (self.cfg.mm_base_spread / 2.0 * center).max(self.cfg.mm_vol_mult * sigma5 * center).max(1.0);
+        // scheduled information (air windows, fresh events, the first half hour of the session): a dealer
+        // widens and quotes smaller while informed flow is likely
+        let info = 1.0 + if self.info_window(c, t) { self.cfg.mm_event_widen } else { 0.0 };
+        let half = (self.cfg.mm_base_spread / 2.0 * center).max(self.cfg.mm_vol_mult * sigma5 * center)
+            * (1.0 + self.cfg.mm_toxicity_mult * toxicity)
+            * info;
+        let half = half.max(1.0);
         let (lo, hi) = quote_band(&co, &ts, &rules);
-        let size = ((co.shares as f64 * self.cfg.mm_quote_frac).round() as i64).max(1);
+        // quote unit: a share of the company, at least `mm_quote_min` 币 (the designated market maker's
+        // minimum quote size)
+        let size = ((co.shares as f64 * self.cfg.mm_quote_frac).round() as i64)
+            .max((self.cfg.mm_quote_min * 100.0 / center).round() as i64)
+            .max(1);
+        let size = ((size as f64 / info).round() as i64).max(1);
+        // players' resting orders: depth at the inside that has rested a while (placing and cancelling
+        // cannot fake it), and their best prices
+        let band = self.cfg.adapt_depth_halves * half;
+        let old_ts = ts_of(t - (self.cfg.adapt_min_age_min * 60.0) as i64);
+        let (mut pdepth_bid, mut pdepth_ask) = (0i64, 0i64);
+        let (mut pbest_bid, mut pbest_ask) = (None::<i64>, None::<i64>);
+        for (buy, price, left, created) in engine.player_orders(c) {
+            let near = (price as f64 - center).abs() <= band;
+            let rested = created <= old_ts.as_str();
+            if buy {
+                pbest_bid.get_or_insert(price);
+                if near && rested {
+                    pdepth_bid += left;
+                }
+            } else {
+                pbest_ask.get_or_insert(price);
+                if near && rested {
+                    pdepth_ask += left;
+                }
+            }
+        }
+        let st = self.mms.get_mut(&c).unwrap();
+        st.human_depth = (pdepth_bid + pdepth_ask) as f64 * p / 100.0;
+        // fill, don't crowd out: quote the target depth less what players already show (at least a minimal
+        // two-sided quote)
+        let levels = self.cfg.mm_levels.max(1);
+        let full: i64 = (1..=levels as i64).map(|k| size * k).sum();
+        let min_keep = self.cfg.adapt_min_quote;
+        let keep = |player: i64| ((full - player) as f64 / full as f64).clamp(min_keep, 1.0);
+        let (keep_bid, keep_ask) = if self.cfg.adapt_mm { (keep(pdepth_bid), keep(pdepth_ask)) } else { (1.0, 1.0) };
+        // never past its inventory bound: then it only offers
+        let mut room = ((target as f64 * self.cfg.mm_inventory_cap).round() as i64 - held).max(0);
+        // size skew: long, it bids less and offers more (short, the reverse); unlike shading the price this
+        // does not feed back into the last price it quotes around
+        let sk = self.cfg.mm_size_skew * x;
+        let (bid_mult, ask_mult) = ((1.0 - sk).max(0.0) * keep_bid, (1.0 + sk).max(0.0) * keep_ask);
+        // it does not step ahead of a player's best price close to its own (it joins behind it); a player's
+        // price far from its own is ignored, so a bad price cannot pull its quotes
+        let mut bid_cap = i64::MAX;
+        let mut ask_floor = i64::MIN;
+        if self.cfg.adapt_mm {
+            let bid1 = (center - half).floor() as i64;
+            let ask1 = (center + half).ceil() as i64;
+            if let Some(pb) = pbest_bid.filter(|&pb| pb < bid1 && pb as f64 >= bid1 as f64 - half) {
+                bid_cap = pb;
+            }
+            if let Some(pa) = pbest_ask.filter(|&pa| pa > ask1 && pa as f64 <= ask1 as f64 + half) {
+                ask_floor = pa;
+            }
+        }
         let mut last_bid = i64::MAX;
         let mut last_ask = i64::MIN;
-        for k in 1..=self.cfg.mm_levels.max(1) {
+        for k in 1..=levels {
             let off = half * (1.0 + (k - 1) as f64 * self.cfg.mm_level_step);
-            let ask = ((center + off).ceil() as i64).clamp(lo + 1, hi.max(lo + 1)).max(last_ask + 1);
-            let bid = ((center - off).floor() as i64).clamp(lo, ask - 1).min(last_bid - 1);
+            let ask = ((center + off).ceil() as i64).max(ask_floor).clamp(lo + 1, hi.max(lo + 1)).max(last_ask + 1);
+            let bid = ((center - off).floor() as i64).min(bid_cap).clamp(lo, ask - 1).min(last_bid - 1);
             let q = size * k as i64;
             let cash = engine.available_cash(acct);
-            let qb = q.min(cash.div_euclid(engine.fees.buy_reserve(bid.max(1), 1).max(1)));
+            let qb = ((q as f64 * bid_mult).round() as i64)
+                .min(cash.div_euclid(engine.fees.buy_reserve(bid.max(1), 1).max(1)))
+                .min(room);
             if qb > 0 && bid >= lo && bid >= 1 {
                 self.place(engine, "mm", acct, c, "buy", "limit", qb, Some(bid), t);
+                room -= qb;
             }
-            let qa = q.min(engine.available_shares(acct, c));
+            let qa = ((q as f64 * ask_mult).round() as i64).min(engine.available_shares(acct, c));
             if qa > 0 && ask <= hi {
                 self.place(engine, "mm", acct, c, "sell", "limit", qa, Some(ask), t);
             }
@@ -973,7 +1199,7 @@ impl Market {
             if let Some(mm) = engine.account_of("mm", c) {
                 if engine.ipo_application(c, mm).is_none() {
                     let co = engine.company(c).unwrap();
-                    let target = (co.shares as f64 * self.ipo_float * self.cfg.mm_target_frac).round() as i64;
+                    let target = self.float_target(co);
                     let q = target.min(self.affordable(engine.available_cash(mm) as f64 * 0.8, price));
                     if q > 0 {
                         let _ = engine.subscribe(mm, c, q, &day, &ts);
@@ -1056,7 +1282,7 @@ impl Market {
             let Some(mm) = engine.account_of("mm", c) else { continue };
             engine.cancel_all(mm, c, ts);
             let co = engine.company(c).unwrap().clone();
-            let target = (co.shares as f64 * self.ipo_float * self.cfg.mm_target_frac).round() as i64;
+            let target = self.float_target(&co);
             let excess = engine.available_shares(mm, c) - target;
             let price = co.last_price.max(1);
             if excess > 0 {
@@ -1113,6 +1339,83 @@ impl Market {
                 engine.transfer(world, mm, want - cash, "npc_rebalance", day, ts, Some(c), None);
             }
         }
+    }
+
+    /// The market maker's share of the public float (`mm_target_frac`).
+    fn float_target(&self, co: &crate::model::Company) -> i64 {
+        (co.shares as f64 * self.ipo_float * self.cfg.mm_target_frac).round() as i64
+    }
+
+    /// Stock the rights holders lend to the market maker (`mm_loan_frac` of the company's shares).
+    fn loan_target(&self, co: &crate::model::Company) -> i64 {
+        (co.shares as f64 * self.cfg.mm_loan_frac).round() as i64
+    }
+
+    /// The market maker's inventory target: its share of the float plus the stock lent to it.
+    pub fn mm_target(&self, co: &crate::model::Company) -> i64 {
+        self.float_target(co) + self.loan_target(co)
+    }
+
+    /// Designated market maker set-up, idempotent (runs at every start and after every close): the rights
+    /// holders (committee) place `mm_loan_frac` of each listed company's shares with its market maker, off
+    /// the book at the last price, paid by the world account (the issuer placing stock with the market
+    /// maker it designated, so the quotes have inventory behind them); a market maker below `mm_cash` is
+    /// topped up to it from the world account. What has been placed per stock is kept in the game state
+    /// (`mm_loan:<company>`), so raising `mm_loan_frac` places only the difference and lowering it takes
+    /// nothing back. Players are not touched and no trade prints. Reason `npc_mm_loan`.
+    pub fn designation_pending(&self, engine: &Engine) -> bool {
+        let want_cash = (self.cfg.mm_cash * 100.0) as i64;
+        let cash_applied: i64 = engine.state("npc_mm_cash").and_then(|v| v.parse().ok()).unwrap_or(1_000_000);
+        want_cash > cash_applied
+            || engine.companies().filter(|c| c.status == "listed").any(|co| {
+                let done: i64 = engine.state(&format!("mm_loan:{}", co.id)).and_then(|v| v.parse().ok()).unwrap_or(0);
+                self.loan_target(co) > done
+            })
+    }
+
+    pub fn designate_market_makers(&mut self, engine: &mut Engine, day: &str, ts: &str) -> i64 {
+        let world = engine.special("world").expect("world");
+        let want_cash = (self.cfg.mm_cash * 100.0) as i64;
+        let cash_key = "npc_mm_cash";
+        // a database from before this setting got 10,000 币 per market maker in the v0.3.0 float migration
+        let cash_applied: i64 = engine.state(cash_key).and_then(|v| v.parse().ok()).unwrap_or(1_000_000);
+        // (`designation_pending` reads the same two states)
+        let listed: Vec<i64> = engine.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        let mut moved = 0;
+        for c in listed {
+            let Some(mm) = engine.account_of("mm", c) else { continue };
+            let co = engine.company(c).unwrap().clone();
+            let key = format!("mm_loan:{c}");
+            let done: i64 = engine.state(&key).and_then(|v| v.parse().ok()).unwrap_or(0);
+            let goal = self.loan_target(&co);
+            if goal > done {
+                let q = match engine.account_of("committee", c) {
+                    Some(com) => (goal - done).min(engine.available_shares(com, c)).max(0),
+                    None => 0,
+                };
+                if q > 0 {
+                    let com = engine.account_of("committee", c).unwrap();
+                    let price = co.last_price.max(1);
+                    engine.transfer(world, com, q * price, "npc_mm_loan", day, ts, Some(c), None);
+                    engine.remove_shares(com, c, q, 0).expect("committee shares");
+                    engine.add_shares(mm, c, q, price, day);
+                    moved += q;
+                }
+                // a committee that has sold its stock cannot place more: recorded as done all the same
+                engine.set_state(&key, &goal.to_string());
+            }
+            if want_cash > cash_applied {
+                let cash = engine.account(mm).map_or(0, |a| a.cash);
+                if cash < want_cash {
+                    engine.transfer(world, mm, want_cash - cash, "npc_mm_loan", day, ts, Some(c), None);
+                }
+            }
+        }
+        if want_cash != cash_applied {
+            engine.set_state(cash_key, &want_cash.to_string());
+        }
+        self.stats.rebalance_shares += moved;
+        moved
     }
 
     /// Wealth of all NPC agents (cash + holdings at last prices), cents.

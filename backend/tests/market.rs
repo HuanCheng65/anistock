@@ -254,3 +254,67 @@ fn migrating_a_v1_database_retires_the_v1_npcs_zero_sum() {
     // the market maker keeps its target; the rest went to the agents
     assert_eq!(e.holding(mm, 1000).unwrap().qty, 500);
 }
+
+#[test]
+fn designation_places_the_loan_once_and_only_moves_committee_shares() {
+    let cfg = cfg();
+    let (mut e, _) = one_day(17);
+    let mut mc = small(17);
+    mc.mm_loan_frac = 0.2;
+    mc.mm_cash = 50_000.0;
+    let mut m = Market::new(mc, &cfg);
+    m.attach_population(&e);
+    let ts = "2026-11-06T08:00:00+08:00";
+    let before: Vec<(i64, i64, i64, i64)> = e
+        .companies()
+        .map(|c| {
+            let (com, mm) = (e.account_of("committee", c.id).unwrap(), e.account_of("mm", c.id).unwrap());
+            (c.id, e.holding(com, c.id).map_or(0, |h| h.qty), e.holding(mm, c.id).map_or(0, |h| h.qty), c.last_price)
+        })
+        .collect();
+    let npc_shares = |e: &Engine, m: &Market| -> i64 {
+        m.agents.iter().map(|a| e.holdings_of(a.account).map(|h| h.qty).sum::<i64>()).sum()
+    };
+    let npc_before = npc_shares(&e, &m);
+    assert!(m.designation_pending(&e));
+    let moved = m.designate_market_makers(&mut e, DAY, ts);
+    assert_eq!(moved, 6 * 2000);
+    e.check_invariants().unwrap();
+    for (c, com_q, mm_q, price) in before {
+        let (com, mm) = (e.account_of("committee", c).unwrap(), e.account_of("mm", c).unwrap());
+        assert_eq!(e.holding(com, c).unwrap().qty, com_q - 2000);
+        assert_eq!(e.holding(mm, c).unwrap().qty, mm_q + 2000);
+        assert_eq!(e.company(c).unwrap().last_price, price); // off the book: no trade, no price change
+        assert!(e.account(mm).unwrap().cash >= 5_000_000);
+    }
+    assert_eq!(npc_shares(&e, &m), npc_before);
+    // idempotent: a restart places nothing more
+    assert!(!m.designation_pending(&e));
+    assert_eq!(m.designate_market_makers(&mut e, DAY, ts), 0);
+}
+
+#[test]
+fn a_larger_configured_population_is_appended_and_reattached() {
+    let cfg = cfg();
+    let (mut e, m) = one_day(19);
+    let n0 = m.agents.len();
+    let mut mc = small(19);
+    mc.n_value = 70; // +30 value agents
+    mc.grow_cash_scale = 0.33;
+    let mut m2 = Market::new(mc.clone(), &cfg);
+    m2.attach_population(&e);
+    assert_eq!(m2.agents.len(), n0);
+    let ts = "2026-11-06T08:00:00+08:00";
+    assert_eq!(m2.grow_population(&mut e, DAY, ts), 30);
+    e.check_invariants().unwrap();
+    assert_eq!(m2.grow_population(&mut e, DAY, ts), 0);
+    // after a restart the appended block is found again, accounts in the same order
+    let mut mc = mc;
+    mc.grow_cash_scale = 0.5; // a later config change does not alter the recorded block's funding
+    let mut m3 = Market::new(mc, &cfg);
+    m3.attach_population(&e);
+    assert_eq!(m3.agents.len(), n0 + 30);
+    for (a, b) in m2.agents.iter().zip(&m3.agents) {
+        assert_eq!((a.account, a.kind, a.start_cash), (b.account, b.kind, b.start_cash));
+    }
+}

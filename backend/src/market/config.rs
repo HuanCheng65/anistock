@@ -20,6 +20,8 @@ pub struct MarketConfig {
     pub population_reference: f64,
     /// starting cash per agent, 币
     pub cash_value: f64,
+    /// agents added to a running population (`grow_population`) start with this share of it
+    pub grow_cash_scale: f64,
     pub cash_trend: f64,
     pub cash_news: f64,
     pub cash_retail: f64,
@@ -105,6 +107,41 @@ pub struct MarketConfig {
     pub mm_anchor_to_price: f64,
     /// market maker's cash after the float migration, 币
     pub mm_cash: f64,
+    /// stock lent to the market maker by the rights holders (committee), share of the company's shares, on
+    /// top of `mm_target_frac` of the float (the issuer lending stock to its designated market maker)
+    pub mm_loan_frac: f64,
+    /// designated-market-maker obligation: a quote unit is at least this many 币 (level k quotes k units)
+    pub mm_quote_min: f64,
+    /// quote size skew by inventory: at inventory x (-1..1 around the target) bids are (1 - s x) and offers
+    /// (1 + s x) times the size
+    pub mm_size_skew: f64,
+    /// half-spread widening per quote unit of recent adverse markout (what its fills lost by the next
+    /// requote, EWMA over `mm_vol_half_life_min`)
+    pub mm_toxicity_mult: f64,
+    /// in an information window (air times, fresh events, the first half hour) the half-spread is
+    /// (1 + this) times wider and the quote size (1 + this) times smaller
+    pub mm_event_widen: f64,
+
+    // ---- adaptive liquidity (the designated market maker's obligations bind only when humans are thin)
+    /// the market maker quotes its target depth less the players' resting depth, and does not step ahead
+    /// of a player's best price near its own
+    pub adapt_mm: bool,
+    /// players' orders count as depth within this many of its half-spreads from the centre (at the inside,
+    /// where they stand in for its own quotes; deep orders do not), after resting this long
+    pub adapt_depth_halves: f64,
+    pub adapt_min_age_min: f64,
+    /// the market maker keeps at least this share of its quote per side
+    pub adapt_min_quote: f64,
+    /// half-life of the human activity measure, minutes
+    pub adapt_half_life_min: f64,
+    /// retail and trend agents' rate multiplier: from `adapt_rate_max` (no humans) down to `adapt_rate_min`
+    pub adapt_rate_min: f64,
+    pub adapt_rate_max: f64,
+    /// human activity (traded 币 per hour plus resting depth 币) at which the multiplier has moved 63% of
+    /// the way down
+    pub adapt_activity_ref: f64,
+    /// the market maker stops bidding once its inventory reaches this multiple of its target
+    pub mm_inventory_cap: f64,
 
     // ---- committee (v1 rule)
     pub committee_rate: f64,
@@ -143,6 +180,7 @@ impl Default for MarketConfig {
             n_retail: 180,
             population_reference: 140.0,
             cash_value: 15000.0,
+            grow_cash_scale: 1.0,
             cash_trend: 8000.0,
             cash_news: 8000.0,
             cash_retail: 3000.0,
@@ -186,6 +224,20 @@ impl Default for MarketConfig {
             mm_inventory_skew: 0.3,
             mm_anchor_to_price: 0.3,
             mm_cash: 10000.0,
+            mm_loan_frac: 0.0,
+            mm_quote_min: 0.0,
+            mm_inventory_cap: 2.0,
+            mm_toxicity_mult: 0.0,
+            mm_event_widen: 0.0,
+            adapt_mm: false,
+            adapt_depth_halves: 1.5,
+            adapt_min_age_min: 5.0,
+            adapt_min_quote: 0.25,
+            adapt_half_life_min: 30.0,
+            adapt_rate_min: 1.0,
+            adapt_rate_max: 1.0,
+            adapt_activity_ref: 20000.0,
+            mm_size_skew: 0.0,
             committee_rate: 3.0,
             ipo_subscribe_frac: 0.1,
             fund_floor: 0.3,

@@ -2,9 +2,11 @@
 //!
 //!     marketsim --world WORLD.db --inputs DIR --out DIR [--collector anistock.db] [--days N]
 //!               [--set key=value ...] [--bots all|none|name,name] [--threshold PTS]
+//!               [--probe | --probe-players N] [--grow N_VALUE,DAYS,CASH_SCALE]
 //!
 //! WORLD.db: a launched game DB (read only). The baseline run has no bots; each bot strategy runs in its
 //! own season replay (same seed) on its own thread. Writes DIR/metrics.json, DIR/bots.json, DIR/report.html.
+//! --probe adds the liquidity probe (src/sim/probe.rs) to the baseline run: metrics.json "probe".
 
 use std::path::PathBuf;
 
@@ -22,6 +24,8 @@ fn main() {
     let mut sets = Vec::new();
     let mut bots_arg = "all".to_string();
     let mut threshold = 5.0;
+    let mut probe = 0usize;
+    let mut grow = None;
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -34,6 +38,16 @@ fn main() {
             "--set" => sets.push(v),
             "--bots" => bots_arg = v,
             "--threshold" => threshold = v.parse().expect("--threshold"),
+            "--probe" => {
+                probe = 20;
+                i += 1;
+                continue;
+            }
+            "--probe-players" => probe = v.parse().expect("--probe-players"),
+            "--grow" => {
+                let x: Vec<&str> = v.split(',').collect();
+                grow = Some((x[0].parse().expect("--grow n"), x[1].parse().expect("--grow days"), x[2].parse().expect("--grow cash")));
+            }
             other => panic!("unknown argument {other}"),
         }
         i += 2;
@@ -53,6 +67,8 @@ fn main() {
         spread_every_min: 5,
         idle_players: 39,
         foresight: None,
+        probe: 0,
+        grow,
     };
     let bots: Vec<BotKind> = match bots_arg.as_str() {
         "none" => vec![],
@@ -69,7 +85,8 @@ fn main() {
         std::thread::spawn(move || (b, run(&cfg, &o)))
     };
     let mut handles: Vec<_> = others.iter().map(|&b| spawn(b, &base)).collect();
-    let res = run(&cfg, &base).unwrap_or_else(|e| panic!("baseline: {e}"));
+    // the liquidity probe's players trade in the baseline run only (the bots' runs stay comparable)
+    let res = run(&cfg, &SimOptions { probe, ..base.clone() }).unwrap_or_else(|e| panic!("baseline: {e}"));
     if !fans.is_empty() {
         let mut fs = std::collections::HashMap::new();
         for (c, _, rows) in &res.series.paths {
@@ -104,6 +121,9 @@ fn main() {
     eprintln!("done in {:.0}s -> {}", t0.elapsed().as_secs_f64(), out.display());
     println!("{}", serde_json::to_string(&res.metrics["groups"]["all"]).unwrap());
     println!("{}", serde_json::to_string(&res.metrics["npc"]).unwrap());
+    if probe > 0 {
+        println!("{}", serde_json::to_string(&res.metrics["probe"]).unwrap());
+    }
     for (k, v) in &bot_results {
         println!("{k}: {:.2}%", v["return"].as_f64().unwrap_or(f64::NAN) * 100.0);
     }

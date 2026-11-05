@@ -6,6 +6,7 @@
 pub mod bots;
 pub mod data;
 pub mod metrics;
+pub mod probe;
 pub mod report;
 
 use std::collections::{HashMap, HashSet};
@@ -97,6 +98,12 @@ pub struct SimOptions {
     pub idle_players: usize,
     /// the fan bots' foresight: (company, day) -> hidden value at that day's open (from a baseline run)
     pub foresight: Option<Arc<std::collections::HashMap<(i64, String), (i64, i64)>>>,
+    /// the liquidity probe's players (`probe.rs`; 0: none)
+    pub probe: usize,
+    /// a running population grown the way a deploy grows it (`Market::grow_population`): to this many
+    /// value agents (configured count), spread over this many daily closes (0: at once, before the first
+    /// day), each new agent with this share of the configured starting cash
+    pub grow: Option<(usize, usize, f64)>,
 }
 
 pub struct SimResult {
@@ -156,6 +163,22 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let ts0 = ts_of(t0);
     m.create_population(&mut e, &last_closed, &ts0);
     m.rebalance_float(&mut e, &last_closed, &ts0);
+    m.designate_market_makers(&mut e, &last_closed, &ts0);
+    let mut grown_cash = 0i64;
+    let grow_step = |m: &mut Market, e: &mut Engine, k: usize, day: &str, ts: &str| -> i64 {
+        let Some((n_to, days, scale)) = opts.grow else { return 0 };
+        let n_from = opts.market.n_value;
+        let target = if days == 0 { n_to } else { n_from + (n_to.saturating_sub(n_from)) * (k + 1).min(days) / days };
+        let world = e.special("world").unwrap();
+        let before = e.account(world).map_or(0, |a| a.cash);
+        m.cfg.n_value = target;
+        m.cfg.grow_cash_scale = scale;
+        m.grow_population(e, day, ts);
+        before - e.account(world).map_or(0, |a| a.cash)
+    };
+    if opts.grow.is_some_and(|g| g.1 == 0) {
+        grown_cash += grow_step(&mut m, &mut e, 0, &last_closed, &ts0);
+    }
     let data = data::SeasonData::load(cfg, &opts.market, opts.collector_db.as_deref(), &e, &days);
     m.set_air_times(data.air.clone());
     m.refresh_universe(&e, t0);
@@ -181,6 +204,43 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             e.transfer(world, acct, start_cash, "grant", &last_closed, &ts0, None, None);
         }
     }
+    let mut probe = (opts.probe > 0).then(|| {
+        let start_cash = (cfg.game.initial_cash * 100.0).round() as i64;
+        probe::Probe::new(&mut e, opts.probe, start_cash, &last_closed, &ts0, opts.market.seed)
+    });
+    // NPC capital against the players' (the liquidity study): total, and per stock for the hottest ten
+    let capital = {
+        let npc: HashSet<i64> = m.agents.iter().map(|a| a.account).collect();
+        let cash: i64 = m.agents.iter().map(|a| e.account(a.account).map_or(0, |x| x.cash)).sum();
+        let mut hot: Vec<(f64, i64)> = e.companies().filter(|c| c.status == "listed").map(|c| (m.heat(c.id), c.id)).collect();
+        hot.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
+        let per_stock = |c: i64| {
+            let co = e.company(c).unwrap();
+            let (mut npc_q, mut mm_q) = (0, 0);
+            for a in e.accounts() {
+                let q = e.holding(a.id, c).map_or(0, |h| h.qty);
+                if npc.contains(&a.id) {
+                    npc_q += q;
+                } else if a.kind == "mm" {
+                    mm_q += q;
+                }
+            }
+            let watchers = m.agents.iter().filter(|a| a.watch.contains(&c)).count();
+            serde_json::json!({"price": co.last_price as f64 / 100.0, "market_cap": (co.last_price * co.shares) as f64 / 100.0,
+                "npc_holdings": (npc_q * co.last_price) as f64 / 100.0, "mm_holdings": (mm_q * co.last_price) as f64 / 100.0,
+                "watchers": watchers})
+        };
+        let mut watchers: Vec<usize> = hot.iter().map(|(_, c)| m.agents.iter().filter(|a| a.watch.contains(c)).count()).collect();
+        let cold_watchers: Vec<usize> = watchers.split_off(watchers.len() * 2 / 3);
+        serde_json::json!({
+            "npc_agents": m.agents.len(),
+            "npc_cash": cash as f64 / 100.0,
+            "npc_wealth": m.npc_wealth(&e).0 as f64 / 100.0,
+            "mm_wealth": m.npc_wealth(&e).1 as f64 / 100.0,
+            "hot10": hot.iter().take(10).map(|(_, c)| per_stock(*c)).collect::<Vec<_>>(),
+            "cold_third_watchers_min_median": [cold_watchers.iter().min(), cold_watchers.get(cold_watchers.len() / 2)],
+        })
+    };
     // setup rows (grants, the float migration) are not part of the season's flows
     {
         let mut tp = tap.0.lock().unwrap();
@@ -188,6 +248,12 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         tp.ledger.clear();
     }
     let npc_accounts: HashSet<i64> = m.agents.iter().map(|a| a.account).collect();
+    let mm_accounts: HashSet<i64> = e.accounts().filter(|a| a.kind == "mm").map(|a| a.id).collect();
+    let agent_kind: HashMap<i64, crate::market::AgentKind> = m.agents.iter().map(|a| (a.account, a.kind)).collect();
+    let mut mm_counterparty: std::collections::BTreeMap<String, i64> = Default::default();
+    let mut bot_by_cp: std::collections::BTreeMap<String, i64> = Default::default();
+    let mut bot_by_hour: std::collections::BTreeMap<i64, i64> = Default::default();
+    let mut bot_volume: std::collections::BTreeMap<&str, i64> = Default::default();
     let mut rec = Recorder::new(&e, &m, &npc_accounts);
     rec.dividend_tax = cfg.game.dividend_tax.clone();
     rec.start_wealth(&e, &m);
@@ -237,6 +303,13 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
                     b.on_minute(&mut e, t, &heat);
+                }
+                if let Some(p) = probe.as_mut() {
+                    let heat = |c: i64| m.heat(c);
+                    p.on_minute(&mut e, t, &heat);
+                    if (s / 60) % 30 == 0 {
+                        p.sample_impact(&e, &heat);
+                    }
                 }
             }
             if (s / 60) % opts.spread_every_min == 0 && s >= 9 * 3600 {
@@ -309,12 +382,61 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         let next_day = day_of(t_close);
         m.note_revisions(&e, t_close);
+        m.designate_market_makers(&mut e, day, &ts_close);
+        if opts.grow.is_some_and(|g| g.1 > 0) && k >= BOT_START_DAY {
+            grown_cash += grow_step(&mut m, &mut e, k - BOT_START_DAY, day, &ts_close);
+        }
         m.fund_flows(&mut e, day, &ts_close);
         m.prune(t_close);
         rec.after_close(&e, &m, day, &next_day);
         rec.note_info(&inp, &prev, day);
         {
             let mut tp = tap.0.lock().unwrap();
+            // the bot's trades: its markout to the day's close by counterparty and by hour of the day
+            if let Some(b) = &bot {
+                for tr in &tp.trades {
+                    let (bought, other) = if tr.buyer == b.account {
+                        (true, tr.seller)
+                    } else if tr.seller == b.account {
+                        (false, tr.buyer)
+                    } else {
+                        continue;
+                    };
+                    let Some(close) = e.company(tr.company).map(|c| c.last_price) else { continue };
+                    let edge = if bought { close - tr.price } else { tr.price - close } * tr.qty;
+                    let label = match agent_kind.get(&other) {
+                        Some(k) => format!("{k:?}"),
+                        None => e.account(other).map_or("?".into(), |a| a.kind.clone()),
+                    };
+                    *bot_by_cp.entry(label).or_default() += edge;
+                    let (_, s) = local(tr.t);
+                    *bot_by_hour.entry(s / 3600).or_default() += edge;
+                    *bot_volume.entry(if bought { "bought" } else { "sold" }).or_default() += tr.price * tr.qty;
+                }
+            }
+            // where the market makers' dealing result goes: each counterparty's markout to the day's close
+            for tr in &tp.trades {
+                let Some(close) = e.company(tr.company).map(|c| c.last_price) else { continue };
+                let (mm_buys, other) = if mm_accounts.contains(&tr.buyer) {
+                    (true, tr.seller)
+                } else if mm_accounts.contains(&tr.seller) {
+                    (false, tr.buyer)
+                } else {
+                    continue;
+                };
+                // the counterparty sold to (bought from) the market maker
+                let edge = if mm_buys { tr.price - close } else { close - tr.price } * tr.qty;
+                let label = match agent_kind.get(&other) {
+                    Some(k) => format!("{k:?}"),
+                    None => e.account(other).map_or("?".into(), |a| match a.kind.as_str() {
+                        "player" if a.name.starts_with("probe") => "probe".into(),
+                        "player" if a.name.starts_with("raid") => "raiders".into(),
+                        "player" => "bot".into(),
+                        k => k.to_string(),
+                    }),
+                };
+                *mm_counterparty.entry(label).or_default() += edge;
+            }
             rec.absorb(&mut tp);
         }
         prev = inp;
@@ -362,5 +484,21 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             "companies": companies,
         })
     };
+    let bot_json = bot_json.map(|mut b| {
+        // what the market makers made or lost dealing in this bot's season (vs the baseline: the bot's share)
+        b["mm_dealing_pnl"] = metrics["npc"]["mm_dealing_pnl"].clone();
+        let y = |v: i64| v as f64 / 100.0;
+        b["markout_by_counterparty"] = serde_json::json!(bot_by_cp.iter().map(|(k, v)| (k.clone(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
+        b["markout_by_hour"] = serde_json::json!(bot_by_hour.iter().map(|(k, v)| (k.to_string(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
+        b["volume"] = serde_json::json!(bot_volume.iter().map(|(k, v)| (k.to_string(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
+        b
+    });
+    metrics["capital"] = capital;
+    metrics["grown_cash"] = serde_json::json!(grown_cash as f64 / 100.0);
+    metrics["mm_counterparty_markout"] =
+        serde_json::json!(mm_counterparty.iter().map(|(k, v)| (k.clone(), *v as f64 / 100.0)).collect::<std::collections::BTreeMap<_, _>>());
+    if let Some(p) = &probe {
+        metrics["probe"] = p.report();
+    }
     Ok(SimResult { events, metrics, bot: bot_json, series })
 }

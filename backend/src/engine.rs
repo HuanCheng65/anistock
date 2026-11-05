@@ -140,6 +140,9 @@ pub struct Engine {
     reader: Option<rusqlite::Connection>,
     /// > 0 inside `begin_batch` .. `end_batch`: operations accumulate into one database transaction
     batch_depth: u32,
+    /// per company: notional (cents) traded with a player on either side since this engine started
+    /// (in memory only; the NPC market reads it to see how active the humans are in each stock)
+    player_flow: HashMap<i64, i64>,
 }
 
 impl Engine {
@@ -171,6 +174,7 @@ impl Engine {
             db_path: None,
             reader: None,
             batch_depth: 0,
+            player_flow: HashMap::new(),
         };
         for o in s.open_orders.values() {
             e.st.by_account.entry(o.account_id).or_default().insert(o.id);
@@ -257,6 +261,32 @@ impl Engine {
 
     pub fn available_shares(&self, account_id: i64, company_id: i64) -> i64 {
         self.st.holdings.get(&(account_id, company_id)).map(|h| h.qty - h.qty_frozen).unwrap_or(0)
+    }
+
+    /// Notional (cents) traded with a player in `company_id` since the engine started.
+    pub fn player_flow(&self, company_id: i64) -> i64 {
+        self.player_flow.get(&company_id).copied().unwrap_or(0)
+    }
+
+    /// Players' resting limit orders in `company_id`, best first per side: (is_buy, price, shares left,
+    /// created_at).
+    pub fn player_orders(&self, company_id: i64) -> Vec<(bool, i64, i64, &str)> {
+        let Some(b) = self.st.books.get(&company_id) else { return vec![] };
+        let mut out = Vec::new();
+        let player = |o: &Order| self.st.accounts.get(&o.account_id).is_some_and(|a| a.kind == "player");
+        for (Reverse(p), id) in &b.bids {
+            let o = &self.st.orders[id];
+            if player(o) {
+                out.push((true, *p, o.left(), o.created_at.as_str()));
+            }
+        }
+        for (p, id) in &b.asks {
+            let o = &self.st.orders[id];
+            if player(o) {
+                out.push((false, *p, o.left(), o.created_at.as_str()));
+            }
+        }
+        out
     }
 
     /// Price levels of the book, best first (v1 `book`).
@@ -1065,6 +1095,10 @@ impl Engine {
         let sell = self.st.orders[&sell_id].clone();
         let company_id = buy.company_id;
         let notional = q * tp;
+        let is_player = |a: i64| self.st.accounts.get(&a).is_some_and(|x| x.kind == "player");
+        if is_player(buy.account_id) || is_player(sell.account_id) {
+            *self.player_flow.entry(company_id).or_default() += notional;
+        }
         let c_buy = self.fees.commission_on(notional);
         let c_sell = self.fees.commission_on(notional);
         let stamp = self.fees.stamp_on(notional);
