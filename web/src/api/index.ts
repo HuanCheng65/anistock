@@ -41,6 +41,8 @@ export type SearchHit = S['SearchHit']
 export type PlaceOrderResponse = S['PlaceOrderResponse']
 export type WsServerMessage = S['WsServerMessage']
 export type ErrorBody = S['ErrorBody']
+export type CreditAccount = S['CreditAccount']
+export type StockMargin = S['StockMargin']
 
 /** A non-2xx answer: the server's `{code, message, details}`; `message` is shown as is. */
 export class ApiError extends Error {

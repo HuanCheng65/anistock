@@ -45,9 +45,11 @@ impl Market {
         let p = engine.company(c).map_or(0, |x| x.last_price);
         if owed > 0 {
             if m > 0.0 && p > 0 {
-                // under its value now: buy it back, paying up to the value
+                // under its value now: buy it back, paying up to the value, as far as its cash goes
                 let limit = Self::clamp_price(engine, &engine.rules.clone(), c, (p as f64 * (a.aggression * m).exp()).min(belief), t);
-                self.credit_order(engine, a.account, c, Mode::BuyReturn, owed, limit, t);
+                let cash = engine.available_cash(a.account) + engine.short_of(a.account, c).map_or(0, |s| s.proceeds);
+                let q = owed.min(cash / engine.fees.buy_reserve(limit, 1).max(1));
+                self.credit_order(engine, a.account, c, Mode::BuyReturn, q, limit, t);
             }
             return true;
         }
@@ -55,16 +57,25 @@ impl Market {
         if m >= -(a.threshold + extra) || p <= 0 || !self.short_seller(engine, i) {
             return false;
         }
-        if engine.holding(a.account, c).is_some_and(|h| h.qty > 0) {
+        let day = day_of(t);
+        if engine.holding(a.account, c).is_some_and(|h| h.qty > 0) || engine.margin_ineligible(c, &day).is_some() {
             return false;
         }
         if engine.credit(a.account).is_none() {
             engine.open_credit_unchecked(a.account, &ts_of(t));
         }
+        if engine.credit(a.account).is_some_and(|x| x.status != crate::margin::NORMAL) {
+            return false;
+        }
+        // the same limits a player meets: initial margin, concentration, the lending pool
+        let n = engine.credit_numbers(a.account, &day);
+        let r = &engine.margin;
+        let by_margin = (n.available_margin as f64 / (r.margin_ratio * p as f64)).floor() as i64;
+        let by_conc = (r.concentration * n.net() as f64 / p as f64).floor() as i64;
         let conviction = ((-m - a.threshold - extra) / self.cfg.value_full).clamp(0.0, 1.0);
         let wealth = self.wealth(engine, a.account).max(0) as f64;
-        let budget = wealth * engine.margin.npc_short_size * conviction;
-        let q = ((budget / p as f64) as i64).min(engine.lendable(c));
+        let budget = wealth * r.npc_short_size * conviction;
+        let q = ((budget / p as f64) as i64).min(engine.lendable(c)).min(by_margin).min(by_conc);
         // at or above the last trade (the short-sale price rule): it rests and waits for buyers
         self.credit_order(engine, a.account, c, Mode::ShortSell, q, p, t);
         true

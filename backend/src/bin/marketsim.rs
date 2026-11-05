@@ -1,7 +1,7 @@
 //! Season simulation of the v2 NPC market (docs/v2-npc-market.md §7) and the §6 exploit tests.
 //!
 //!     marketsim --world WORLD.db --inputs DIR --out DIR [--collector anistock.db] [--days N]
-//!               [--set key=value ...] [--bots all|none|name,name] [--threshold PTS]
+//!               [--set key=value ...] [--margin key=value ...] [--bots all|none|name,name] [--threshold PTS]
 //!               [--probe | --probe-players N] [--grow N_VALUE,DAYS,CASH_SCALE]
 //!
 //! WORLD.db: a launched game DB (read only). The baseline run has no bots; each bot strategy runs in its
@@ -22,6 +22,7 @@ fn main() {
     let mut collector = None;
     let mut days = None;
     let mut sets = Vec::new();
+    let mut margin_sets: Vec<String> = Vec::new();
     let mut bots_arg = "all".to_string();
     let mut threshold = 5.0;
     let mut probe = 0usize;
@@ -37,6 +38,7 @@ fn main() {
             "--collector" => collector = Some(PathBuf::from(&v)),
             "--days" => days = Some(v.parse().expect("--days")),
             "--set" => sets.push(v),
+            "--margin" => margin_sets.push(v),
             "--bots" => bots_arg = v,
             "--threshold" => threshold = v.parse().expect("--threshold"),
             "--probe" => {
@@ -58,7 +60,17 @@ fn main() {
         }
         i += 2;
     }
-    let cfg = Config::load().expect("config");
+    let mut cfg = Config::load().expect("config");
+    // --margin key=value: override [margin] (融资融券) for this run
+    if !margin_sets.is_empty() {
+        let mut t = toml::Value::try_from(&cfg.margin).expect("margin rules");
+        for kv in &margin_sets {
+            let (k, v) = kv.split_once('=').unwrap_or_else(|| panic!("--margin {kv}: key=value"));
+            let v: toml::Value = toml::from_str(&format!("x = {v}")).map(|t: toml::Table| t["x"].clone()).expect("--margin value");
+            t.as_table_mut().unwrap().insert(k.trim().to_string(), v);
+        }
+        cfg.margin = anistock::margin::MarginRules::from_table(Some(&t)).expect("--margin");
+    }
     let mut market = cfg.market.clone();
     for kv in &sets {
         market.set(kv).unwrap_or_else(|e| panic!("--set {kv}: {e}"));
