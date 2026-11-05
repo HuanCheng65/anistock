@@ -127,6 +127,25 @@ class History:
                 continue  # a short or all-at-once release: no in-season level to compare with
             yield mid, m, s, e
 
+    def pop_at_finale(self, mid, m, e: date) -> float:
+        """AniList list entries two weeks after the finale (the first trend day from e+14 on), else today's."""
+        t = self.trend.get(mid, {})
+        for k in range(14, 45):
+            d = e + timedelta(days=k)
+            if d in t and t[d][1]:
+                return t[d][1]
+        return m.get("popularity") or 0
+
+    def popularity_percentiles(self):
+        """({id: percentile of its popularity at the finale among the finished shows of its finale year},
+        {year: sorted popularity at the finale}) (sim/long_tail_analysis.py's definition)."""
+        pops = {mid: (e.year, self.pop_at_finale(mid, m, e)) for mid, m, s, e in self.finished_shows()}
+        by_y = defaultdict(list)
+        for y, p in pops.values():
+            by_y[y].append(p)
+        pct = {mid: sum(1 for x in by_y[y] if x < p) / len(by_y[y]) for mid, (y, p) in pops.items()}
+        return pct, {y: sorted(v) for y, v in by_y.items()}
+
     def us_tail(self, bump: float = 1.0):
         """[(show id, media, [(t days after finale+7, factor)])]: deflated factors relative to level × bump."""
         out = []

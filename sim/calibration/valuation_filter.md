@@ -110,7 +110,9 @@ cn: transition [1.820989, 1.083025, 0.748894, 0.564722]; then 0.0922 × 0.9037^(
 
 jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; the Annict watch-record history is not collected yet): **the us shape, flagged**.
 
-Tail level prior (us, months 24–36, 731 shows): log level = 0.178·(score−70)/10 + 0.629·ONA − 0.052 (×1.19 per 10 points, ×1.88 for ONA; R² 0.13, residual sd 0.69); centred to average 1. Scales the floor term, all markets.
+Tail level prior (us, months 24–36, 731 shows): log level = 0.186·(score−70)/10 + 0.452·ONA + 0.368·[popularity in the bottom fifth of its finale year] + 0.257·[top tenth] − 0.114 (R² 0.160, held out 0.180; score and ONA alone: 0.128 / 0.149; a linear percentile term: 0.130 / 0.151, coefficient −0.16; residual sd 0.68). Popularity is compared with the 2025 finales (`pop_ref`). Scales the floor and the slow excess, all markets. The data report's −1.035 for a linear percentile is a different normalisation (relative to the in-season mean, sequels included, a 'sequel aired' covariate): relative to its own level at the finale a popular show's tail is, if anything, higher, not lower.
+
+Finale week (phase 1 review): the bump differs by show; its log variance across shows (us 0.084, cn 0.080, jp 0.003; `finale_bump_var`) is added to the noise of an observation that includes the finale's week. The us prior's elasticity refitted with the dynamics fixed: 0.95 (held out 0.98), log-likelihood +0.3: not significant, kept at 1.
 
 Hold-out (§11): share of us factors inside the 80% interval (fit on even AniList ids, tested on odd; in sample in brackets): 12 months 82.6% of 517 (83.1%), 24 months 83.1% of 414 (85.6%), 36 months 81.4% of 349 (81.9%).
 

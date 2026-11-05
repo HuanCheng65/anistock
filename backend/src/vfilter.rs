@@ -83,6 +83,10 @@ struct RawParams {
     /// v0.3.2: attention in the finale's week relative to the level, per market
     #[serde(default)]
     finale_bump: Option<PerMarket>,
+    /// phase 1: the spread across shows (log variance) of the finale week's bump: extra noise of a finale-week
+    /// observation
+    #[serde(default)]
+    finale_bump_var: Option<PerMarket>,
     #[serde(default)]
     post_finale: Option<PerMarketVec>,
     #[serde(default)]
@@ -122,6 +126,13 @@ pub struct TailPrior {
     pub ona: f64,
     pub center: f64,
     pub score_ref: f64,
+    #[serde(default)]
+    pub pop_bottom: f64,
+    #[serde(default)]
+    pub pop_top: f64,
+    /// the reference year's popularity at the finale, sorted
+    #[serde(default)]
+    pub pop_ref: Vec<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +165,8 @@ pub struct FilterParams {
     pub drift_by_week: [Vec<f64>; 3],
     /// per market: attention in the finale's week relative to the level (1: none)
     pub finale_bump: M3,
+    /// per market: the finale bump's log variance across shows (0: exact)
+    pub finale_bump_var: M3,
     /// per market: attention by week after the finale week and its weekly tail (empty: the game's profile)
     pub post_finale: [Vec<f64>; 3],
     pub post_finale_tail: M3,
@@ -278,6 +291,7 @@ impl FilterParams {
             season_listing: r.season_listing,
             prior_beta: r.prior_beta.map_or([1.0; 3], |b| b.m3()),
             finale_bump: r.finale_bump.map_or([1.0; 3], |b| b.m3()),
+            finale_bump_var: r.finale_bump_var.map_or([0.0; 3], |b| b.m3()),
             drift_by_week: r.drift_by_week.map_or([Vec::new(), Vec::new(), Vec::new()], |v| [v.us, v.cn, v.jp]),
             post_finale: r.post_finale.map_or([Vec::new(), Vec::new(), Vec::new()], |v| [v.us, v.cn, v.jp]),
             post_finale_tail: r.post_finale_tail.map_or([0.0; 3], |t| t.m3()),
@@ -532,13 +546,19 @@ pub fn tail_var(tl: &Tail, t: i64) -> f64 {
 }
 
 /// The show's prior tail level relative to the average (Python `tail_mult`).
-pub fn tail_mult(fp: &FilterParams, score: Option<f64>, ona: bool) -> f64 {
+pub fn tail_mult(fp: &FilterParams, score: Option<f64>, ona: bool, popularity: Option<f64>) -> f64 {
     let Some(pr) = &fp.tail_prior else { return 1.0 };
     let s = match score {
         Some(x) if x != 0.0 => (x - pr.score_ref) / 10.0,
         _ => 0.0,
     };
-    (pr.score * s + if ona { pr.ona } else { 0.0 } - pr.center).exp()
+    let mut x = pr.score * s + if ona { pr.ona } else { 0.0 };
+    if let (Some(pop), false) = (popularity, pr.pop_ref.is_empty()) {
+        // the percentile among the reference year's finales (Python `pop_percentile`)
+        let q = pr.pop_ref.iter().filter(|v| **v < pop).count() as f64 / pr.pop_ref.len() as f64;
+        x = x + if q < 0.2 { pr.pop_bottom } else { 0.0 } + if q >= 0.9 { pr.pop_top } else { 0.0 };
+    }
+    (x - pr.center).exp()
 }
 
 /// Σ_{k>=1} disc^k × attention(t_last + k) of a path in the long tail (Python `tail_beyond`).
@@ -706,21 +726,21 @@ pub fn finale_level(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64
 
 /// The sequel option of market `m` in attention-days discounted to today (Python `sequel_extra`).
 #[allow(clippy::too_many_arguments)]
-pub fn sequel_extra(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64, fin: i64, first_air: i64, z: f64, zs: f64, disc: f64, known: &[i64]) -> f64 {
+pub fn sequel_extra(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64, fin: i64, first_air: i64, z: f64, zs: f64, disc: f64, known: &[i64], watched: bool) -> f64 {
     let Some(sp) = &fp.sequel else { return 0.0 };
     let lvl = finale_level(fp, m, mean, var, today, fin, first_air) / sp.season_to_finale.m3()[m];
     let k: Vec<i64> = known.iter().map(|d| d - fin).collect();
-    lvl * sequel_multiple(fp, m, z, zs, today - fin, disc, &k)
+    lvl * sequel_multiple(fp, m, z, zs, today - fin, disc, &k, watched)
 }
 
-fn option_factor(sp: &SequelParams, z: f64, t_now: i64, disc: f64) -> f64 {
+fn option_factor(sp: &SequelParams, z: f64, t_now: i64, disc: f64, t_from: i64) -> f64 {
     let lags = &sp.lag_days;
     let mut acc = 0.0;
-    for (ta, p) in announce_schedule(sp, z, t_now) {
+    for (ta, p) in announce_schedule(sp, z, t_from) {
         let mut s = 0.0;
         for lag in lags {
             let d = ta + lag;
-            s += disc.powf((d - t_now) as f64) * gap_ratio(sp, d as f64);
+            s += disc.powf((d - t_now).max(0) as f64) * gap_ratio(sp, d as f64);
         }
         acc += p * s / lags.len() as f64;
     }
@@ -728,10 +748,10 @@ fn option_factor(sp: &SequelParams, z: f64, t_now: i64, disc: f64) -> f64 {
 }
 
 /// Python `sequel_multiple`: the sequel option in attention-days per unit of in-season mean attention, today.
-pub fn sequel_multiple(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now: i64, disc: f64, known: &[i64]) -> f64 {
+pub fn sequel_multiple(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now: i64, disc: f64, known: &[i64], watched: bool) -> f64 {
     let Some(sp) = &fp.sequel else { return 0.0 };
     let w = season_value(fp, m, disc);
-    let a_s = option_factor(sp, zs, 0, disc) * disc.powf(SEASON_DAYS as f64);
+    let a_s = option_factor(sp, zs, 0, disc, 0) * disc.powf(SEASON_DAYS as f64);
     let own = if a_s < 1.0 { a_s * w / (1.0 - a_s) } else { 0.0 };
     if !known.is_empty() {
         let mut acc = 0.0;
@@ -740,7 +760,7 @@ pub fn sequel_multiple(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now: i64,
         }
         return acc / known.len() as f64 * (w + own);
     }
-    option_factor(sp, z, t_now, disc) * (w + own)
+    option_factor(sp, z, t_now, disc, if watched { t_now } else { t_now.min(0) }) * (w + own)
 }
 
 /// A path that ends in the long tail: its market's tail, the show's prior, days after the finale's week on the
@@ -756,6 +776,10 @@ pub fn absolute_parts(own: &M3, platform: &M3, scale: f64, weights: &M3, p: &Par
 /// The absolute revenue rule's inputs: each market's platform size and the scale set at the switch.
 pub type PlatformRule = Option<(M3, f64)>;
 
+/// The revenue rule the value prices: the absolute rule's platform sizes and scale, and the first path index it
+/// applies to (0: in force; later: a scheduled switch, the days before it under the relative rule).
+pub type ValueRule = Option<(M3, f64, usize)>;
+
 /// Per-share value (yuan) from the attention paths (Python `value_from_paths`).
 #[allow(clippy::too_many_arguments)]
 pub fn value_from_paths(
@@ -769,7 +793,7 @@ pub fn value_from_paths(
     rate: f64,
     long_runner: bool,
     tails: &[TailEnd; 3],
-    platform: PlatformRule,
+    platform: ValueRule,
     extra: Option<&M3>,
 ) -> f64 {
     let disc = discount_day(rate, p);
@@ -782,7 +806,7 @@ pub fn value_from_paths(
     for j in 0..h {
         f *= disc;
         let o = [own[0][j], own[1][j], own[2][j]];
-        if let Some((pl, sc)) = &platform {
+        if let Some((pl, sc, _)) = platform.as_ref().filter(|x| j >= x.2) {
             let parts = absolute_parts(&o, pl, *sc, weights, p);
             last = (parts[0] + parts[1] + parts[2]) * keep / shares as f64;
         } else {
@@ -813,7 +837,7 @@ pub fn value_from_paths(
         let dd = demand_day(tt[0], a_ref, p);
         for m in 0..3 {
             let per = match &platform {
-                Some((pl, sc)) => {
+                Some((pl, sc, _)) => {
                     if pl[m] <= 0.0 {
                         continue;
                     }
@@ -882,10 +906,10 @@ mod tests {
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
-        assert!(ulps(a, 22.74665592751861) <= 2, "{a}");
-        assert!(ulps(b, 357.95961620416017) <= 2, "{b}");
+        assert!(ulps(a, 22.74665854953445) <= 2, "{a}");
+        assert!(ulps(b, 357.95961573590165) <= 2, "{b}");
         assert!(ulps(own1[0][5], 835.2637132741504) <= 2, "{}", own1[0][5]);
-        assert!(ulps(own1[1][100], 10.093938597699406) <= 2, "{}", own1[1][100]);
+        assert!(ulps(own1[1][100], 10.09412118265266) <= 2, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
         assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.644)));
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
@@ -898,8 +922,8 @@ mod tests {
         assert!(ulps(post_finale_factor(&fp, &p, 0, today, today + 30, 1.0), 0.16330143897601446) <= 2);
         // the long tail (phase 1): a show that finished 200 days ago with a score prior; the value includes the
         // closed-form sum beyond the horizon (backend/difftest/valuation_ref.py prints these)
-        let mult = tail_mult(&fp, Some(78.0), true);
-        assert!(ulps(mult, 2.0524655955763746) <= 2, "{mult}");
+        let mult = tail_mult(&fp, Some(78.0), true, Some(250000.0));
+        assert!(ulps(mult, 2.104734645408802) <= 2, "{mult}");
         let s4 = schedule(&(0..12).map(|k| today - 290 + 7 * k).collect::<Vec<_>>(), Some(12), false);
         let fin4 = *s4.last().unwrap();
         let own4: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s4, s4[0], false, 400, mult));
@@ -907,28 +931,31 @@ mod tests {
         let tails: [TailEnd; 3] = std::array::from_fn(|m| fp.tail[m].as_ref().map(|tl| (tl, mult, today + 400 - fin4 - 7)));
         let c4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, None, None);
         let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None], None, None);
-        assert!((own4[0][0] / 469.2214252449581 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
-        assert!((own4[1][399] / 2.974024532655546 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
-        assert!((c4 / 119.40088036710972 - 1.0).abs() < 1e-13 && (c0 / 54.12183885587719 - 1.0).abs() < 1e-13, "{c4} {c0}");
-        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.3572582370850549) <= 2);
+        assert!((own4[0][0] / 481.083195065972 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
+        assert!((own4[1][399] / 3.049764140208748 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
+        assert!((c4 / 121.81740048817589 - 1.0).abs() < 1e-13 && (c0 / 55.19884834612225 - 1.0).abs() < 1e-13, "{c4} {c0}");
+        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.3656590475269536) <= 2);
         assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
         // absolute revenue (phase 1 step 2)
-        let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83)), None);
-        assert!((d4 / 46.771366386861715 - 1.0).abs() < 1e-13, "{d4}");
+        let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), None);
+        assert!((d4 / 47.96159865502023 - 1.0).abs() < 1e-13, "{d4}");
         // the sequel option (phase 1 step 3)
         let sp = fp.sequel.as_ref().unwrap();
         let z = sequel_z(sp, Some(78.0), Some("LIGHT_NOVEL"), false, true);
         let zs = z + sp.beta.sequel;
         let disc = discount_day(0.03, &p);
         let fin1 = *s1.last().unwrap();
-        let e1 = sequel_extra(&fp, 0, 7.5, 0.05, today, fin1, today - 20, z, zs, disc, &[]);
-        let e4 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[]);
-        let e5 = sequel_extra(&fp, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &[today + 200, today + 300]);
+        let e1 = sequel_extra(&fp, 0, 7.5, 0.05, today, fin1, today - 20, z, zs, disc, &[], true);
+        let e4 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], true);
+        let e5 = sequel_extra(&fp, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &[today + 200, today + 300], true);
         let close = |x: f64, y: f64| (x / y - 1.0).abs() < 1e-12;
         assert!(ulps(z, 1.4591888) <= 2, "{z}");
-        assert!(close(e1, 185259.0513666545) && close(e4, 1742.2276162310695) && close(e5, 1147.126310729848), "{e1} {e4} {e5}");
-        let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83)), Some(&[e1, e4, e5]));
-        assert!(close(g, 75.92060283563306), "{g}");
+        assert!(close(e1, 185259.0513666545) && close(e4, 1742.2312048492163) && close(e5, 1147.126310729848), "{e1} {e4} {e5}");
+        let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), Some(&[e1, e4, e5]));
+        assert!(close(g, 77.11087942749784), "{g}");
+        // relations not collected: the option is not updated as time passes
+        let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
+        assert!(close(e6, 3944.0391922594135), "{e6}");
         // the joint filter (v0.3.2)
         let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
         let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];

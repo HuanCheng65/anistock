@@ -58,6 +58,9 @@ File format (JSON, one object):
         sequel          an announced sequel not yet aired, from the relations known on D, else null (phase 1;
                         engine/daily_inputs.py `series_facts`): {"id", "announced" (the first day the relation was
                         seen), "premieres" [days, equally likely], "exact" (an announced day)}
+        popularity      AniList list entries on D (the tail prior's popularity at the finale) (phase 1)
+        relations_known the collector has the show's AniList relations as of D; without them "no sequel announced
+                        yet" is not information and the sequel option is not updated as time passes (phase 1)
         series          the series key (engine/series.py: SEQUEL/PREQUEL among TV/ONA/films, plus sim/series.json;
                         the smallest AniList id in the series); a new season of a listed series joins its company
                         instead of listing (phase 1)
@@ -146,7 +149,7 @@ def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
     else the announcement plus each fitted announcement-to-premiere lag."""
     snaps = [(d, e) for d, e in rel.get(sid, []) if d <= day]
     if not snaps:
-        return {"prequel": False, "sequel": None}
+        return {"prequel": False, "sequel": None, "relations_known": False}
     edges = snaps[-1][1]
 
     def anime(e):
@@ -168,7 +171,7 @@ def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
         cands.append((min(prem), {"id": n["id"], "announced": first.isoformat(), "premieres": [d.isoformat() for d in prem],
                                   "exact": prec == "day"}))
     cands.sort(key=lambda c: (c[0], c[1]["id"]))
-    return {"prequel": prequel, "sequel": cands[0][1] if cands else None}
+    return {"prequel": prequel, "sequel": cands[0][1] if cands else None, "relations_known": True}
 
 
 def top_decile(shows: list[E.Show], s: E.Show) -> bool:
@@ -252,6 +255,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "source": s.source,
             **series_facts(s.id, relations, day, lags),
             "top_pop": top_decile(shows, s),
+            "popularity": E.at(s, s.popularity, day, None),
             "series": keys[s.id],
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
@@ -339,6 +343,8 @@ class ShowInputs:
     top_pop: bool = False                  # phase 1
     sequel: dict | None = None             # phase 1
     series: int | None = None              # phase 1
+    popularity: float | None = None        # phase 1
+    relations_known: bool = False          # phase 1
 
 
 @dataclass(frozen=True)

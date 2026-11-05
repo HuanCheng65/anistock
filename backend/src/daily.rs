@@ -262,11 +262,13 @@ impl Engine {
         }
 
         // 1. revenue
+        // (v2: post-finale cn/jp days without data earn the filter's expectation, `revenue_att`)
+        let att_of = |e: &Engine, s: &ShowInputs| if cx.cfg.economy_v1 { s.att.m3() } else { e.revenue_att(s) };
         let mut totals = [0.0f64; 3];
         for m in 0..3 {
             let mut t = 0.0;
             for s in &cx.listed {
-                t += s.att.m3()[m];
+                t += att_of(self, s)[m];
             }
             totals[m] = t;
         }
@@ -295,7 +297,7 @@ impl Engine {
                 Some((pl, sc)) => {
                     let mut parts = [0.0; 3];
                     for x in &works {
-                        let q = crate::vfilter::absolute_parts(&x.att.m3(), pl, *sc, &p.market_weights, &p);
+                        let q = crate::vfilter::absolute_parts(&att_of(self, x), pl, *sc, &p.market_weights, &p);
                         for m in 0..3 {
                             parts[m] += q[m];
                         }
@@ -305,7 +307,7 @@ impl Engine {
                 None => {
                     let (mut share, mut parts) = (0.0, [0.0; 3]);
                     for x in &works {
-                        let (sh, q) = V::blended_share(&x.att.m3(), &totals, &p.market_weights);
+                        let (sh, q) = V::blended_share(&att_of(self, x), &totals, &p.market_weights);
                         share += sh;
                         for m in 0..3 {
                             parts[m] += q[m];
@@ -574,24 +576,39 @@ impl Engine {
     fn platform_switch(&mut self, cx: &Ctx, p: &Params, totals: &V::M3, demand_day: f64) -> Option<(V::M3, f64)> {
         let prev = self.platform_rule();
         let Some(pl) = cx.inp.platform.as_ref().map(|x| x.m3()) else { return prev };
-        if cx.inp.platform_days < p.platform_min_days || pl.iter().any(|x| *x <= 0.0) {
+        if pl.iter().any(|x| *x <= 0.0) {
+            return prev;
+        }
+        // the scale that leaves today's total revenue unchanged: set on the switch day; before it, today's estimate
+        let scale_today = || {
+            let (mut old, mut new) = (0.0, 0.0);
+            for c in &cx.companies {
+                for w in self.works_of(c.id) {
+                    let Some(s) = cx.inp.show(w) else { continue };
+                    let a = self.revenue_att(s);
+                    old += demand_day * V::blended_share(&a, totals, &p.market_weights).0;
+                    let parts = crate::vfilter::absolute_parts(&a, &pl, 1.0, &p.market_weights, p);
+                    new += parts[0] + parts[1] + parts[2];
+                }
+            }
+            (new > 0.0).then(|| old / new)
+        };
+        if cx.inp.platform_days < p.platform_min_days {
+            if prev.is_none() {
+                // the switch is on a known day: the value prices the absolute rule from then on (vclose `value_rule`)
+                if let (Some(sc), Some(today)) = (scale_today(), crate::vclose::day_no(&cx.day)) {
+                    let at = today + p.platform_min_days - cx.inp.platform_days;
+                    self.do_set_state(
+                        "platform_pending",
+                        &format!("{},{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(sc), at),
+                    );
+                }
+            }
             return prev;
         }
         let scale = match prev {
             Some((_, sc)) => sc,
-            None => {
-                let (mut old, mut new) = (0.0, 0.0);
-                for c in &cx.companies {
-                    let Some(s) = cx.inp.show(c.id) else { continue };
-                    old += demand_day * V::blended_share(&s.att.m3(), totals, &p.market_weights).0;
-                    let parts = crate::vfilter::absolute_parts(&s.att.m3(), &pl, 1.0, &p.market_weights, p);
-                    new += parts[0] + parts[1] + parts[2];
-                }
-                if new <= 0.0 {
-                    return None;
-                }
-                old / new
-            }
+            None => scale_today()?,
         };
         self.do_set_state("platform_rule", &format!("{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(scale)));
         Some((pl, scale))

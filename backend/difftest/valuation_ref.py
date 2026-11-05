@@ -38,7 +38,7 @@ print("o3[15]", repr(o3[15]), "o3[110]", repr(o3[110]))
 print("post_finale_factor", repr(V.post_finale_factor(fp, p, "us", today, today + 30)))
 # the long tail (phase 1): a show that finished 200 days ago, with a score prior; the value includes the closed-form
 # sum beyond the horizon
-mult = V.tail_mult(fp, 78.0, True)
+mult = V.tail_mult(fp, 78.0, True, 250000.0)
 s4 = V.schedule([today - 290 + 7 * k for k in range(12)], 12, False)
 fin4 = s4[-1]
 own4 = {m: V.att_path(fp, p, m, m1[i], v1[i], today, s4, s4[0], False, 400, mult) for i, m in enumerate(M)}
@@ -66,3 +66,5 @@ e5 = V.sequel_extra(fp, "jp", 2.0, 0.03, today, fin4, s4[0], z, zs, disc, [today
 print("z", repr(z), "e1", repr(e1), "e4", repr(e4), "e5", repr(e5))
 ex = {"us": e1, "cn": e4, "jp": e5}
 print("g", repr(V.value_from_paths(own4, tot4, w, 110925.85, p, 10000, 4321, 0.03, False, tails, plat, ex)))
+# relations not collected: the option is not updated as time passes (phase 1 fix)
+print("e6", repr(V.sequel_extra(fp, "cn", 3.0, 0.2, today, fin4, s4[0], z, zs, disc, None, False)))

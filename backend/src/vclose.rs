@@ -54,6 +54,9 @@ pub struct JState {
     /// work that is not its company's first (docs/v2-series.md §3)
     #[serde(default)]
     pub meta: Option<WorkMeta>,
+    /// the show's relations are collected (an announcement would be seen)
+    #[serde(default)]
+    pub watched: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,6 +93,7 @@ impl JState {
             seq_zs: 0.0,
             sequel: None,
             meta: None,
+            watched: false,
         }
     }
     fn var(&self, m: usize) -> f64 {
@@ -270,6 +274,17 @@ impl Engine {
 
     /// The absolute revenue rule in force (docs/v2-series.md §6): the platform sizes of the last close and the
     /// scale set at the switch (state `platform_rule`: "us,cn,jp,scale"); None while the relative rule applies.
+    /// The rule the value prices from `today` (docs/v2-series.md §6): the one in force, or, before the switch, the
+    /// absolute rule from its known date on (state `platform_pending`: "us,cn,jp,scale estimate,switch day"), so
+    /// that the switch day is not a jump anyone could compute in advance.
+    pub fn value_rule(&self, today: i64) -> F::ValueRule {
+        if let Some((pl, sc)) = self.platform_rule() {
+            return Some((pl, sc, 0));
+        }
+        let v: Vec<f64> = self.state("platform_pending")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
+        (v.len() == 5).then(|| ([v[0], v[1], v[2]], v[3], (v[4] as i64 - today - 1).max(0) as usize))
+    }
+
     pub fn platform_rule(&self) -> F::PlatformRule {
         let v: Vec<f64> = self.state("platform_rule")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
         (v.len() == 4).then(|| ([v[0], v[1], v[2]], v[3]))
@@ -292,16 +307,33 @@ impl Engine {
         let disc = F::discount_day(rate, p);
         Some(std::array::from_fn(|m| {
             if js.active[m] {
-                F::sequel_extra(fp, m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known)
+                F::sequel_extra(fp, m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known, js.watched)
             } else {
                 0.0
             }
         }))
     }
 
+    /// The attention a show earns on today's close (docs/v2-series.md §4.2): the inputs', except for a cn/jp market
+    /// that has no real data after the finale's week (the rebuilt series has none; the real tail, collection and
+    /// record increments, is not switched on yet): there, the filter's expectation, exp(mean + var/2) × the
+    /// post-finale factor of the latest state, the same expectation the value prices. A stopgap: without it the
+    /// close would book nothing (or a modelled median) while the value priced the mean, a predictable shortfall.
+    pub fn revenue_att(&self, s: &ShowInputs) -> M3 {
+        let mut a = s.att.m3();
+        let Some(js) = self.st.jstate.get(&s.id) else { return a };
+        let (obs, src) = (Self::observed(s), Self::sources(s));
+        for m in 1..3 {
+            if src[m] && !obs[m] && js.active[m] && js.post[m] != 1.0 {
+                a[m] = (js.mean[m] + 0.5 * js.var(m)).exp() * js.post[m];
+            }
+        }
+        a
+    }
+
     /// The show's long-tail prior from its score and format (`vfilter::tail_mult`).
     fn tail_mult_of(fp: &FilterParams, s: &ShowInputs) -> f64 {
-        F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"))
+        F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"), s.popularity)
     }
 
     /// For each market whose expected path ends in the long tail: (its tail, the show's prior, days after the
@@ -412,6 +444,7 @@ impl Engine {
             j.seq_zs = seq_zs;
             j.sequel = sequel.clone();
             j.meta = Self::meta_of(s);
+            j.watched = s.relations_known;
             j
         };
         let cur = self.st.jstate.get(&s.id).cloned();
@@ -466,6 +499,7 @@ impl Engine {
         st.day = day.into();
         st.post = post;
         st.meta = Self::meta_of(s);
+        st.watched = s.relations_known;
         st.tail_mult = mult;
         st.seq_z = seq_z;
         st.seq_zs = seq_zs;
@@ -479,7 +513,12 @@ impl Engine {
         } else {
             fp.drift_at(0, day_no(&s.first_air).map_or(0, |p| (today - p).div_euclid(7)))
         };
+        // an observation that includes the finale's week is read through the average finale bump; the bump differs
+        // by show (bigger shows record more completions), so it carries that spread as extra noise
+        let mut extra_r: Vec<f64> = Vec::new();
         if st.acc_n > 0 && (k == Some(0) || st.acc_n >= 7) {
+            let covers_finale = fin.is_some_and(|f| today - st.acc_n <= f + 6 && today - 1 >= f);
+            extra_r.push(if covers_finale { fp.finale_bump_var[0] } else { 0.0 });
             ys.push((0, F::week_observation(st.acc / st.acc_n as f64, st.acc_n, drift_us)));
             st.acc = 0.0;
             st.acc_n = 0;
@@ -503,6 +542,7 @@ impl Engine {
                 if st.last_obs[m] != Some(att[m]) {
                     st.last_obs[m] = Some(att[m]);
                     st.seen[m] = true;
+                    extra_r.push(if in_finale_week { fp.finale_bump_var[m] } else { 0.0 });
                     ys.push((m, att[m].ln()));
                 }
             } else {
@@ -514,9 +554,9 @@ impl Engine {
                 }
             }
         }
-        for (m, y) in ys {
+        for ((m, y), xr) in ys.into_iter().zip(extra_r) {
             if st.active[m] {
-                let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, m, y, fp.r[m], fp.clip);
+                let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, m, y, fp.r[m] + xr, fp.clip);
                 st.mean = mean;
                 st.cov = cov;
             }
@@ -708,7 +748,7 @@ impl Engine {
         let mult = js.map_or(1.0, |j| j.tail_mult);
         let tails = Self::tail_ends(fp, &sched, long, today, mult);
         let extra = if option { js.and_then(|js| self.sequel_extra(fp, p, js, &sched, long, first_air, today, rate)) } else { None };
-        F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, long, &tails, self.platform_rule(), extra.as_ref())
+        F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, long, &tails, self.value_rule(today), extra.as_ref())
     }
 
     /// A company's value per share (cents): the sum over its works (docs/v2-series.md §3.2). `paths`: the other
@@ -919,11 +959,11 @@ impl Engine {
                 let z = F::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
                 let zs = if s.prequel { z } else { z + sp.beta.sequel };
                 let disc = F::discount_day(rate, p);
-                Some(std::array::from_fn(|m| if src[m] { F::sequel_extra(fp, m, pm[m], pc[m][m], today, fin, first, z, zs, disc, &[]) } else { 0.0 }))
+                Some(std::array::from_fn(|m| if src[m] { F::sequel_extra(fp, m, pm[m], pc[m][m], today, fin, first, z, zs, disc, &[], s.relations_known) } else { 0.0 }))
             }
             _ => None,
         };
-        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails, self.platform_rule(), extra.as_ref());
+        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails, self.value_rule(today), extra.as_ref());
         let used: Vec<f64> = (0..3).filter(|m| src[*m]).map(|m| fp.p0[m]).collect();
         let sd = if used.is_empty() { 0.0 } else { (used.iter().sum::<f64>() / used.len() as f64).sqrt() };
         let discount = 1.0 - (-fp.ipo_risk * sd).exp();

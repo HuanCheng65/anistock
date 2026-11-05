@@ -435,13 +435,87 @@ def cmd_check() -> None:
 
 # ---------------------------------------------------------------- build
 
+def snapshot_history(source: str, kind: str) -> dict[int, dict[date, dict]]:
+    """Every day's snapshot of every work: {external id: {day: data}} (the collector keeps one row per day)."""
+    out: dict[int, dict[date, dict]] = defaultdict(dict)
+    for i, d, data in db().execute("SELECT external_id, day, data FROM snapshots WHERE source=? AND kind=?", (source, kind)):
+        out[int(i)][date.fromisoformat(d)] = json.loads(data)
+    return out
+
+
+def collection_total(subject: dict) -> float:
+    """Bangumi collections: 想看 + 在看 + 看过 (docs/v2-series.md §4.2)."""
+    c = subject.get("collection") or {}
+    return float((c.get("wish") or 0) + (c.get("doing") or 0) + (c.get("collect") or 0))
+
+
+def record_total(work: dict) -> float:
+    """Annict: watch records over all episodes."""
+    return float(sum(e.get("recordsCount") or 0 for e in work.get("episodes", [])))
+
+
+def daily_increments(snaps: dict[date, dict], total) -> dict[date, float]:
+    """Per day, the increase of a cumulative count since the previous snapshot, spread over the days between."""
+    days = sorted(snaps)
+    out = {}
+    for a, b in zip(days, days[1:]):
+        inc = max(0.0, total(snaps[b]) - total(snaps[a])) / (b - a).days
+        for k in range((b - a).days):
+            out[b - timedelta(days=k)] = inc
+    return out
+
+
+def tail_link(season: dict[date, float], inc: dict[date, float], min_days: int = 14) -> float | None:
+    """The in-season ratio of the game's series to the daily increments, over the in-season days with both:
+    the scale that puts post-finale increments in the series' units (docs/v2-series.md §4.2)."""
+    both = [d for d in season if d in inc]
+    if len(both) < min_days:
+        return None
+    a, b = sum(season[d] for d in both) / len(both), sum(inc[d] for d in both) / len(both)
+    return a / b if b > 0 else None
+
+
+def tail_ingest(series, smooth: int = 7) -> dict[str, dict[int, dict[date, float]]]:
+    """The real post-finale cn/jp tail where the collector has daily snapshots: cn = Bangumi collection-count
+    increments, jp = Annict record increments, each × its in-season link (`tail_link`), 7-day trailing mean.
+    {market: {AniList id: {day: value}}} for the days after each show's last episode week."""
+    m = matches()
+    maps = {"cn": ("bgm", "subject", collection_total, {r["bgm"]: int(k) for k, r in m.items() if "bgm" in r}),
+            "jp": ("annict", "work", record_total, {r["annict"]: int(k) for k, r in m.items() if "annict" in r})}
+    out: dict[str, dict[int, dict[date, float]]] = {"cn": {}, "jp": {}}
+    for mk, (src, kind, total, idmap) in maps.items():
+        for ext, snaps in snapshot_history(src, kind).items():
+            aid = idmap.get(ext)
+            eps = series[mk].get(aid) if aid else None
+            if not eps or len(snaps) < 2:
+                continue
+            inc = daily_increments(snaps, total)
+            season: dict[date, float] = {}
+            for (t, c, _), nxt in zip(eps, eps[1:] + [None]):
+                end = min(t.date() + timedelta(days=7), nxt[0].date()) if nxt else t.date() + timedelta(days=7)
+                for k in range((end - t.date()).days):
+                    season[t.date() + timedelta(days=k)] = c / 7
+            link = tail_link(season, inc)
+            if link is None:
+                continue
+            after = max(season) + timedelta(days=1)
+            vals = {}
+            for d in sorted(inc):
+                if d < after:
+                    continue
+                w = [inc[d - timedelta(days=k)] for k in range(smooth) if d - timedelta(days=k) in inc]
+                vals[d] = link * sum(w) / len(w)
+            out[mk][aid] = vals
+    return out
+
+
 def cmd_build() -> None:
     """Daily attention per show for the China and Japan markets -> data/derived/markets.json.
 
     Each episode's matured count is spread evenly over its air week [air, air+6]. Episodes younger
     than 3 days are left out and the previous week is carried forward (so these markets lag by up to
-    a week). Once a show stops airing, the last airing week is extended with the post-finale profile
-    measured on AniList (sim/params.toml [valuation]); that extension is modelled, not observed.
+    a week). Once a show has finished, the days after its last week are missing (no observation), or with
+    ANISTOCK_TAIL_INGEST=1 the real tail from the collector's daily snapshots (`tail_ingest`).
     """
     import tomllib
     p = tomllib.loads((ROOT / "sim" / "params.toml").read_text(encoding="utf-8"))["valuation"]
@@ -450,8 +524,8 @@ def cmd_build() -> None:
     from engine import valuation as V
     ff = Path(os.environ.get("ANISTOCK_FILTER_FILE", CALIBRATION / "valuation_filter.json"))
     fp = json.loads(ff.read_text(encoding="utf-8")) if ff.exists() else None
-    score_fmt = {mid: (m.get("averageScore"), m.get("format") == "ONA") for mid, m in latest("anilist", "media").items()}
     series = episode_series(min_age=3.0)
+    ingest = tail_ingest(series) if os.environ.get("ANISTOCK_TAIL_INGEST") == "1" else None
     fetched = {**{k: v for k, v in _fetched_at("bgm", "episodes").items()},
                **{k: v for k, v in _fetched_at("annict", "work").items()}}
     snap_day = max(fetched.values()).date()
@@ -479,23 +553,28 @@ def cmd_build() -> None:
                     daily[d] = weekly
                     d += timedelta(days=1)
             else:
-                # finished: extend with the model's post-finale curve. The rebuilt series has no post-finale data
-                # (an episode's count belongs to its air week); with the fitted long tail (docs/v2-series.md §4) the
-                # extension is its median factor, so the filter reads it as "no news" (the live game observes the
-                # tail: cn from Bangumi collection increments, jp from Annict record increments)
-                k = 0
-                tl = V.tail_of(fp, mk) if fp else None
-                mult = V.tail_mult(fp, *score_fmt.get(aid, (None, False))) if tl else 1.0
-                while d <= snap_day:
-                    if tl is not None:
-                        f = V.post_finale_factor(fp, {}, mk, 0, k + 7, mult)
-                    else:
+                # finished. The rebuilt series has no post-finale data (an episode's count belongs to its air week).
+                # With the fitted long tail (docs/v2-series.md §4) those days are left MISSING: the filter infers the
+                # level from the other markets and the close books the filter's expectation as revenue (a stopgap,
+                # vclose.rs `revenue_att`). With ANISTOCK_TAIL_INGEST=1 the real tail is used where the collector
+                # has daily snapshots (`tail_ingest`: Bangumi collection-count increments, Annict record increments,
+                # linked to the in-season series); off by default until the link is calibrated (sim/fit_tail_link.py).
+                # Without the tail fit (older parameters): the v1 profile extension, as before.
+                if fp and V.tail_of(fp, mk) is not None:
+                    real = ingest.get(mk, {}).get(aid, {}) if ingest else {}
+                    for day, v in sorted(real.items()):
+                        if day >= d and day <= snap_day:
+                            daily[day] = v
+                            stats[mk]["extended_days"] += 1
+                else:
+                    k = 0
+                    while d <= snap_day:
                         w = k // 7
                         f = profile[w] if w < len(profile) else profile[-1] * tail ** (w - len(profile) + 1)
-                    daily[d] = weekly * f
-                    stats[mk]["extended_days"] += 1
-                    d += timedelta(days=1)
-                    k += 1
+                        daily[d] = weekly * f
+                        stats[mk]["extended_days"] += 1
+                        d += timedelta(days=1)
+                        k += 1
             stats[mk]["observed_days"] += len(daily)
             for day, v in daily.items():
                 out[str(aid)].setdefault(day.isoformat(), {})[mk] = round(v, 3)

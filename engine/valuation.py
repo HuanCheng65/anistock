@@ -388,14 +388,26 @@ def tail_var(tl: dict, t: int) -> float:
     return v[0] * (1.0 - math.exp(-t / v[1])) + v[2] * t
 
 
-def tail_mult(fp: dict, score: float | None, ona: bool) -> float:
-    """The show's prior tail level relative to the average (docs/v2-series.md §4.1): fitted on score and format
-    (log-linear, centred so the average show has 1). A missing score counts as the reference score."""
+def pop_percentile(pr: dict, popularity: float | None) -> float | None:
+    """The show's popularity percentile among the reference year's finales (`pop_ref`, sorted); None if unknown."""
+    ref = pr.get("pop_ref") or []
+    if popularity is None or not ref:
+        return None
+    return sum(1 for v in ref if v < popularity) / len(ref)
+
+
+def tail_mult(fp: dict, score: float | None, ona: bool, popularity: float | None = None) -> float:
+    """The show's prior tail level relative to the average (docs/v2-series.md §4.1): fitted on score, format and the
+    popularity percentile (bottom fifth, top tenth), log-linear, centred so the average show has 1. A missing score
+    counts as the reference score; an unknown popularity as the middle."""
     pr = fp.get("tail", {}).get("prior")
     if not pr:
         return 1.0
-    x = pr["score"] * ((score - pr["score_ref"]) / 10.0 if score else 0.0) + (pr["ona"] if ona else 0.0) - pr["center"]
-    return math.exp(x)
+    x = pr["score"] * ((score - pr["score_ref"]) / 10.0 if score else 0.0) + (pr["ona"] if ona else 0.0)
+    q = pop_percentile(pr, popularity)
+    if q is not None:
+        x = x + (pr.get("pop_bottom", 0.0) if q < 0.2 else 0.0) + (pr.get("pop_top", 0.0) if q >= 0.9 else 0.0)
+    return math.exp(x - pr["center"])
 
 
 def tail_beyond(tl: dict, mult: float, t_last: int, last: float, disc: float) -> float:
@@ -488,12 +500,15 @@ def season_value(fp: dict, m: str, disc: float) -> float:
     return w + f / disc * tail_beyond(tl, 1.0, 399, last, disc)
 
 
-def sequel_multiple(fp: dict, m: str, z: float, zs: float, t_now: int, disc: float, known: list[int] | None = None) -> float:
+def sequel_multiple(fp: dict, m: str, z: float, zs: float, t_now: int, disc: float, known: list[int] | None = None,
+                    watched: bool = True) -> float:
     """The sequel option of a show in market m, in attention-days per unit of the show's in-season mean attention,
     discounted to today (t_now days after its finale; negative before it): Σ over announcement times and the
     announcement-to-premiere lags of P × disc^(days to the premiere) × the sequel's attention ratio × (the sequel
     season's value + its own option). z: the show's hazard shift (`sequel_z`); zs: the sequel's (itself a sequel).
-    `known`: the premiere day(s) (days after the finale) of an announced sequel, equally likely."""
+    `known`: the premiere day(s) (days after the finale) of an announced sequel, equally likely. `watched`: whether
+    the show's relations are collected; if not, "no announcement so far" is not information, and the option keeps
+    its value as of the finale (no update when the finale passes)."""
     sp = fp["sequel"]
     w = season_value(fp, m, disc)
     # the sequel's own option at its premiere, as a fraction of its own season's value: geometric
@@ -504,7 +519,7 @@ def sequel_multiple(fp: dict, m: str, z: float, zs: float, t_now: int, disc: flo
         for d in known:
             acc += disc ** max(0, d - t_now) * gap_ratio(sp, d)
         return acc / len(known) * (w + own)
-    return _option_factor(sp, z, t_now, disc) * (w + own)
+    return _option_factor(sp, z, t_now, disc, t_now if watched else min(t_now, 0)) * (w + own)
 
 
 def finale_level(fp: dict, m: str, mean: float, var: float, today: int, final: int, first_air: int) -> float:
@@ -515,23 +530,25 @@ def finale_level(fp: dict, m: str, mean: float, var: float, today: int, final: i
 
 
 def sequel_extra(fp: dict, m: str, mean: float, var: float, today: int, final: int, first_air: int, z: float,
-                 zs: float, disc: float, known: list[int] | None = None) -> float:
+                 zs: float, disc: float, known: list[int] | None = None, watched: bool = True) -> float:
     """The sequel option of market m in attention-days discounted to today: the show's in-season mean attention
     (finale week ÷ `season_to_finale`) × `sequel_multiple`. `known`: an announced sequel's premiere day(s)."""
     sp = fp["sequel"]
     lvl = finale_level(fp, m, mean, var, today, final, first_air) / sp["season_to_finale"][m]
     k = [d - final for d in known] if known else None
-    return lvl * sequel_multiple(fp, m, z, zs, today - final, disc, k)
+    return lvl * sequel_multiple(fp, m, z, zs, today - final, disc, k, watched)
 
 
-def _option_factor(sp: dict, z: float, t_now: int, disc: float) -> float:
+def _option_factor(sp: dict, z: float, t_now: int, disc: float, t_from: int | None = None) -> float:
+    """Σ P(announcement) × mean over lags of disc^(days from today to the premiere) × attention ratio, with the
+    announcement schedule conditioned on nothing so far as of `t_from` (default today)."""
     lags = sp["lag_days"]
     acc = 0.0
-    for ta, p in announce_schedule(sp, z, t_now):
+    for ta, p in announce_schedule(sp, z, t_now if t_from is None else t_from):
         s = 0.0
         for lag in lags:
             d = ta + lag
-            s += disc ** (d - t_now) * gap_ratio(sp, d)
+            s += disc ** max(0, d - t_now) * gap_ratio(sp, d)
         acc += p * s / len(lags)
     return acc
 def discount_day(rate: float, p: dict) -> float:
@@ -554,7 +571,8 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     """Per-share value (yuan): expected dividends from the attention paths, discounted, plus cash per share.
     own/totals: market -> expected attention per future day (the same length). tails: market -> (tail parameters,
     the show's tail prior, days after the finale's week on the path's last day) for a path that ends in the long
-    tail: its revenue beyond the horizon, in closed form. platform: (platform sizes, scale) under the absolute
+    tail: its revenue beyond the horizon, in closed form. platform: (platform sizes, scale[, first day index under
+    the rule]) under the absolute
     revenue rule (the platform expected to stay at today's size; totals unused), else the relative rule (a share of
     the demand index, at the last day's revenue per unit of attention beyond the horizon)."""
     rv, co = p["revenue"], p["company"]
@@ -570,7 +588,8 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     for j in range(h):
         f *= disc
         o = {m: own[m][j] for m in MARKETS}
-        if platform is not None:
+        if platform is not None and j >= (platform[2] if len(platform) > 2 else 0):
+            # (a scheduled switch: the days before it under the relative rule, from it on the absolute one)
             parts = absolute_parts(o, platform[0], platform[1], weights, rv)
             last = (parts["us"] + parts["cn"] + parts["jp"]) * keep / shares
         else:

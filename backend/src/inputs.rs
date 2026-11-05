@@ -82,6 +82,12 @@ pub struct ShowInputs {
     /// the series key (engine/series.py: the smallest AniList id of the series) (phase 1, docs/v2-series.md §3)
     #[serde(default)]
     pub series: Option<i64>,
+    /// AniList list entries on the day (the tail prior's popularity at the finale) (phase 1)
+    #[serde(default)]
+    pub popularity: Option<f64>,
+    /// the collector has the show's relations as of the day (else "no sequel announced" is not information)
+    #[serde(default)]
+    pub relations_known: bool,
 }
 
 /// An announced sequel: its AniList id, the day the relation first appeared, and its premiere day(s): the
