@@ -1,0 +1,33 @@
+[package]
+name = "anistock"
+version = "0.1.0"
+edition = "2021"
+description = "AniStock v2 game server"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "anistock"
+path = "src/main.rs"
+
+[[bin]]
+name = "difftest"
+path = "src/bin/difftest.rs"
+
+[dependencies]
+refinery = { version = "0.10", features = ["rusqlite"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10"
+toml = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
