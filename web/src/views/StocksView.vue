@@ -2,7 +2,7 @@
 // 股票: every listed stock in one sortable, filterable table (table frame).
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import type { MarketStock } from '../api'
+import type { Quote } from '../api'
 import ChangePill from '../components/ChangePill.vue'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -11,7 +11,7 @@ import SearchPanel from '../components/SearchPanel.vue'
 import Sparkline from '../components/Sparkline.vue'
 import { usePoll } from '../composables/usePoll'
 import { FILTERS, listRows, SORTS, sortValue, type ListCtx, type SortKey } from '../composables/stockList'
-import { big, dir, episodeText, money, pct, share } from '../format'
+import { bigMoney, dir, episodeText, money, pct, share } from '../format'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
 
@@ -22,7 +22,6 @@ const router = useRouter()
 const searching = ref(false)
 
 const { refresh } = usePoll(() => market.refreshQuotes(), 5000, 30000)
-usePoll(() => market.refreshRatios(), 60000)
 usePoll(() => (market.indices ? null : market.refreshIndices()), 300000)
 
 const q = (k: string) => (typeof route.query[k] === 'string' ? (route.query[k] as string) : '')
@@ -33,8 +32,7 @@ watch([filter, sort, desc], () => router.replace({ query: { f: filter.value, s: 
 
 const ctx = computed<ListCtx>(() => ({
   watch: new Set(prefs.watchlist),
-  seasonStart: market.indices?.season_start ?? market.ratios?.season_start ?? '9999',
-  ratio: market.ratioById,
+  seasonStart: market.indices?.season_start ?? '9999',
 }))
 const counts = computed(() => Object.fromEntries(FILTERS.map((f) => [f.key, (market.stocks ?? []).filter((s) => f.test(s, ctx.value)).length])))
 const rows = computed(() => listRows(market.stocks ?? [], filter.value, sort.value, desc.value, ctx.value))
@@ -58,22 +56,22 @@ function nextMetric() {
   sort.value = PHONE_METRICS[(i + 1) % PHONE_METRICS.length]
   desc.value = true
 }
-function fmt(s: MarketStock, k: SortKey): string {
-  const v = sortValue(s, k, ctx.value)
+function fmt(s: Quote, k: SortKey): string {
+  const v = sortValue(s, k)
   if (v == null) return '–'
   switch (k) {
     case 'price': return money(v)
     case 'change': return pct(v)
-    case 'turnover': case 'cap': case 'rev': return big(v)
+    case 'turnover': case 'cap': case 'rev': return bigMoney(v)
     case 'pe': return v.toFixed(1)
     case 'dy': return share(v, 1)
-    case 'eps': return s.aired ? episodeText(s.aired, s.episodes, s.long_runner) : '–'
+    case 'eps': return s.episodes_aired ? episodeText(s.episodes_aired, s.episodes, s.is_long_runner) : '–'
   }
 }
 const label = (k: SortKey) => SORTS.find((x) => x.key === k)!.label
 
 function remember() {
-  prefs.context = { key: filter.value, label: filterLabel.value, ids: rows.value.map((s) => s.id) }
+  prefs.context = { key: filter.value, label: filterLabel.value, ids: rows.value.map((s) => s.stock.id) }
 }
 </script>
 
@@ -110,11 +108,11 @@ function remember() {
               <button type="button" class="sorth arr" :aria-label="desc ? '改为升序' : '改为降序'" @click="setSort(metric)">{{ sort === metric ? (desc ? '↓' : '↑') : '↕' }}</button>
             </span>
           </div>
-          <RouterLink v-for="s in rows" :key="s.id" :to="`/stocks/${s.id}`" class="prow" @click="remember">
-            <Cover :id="s.id" :title="s.title" :w="30" :h="42" :spine="false" />
+          <RouterLink v-for="s in rows" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="prow" @click="remember">
+            <Cover :id="s.stock.id" :title="s.stock.title" :w="30" :h="42" :spine="false" />
             <span class="nm">
-              <span class="serif clamp1 t">{{ s.title }}</span>
-              <span class="num code">{{ s.code }}<span v-if="s.cooling" class="tag">冷静期</span><span v-else-if="s.new" class="tag">新上市</span></span>
+              <span class="serif clamp1 t">{{ s.stock.title }}</span>
+              <span class="num code">{{ s.stock.code }}<span v-if="s.vcm_active" class="tag">冷静期</span><span v-else-if="s.is_new" class="tag">新上市</span></span>
             </span>
             <span v-flash="s.price" class="num px">{{ money(s.price) }}</span>
             <ChangePill v-if="metric === 'change'" :value="s.change" />
@@ -134,24 +132,24 @@ function remember() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="s in rows" :key="s.id">
+            <tr v-for="s in rows" :key="s.stock.id">
               <td class="namecell">
-                <RouterLink :to="`/stocks/${s.id}`" class="nm2" @click="remember">
-                  <Cover :id="s.id" :title="s.title" :w="24" :h="34" :spine="false" />
-                  <span class="serif clamp1 t">{{ s.title }}</span>
-                  <span class="num code">{{ s.code }}</span>
-                  <span v-if="s.cooling" class="tag">冷静期</span><span v-else-if="s.new" class="tag">新上市</span>
+                <RouterLink :to="`/stocks/${s.stock.id}`" class="nm2" @click="remember">
+                  <Cover :id="s.stock.id" :title="s.stock.title" :w="24" :h="34" :spine="false" />
+                  <span class="serif clamp1 t">{{ s.stock.title }}</span>
+                  <span class="num code">{{ s.stock.code }}</span>
+                  <span v-if="s.vcm_active" class="tag">冷静期</span><span v-else-if="s.is_new" class="tag">新上市</span>
                 </RouterLink>
               </td>
               <td v-flash="s.price" class="num">{{ money(s.price) }}</td>
               <td v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</td>
-              <td v-flash.neutral="s.turnover" class="num">{{ big(s.turnover) }}</td>
-              <td class="num">{{ big(s.market_cap) }}</td>
+              <td v-flash.neutral="s.turnover" class="num">{{ bigMoney(s.turnover) }}</td>
+              <td class="num">{{ bigMoney(s.market_cap) }}</td>
               <td class="num">{{ fmt(s, 'pe') }}</td>
               <td class="num">{{ fmt(s, 'dy') }}</td>
-              <td class="num">{{ big(s.week_revenue) }}</td>
+              <td class="num">{{ bigMoney(s.week_revenue) }}</td>
               <td class="num">{{ fmt(s, 'eps') }}</td>
-              <td><Sparkline :values="s.spark" :base="s.spark[0]" :w="72" :h="22" class="mini" /></td>
+              <td><Sparkline :values="s.sparkline" :base="s.sparkline[0]" :w="72" :h="22" class="mini" /></td>
             </tr>
           </tbody>
         </table>

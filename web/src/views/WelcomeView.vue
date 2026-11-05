@@ -2,7 +2,7 @@
 // 新手引导 after the first sign-in on this device: pick a work, how revenue and dividends work, first buy.
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, ApiError, type PlaceResult } from '../api'
+import { api, call, errorText } from '../api'
 import Cover from '../components/Cover.vue'
 import { usePoll } from '../composables/usePoll'
 import { dir, money, pct, qty, taxBrackets } from '../format'
@@ -24,16 +24,18 @@ usePoll(() => market.refreshQuotes(), 15000)
 // six works on air right now, by this week's revenue
 const picks = computed(() =>
   [...(market.stocks ?? [])]
-    .filter((s) => !s.long_runner && s.aired > 0 && (!s.episodes || s.aired < s.episodes))
+    .filter((s) => !s.is_long_runner && s.episodes_aired > 0 && (!s.episodes || s.episodes_aired < s.episodes))
     .sort((a, b) => b.week_revenue - a.week_revenue)
     .slice(0, 6),
 )
 const chosen = computed(() => market.byId.get(pickId.value ?? -1) ?? picks.value[0] ?? null)
-const buyQty = computed(() => (chosen.value ? Math.floor(10000 / chosen.value.price) : 0))
-const tax = computed(() => taxBrackets(session.status?.rules.dividend_tax))
+// about 10,000 币 (cents)
+const buyQty = computed(() => (chosen.value && chosen.value.price > 0 ? Math.floor(1_000_000 / chosen.value.price) : 0))
+session.loadRules()
+const tax = computed(() => taxBrackets(session.rules?.dividend_tax))
 const trading = computed(() => session.status?.phase === 'continuous')
 const note = computed(() => {
-  if (step.value === 0) return chosen.value ? `《${chosen.value.title}》 现价 ${money(chosen.value.price)}` : ''
+  if (step.value === 0) return chosen.value ? `《${chosen.value.stock.title}》 现价 ${money(chosen.value.price)}` : ''
   if (step.value === 2) return chosen.value ? (trading.value ? `先用 1 万币试试：约 ${qty(buyQty.value)} 股` : '休市中，开盘后可以买入') : ''
   return ''
 })
@@ -45,14 +47,14 @@ function finish(to?: string) {
 async function buy() {
   const s = chosen.value
   if (!s) return finish()
-  if (!trading.value || !buyQty.value) return finish(`/stocks/${s.id}`)
+  if (!trading.value || !buyQty.value) return finish(`/stocks/${s.stock.id}`)
   busy.value = true
   error.value = ''
   try {
-    await api.post<PlaceResult>('/api/orders', { company_id: s.id, side: 'buy', kind: 'market', qty: buyQty.value, price: null })
-    finish(`/stocks/${s.id}`)
+    await call(api.POST('/api/v1/me/orders', { body: { stock_id: s.stock.id, side: 'buy', type: 'market', quantity: buyQty.value } }))
+    finish(`/stocks/${s.stock.id}`)
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '无法提交委托'
+    error.value = errorText(e, '无法提交委托')
   } finally {
     busy.value = false
   }
@@ -73,8 +75,8 @@ async function buy() {
         <p>选一部你在追的。</p>
       </div>
       <div class="grid">
-        <button v-for="s in picks" :key="s.id" type="button" class="pick" :aria-pressed="chosen?.id === s.id" @click="pickId = s.id">
-          <Cover :id="s.id" :title="s.title" :w="110" :h="138" :size="16" class="pc" />
+        <button v-for="s in picks" :key="s.stock.id" type="button" class="pick" :aria-pressed="chosen?.stock.id === s.stock.id" @click="pickId = s.stock.id">
+          <Cover :id="s.stock.id" :title="s.stock.title" :w="110" :h="138" :size="16" class="pc" />
           <span class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
         </button>
       </div>
@@ -116,7 +118,7 @@ async function buy() {
       <p v-if="error" class="msg error">{{ error }}</p>
       <button v-if="step < 2" type="button" class="btn block cta" @click="next">下一步</button>
       <button v-else-if="trading && chosen" type="button" class="btn block cta buy" :disabled="busy" @click="buy">买入 {{ qty(buyQty) }} 股</button>
-      <button v-else type="button" class="btn block cta" @click="finish(chosen ? `/stocks/${chosen.id}` : '/stocks')">去看股票</button>
+      <button v-else type="button" class="btn block cta" @click="finish(chosen ? `/stocks/${chosen.stock.id}` : '/stocks')">去看股票</button>
     </div>
   </main>
 </template>

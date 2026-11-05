@@ -7,7 +7,7 @@ import { money, qty } from '../format'
 
 const props = defineProps<{ bids: BookLevel[]; asks: BookLevel[]; layout: 'split' | 'stack'; last?: number; prevClose?: number }>()
 const emit = defineEmits<{ pick: [price: number] }>()
-const max = computed(() => Math.max(1, ...props.bids.map((b) => b.qty), ...props.asks.map((a) => a.qty)))
+const max = computed(() => Math.max(1, ...props.bids.map((b) => b.quantity), ...props.asks.map((a) => a.quantity)))
 const bids = computed(() => props.bids.slice(0, 5))
 const asks = computed(() => props.asks.slice(0, 5))
 const asksDesc = computed(() => [...asks.value].reverse())
@@ -21,29 +21,29 @@ const w = (q: number) => Math.round((q / max.value) * 100) + '%'
     <template v-if="layout === 'split'">
       <div class="col">
         <button v-for="b in bids" :key="'b' + b.price" type="button" class="lv num" @click="emit('pick', b.price)">
-          <span class="bar bid" :style="{ width: w(b.qty) }"></span>
-          <span class="p tup">{{ money(b.price) }}</span><span v-flash.neutral="b.qty" class="q">{{ qty(b.qty) }}</span>
+          <span class="bar bid" :style="{ width: w(b.quantity) }"></span>
+          <span class="p tup">{{ money(b.price) }}</span><span v-flash.neutral="b.quantity" class="q">{{ qty(b.quantity) }}</span>
         </button>
       </div>
       <div class="col">
         <button v-for="a in asks" :key="'a' + a.price" type="button" class="lv num" @click="emit('pick', a.price)">
-          <span class="bar ask left" :style="{ width: w(a.qty) }"></span>
-          <span class="p tdown">{{ money(a.price) }}</span><span v-flash.neutral="a.qty" class="q">{{ qty(a.qty) }}</span>
+          <span class="bar ask left" :style="{ width: w(a.quantity) }"></span>
+          <span class="p tdown">{{ money(a.price) }}</span><span v-flash.neutral="a.quantity" class="q">{{ qty(a.quantity) }}</span>
         </button>
       </div>
     </template>
     <template v-else>
       <button v-for="a in asksDesc" :key="'a' + a.price" type="button" class="lv num" @click="emit('pick', a.price)">
-        <span class="bar ask" :style="{ width: w(a.qty) }"></span>
-        <span class="p tdown">{{ money(a.price) }}</span><span v-flash.neutral="a.qty" class="q">{{ qty(a.qty) }}</span>
+        <span class="bar ask" :style="{ width: w(a.quantity) }"></span>
+        <span class="p tdown">{{ money(a.price) }}</span><span v-flash.neutral="a.quantity" class="q">{{ qty(a.quantity) }}</span>
       </button>
       <div class="mid num">
         <span v-flash="last" :class="lastCls">{{ money(last) }}</span>
         <span class="tmuted sp">{{ spread != null ? money(spread) : '' }}</span>
       </div>
       <button v-for="b in bids" :key="'b' + b.price" type="button" class="lv num" @click="emit('pick', b.price)">
-        <span class="bar bid" :style="{ width: w(b.qty) }"></span>
-        <span class="p tup">{{ money(b.price) }}</span><span v-flash.neutral="b.qty" class="q">{{ qty(b.qty) }}</span>
+        <span class="bar bid" :style="{ width: w(b.quantity) }"></span>
+        <span class="p tup">{{ money(b.price) }}</span><span v-flash.neutral="b.quantity" class="q">{{ qty(b.quantity) }}</span>
       </button>
     </template>
     <p v-if="!bids.length && !asks.length" class="none tmuted">暂无委托</p>

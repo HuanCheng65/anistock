@@ -1,24 +1,23 @@
-// New listings: open subscriptions with allotment results, and recent listings.
+// New listings: subscriptions (upcoming, open), allotted ones waiting to list, and recent listings.
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { api, type Ipo, type Listings } from '../api'
+import { computed, ref } from 'vue'
+import { api, call, type Ipo } from '../api'
 
 export const useIpo = defineStore('ipo', () => {
   const ipos = ref<Ipo[] | null>(null)
-  const listings = ref<Listings | null>(null)
+  const open = computed(() => (ipos.value ?? []).filter((i) => i.status === 'open'))
+  const upcoming = computed(() => (ipos.value ?? []).filter((i) => i.status === 'upcoming'))
+  const allotted = computed(() => (ipos.value ?? []).filter((i) => i.status === 'allotted'))
+  const listed = computed(() => (ipos.value ?? []).filter((i) => i.status === 'listed'))
 
   async function refresh() {
-    const [a, b] = await Promise.all([
-      api.get<{ ipos: Ipo[] }>('/api/ipos'),
-      api.get<Listings>('/api/v2/listings').catch(() => ({ recent: [], upcoming: [] })),
-    ])
-    ipos.value = a.ipos
-    listings.value = b
+    ipos.value = (await call(api.GET('/api/v1/ipos', { params: { query: { status: 'upcoming,open,allotted,listed' } } }))).items
   }
+  /** Set my subscription to `q` shares; 0 withdraws it. */
   async function subscribe(id: number, q: number) {
-    if (q === 0) await api.del(`/api/ipos/${id}/subscribe`)
-    else await api.post(`/api/ipos/${id}/subscribe`, { qty: q })
+    if (q === 0) await call(api.DELETE('/api/v1/ipos/{id}/subscription', { params: { path: { id } } }))
+    else await call(api.PUT('/api/v1/ipos/{id}/subscription', { params: { path: { id } }, body: { quantity: q } }))
     await refresh()
   }
-  return { ipos, listings, refresh, subscribe }
+  return { ipos, open, upcoming, allotted, listed, refresh, subscribe }
 })

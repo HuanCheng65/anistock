@@ -1,54 +1,79 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+// 资讯: the four groups (the server's `category`) as filters, cursor paging ("加载更多"), new items by push.
+import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ApiError, type NewsItem } from '../api'
+import { api, call, errorText, type NewsItem } from '../api'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { usePoll } from '../composables/usePoll'
-import { dayLabel, dir, hm, newsGroup, pct } from '../format'
+import { dayLabel, dir, hm, NEWS_CATEGORY, newsGroup, pct } from '../format'
+import { onLive } from '../live'
 import { useAccount } from '../stores/account'
 import { useMarket } from '../stores/market'
 import { useSession } from '../stores/session'
+import { onBeforeUnmount } from 'vue'
 
 const market = useMarket()
 const account = useAccount()
 const session = useSession()
 const chip = ref('all')
 const error = ref('')
-const { refresh } = usePoll(async () => {
+const list = ref<NewsItem[] | null>(null)
+const next = ref<string | null>(null)
+const loading = ref(false)
+
+/** the server-side filter of a chip: a category, or none ('all', and 'mine' filters what is loaded) */
+const category = (c: string) => (c in NEWS_CATEGORY ? c : undefined)
+async function load(more = false) {
+  loading.value = true
   try {
-    await market.refreshNews(150)
+    const r = await call(api.GET('/api/v1/news', {
+      params: { query: { limit: 50, category: category(chip.value), before: more ? next.value ?? undefined : undefined } },
+    }))
+    list.value = more ? [...(list.value ?? []), ...r.items] : r.items
+    next.value = r.next_cursor
     error.value = ''
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '无法加载'
+    error.value = errorText(e, '无法加载')
+  } finally {
+    loading.value = false
   }
-}, 30000, 120000)
+}
+watch(chip, () => {
+  list.value = null
+  load()
+})
+// a fallback while the socket is down: reload the first page only when nothing more was paged in
+const { refresh } = usePoll(() => ((list.value?.length ?? 0) <= 50 ? load() : null), 30000, 120000)
 usePoll(() => Promise.all([market.stocks ? null : market.refreshQuotes(), session.me ? account.refreshPositions() : null]), 60000)
+const off = onLive('news', (m) => {
+  if (!list.value || list.value.some((n) => n.id === m.item.id)) return
+  const c = category(chip.value)
+  if (c && m.item.category !== c) return
+  list.value = [m.item, ...list.value]
+})
+onBeforeUnmount(off)
 
-const held = computed(() => new Set((account.positions ?? []).map((p) => p.company_id)))
+const held = computed(() => new Set((account.positions ?? []).map((p) => p.stock.id)))
 const chips = computed(() => {
-  const groups = new Set((market.news ?? []).map((n) => newsGroup(n.kind).label))
   const out = [{ key: 'all', label: '全部' }]
   if (session.me && held.value.size) out.push({ key: 'mine', label: '持仓相关' })
-  for (const g of ['快讯', '公告', '放送', '日结']) if (groups.has(g)) out.push({ key: g, label: g })
+  for (const [k, v] of Object.entries(NEWS_CATEGORY)) out.push({ key: k, label: v.label })
   return out
 })
 const items = computed(() =>
-  (market.news ?? []).filter((n) => {
-    if (chip.value === 'all') return true
-    if (chip.value === 'mine') return n.company_id != null && held.value.has(n.company_id)
-    return newsGroup(n.kind).label === chip.value
-  }),
+  (list.value ?? []).filter((n) => chip.value !== 'mine' || (n.stock != null && held.value.has(n.stock.id))),
 )
 const days = computed(() => {
   const out: { day: string; items: NewsItem[] }[] = []
   for (const n of items.value) {
     const last = out[out.length - 1]
-    if (last && last.day === n.day) last.items.push(n)
-    else out.push({ day: n.day, items: [n] })
+    if (last && last.day === n.trading_day) last.items.push(n)
+    else out.push({ day: n.trading_day, items: [n] })
   }
   return out
 })
+const quote = (n: NewsItem) => (n.stock ? market.byId.get(n.stock.id) ?? null : null)
 </script>
 
 <template>
@@ -59,33 +84,35 @@ const days = computed(() => {
       <div class="chips gutter" role="group" aria-label="类型">
         <button v-for="c in chips" :key="c.key" type="button" :aria-pressed="chip === c.key" @click="chip = c.key">{{ c.label }}</button>
       </div>
-      <EmptyState v-if="error && !market.news" :text="error" action="重试" tone="error" @act="refresh" />
+      <EmptyState v-if="error && !list" :text="error" action="重试" tone="error" @act="refresh" />
       <section v-for="d in days" :key="d.day">
-        <h2 class="dayh gutter">{{ dayLabel(d.day, session.status?.day) }}</h2>
-        <component :is="n.company_id ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : undefined" class="item gutter" :class="{ fresh: market.fresh.has(n.id), hot: market.fresh.has(n.id) && newsGroup(n.kind).tone === 'flash' && n.company_id != null && held.has(n.company_id) }">
-          <span class="num tm">{{ n.ts ? hm(n.ts) : '' }}</span>
+        <h2 class="dayh gutter">{{ dayLabel(d.day, session.status?.trading_day) }}</h2>
+        <component :is="n.stock ? RouterLink : 'div'" v-for="n in d.items" :key="n.id" :to="n.stock ? `/stocks/${n.stock.id}` : undefined" class="item gutter" :class="{ fresh: market.fresh.has(n.id), hot: market.fresh.has(n.id) && n.category === 'flash' && n.stock != null && held.has(n.stock.id) }">
+          <span class="num tm">{{ hm(n.at) }}</span>
           <span class="body">
             <span class="tags">
-              <span class="kind" :class="newsGroup(n.kind).tone">{{ newsGroup(n.kind).label }}</span>
-              <span v-if="n.company_id && held.has(n.company_id)" class="mine">持仓</span>
+              <span class="kind" :class="newsGroup(n.category).tone">{{ newsGroup(n.category).label }}</span>
+              <span v-if="n.stock && held.has(n.stock.id)" class="mine">持仓</span>
             </span>
             <span class="title">{{ n.title }}</span>
             <span v-if="n.body" class="text">{{ n.body }}</span>
-            <span v-if="n.company_id && market.byId.get(n.company_id)" class="stock">
-              <Cover :id="n.company_id" :title="market.byId.get(n.company_id)!.title" :w="14" :h="18" :spine="false" />
-              <span class="clamp1">{{ market.byId.get(n.company_id)!.title }}</span>
-              <span v-flash="market.byId.get(n.company_id)!.change" class="num" :class="dir(market.byId.get(n.company_id)!.change)">{{ pct(market.byId.get(n.company_id)!.change) }}</span>
+            <span v-if="n.stock" class="stock">
+              <Cover :id="n.stock.id" :title="n.stock.title" :w="14" :h="18" :spine="false" />
+              <span class="clamp1">{{ n.stock.title }}</span>
+              <span v-if="quote(n)" v-flash="quote(n)!.change" class="num" :class="dir(quote(n)!.change)">{{ pct(quote(n)!.change) }}</span>
             </span>
           </span>
         </component>
       </section>
-      <EmptyState v-if="market.news && !items.length" text="暂无资讯" />
-      <div v-if="!market.news && !error" class="gutter"><div v-for="i in 4" :key="i" class="skel" style="height: 60px; margin: 14px 0"></div></div>
+      <EmptyState v-if="list && !items.length" text="暂无资讯" />
+      <button v-if="list && next" type="button" class="linkbtn morebtn" :disabled="loading" @click="load(true)">{{ loading ? '加载中…' : '加载更多' }}</button>
+      <div v-if="!list && !error" class="gutter"><div v-for="i in 4" :key="i" class="skel" style="height: 60px; margin: 14px 0"></div></div>
     </div>
   </main>
 </template>
 
 <style scoped>
+.morebtn { display: block; margin: 16px auto; font-size: 13px; }
 .chips { display: flex; gap: 8px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair); overflow-x: auto; scrollbar-width: none; }
 .chips button { flex: none; height: 30px; padding: 0 12px; font-size: 13px; border: 1px solid var(--base-line); background: transparent; color: var(--ink); }
 .chips button[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }

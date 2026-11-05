@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ApiError } from '../api'
+import { errorText } from '../api'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import IpoOffer from '../components/IpoOffer.vue'
@@ -18,15 +18,15 @@ const { refresh } = usePoll(async () => {
     await store.refresh()
     error.value = ''
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '无法加载'
+    error.value = errorText(e, '无法加载')
   }
 }, 10000)
 usePoll(() => (market.stocks ? null : market.refreshQuotes()), 60000)
 
-const open = computed(() => (store.ipos ?? []).filter((i) => i.status === 'open'))
-const mineDone = computed(() => (store.ipos ?? []).filter((i) => i.status !== 'open' && i.my))
-const upcoming = computed(() => store.listings?.upcoming ?? [])
-const recent = computed(() => store.listings?.recent ?? [])
+const open = computed(() => store.open)
+const mineDone = computed(() => (store.ipos ?? []).filter((i) => (i.status === 'allotted' || i.status === 'listed') && i.viewer?.quantity))
+const upcoming = computed(() => store.upcoming)
+const recent = computed(() => store.listed.slice(0, 20))
 const eps = (id: number) => market.byId.get(id)?.episodes ?? null
 </script>
 
@@ -40,8 +40,8 @@ const eps = (id: number) => market.byId.get(id)?.episodes ?? null
     <div class="container">
       <h1 class="pagetitle desk-only">新股</h1>
       <p v-if="error" class="msg error pad">{{ error }}</p>
-      <section v-for="i in open" :key="i.id" class="offerwrap">
-        <IpoOffer :ipo="i" :episodes="eps(i.id)" @changed="refresh" />
+      <section v-for="i in open" :key="i.stock.id" class="offerwrap">
+        <IpoOffer :ipo="i" :episodes="eps(i.stock.id)" @changed="refresh" />
       </section>
       <EmptyState v-if="store.ipos && !open.length" text="暂无认购中的新股" action="去看股票" to="/stocks" />
       <div v-if="!store.ipos && !error" class="pad"><div class="skel" style="height: 220px"></div></div>
@@ -49,9 +49,9 @@ const eps = (id: number) => market.byId.get(id)?.episodes ?? null
       <div class="cols">
         <section class="sec">
           <h2 class="h2">即将认购</h2>
-          <div v-for="u in upcoming" :key="u.id" class="soon">
-            <Cover :id="u.id" :title="u.title" :w="24" :h="34" :spine="false" />
-            <span class="serif clamp1 t">《{{ u.title }}》</span>
+          <div v-for="u in upcoming" :key="u.stock.id" class="soon">
+            <Cover :id="u.stock.id" :title="u.stock.title" :w="24" :h="34" :spine="false" />
+            <span class="serif clamp1 t">《{{ u.stock.title }}》</span>
             <span class="num ink2 d">{{ u.sub_start.slice(5) }} 开始</span>
             <span class="num ink2 d">{{ u.first_air.slice(5) }} 首播</span>
           </div>
@@ -62,12 +62,12 @@ const eps = (id: number) => market.byId.get(id)?.episodes ?? null
           <h2 class="h2">近期上市</h2>
           <template v-if="recent.length">
             <div class="lrow head"><span></span><span>发行价</span><span>首日</span><span>中签率</span><span class="desk-only">认购倍数</span></div>
-            <RouterLink v-for="l in recent" :key="l.id" :to="`/stocks/${l.id}`" class="lrow">
-              <span class="serif clamp1 t">{{ l.title }}</span>
-              <span class="num">{{ money(l.ipo_price) }}</span>
-              <span class="num" :class="dir(l.first_change)">{{ l.first_change != null ? pct(l.first_change) : '–' }}</span>
-              <span class="num">{{ l.ratio != null ? share(l.ratio, 1) : '–' }}</span>
-              <span class="num desk-only">{{ l.oversubscribed != null ? l.oversubscribed.toFixed(1) + '×' : '–' }}</span>
+            <RouterLink v-for="l in recent" :key="l.stock.id" :to="`/stocks/${l.stock.id}`" class="lrow">
+              <span class="serif clamp1 t">{{ l.stock.title }}</span>
+              <span class="num">{{ money(l.price) }}</span>
+              <span class="num" :class="dir(l.first_day?.change)">{{ l.first_day?.change != null ? pct(l.first_day.change) : '–' }}</span>
+              <span class="num">{{ l.result?.allotment_ratio != null ? share(l.result.allotment_ratio, 1) : '–' }}</span>
+              <span class="num desk-only">{{ l.result ? l.result.oversubscribed.toFixed(1) + '×' : '–' }}</span>
             </RouterLink>
           </template>
           <p v-else class="none">暂无</p>
@@ -76,8 +76,8 @@ const eps = (id: number) => market.byId.get(id)?.episodes ?? null
 
       <section v-if="mineDone.length" class="sec">
         <h2 class="h2">配售结果</h2>
-        <div v-for="i in mineDone" :key="i.id" class="done">
-          <RouterLink :to="`/stocks/${i.id}`" class="serif clamp1 t">{{ i.title }}</RouterLink>
+        <div v-for="i in mineDone" :key="i.stock.id" class="done">
+          <RouterLink :to="`/stocks/${i.stock.id}`" class="serif clamp1 t">{{ i.stock.title }}</RouterLink>
           <IpoOffer :ipo="i" compact />
         </div>
       </section>

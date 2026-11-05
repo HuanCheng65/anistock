@@ -1,23 +1,34 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ApiError } from '../api'
+import { computed, ref, watch } from 'vue'
+import { errorText } from '../api'
 import BackButton from '../components/BackButton.vue'
 import EmptyState from '../components/EmptyState.vue'
+import Tabs from '../components/Tabs.vue'
 import { usePoll } from '../composables/usePoll'
-import { dir, money, pct } from '../format'
-import { useSession } from '../stores/session'
+import { dir, money, pct, shortDay } from '../format'
+import { useSession, type Period } from '../stores/session'
 
 const session = useSession()
 const error = ref('')
+const period = ref<Period>('all')
+const periods = [
+  { key: 'all', label: '总榜' },
+  { key: 'week', label: '周榜' },
+  { key: 'season', label: '季榜' },
+]
+const periodModel = computed({ get: () => period.value as string, set: (v: string) => (period.value = v as Period) })
 const { refresh } = usePoll(async () => {
   try {
-    await session.loadLeaders()
+    await session.loadLeaders(period.value)
     error.value = ''
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '无法加载'
+    error.value = errorText(e, '无法加载')
   }
 }, 15000)
-const rows = computed(() => session.leaders ?? [])
+watch(period, () => refresh())
+const board = computed(() => session.boards[period.value] ?? null)
+const rows = computed(() => board.value?.items ?? [])
+const since = computed(() => (board.value?.from_day && period.value !== 'all' ? `${shortDay(board.value.from_day, session.status?.trading_day)} 起` : ''))
 const podium = computed(() => {
   const r = rows.value
   if (r.length < 3) return []
@@ -28,7 +39,7 @@ const podium = computed(() => {
   ]
 })
 const rest = computed(() => (podium.value.length ? rows.value.slice(3) : rows.value))
-const mine = (name: string) => name === session.me?.username
+const mine = (id: number) => id === session.me?.id
 </script>
 
 <template>
@@ -39,28 +50,31 @@ const mine = (name: string) => name === session.me?.username
     </header>
     <div class="container">
       <h1 class="pagetitle desk-only">排行</h1>
-      <EmptyState v-if="error && !session.leaders" :text="error" action="重试" tone="error" @act="refresh" />
+      <Tabs v-model="periodModel" :items="periods" label="排行周期" class="ptabs gutter"><span v-if="since" class="since num">{{ since }}</span></Tabs>
+      <EmptyState v-if="error && !board" :text="error" action="重试" tone="error" @act="refresh" />
       <section v-if="podium.length" class="podium gutter">
         <div v-for="p in podium" :key="p.rank" class="pod">
-          <span class="nm clamp1" :class="{ me: mine(p.username) }">{{ p.username }}</span>
-          <span class="num ret" :class="dir(p.return_pct)">{{ pct(p.return_pct) }}</span>
+          <span class="nm clamp1" :class="{ me: mine(p.user.id) }">{{ p.user.username }}</span>
+          <span class="num ret" :class="dir(p.return)">{{ pct(p.return) }}</span>
           <span v-if="p.restructures" class="rs">重整 {{ p.restructures }} 次</span>
           <div class="block" :class="p.tone" :style="{ height: p.h + 'px' }"><span class="serif">{{ p.rank }}</span></div>
         </div>
       </section>
       <div v-if="rows.length" class="rrow head gutter"><span></span><span></span><span>总资产</span><span>收益率</span></div>
-      <div v-for="r in rest" :key="r.username" class="rrow gutter" :class="{ me: mine(r.username) }">
+      <div v-for="r in rest" :key="r.user.id" class="rrow gutter" :class="{ me: mine(r.user.id) }">
         <span class="num rk">{{ r.rank }}</span>
-        <span class="clamp1 nm">{{ r.username }}<span v-if="r.restructures" class="rs">重整 {{ r.restructures }} 次</span></span>
-        <span class="num">{{ money(r.total) }}</span>
-        <span class="num" :class="dir(r.return_pct)">{{ pct(r.return_pct) }}</span>
+        <span class="clamp1 nm">{{ r.user.username }}<span v-if="r.restructures" class="rs">重整 {{ r.restructures }} 次</span></span>
+        <span class="num">{{ money(r.total_assets) }}</span>
+        <span class="num" :class="dir(r.return)">{{ pct(r.return) }}</span>
       </div>
-      <EmptyState v-if="session.leaders && !rows.length" text="暂无玩家" action="注册" to="/login" />
+      <EmptyState v-if="board && !rows.length" text="暂无玩家" action="注册" to="/login" />
     </div>
   </main>
 </template>
 
 <style scoped>
+.ptabs { gap: 20px; }
+.since { margin-left: auto; font-size: 12px; color: var(--muted); align-self: center; }
 .podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; padding-top: 22px; border-bottom: 1px solid var(--rule); }
 .pod { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
 .pod .nm { font-size: 14px; font-weight: 700; max-width: 100%; }

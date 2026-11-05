@@ -90,7 +90,7 @@ pub enum WsServerMessage {
         full: bool,
         trading_day: TradingDay,
         cols: Option<Vec<String>>,
-        #[schema(value_type = Vec<Vec<Object>>)]
+        #[schema(value_type = Vec<Vec<serde_json::Value>>)]
         rows: Vec<Value>,
     },
     /// 档位 `[price, quantity, orders]`，成交 `[id, price, quantity, at]`
@@ -114,7 +114,7 @@ pub enum WsServerMessage {
         asks: Vec<Value>,
         vcm: Vcm,
         auction: Option<AuctionIndication>,
-        #[schema(value_type = Vec<Vec<Object>>)]
+        #[schema(value_type = Vec<Vec<serde_json::Value>>)]
         trades: Vec<Value>,
     },
     News {

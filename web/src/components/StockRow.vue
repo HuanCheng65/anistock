@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
-import type { MarketStock } from '../api'
+import type { Quote } from '../api'
 import { money } from '../format'
 import ChangePill from './ChangePill.vue'
 import Cover from './Cover.vue'
-defineProps<{ s: MarketStock; extra?: string }>()
+defineProps<{ s: Quote; extra?: string }>()
 </script>
 
 <template>
-  <RouterLink :to="`/stocks/${s.id}`" class="row">
-    <Cover :id="s.id" :title="s.title" :w="36" :h="50" :spine="false" />
+  <RouterLink :to="`/stocks/${s.stock.id}`" class="row">
+    <Cover :id="s.stock.id" :title="s.stock.title" :w="36" :h="50" :spine="false" />
     <span class="name">
-      <span class="serif clamp2 t">{{ s.title }}</span>
-      <span class="num code">{{ s.code }}<template v-if="extra"> · {{ extra }}</template><span v-if="s.cooling" class="tag">冷静期</span><span v-else-if="s.new" class="tag">新上市</span></span>
+      <span class="serif clamp2 t">{{ s.stock.title }}</span>
+      <span class="num code">{{ s.stock.code }}<template v-if="extra"> · {{ extra }}</template><span v-if="s.vcm_active" class="tag">冷静期</span><span v-else-if="s.is_new" class="tag">新上市</span></span>
     </span>
     <span class="q">
       <span v-flash="s.price" class="num px">{{ money(s.price) }}</span>

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BackButton from '../components/BackButton.vue'
-import { sessionText, taxBrackets } from '../format'
+import { money, sessionText, taxBrackets } from '../format'
 import { useSession } from '../stores/session'
 
 const session = useSession()
-const r = computed(() => session.status?.rules)
-const st = computed(() => session.status)
+session.loadRules()
+const r = computed(() => session.rules)
+const st = computed(() => session.rules?.session)
 const p = (v: number | undefined, d = 2) => (v == null ? '–' : (v * 100).toFixed(d) + '%')
 const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${x.k} ${x.v}`).join('，'))
 </script>
@@ -34,8 +35,8 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
     <section class="sec">
       <h2>交易时间</h2>
       <ul>
-        <li>{{ st?.auction_start ?? '08:45' }}–{{ st?.open ?? '09:00' }} 开盘集合竞价；{{ sessionText(st?.open, st?.close) }} 连续交易；每天 06:30 日结。<span class="simp">简化</span>真实交易所每天只开几个小时；社团成员晚上才有空，深夜番播出后也能交易。</li>
-        <li>凌晨 {{ st?.rollover ?? '04:00' }} 以前的委托和成交都算前一个交易日，K 线、涨跌幅和分红登记也按交易日计算。</li>
+        <li>{{ st?.auction_start ?? '08:45' }}–{{ st?.open ?? '09:00' }} 开盘集合竞价；{{ sessionText(st?.open, st?.close) }} 连续交易；每天 {{ st?.daily_close ?? '06:30' }} 日结。<span class="simp">简化</span>真实交易所每天只开几个小时；社团成员晚上才有空，深夜番播出后也能交易。</li>
+        <li>凌晨 {{ st?.day_rollover ?? '04:00' }} 以前的委托和成交都算前一个交易日，K 线、涨跌幅和分红登记也按交易日计算。</li>
         <li>没成交的委托在每天日结时自动撤销（委托当日有效）。</li>
       </ul>
     </section>
@@ -57,7 +58,7 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
         <li>最小 1 股。<span class="simp">简化</span>A 股是 100 股一手。</li>
         <li>T+0：当天买的当天就能卖（港股、美股也是 T+0）。</li>
         <li>不能卖空，不能加杠杆。</li>
-        <li>费用：买卖双方各付佣金 {{ p(r?.commission, 3) }}，卖方另付印花税 {{ p(r?.stamp_duty) }}。<span class="simp">简化</span>没有每笔最低佣金。</li>
+        <li>费用：买卖双方各付佣金 {{ p(r?.fees.commission, 3) }}，卖方另付印花税 {{ p(r?.fees.stamp_duty) }}。<span class="simp">简化</span>没有每笔最低佣金。</li>
       </ul>
     </section>
 
@@ -65,7 +66,7 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
       <h2>没有涨跌停，有冷静期</h2>
       <ul>
         <li>参考港股的市场波动调节机制：价格可以一天之内大涨大跌，剧集的好坏当天就能反映到股价上。</li>
-        <li>当天第一次出现成交价比 {{ r?.vcm_window_min ?? 5 }} 分钟前的价格偏离超过 {{ p(r?.vcm_threshold, 0) }} 时，这笔不成交，股票进入 {{ r?.vcm_cool_min ?? 5 }} 分钟冷静期，期间只能在参考价 ±{{ p(r?.vcm_threshold, 0) }} 内成交，区间外的单子挂着等。</li>
+        <li>当天第一次出现成交价比 {{ r?.vcm.window_minutes ?? 5 }} 分钟前的价格偏离超过 {{ p(r?.vcm.threshold, 0) }} 时，这笔不成交，股票进入 {{ r?.vcm.cool_minutes ?? 5 }} 分钟冷静期，期间只能在参考价 ±{{ p(r?.vcm.threshold, 0) }} 内成交，区间外的单子挂着等。</li>
         <li>之后以当天开盘价为锚：偏离开盘价超过 20%、30%……时依次再次触发冷静期。<span class="simp">调整</span>港股是每天一次；逐级触发是为了防止小市场里被大户一路推高。</li>
         <li>极端价格保护：限价单价格超过昨收 20 倍会被拒绝。</li>
       </ul>
@@ -85,7 +86,7 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
     <section class="sec">
       <h2>账户、利息与税</h2>
       <ul>
-        <li>注册需要社团邀请码。初始资金 {{ (r?.initial_cash ?? 100000).toLocaleString('zh-CN') }} 币。</li>
+        <li>注册需要社团邀请码。初始资金 {{ money(r?.initial_cash ?? 10000000, 0) }} 币。</li>
         <li>现金每天按存款利率计息，存款利率 = 政策利率 − 1%。</li>
         <li>股息红利税按持股时间计算，先买的先算：{{ taxText }}。</li>
         <li>每周日，财政会把本周税收的 25% 平均发给所有玩家（财政补贴）。</li>

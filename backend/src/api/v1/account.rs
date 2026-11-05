@@ -828,32 +828,25 @@ fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i6
 }
 
 /// The leaderboard for `period` (`all`, `week`, `season`).
-pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Option<i64>) -> R<Leaderboard> {
-    let today = st.clock.today();
-    let t = date(&today)?;
-    let initial = initial_cents(&st.cfg);
-    let players = players_now(c, initial)?;
-    let from_day = match period {
-        "week" => Some(iso(t - chrono::Duration::days(t.weekday().num_days_from_monday() as i64))),
-        "season" => Some(quarter_start(&today)),
-        _ => state(c, "launched_on")?.filter(|s| !s.is_empty()),
-    };
+/// Every player ranked: `period_start: None` is the 总榜 (return = return index − 1); `Some(day)` divides
+/// the current return index by the last `player_days` one before `day` (1.0 for players who joined since).
+/// Sorted by return, ties by user id; ranks filled in.
+pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>) -> R<Vec<LeaderRow>> {
     let mut rows: Vec<(f64, LeaderRow)> = Vec::new();
-    for (id, username, total, idx, count) in players {
-        let ret = if period == "all" {
-            idx - 1.0
-        } else {
-            let start = from_day.clone().unwrap_or_default();
-            let base: Option<f64> = c
-                .query_row(
-                    "SELECT return_index FROM player_days WHERE account_id=? AND day<? ORDER BY day DESC LIMIT 1",
-                    rusqlite::params![id, start],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(sql)?;
-            let base = base.filter(|b| *b > 0.0).unwrap_or(1.0);
-            idx / base - 1.0
+    for (id, username, total, idx, count) in players_now(c, initial)? {
+        let ret = match period_start {
+            None => idx - 1.0,
+            Some(start) => {
+                let base: Option<f64> = c
+                    .query_row(
+                        "SELECT return_index FROM player_days WHERE account_id=? AND day<? ORDER BY day DESC LIMIT 1",
+                        rusqlite::params![id, start],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(sql)?;
+                idx / base.filter(|b| *b > 0.0).unwrap_or(1.0) - 1.0
+            }
         };
         rows.push((
             ret,
@@ -861,14 +854,27 @@ pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Optio
         ));
     }
     rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.user.id.cmp(&b.1.user.id)));
-    let items: Vec<LeaderRow> = rows
+    Ok(rows
         .into_iter()
         .enumerate()
         .map(|(i, (_, mut r))| {
             r.rank = i as i64 + 1;
             r
         })
-        .collect();
+        .collect())
+}
+
+/// The leaderboard for `period` (`all`, `week`, `season`).
+pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Option<i64>) -> R<Leaderboard> {
+    let today = st.clock.today();
+    let t = date(&today)?;
+    let from_day = match period {
+        "week" => Some(iso(t - chrono::Duration::days(t.weekday().num_days_from_monday() as i64))),
+        "season" => Some(quarter_start(&today)),
+        _ => state(c, "launched_on")?.filter(|s| !s.is_empty()),
+    };
+    let start = if period == "all" { None } else { from_day.as_deref() };
+    let items = ranked(c, initial_cents(&st.cfg), start)?;
     let viewer = viewer.and_then(|v| items.iter().find(|r| r.user.id == v)).map(|r| LeaderViewer { rank: r.rank, r#return: r.r#return });
     Ok(Leaderboard { period: period.into(), from_day: from_day.map(day), to_day: day(today), as_of: ts(st.clock.ts()), items, viewer })
 }

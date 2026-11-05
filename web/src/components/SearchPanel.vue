@@ -1,28 +1,47 @@
 <script setup lang="ts">
-// Search by title (Chinese / Japanese / English) or code, over the market list.
-import { computed, onMounted, ref } from 'vue'
+// Search by any name of the work (Chinese, Japanese, romaji, English, aliases) or its code
+// (/api/v1/stocks/search: the server ranks the matches).
+import { onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
+import { api, call, type SearchHit } from '../api'
 import { money, pct, dir } from '../format'
-import { useMarket } from '../stores/market'
 import Icon from './Icon.vue'
 
 const props = defineProps<{ compact?: boolean; autofocus?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-const market = useMarket()
 const q = ref('')
 const input = ref<HTMLInputElement>()
 const open = ref(false)
+const hits = ref<SearchHit[]>([])
+const searched = ref('')
 onMounted(() => {
   if (props.autofocus) input.value?.focus()
-  if (!market.stocks) market.refreshQuotes().catch(() => {})
 })
-const hits = computed(() => {
-  const t = q.value.trim().toLowerCase()
-  if (!t) return []
-  return (market.stocks ?? [])
-    .filter((s) => s.code.includes(t) || [s.title, s.title_ja, s.title_en].some((x) => (x ?? '').toLowerCase().includes(t)))
-    .slice(0, 12)
+let timer: number | undefined
+let seq = 0
+watch(q, (v) => {
+  window.clearTimeout(timer)
+  const t = v.trim()
+  if (!t) {
+    hits.value = []
+    searched.value = ''
+    return
+  }
+  timer = window.setTimeout(async () => {
+    const n = ++seq
+    try {
+      const r = await call(api.GET('/api/v1/stocks/search', { params: { query: { q: t.slice(0, 50), limit: 12 } } }))
+      if (n === seq) {
+        hits.value = r.items
+        searched.value = t
+      }
+    } catch {
+      /* keep the last results */
+    }
+  }, 160)
 })
+/** the name that matched, when it is not the title shown */
+const alias = (h: SearchHit) => (h.matched.field === 'title' || h.matched.field === 'code' ? '' : h.matched.text)
 function blur() {
   if (props.compact) window.setTimeout(() => (open.value = false), 150)
 }
@@ -41,15 +60,15 @@ function done() {
              @focus="open = true" @blur="blur" @keydown.esc="done" />
     </label>
     <ul v-if="hits.length && (open || !compact)" class="hits" role="listbox">
-      <li v-for="s in hits" :key="s.id">
-        <RouterLink :to="`/stocks/${s.id}`" @click="done">
-          <span class="clamp1 t">{{ s.title }}</span>
-          <span class="num code">{{ s.code }}</span>
-          <span class="num px" :class="dir(s.change)">{{ money(s.price) }} {{ pct(s.change) }}</span>
+      <li v-for="h in hits" :key="h.stock.id">
+        <RouterLink :to="`/stocks/${h.stock.id}`" @click="done">
+          <span class="clamp1 t">{{ h.stock.title }}</span>
+          <span class="num code">{{ h.stock.code }}<template v-if="alias(h)"> · <span class="sans">{{ alias(h) }}</span></template><template v-if="h.status === 'subscribing'"> · <span class="sans">认购中</span></template></span>
+          <span class="num px" :class="dir(h.change)">{{ money(h.price) }} {{ pct(h.change) }}</span>
         </RouterLink>
       </li>
     </ul>
-    <p v-else-if="q.trim() && (open || !compact)" class="none">没有匹配的作品</p>
+    <p v-else-if="searched && q.trim() && (open || !compact)" class="none">没有匹配的作品</p>
   </div>
 </template>
 
@@ -64,7 +83,8 @@ input::-webkit-search-cancel-button { display: none; }
 .compact .hits, .compact .none { position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; z-index: 40; background: var(--ground); border: 1px solid var(--rule); max-height: 60vh; overflow: auto; }
 .hits a { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
 .t { font-size: 14px; }
-.code { font-size: 11px; color: var(--muted); grid-row: 2; }
+.code { font-size: 11px; color: var(--muted); grid-row: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sans { font-family: var(--font); }
 .px { grid-row: span 2; align-self: center; font-size: 13px; }
 .none { padding: 14px 12px; font-size: 13px; color: var(--muted); }
 </style>

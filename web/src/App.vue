@@ -4,7 +4,8 @@ import { RouterView, useRoute } from 'vue-router'
 import BottomNav from './components/BottomNav.vue'
 import DeskHeader from './components/DeskHeader.vue'
 import Toaster from './components/Toaster.vue'
-import { reconnectLive, startLive, subscribe, unsubscribe } from './live'
+import UpdateBanner from './components/UpdateBanner.vue'
+import { liveState, reconnectLive, startLive, subscribe, unsubscribe } from './live'
 import { useAccount } from './stores/account'
 import { useMarket } from './stores/market'
 import { usePrefs } from './stores/prefs'
@@ -30,7 +31,7 @@ watch(
   ([checked, id]) => {
     if (!checked) return
     if (!baseline) {
-      // the first answer of /api/me: the socket opened with this session already
+      // the first answer of /api/v1/me: the socket opened with this session already
       baseline = true
       meId = id
       if (id != null) subscribe('me')
@@ -45,13 +46,16 @@ watch(
   },
 )
 
+// the status follows the WebSocket's `time` messages; a slow poll covers the time the socket is down
 let timer: number | undefined
 function tick() {
   if (document.hidden) return
-  session.loadStatus()
+  if (liveState.value !== 'open' || !session.status) session.loadStatus()
   market.refreshIndices()
 }
 onMounted(() => {
+  session.loadStatus()
+  session.loadRules()
   tick()
   timer = window.setInterval(tick, 30000)
 })
@@ -65,4 +69,5 @@ onBeforeUnmount(() => window.clearInterval(timer))
   </RouterView>
   <BottomNav v-if="!bare && !route.meta.noNav" />
   <Toaster />
+  <UpdateBanner />
 </template>

@@ -2,7 +2,7 @@
 // One IPO: terms, demand against the clawback tiers, and the subscription form (terminal surface).
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { ApiError, type Ipo } from '../api'
+import { errorText, type Ipo } from '../api'
 import { money, qty as fmtQty, shortDay, share } from '../format'
 import { useIpo } from '../stores/ipo'
 import { useSession } from '../stores/session'
@@ -13,14 +13,21 @@ const emit = defineEmits<{ changed: [] }>()
 const session = useSession()
 const store = useIpo()
 const route = useRoute()
-const qty = ref(props.ipo.my?.qty ? String(props.ipo.my.qty) : '')
+const qty = ref(props.ipo.viewer?.quantity ? String(props.ipo.viewer.quantity) : '')
 const busy = ref(false)
 const msg = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
-watch(() => props.ipo.my?.qty, (q) => { if (!busy.value) qty.value = q ? String(q) : '' })
+watch(() => props.ipo.viewer?.quantity, (q) => { if (!busy.value) qty.value = q ? String(q) : '' })
 
-const heat = computed(() => (props.ipo.base_public_qty ? props.ipo.applied_qty / props.ipo.base_public_qty : 0))
-const publicShare = computed(() => (heat.value >= 100 ? 0.9 : heat.value >= 50 ? 0.8 : heat.value >= 15 ? 0.7 : 0.5))
-const publicQty = computed(() => Math.round(props.ipo.float_qty * publicShare.value))
+const heat = computed(() => (props.ipo.base_public_quantity ? props.ipo.applied_quantity / props.ipo.base_public_quantity : 0))
+const publicShare = computed(() => {
+  const r = session.rules?.ipo
+  let s = r?.public_base ?? 0.5
+  for (const b of r?.clawback ?? [{ oversubscribed: 15, public_share: 0.7 }, { oversubscribed: 50, public_share: 0.8 }, { oversubscribed: 100, public_share: 0.9 }]) {
+    if (heat.value >= b.oversubscribed) s = b.public_share
+  }
+  return s
+})
+const publicQty = computed(() => Math.round(props.ipo.float_quantity * publicShare.value))
 const heatX = computed(() => {
   const h = heat.value
   const seg = (a: number, b: number, x0: number, x1: number) => x0 + ((h - a) / (b - a)) * (x1 - x0)
@@ -34,24 +41,27 @@ const n = computed(() => {
   const v = Number(qty.value)
   return Number.isInteger(v) && v >= 0 ? v : -1
 })
-const mine = computed(() => props.ipo.my?.qty ?? 0)
-const freeze = computed(() => (n.value > 0 ? n.value * props.ipo.ipo_price : 0))
-const room = computed(() => (session.me?.available ?? 0) + mine.value * props.ipo.ipo_price)
-const maxQty = computed(() => Math.min(props.ipo.float_qty, Math.floor(room.value / props.ipo.ipo_price)))
+const mine = computed(() => props.ipo.viewer?.quantity ?? 0)
+const rate = computed(() => session.rules?.fees.commission ?? 0.00025)
+// cents frozen: the price, commission and one cent per share for rounding (the server's reserve)
+const freeze = computed(() => (n.value > 0 ? n.value * props.ipo.price + Math.ceil(n.value * props.ipo.price * rate.value) + n.value : 0))
+const room = computed(() => (session.me?.available_cash ?? 0) + (props.ipo.viewer?.frozen ?? 0))
+const maxQty = computed(() => Math.min(props.ipo.float_quantity, Math.floor(room.value / (props.ipo.price * (1 + rate.value) + 1))))
 const expected = computed(() => {
   if (n.value <= 0) return 0
-  const applied = props.ipo.applied_qty - mine.value + n.value
+  const applied = props.ipo.applied_quantity - mine.value + n.value
   return applied <= publicQty.value ? n.value : Math.floor((n.value * publicQty.value) / applied)
 })
 const problem = computed(() => {
   if (qty.value === '') return ''
   if (n.value < 0) return '数量需为整数'
-  if (n.value > props.ipo.float_qty) return `最多认购 ${fmtQty(props.ipo.float_qty)} 股`
-  if (freeze.value > room.value + 1e-9) return `可用资金最多认购 ${fmtQty(maxQty.value)} 股`
+  if (n.value > props.ipo.float_quantity) return `最多认购 ${fmtQty(props.ipo.float_quantity)} 股`
+  if (freeze.value > room.value) return `可用资金最多认购 ${fmtQty(maxQty.value)} 股`
   return ''
 })
 const open = computed(() => props.ipo.status === 'open')
-const today = computed(() => session.status?.day)
+const statusText = computed(() => ({ upcoming: '即将认购', open: '认购中', allotted: '已配售', listed: '已上市', cancelled: '已取消' } as Record<string, string>)[props.ipo.status] ?? '')
+const today = computed(() => session.status?.trading_day)
 const closeText = computed(() => {
   const d = props.ipo.sub_end
   const t = today.value
@@ -64,13 +74,13 @@ async function submit(q: number) {
   busy.value = true
   msg.value = null
   try {
-    await store.subscribe(props.ipo.id, q)
+    await store.subscribe(props.ipo.stock.id, q)
     msg.value = { kind: 'ok', text: q === 0 ? '已撤回认购，资金已解冻' : `已认购 ${fmtQty(q)} 股` }
     if (q === 0) qty.value = ''
     await session.loadMe()
     emit('changed')
   } catch (e) {
-    msg.value = { kind: 'error', text: e instanceof ApiError ? e.message : '无法提交认购' }
+    msg.value = { kind: 'error', text: errorText(e, '无法提交认购') }
   } finally {
     busy.value = false
   }
@@ -79,18 +89,18 @@ async function submit(q: number) {
 
 <template>
   <article class="offer" :class="{ compact, band: !compact }">
-    <Cover v-if="!compact" class="oc" :id="ipo.id" :title="ipo.title" :w="84" :h="118" :size="17" />
+    <Cover v-if="!compact" class="oc" :id="ipo.stock.id" :title="ipo.stock.title" :w="84" :h="118" :size="17" />
     <div class="info">
       <div v-if="!compact" class="ti">
-        <span class="status desk-only">{{ open ? '认购中' : '已配售' }}</span>
-        <RouterLink :to="`/stocks/${ipo.id}`" class="serif name">{{ ipo.title }}</RouterLink>
+        <span class="status desk-only">{{ statusText }}</span>
+        <RouterLink :to="`/stocks/${ipo.stock.id}`" class="serif name">{{ ipo.stock.title }}</RouterLink>
         <div class="meta phone-only">首播 <span class="num">{{ ipo.first_air.slice(5) }}</span><template v-if="episodes"> · 全 {{ episodes }} 集</template></div>
-        <div class="price phone-only"><span class="num">{{ money(ipo.ipo_price) }}</span><span class="muted">发行价</span></div>
+        <div class="price phone-only"><span class="num">{{ money(ipo.price) }}</span><span class="muted">发行价</span></div>
       </div>
 
       <dl class="facts" :class="{ five: !compact }">
-        <div v-if="!compact" class="desk-only"><dt>发行价</dt><dd>{{ money(ipo.ipo_price) }}</dd></div>
-        <div><dt>公开发售</dt><dd>{{ fmtQty(open ? publicQty : ipo.result?.public_qty ?? publicQty) }} 股</dd></div>
+        <div v-if="!compact" class="desk-only"><dt>发行价</dt><dd>{{ money(ipo.price) }}</dd></div>
+        <div><dt>公开发售</dt><dd>{{ fmtQty(open ? publicQty : ipo.result?.public_quantity ?? publicQty) }} 股</dd></div>
         <div><dt>截止</dt><dd>{{ closeText }}</dd></div>
         <div><dt>上市</dt><dd>{{ ipo.listed_on.slice(5) }}</dd></div>
         <div v-if="!compact" class="desk-only"><dt>首播</dt><dd>{{ ipo.first_air.slice(5) }}</dd></div>
@@ -121,7 +131,7 @@ async function submit(q: number) {
           <button type="submit" class="tbtn buy" :disabled="busy || !!problem || n <= 0 || n === mine">{{ mine ? '修改认购' : '认购' }}</button>
           <button v-if="mine" type="button" class="tbtn plain" :disabled="busy" @click="submit(0)">撤回</button>
         </div>
-        <p v-if="mine" class="note ok">已认购 <span class="num">{{ fmtQty(mine) }}</span> 股</p>
+        <p v-if="mine && !msg" class="note ok">已认购 <span class="num">{{ fmtQty(mine) }}</span> 股</p>
         <p v-if="msg" class="note" :class="msg.kind === 'error' ? 'err' : 'ok'" role="status">{{ msg.text }}</p>
       </template>
       <RouterLink v-else :to="{ name: 'login', query: { next: route.fullPath } }" class="tbtn buy cta">登录后认购</RouterLink>
@@ -130,8 +140,8 @@ async function submit(q: number) {
 
     <dl v-else-if="ipo.result" class="facts result">
       <div><dt>超额认购</dt><dd>{{ ipo.result.oversubscribed.toFixed(1) }} 倍</dd></div>
-      <div><dt>中签率</dt><dd>{{ ipo.result.ratio != null ? share(ipo.result.ratio, 1) : '–' }}</dd></div>
-      <div v-if="ipo.my"><dt>获配</dt><dd :class="ipo.my.allotted ? 'up' : ''">{{ fmtQty(ipo.my.allotted ?? 0) }} / {{ fmtQty(ipo.my.qty) }} 股</dd></div>
+      <div><dt>中签率</dt><dd>{{ ipo.result.allotment_ratio != null ? share(ipo.result.allotment_ratio, 1) : '–' }}</dd></div>
+      <div v-if="ipo.viewer && ipo.viewer.quantity"><dt>获配</dt><dd :class="ipo.viewer.allotted ? 'up' : ''">{{ fmtQty(ipo.viewer.allotted ?? 0) }} / {{ fmtQty(ipo.viewer.quantity) }} 股</dd></div>
     </dl>
   </article>
 </template>

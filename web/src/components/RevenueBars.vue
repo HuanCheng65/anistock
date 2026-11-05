@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Weekly revenue, stacked by market (us bottom, cn, jp top), with the market split of the period.
 import { computed } from 'vue'
-import type { WeekRow } from '../api'
-import { big, share } from '../format'
-const props = withDefaults(defineProps<{ weeks: WeekRow[]; n?: number; h?: number }>(), { n: 8, h: 96 })
-const shown = computed(() => props.weeks.slice(-props.n))
+import type { RevenueWeek } from '../api'
+import { bigMoney, share } from '../format'
+const props = withDefaults(defineProps<{ weeks: RevenueWeek[]; n?: number; h?: number }>(), { n: 8, h: 96 })
+const shown = computed(() => props.weeks.slice(-props.n).map((w) => ({ week: w.week_start, revenue: w.revenue, ...w.by_market })))
 const max = computed(() => Math.max(1, ...shown.value.map((w) => w.us + w.cn + w.jp)))
 const split = computed(() => {
   const t = shown.value.reduce((a, w) => ({ us: a.us + w.us, cn: a.cn + w.cn, jp: a.jp + w.jp }), { us: 0, cn: 0, jp: 0 })
@@ -17,7 +17,7 @@ const px = (v: number) => Math.max(0, (v / max.value) * (props.h - 6)) + 'px'
 <template>
   <div class="rev">
     <div class="bars" :style="{ height: h + 'px' }" role="img" :aria-label="`近 ${shown.length} 周营收，欧美 ${share(split.us)}，中国 ${share(split.cn)}，日本 ${share(split.jp)}`">
-      <div v-for="w in shown" :key="w.week" class="col" :title="`${w.week} 起一周 ${big(w.revenue)}`">
+      <div v-for="w in shown" :key="w.week" class="col" :title="`${w.week} 起一周 ${bigMoney(w.revenue)}`">
         <span class="jp" :style="{ height: px(w.jp) }"></span>
         <span class="cn" :style="{ height: px(w.cn) }"></span>
         <span class="us" :style="{ height: px(w.us) }"></span>

@@ -2,7 +2,7 @@
 // 市场: overview modules (总览 frame). Desktop: a 12-column module grid; phone: the same modules stacked.
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import type { MarketStock } from '../api'
+import type { Quote } from '../api'
 import BrandMark from '../components/BrandMark.vue'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -13,7 +13,7 @@ import Sparkline from '../components/Sparkline.vue'
 import Tabs from '../components/Tabs.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
-import { big, dir, hm, longDate, money, pct, signed, tradingDay } from '../format'
+import { bigMoney, dir, hm, longDate, money, num, pct, signedNum, tradingDay } from '../format'
 import { useIpo } from '../stores/ipo'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
@@ -31,13 +31,13 @@ const { refresh } = usePoll(() => market.refreshQuotes(), 5000, 30000)
 usePoll(() => market.refreshTonight(), 300000)
 usePoll(() => market.refreshNews(40), 30000, 120000)
 usePoll(() => market.refreshMacro(), 300000)
-usePoll(() => Promise.all([session.loadLeaders(), ipo.refresh()]), 60000)
+usePoll(() => Promise.all([session.loadLeaders('all'), ipo.refresh()]), 60000)
 
-const today = computed(() => session.status?.day ?? tradingDay())
-const idx = computed(() => market.indices?.indices ?? [])
+const today = computed(() => session.status?.trading_day ?? tradingDay())
+const idx = computed(() => market.indices?.items ?? [])
 const main = computed(() => idx.value.find((i) => i.key === 'all') ?? null)
 const subs = computed(() => idx.value.filter((i) => i.key !== 'all'))
-const spark = computed(() => (main.value?.series ?? []).slice(-30).map((p) => p[1]))
+const spark = computed(() => (main.value?.series ?? []).slice(-30).map((p) => p.value))
 const breadth = computed(() => {
   const s = market.stocks ?? []
   return {
@@ -47,8 +47,8 @@ const breadth = computed(() => {
   }
 })
 
-const watch = computed(() => prefs.watchlist.map((id) => market.byId.get(id)).filter((s): s is MarketStock => !!s))
-const by = (f: (a: MarketStock, b: MarketStock) => number) => [...(market.stocks ?? [])].sort(f).slice(0, 6)
+const watch = computed(() => prefs.watchlist.map((id) => market.byId.get(id)).filter((s): s is Quote => !!s))
+const by = (f: (a: Quote, b: Quote) => number) => [...(market.stocks ?? [])].sort(f).slice(0, 6)
 const lists = computed(() => ({
   gain: { label: '涨幅', rows: by((a, b) => b.change - a.change), link: '/stocks?s=change&d=desc' },
   loss: { label: '跌幅', rows: by((a, b) => a.change - b.change), link: '/stocks?s=change&d=asc' },
@@ -60,32 +60,36 @@ const rankTabs = [
   { key: 'turnover', label: '成交额' },
 ]
 const tonight = computed(() =>
-  (market.tonight ?? []).map((a) => ({ a, s: market.byId.get(a.company_id) })).filter((x) => x.s).slice(0, 8),
+  (market.tonight ?? []).map((a) => ({ a, s: market.byId.get(a.stock.id) })).filter((x) => x.s).slice(0, 8),
 )
 const news = computed(() => (market.news ?? []).slice(0, desk.value ? 5 : 4))
 
 const macroRows = computed(() => {
-  const days = market.macroDays ?? []
-  const m = market.macro
+  const rows = market.macro ?? []
+  const series = (f: (r: (typeof rows)[number]) => number | null) => rows.map(f).filter((v): v is number => v != null).slice(-30)
   const last = <T,>(a: T[]) => a[a.length - 1]
+  const demand = series((r) => r.demand_index)
+  const m2 = series((r) => r.m2)
+  const rev = series((r) => r.revenue_7d)
   return [
-    { k: '基准利率', series: days.map((d) => d.rate), v: session.status ? (session.status.rate * 100).toFixed(2) + '%' : '–' },
-    { k: '外部需求指数', series: (m?.demand ?? []).slice(-30).map((p) => p[1]), v: m?.demand.length ? last(m.demand)[1].toFixed(2) : '–' },
-    { k: '货币总量', series: days.map((d) => d.m2), v: days.length ? big(last(days).m2) : '–' },
-    { k: '本周营收合计', series: (m?.revenue_week ?? []).slice(-30).map((p) => p[1]), v: m?.revenue_week.length ? big(last(m.revenue_week)[1]) : '–' },
+    { k: '基准利率', series: series((r) => r.policy_rate), v: session.status ? (session.status.policy_rate * 100).toFixed(2) + '%' : '–' },
+    { k: '外部需求指数', series: demand, v: demand.length ? last(demand).toFixed(2) : '–' },
+    { k: '货币总量', series: m2, v: m2.length ? bigMoney(last(m2)) : '–' },
+    { k: '本周营收合计', series: rev, v: rev.length ? bigMoney(last(rev)) : '–' },
   ]
 })
-const leaders = computed(() => (session.leaders ?? []).slice(0, 3))
+const board = computed(() => session.boards.all ?? null)
+const leaders = computed(() => (board.value?.items ?? []).slice(0, 3))
 const myRank = computed(() => {
-  const r = session.leaders?.find((x) => x.username === session.me?.username)
+  const r = board.value?.items.find((x) => x.user.id === session.me?.id)
   return r && r.rank > 3 ? r : null
 })
-const offer = computed(() => (ipo.ipos ?? []).find((i) => i.status === 'open') ?? null)
-const offerHeat = computed(() => (offer.value && offer.value.base_public_qty ? offer.value.applied_qty / offer.value.base_public_qty : 0))
-const recent = computed(() => (ipo.listings?.recent ?? []).map((l) => market.byId.get(l.id)).filter((s): s is MarketStock => !!s).slice(0, 2))
+const offer = computed(() => ipo.open[0] ?? null)
+const offerHeat = computed(() => (offer.value && offer.value.base_public_quantity ? offer.value.applied_quantity / offer.value.base_public_quantity : 0))
+const recent = computed(() => ipo.listed.map((l) => market.byId.get(l.stock.id)).filter((s): s is Quote => !!s).slice(0, 2))
 
-function remember(key: string, label: string, rows: MarketStock[]) {
-  prefs.context = { key, label, ids: rows.map((s) => s.id) }
+function remember(key: string, label: string, rows: Quote[]) {
+  prefs.context = { key, label, ids: rows.map((s) => s.stock.id) }
 }
 </script>
 
@@ -113,8 +117,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
           <div class="mainidx">
             <span class="lbl">番剧综合指数</span>
             <template v-if="main">
-              <span class="num level">{{ money(main.value) }}</span>
-              <span class="num delta" :class="dir(main.change)">{{ signed(main.value - main.prev) }}&nbsp;&nbsp;{{ pct(main.change) }}</span>
+              <span class="num level">{{ num(main.value) }}</span>
+              <span class="num delta" :class="dir(main.change)">{{ signedNum(main.value - main.prev_close) }}&nbsp;&nbsp;{{ pct(main.change) }}</span>
             </template>
             <span v-else class="skel" style="height: 56px; width: 180px; display: block"></span>
           </div>
@@ -123,7 +127,7 @@ function remember(key: string, label: string, rows: MarketStock[]) {
         <div class="subs">
           <div v-for="i in subs" :key="i.key" class="sub">
             <span class="lbl">{{ i.name }}</span>
-            <span class="num v">{{ money(i.value) }}&nbsp;&nbsp;<span :class="dir(i.change)">{{ pct(i.change) }}</span></span>
+            <span class="num v">{{ num(i.value) }}&nbsp;&nbsp;<span :class="dir(i.change)">{{ pct(i.change) }}</span></span>
           </div>
         </div>
         <div v-if="market.stocks" class="breadth" role="img" :aria-label="`上涨 ${breadth.up} 支，平盘 ${breadth.flat} 支，下跌 ${breadth.down} 支`">
@@ -139,9 +143,9 @@ function remember(key: string, label: string, rows: MarketStock[]) {
       <!-- 自选 -->
       <section class="mod m-watch" :class="{ 'phone-hide': !watch.length }">
         <div class="modhead"><h2>自选</h2><RouterLink to="/stocks?f=watch">全部自选</RouterLink></div>
-        <RouterLink v-for="s in watch.slice(0, 6)" :key="s.id" :to="`/stocks/${s.id}`" class="mrow" @click="remember('watch', '自选', watch)">
-          <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
-          <span class="clamp1">{{ s.title }}</span>
+        <RouterLink v-for="s in watch.slice(0, 6)" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="mrow" @click="remember('watch', '自选', watch)">
+          <Cover :id="s.stock.id" :title="s.stock.title" :w="22" :h="22" :spine="false" />
+          <span class="clamp1">{{ s.stock.title }}</span>
           <span v-flash="s.price" class="num">{{ money(s.price) }}</span>
           <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
         </RouterLink>
@@ -151,8 +155,8 @@ function remember(key: string, label: string, rows: MarketStock[]) {
       <!-- 要闻 -->
       <section class="mod m-news">
         <div class="modhead"><h2>要闻</h2><RouterLink to="/news">全部资讯</RouterLink></div>
-        <RouterLink v-for="n in news" :key="n.id" :to="n.company_id ? `/stocks/${n.company_id}` : '/news'" class="nrow" :class="{ fresh: market.fresh.has(n.id) }">
-          <span class="num tm">{{ n.ts ? hm(n.ts) : n.day.slice(5) }}</span>
+        <RouterLink v-for="n in news" :key="n.id" :to="n.stock ? `/stocks/${n.stock.id}` : '/news'" class="nrow" :class="{ fresh: market.fresh.has(n.id) }">
+          <span class="num tm">{{ hm(n.at) }}</span>
           <span>{{ n.title }}</span>
         </RouterLink>
         <p v-if="market.news && !news.length" class="none">暂无资讯</p>
@@ -162,11 +166,11 @@ function remember(key: string, label: string, rows: MarketStock[]) {
       <section v-if="tonight.length" class="mod m-tonight">
         <div class="modhead"><h2>今晚放送</h2></div>
         <div class="strip">
-          <RouterLink v-for="{ a, s } in tonight" :key="a.company_id" :to="`/stocks/${a.company_id}`" class="air">
-            <Cover :id="s!.id" :title="s!.title" :w="112" :h="150" class="ac">
-              <span class="num time" :class="{ done: a.aired }">{{ hm(a.airing_at) }}</span>
+          <RouterLink v-for="{ a, s } in tonight" :key="a.stock.id + '-' + a.episode" :to="`/stocks/${a.stock.id}`" class="air">
+            <Cover :id="s!.stock.id" :title="s!.stock.title" :w="112" :h="150" class="ac">
+              <span class="num time" :class="{ done: a.has_aired }">{{ hm(a.airs_at) }}</span>
             </Cover>
-            <span class="clamp1 t">{{ s!.title }}</span>
+            <span class="clamp1 t">{{ s!.stock.title }}</span>
             <span v-flash="s!.change" class="num" :class="dir(s!.change)">{{ pct(s!.change) }}</span>
           </RouterLink>
         </div>
@@ -177,19 +181,19 @@ function remember(key: string, label: string, rows: MarketStock[]) {
       <template v-else>
         <section v-for="(l, k) in lists" :key="k" class="mod m-list desk-only">
           <div class="modhead"><h2>{{ l.label }}</h2><RouterLink :to="l.link">全部股票</RouterLink></div>
-          <RouterLink v-for="s in l.rows" :key="s.id" :to="`/stocks/${s.id}`" class="mrow" @click="remember('all', '全部', l.rows)">
-            <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
-            <span class="clamp1">{{ s.title }}</span>
-            <span v-flash="k === 'turnover' ? s.turnover : s.price" class="num">{{ k === 'turnover' ? big(s.turnover) : money(s.price) }}</span>
+          <RouterLink v-for="s in l.rows" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="mrow" @click="remember('all', '全部', l.rows)">
+            <Cover :id="s.stock.id" :title="s.stock.title" :w="22" :h="22" :spine="false" />
+            <span class="clamp1">{{ s.stock.title }}</span>
+            <span v-flash="k === 'turnover' ? s.turnover : s.price" class="num">{{ k === 'turnover' ? bigMoney(s.turnover) : money(s.price) }}</span>
             <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
           </RouterLink>
         </section>
         <section class="mod m-wide phone-only">
           <Tabs v-model="rankTab" :items="rankTabs" label="排行" />
-          <RouterLink v-for="s in lists[rankTab as 'gain'].rows" :key="s.id" :to="`/stocks/${s.id}`" class="mrow" @click="remember('all', '全部', lists[rankTab as 'gain'].rows)">
-            <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
-            <span class="clamp1">{{ s.title }}</span>
-            <span v-flash="rankTab === 'turnover' ? s.turnover : s.price" class="num">{{ rankTab === 'turnover' ? big(s.turnover) : money(s.price) }}</span>
+          <RouterLink v-for="s in lists[rankTab as 'gain'].rows" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="mrow" @click="remember('all', '全部', lists[rankTab as 'gain'].rows)">
+            <Cover :id="s.stock.id" :title="s.stock.title" :w="22" :h="22" :spine="false" />
+            <span class="clamp1">{{ s.stock.title }}</span>
+            <span v-flash="rankTab === 'turnover' ? s.turnover : s.price" class="num">{{ rankTab === 'turnover' ? bigMoney(s.turnover) : money(s.price) }}</span>
             <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
           </RouterLink>
           <RouterLink :to="lists[rankTab as 'gain'].link" class="more">全部 {{ market.stocks?.length ?? '' }} 支</RouterLink>
@@ -210,34 +214,34 @@ function remember(key: string, label: string, rows: MarketStock[]) {
       <!-- 排行 -->
       <section class="mod m-third">
         <div class="modhead"><h2>排行</h2><RouterLink to="/rank">完整排行</RouterLink></div>
-        <div v-for="r in leaders" :key="r.username" class="rrow" :class="{ me: r.username === session.me?.username }">
+        <div v-for="r in leaders" :key="r.user.id" class="rrow" :class="{ me: r.user.id === session.me?.id }">
           <span class="serif rk" :class="{ first: r.rank === 1 }">{{ r.rank }}</span>
-          <span class="clamp1">{{ r.username }}<template v-if="r.username === session.me?.username">（我）</template></span>
-          <span class="num" :class="dir(r.return_pct)">{{ pct(r.return_pct) }}</span>
+          <span class="clamp1">{{ r.user.username }}<template v-if="r.user.id === session.me?.id">（我）</template></span>
+          <span class="num" :class="dir(r.return)">{{ pct(r.return) }}</span>
         </div>
         <div v-if="myRank" class="rrow me">
           <span class="serif rk">{{ myRank.rank }}</span>
-          <span class="clamp1">{{ myRank.username }}（我）</span>
-          <span class="num" :class="dir(myRank.return_pct)">{{ pct(myRank.return_pct) }}</span>
+          <span class="clamp1">{{ myRank.user.username }}（我）</span>
+          <span class="num" :class="dir(myRank.return)">{{ pct(myRank.return) }}</span>
         </div>
-        <p v-if="session.leaders && !leaders.length" class="none">暂无玩家</p>
+        <p v-if="board && !leaders.length" class="none">暂无玩家</p>
       </section>
 
       <!-- 新股 -->
       <section class="mod m-third">
         <div class="modhead"><h2>新股</h2><RouterLink to="/ipo">新股认购</RouterLink></div>
         <RouterLink v-if="offer" to="/ipo" class="offer">
-          <Cover :id="offer.id" :title="offer.title" :w="64" :h="90" :size="13" />
+          <Cover :id="offer.stock.id" :title="offer.stock.title" :w="64" :h="90" :size="13" />
           <span class="oi">
-            <span class="serif ot">《{{ offer.title }}》</span>
+            <span class="serif ot">《{{ offer.stock.title }}》</span>
             <span class="om">认购中 · {{ offer.sub_end.slice(5) }} 截止</span>
-            <span class="om">发行价 <span class="num">{{ money(offer.ipo_price) }}</span> · 超额认购 <span class="num">{{ offerHeat.toFixed(1) }}</span> 倍</span>
+            <span class="om">发行价 <span class="num">{{ money(offer.price) }}</span> · 超额认购 <span class="num">{{ offerHeat.toFixed(1) }}</span> 倍</span>
           </span>
         </RouterLink>
         <p v-else-if="ipo.ipos" class="none">暂无认购中的新股</p>
-        <RouterLink v-for="s in recent" :key="s.id" :to="`/stocks/${s.id}`" class="mrow">
-          <Cover :id="s.id" :title="s.title" :w="22" :h="22" :spine="false" />
-          <span class="clamp1">{{ s.title }}</span>
+        <RouterLink v-for="s in recent" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="mrow">
+          <Cover :id="s.stock.id" :title="s.stock.title" :w="22" :h="22" :spine="false" />
+          <span class="clamp1">{{ s.stock.title }}</span>
           <span v-flash="s.price" class="num">{{ money(s.price) }}</span>
           <span v-flash="s.change" class="num" :class="dir(s.change)">{{ pct(s.change) }}</span>
         </RouterLink>

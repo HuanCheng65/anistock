@@ -2,12 +2,12 @@
 // Detail page list: 自选 / 持仓 / the list the stock was opened from. Current stock marked with a red bar.
 import { nextTick, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import type { MarketStock } from '../api'
+import type { Quote } from '../api'
 import { money, pct, dir } from '../format'
 import Icon from './Icon.vue'
 import Tabs from './Tabs.vue'
 
-const props = defineProps<{ rows: MarketStock[]; tabs: { key: string; label: string }[]; current: number; collapsible?: boolean }>()
+const props = defineProps<{ rows: Quote[]; tabs: { key: string; label: string }[]; current: number; collapsible?: boolean }>()
 const tab = defineModel<string>('tab', { required: true })
 defineEmits<{ collapse: []; pick: [] }>()
 const list = ref<HTMLElement>()
@@ -24,10 +24,10 @@ watch(() => props.current, async () => {
       <button v-if="collapsible" type="button" class="cbtn" aria-label="收起列表" @click="$emit('collapse')"><Icon name="back" :size="16" /></button>
     </div>
     <div ref="list" class="rows">
-      <RouterLink v-for="s in rows" :key="s.id" :to="`/stocks/${s.id}`" replace class="w" :class="{ cur: s.id === current }" :aria-current="s.id === current ? 'true' : undefined" @click="$emit('pick')">
-        <span class="clamp2 t">{{ s.title }}</span>
+      <RouterLink v-for="s in rows" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" replace class="w" :class="{ cur: s.stock.id === current }" :aria-current="s.stock.id === current ? 'true' : undefined" @click="$emit('pick')">
+        <span class="clamp2 t">{{ s.stock.title }}</span>
         <span v-flash="s.price" class="num px">{{ money(s.price) }}</span>
-        <span class="num code">{{ s.code }}</span>
+        <span class="num code">{{ s.stock.code }}</span>
         <span v-flash="s.change" class="num chg" :class="dir(s.change)">{{ pct(s.change) }}</span>
       </RouterLink>
       <p v-if="!rows.length" class="none">{{ tab === 'watch' ? '暂无自选' : tab === 'hold' ? '暂无持仓' : '暂无股票' }}</p>

@@ -1,0 +1,5565 @@
+{
+  "components": {
+    "schemas": {
+      "Airing": {
+        "properties": {
+          "airs_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "episode": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "has_aired": {
+            "type": "boolean"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          }
+        },
+        "required": [
+          "airs_at",
+          "episode",
+          "has_aired",
+          "stock"
+        ],
+        "type": "object"
+      },
+      "AiringsResponse": {
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Airing"
+            },
+            "type": "array"
+          },
+          "to": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "from",
+          "items",
+          "to",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "AnilistAudience": {
+        "properties": {
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "popularity": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "score": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "genres",
+          "popularity",
+          "score"
+        ],
+        "type": "object"
+      },
+      "AnnictAudience": {
+        "properties": {
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "watchers": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "watchers"
+        ],
+        "type": "object"
+      },
+      "AssetDay": {
+        "properties": {
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "is_partial": {
+            "type": "boolean"
+          },
+          "restructured": {
+            "type": "boolean"
+          },
+          "return_index": {
+            "format": "double",
+            "type": "number"
+          },
+          "stock_value": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "total_assets": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "total_return": {
+            "format": "double",
+            "type": "number"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "cash",
+          "is_partial",
+          "restructured",
+          "return_index",
+          "stock_value",
+          "total_assets",
+          "total_return",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "AssetHistory": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssetDay"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AuctionIndication": {
+        "properties": {
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "参考成交价；无法撮合时为 null"
+              }
+            ]
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "price",
+          "quantity"
+        ],
+        "type": "object"
+      },
+      "Audiences": {
+        "properties": {
+          "anilist": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AnilistAudience"
+              }
+            ]
+          },
+          "annict": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AnnictAudience"
+              }
+            ]
+          },
+          "bangumi": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BangumiAudience"
+              }
+            ]
+          }
+        },
+        "required": [
+          "anilist",
+          "annict",
+          "bangumi"
+        ],
+        "type": "object"
+      },
+      "BangumiAudience": {
+        "properties": {
+          "collection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BangumiCollection"
+              }
+            ]
+          },
+          "id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "score": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "collection",
+          "id",
+          "score"
+        ],
+        "type": "object"
+      },
+      "BangumiCollection": {
+        "properties": {
+          "collect": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "doing": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "dropped": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "on_hold": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "wish": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "collect",
+          "doing",
+          "dropped",
+          "on_hold",
+          "wish"
+        ],
+        "type": "object"
+      },
+      "BindCode": {
+        "properties": {
+          "code": {
+            "description": "显示用，带连字符",
+            "type": "string"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "expires_at",
+          "scopes"
+        ],
+        "type": "object"
+      },
+      "BindCodeRequest": {
+        "properties": {
+          "scopes": {
+            "description": "默认 [\"read:account\"]，v1 只接受这一个值",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Binding": {
+        "properties": {
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "description": "打码后的号码",
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ]
+          },
+          "platform": {
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created_at",
+          "display_name",
+          "external_id",
+          "id",
+          "last_used_at",
+          "platform",
+          "scopes"
+        ],
+        "type": "object"
+      },
+      "BindingsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Binding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "BookLevel": {
+        "properties": {
+          "orders": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "orders",
+          "price",
+          "quantity"
+        ],
+        "type": "object"
+      },
+      "BookResponse": {
+        "properties": {
+          "as_of": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "带毫秒"
+          },
+          "asks": {
+            "items": {
+              "$ref": "#/components/schemas/BookLevel"
+            },
+            "type": "array"
+          },
+          "auction": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AuctionIndication"
+              }
+            ]
+          },
+          "bids": {
+            "items": {
+              "$ref": "#/components/schemas/BookLevel"
+            },
+            "type": "array"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "as_of",
+          "asks",
+          "auction",
+          "bids",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "Breadth": {
+        "properties": {
+          "down": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "flat": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "up": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "down",
+          "flat",
+          "up"
+        ],
+        "type": "object"
+      },
+      "ByMarket": {
+        "properties": {
+          "cn": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "jp": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "us": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "cn",
+          "jp",
+          "us"
+        ],
+        "type": "object"
+      },
+      "Candle": {
+        "properties": {
+          "close": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "high": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "is_partial": {
+            "type": "boolean"
+          },
+          "low": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "open": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "source": {
+            "$ref": "#/components/schemas/CandleSource"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "volume": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "close",
+          "high",
+          "is_partial",
+          "low",
+          "open",
+          "source",
+          "trading_day",
+          "volume"
+        ],
+        "type": "object"
+      },
+      "CandleSource": {
+        "description": "K 线来源（封闭）",
+        "enum": [
+          "live",
+          "replay"
+        ],
+        "type": "string"
+      },
+      "CandlesResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Candle"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ClawbackBand": {
+        "properties": {
+          "oversubscribed": {
+            "format": "double",
+            "type": "number"
+          },
+          "public_share": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "oversubscribed",
+          "public_share"
+        ],
+        "type": "object"
+      },
+      "DividendPaid": {
+        "properties": {
+          "per_share": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "per_share",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "DividendTaxBand": {
+        "properties": {
+          "max_holding_days": {
+            "description": "持有天数上限（含）；null 为无上限",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rate": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_holding_days",
+          "rate"
+        ],
+        "type": "object"
+      },
+      "EpisodeDay": {
+        "properties": {
+          "episode": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "episode",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "ErrorBody": {
+        "description": "Every non-2xx response body.",
+        "properties": {
+          "code": {
+            "description": "stable machine-readable code (docs/api-v1.md §2.9)",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "description": "structure depends on `code`; `{}` when there is nothing",
+            "type": "object"
+          },
+          "message": {
+            "description": "text to show the player as is",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "details",
+          "message"
+        ],
+        "type": "object"
+      },
+      "Event": {
+        "description": "An `event` message (§5.3.7).",
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "kind": {
+            "description": "开放枚举：flash、big_move、vcm、ipo_open、ipo_allotted、listed、delisting_warning、delisted、daily_close、leaderboard_weekly",
+            "type": "string"
+          },
+          "news_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stock": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StockRef"
+              }
+            ]
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "at",
+          "data",
+          "kind",
+          "news_id",
+          "seq",
+          "stock",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "FieldError": {
+        "description": "One rejected field of an `invalid_request`.",
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "description": "missing | wrong_type | too_small | too_large | too_short | too_long | not_allowed | bad_format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "Fill": {
+        "properties": {
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "trade_id": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "price",
+          "quantity",
+          "trade_id"
+        ],
+        "type": "object"
+      },
+      "Holders": {
+        "properties": {
+          "committee": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "market_maker": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "npc": {
+            "$ref": "#/components/schemas/NpcHolders"
+          },
+          "other": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "player": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "unissued": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "committee",
+          "market_maker",
+          "npc",
+          "other",
+          "player",
+          "unissued"
+        ],
+        "type": "object"
+      },
+      "IndexPoint": {
+        "properties": {
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "value": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "trading_day",
+          "value"
+        ],
+        "type": "object"
+      },
+      "IndicesResponse": {
+        "properties": {
+          "breadth": {
+            "$ref": "#/components/schemas/Breadth"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MarketIndex"
+            },
+            "type": "array"
+          },
+          "season_start": {
+            "format": "date",
+            "type": "string"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "breadth",
+          "items",
+          "season_start",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "IntradayPoint": {
+        "properties": {
+          "minute": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "volume": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "minute",
+          "price",
+          "volume"
+        ],
+        "type": "object"
+      },
+      "IntradayResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntradayPoint"
+            },
+            "type": "array"
+          },
+          "prev_close": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "items",
+          "prev_close",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "Ipo": {
+        "properties": {
+          "applicants": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "applied_quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "base_public_quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_air": {
+            "format": "date",
+            "type": "string"
+          },
+          "first_day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IpoFirstDay"
+              }
+            ]
+          },
+          "float_quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "listed_on": {
+            "format": "date",
+            "type": "string"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IpoResult"
+              }
+            ]
+          },
+          "status": {
+            "description": "开放枚举：upcoming、open、allotted、listed、cancelled",
+            "type": "string"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "sub_end": {
+            "format": "date",
+            "type": "string"
+          },
+          "sub_start": {
+            "format": "date",
+            "type": "string"
+          },
+          "title_ja": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "viewer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IpoViewer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "applicants",
+          "applied_quantity",
+          "base_public_quantity",
+          "first_air",
+          "first_day",
+          "float_quantity",
+          "listed_on",
+          "price",
+          "result",
+          "status",
+          "stock",
+          "sub_end",
+          "sub_start",
+          "title_ja",
+          "viewer"
+        ],
+        "type": "object"
+      },
+      "IpoEnvelope": {
+        "properties": {
+          "ipo": {
+            "$ref": "#/components/schemas/Ipo"
+          }
+        },
+        "required": [
+          "ipo"
+        ],
+        "type": "object"
+      },
+      "IpoFirstDay": {
+        "properties": {
+          "change": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "close": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "change",
+          "close"
+        ],
+        "type": "object"
+      },
+      "IpoResult": {
+        "properties": {
+          "allotment_ratio": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "oversubscribed": {
+            "format": "double",
+            "type": "number"
+          },
+          "public_quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "allotment_ratio",
+          "oversubscribed",
+          "public_quantity"
+        ],
+        "type": "object"
+      },
+      "IpoViewer": {
+        "properties": {
+          "allotted": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "frozen": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "allotted",
+          "frozen",
+          "quantity"
+        ],
+        "type": "object"
+      },
+      "IposResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Ipo"
+            },
+            "type": "array"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "items",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "LeaderRow": {
+        "properties": {
+          "rank": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "restructures": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "return": {
+            "description": "比例",
+            "format": "double",
+            "type": "number"
+          },
+          "total_assets": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserRef"
+          }
+        },
+        "required": [
+          "rank",
+          "restructures",
+          "return",
+          "total_assets",
+          "user"
+        ],
+        "type": "object"
+      },
+      "LeaderViewer": {
+        "properties": {
+          "rank": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "return": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "rank",
+          "return"
+        ],
+        "type": "object"
+      },
+      "Leaderboard": {
+        "properties": {
+          "as_of": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "from_day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LeaderRow"
+            },
+            "type": "array"
+          },
+          "period": {
+            "description": "all、week、season",
+            "type": "string"
+          },
+          "to_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "viewer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LeaderViewer"
+              }
+            ]
+          }
+        },
+        "required": [
+          "as_of",
+          "from_day",
+          "items",
+          "period",
+          "to_day",
+          "viewer"
+        ],
+        "type": "object"
+      },
+      "LedgerEntry": {
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/Money",
+            "description": "收入为正，支出为负"
+          },
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reason": {
+            "description": "开放枚举，见 reason_label",
+            "type": "string"
+          },
+          "reason_label": {
+            "description": "显示用的中文标签",
+            "type": "string"
+          },
+          "ref": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stock": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StockRef"
+              }
+            ]
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "amount",
+          "at",
+          "id",
+          "reason",
+          "reason_label",
+          "ref",
+          "stock",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "LedgerPage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntry"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "继续翻页用的游标；没有更多时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "LoginRequest": {
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
+      },
+      "MacroResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MacroRow"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "MacroRow": {
+        "properties": {
+          "demand_index": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "exported": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "injected": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "interest": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "m2": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "m2_growth": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "policy_rate": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "revenue_7d": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "taxes": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "demand_index",
+          "exported",
+          "injected",
+          "interest",
+          "m2",
+          "m2_growth",
+          "policy_rate",
+          "revenue_7d",
+          "taxes",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "MarketIndex": {
+        "properties": {
+          "base_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "change": {
+            "format": "double",
+            "type": "number"
+          },
+          "key": {
+            "description": "开放枚举：all、season、long",
+            "type": "string"
+          },
+          "members": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prev_close": {
+            "format": "double",
+            "type": "number"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/IndexPoint"
+            },
+            "type": "array"
+          },
+          "value": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "base_day",
+          "change",
+          "key",
+          "members",
+          "name",
+          "prev_close",
+          "series",
+          "value"
+        ],
+        "type": "object"
+      },
+      "MarketStatus": {
+        "properties": {
+          "deposit_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "last_closed_day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "launched_on": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "next_open_at": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ]
+          },
+          "next_phase": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Phase"
+              }
+            ]
+          },
+          "now": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/Phase"
+          },
+          "phase_ends_at": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ]
+          },
+          "policy_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "deposit_rate",
+          "last_closed_day",
+          "launched_on",
+          "next_open_at",
+          "next_phase",
+          "now",
+          "phase",
+          "phase_ends_at",
+          "policy_rate",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "Me": {
+        "properties": {
+          "available_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "deposit_rate": {
+            "format": "double",
+            "type": "number"
+          },
+          "dividends": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "frozen_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "initial_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "restructure": {
+            "$ref": "#/components/schemas/RestructureState"
+          },
+          "stock_value": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "total_assets": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "total_return": {
+            "description": "链接收益率（时间加权）",
+            "format": "double",
+            "type": "number"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "available_cash",
+          "cash",
+          "deposit_rate",
+          "dividends",
+          "frozen_cash",
+          "id",
+          "initial_cash",
+          "restructure",
+          "stock_value",
+          "total_assets",
+          "total_return",
+          "trading_day",
+          "username"
+        ],
+        "type": "object"
+      },
+      "MeEnvelope": {
+        "properties": {
+          "me": {
+            "$ref": "#/components/schemas/Me"
+          }
+        },
+        "required": [
+          "me"
+        ],
+        "type": "object"
+      },
+      "Money": {
+        "description": "金额，单位：分（1 币 = 100 分）。显示时除以 100。",
+        "format": "int64",
+        "type": "integer"
+      },
+      "MyTrade": {
+        "properties": {
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "commission": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "order_id": {
+            "description": "我这一方的委托",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "side": {
+            "$ref": "#/components/schemas/OrderSide"
+          },
+          "stamp_duty": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "amount",
+          "at",
+          "commission",
+          "id",
+          "order_id",
+          "price",
+          "quantity",
+          "side",
+          "stamp_duty",
+          "stock",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "MyTradePage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MyTrade"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "继续翻页用的游标；没有更多时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "NewsCategory": {
+        "description": "资讯分组（封闭）：由 kind 推出",
+        "enum": [
+          "flash",
+          "notice",
+          "airing",
+          "close"
+        ],
+        "type": "string"
+      },
+      "NewsItem": {
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "$ref": "#/components/schemas/NewsCategory"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash",
+            "type": "string"
+          },
+          "stock": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StockRef"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "at",
+          "body",
+          "category",
+          "id",
+          "kind",
+          "stock",
+          "title",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "NewsPage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NewsItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "继续翻页用的游标；没有更多时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "NextEpisode": {
+        "properties": {
+          "airs_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "episode": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "airs_at",
+          "episode"
+        ],
+        "type": "object"
+      },
+      "NpcHolders": {
+        "properties": {
+          "by_style": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "按主体类型（value、trend、news、retail）；NPC 市场能给出之前为 null",
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by_style",
+          "total"
+        ],
+        "type": "object"
+      },
+      "Order": {
+        "properties": {
+          "average_fill_price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "filled_quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "frozen_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "side": {
+            "$ref": "#/components/schemas/OrderSide"
+          },
+          "status": {
+            "description": "开放枚举：open、filled、cancelled",
+            "type": "string"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "type": {
+            "description": "开放枚举：limit、market",
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "average_fill_price",
+          "created_at",
+          "filled_quantity",
+          "frozen_cash",
+          "id",
+          "price",
+          "quantity",
+          "side",
+          "status",
+          "stock",
+          "trading_day",
+          "type",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "OrderEnvelope": {
+        "properties": {
+          "order": {
+            "$ref": "#/components/schemas/Order"
+          }
+        },
+        "required": [
+          "order"
+        ],
+        "type": "object"
+      },
+      "OrderPage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Order"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "继续翻页用的游标；没有更多时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "OrderSide": {
+        "description": "买卖方向（封闭）",
+        "enum": [
+          "buy",
+          "sell"
+        ],
+        "type": "string"
+      },
+      "Phase": {
+        "description": "市场阶段（封闭）",
+        "enum": [
+          "auction",
+          "continuous",
+          "closed"
+        ],
+        "type": "string"
+      },
+      "PlaceOrderRequest": {
+        "properties": {
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "限价，整数分；市价委托省略或为 null"
+              }
+            ]
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "side": {
+            "$ref": "#/components/schemas/OrderSide"
+          },
+          "stock_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": {
+            "description": "limit 或 market",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stock_id",
+          "side",
+          "type",
+          "quantity"
+        ],
+        "type": "object"
+      },
+      "PlaceOrderResponse": {
+        "properties": {
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/Fill"
+            },
+            "type": "array"
+          },
+          "order": {
+            "$ref": "#/components/schemas/Order"
+          }
+        },
+        "required": [
+          "fills",
+          "order"
+        ],
+        "type": "object"
+      },
+      "Portfolio": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Position"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PortfolioSummary"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "items",
+          "summary",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "PortfolioSummary": {
+        "properties": {
+          "available_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "frozen_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "stock_value": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "total_assets": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "available_cash",
+          "cash",
+          "frozen_cash",
+          "stock_value",
+          "total_assets"
+        ],
+        "type": "object"
+      },
+      "Position": {
+        "properties": {
+          "available_quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "average_cost": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "day_change": {
+            "format": "double",
+            "type": "number"
+          },
+          "dividends": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "oldest_lot_on": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "pnl_ratio": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "available_quantity",
+          "average_cost",
+          "day_change",
+          "dividends",
+          "oldest_lot_on",
+          "pnl",
+          "pnl_ratio",
+          "price",
+          "quantity",
+          "stock",
+          "value"
+        ],
+        "type": "object"
+      },
+      "PublicTrade": {
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "at",
+          "id",
+          "price",
+          "quantity",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "PublicTradePage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PublicTrade"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "继续翻页用的游标；没有更多时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "Quote": {
+        "description": "行情表的一行",
+        "properties": {
+          "change": {
+            "description": "比例：price / prev_close − 1",
+            "format": "double",
+            "type": "number"
+          },
+          "cover_url": {
+            "type": "string"
+          },
+          "episodes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "episodes_aired": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_air": {
+            "format": "date",
+            "type": "string"
+          },
+          "high": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "ipo_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ipo_remaining": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "is_long_runner": {
+            "type": "boolean"
+          },
+          "is_new": {
+            "type": "boolean"
+          },
+          "listed_on": {
+            "format": "date",
+            "type": "string"
+          },
+          "low": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "market_cap": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "open": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "prev_close": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ratios": {
+            "$ref": "#/components/schemas/Ratios"
+          },
+          "sparkline": {
+            "description": "最近 20 个交易日收盘价，旧到新",
+            "items": {
+              "$ref": "#/components/schemas/Money"
+            },
+            "type": "array"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "title_en": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title_ja": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turnover": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "vcm_active": {
+            "type": "boolean"
+          },
+          "volume": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "week_revenue": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "week_revenue_change": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "change",
+          "cover_url",
+          "episodes",
+          "episodes_aired",
+          "first_air",
+          "high",
+          "ipo_price",
+          "ipo_remaining",
+          "is_long_runner",
+          "is_new",
+          "listed_on",
+          "low",
+          "market_cap",
+          "open",
+          "prev_close",
+          "price",
+          "ratios",
+          "sparkline",
+          "stock",
+          "title_en",
+          "title_ja",
+          "turnover",
+          "vcm_active",
+          "volume",
+          "week_revenue",
+          "week_revenue_change"
+        ],
+        "type": "object"
+      },
+      "QuotesResponse": {
+        "properties": {
+          "as_of": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Quote"
+            },
+            "type": "array"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "as_of",
+          "items",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "Ratios": {
+        "properties": {
+          "book_value_per_share": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "dividend_yield_dynamic": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "dividend_yield_ttm": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pb": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pe_dynamic": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "pe_ttm": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "book_value_per_share",
+          "dividend_yield_dynamic",
+          "dividend_yield_ttm",
+          "pb",
+          "pe_dynamic",
+          "pe_ttm"
+        ],
+        "type": "object"
+      },
+      "RedeemRequest": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "platform",
+          "external_id"
+        ],
+        "type": "object"
+      },
+      "RedeemResponse": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/UserRef"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/Binding"
+          }
+        },
+        "required": [
+          "account",
+          "binding"
+        ],
+        "type": "object"
+      },
+      "RegisterRequest": {
+        "properties": {
+          "invite": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object"
+      },
+      "RestructureRequest": {
+        "properties": {
+          "confirm": {
+            "description": "必须为 true",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "RestructureState": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "not_poor、this_season、market_closed；可以申请时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "count",
+          "eligible",
+          "message",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "RevenueWeek": {
+        "properties": {
+          "by_market": {
+            "$ref": "#/components/schemas/ByMarket"
+          },
+          "dividend_per_share": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "episodes_aired": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "revenue": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "week_start": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "by_market",
+          "dividend_per_share",
+          "episodes_aired",
+          "revenue",
+          "week_start"
+        ],
+        "type": "object"
+      },
+      "Rules": {
+        "properties": {
+          "dividend_tax": {
+            "items": {
+              "$ref": "#/components/schemas/DividendTaxBand"
+            },
+            "type": "array"
+          },
+          "fees": {
+            "$ref": "#/components/schemas/RulesFees"
+          },
+          "initial_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ipo": {
+            "$ref": "#/components/schemas/RulesIpo"
+          },
+          "order_quantity_max": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price_limit_multiple": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "restructure": {
+            "$ref": "#/components/schemas/RulesRestructure"
+          },
+          "session": {
+            "$ref": "#/components/schemas/RulesSession"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "vcm": {
+            "$ref": "#/components/schemas/RulesVcm"
+          }
+        },
+        "required": [
+          "dividend_tax",
+          "fees",
+          "initial_cash",
+          "ipo",
+          "order_quantity_max",
+          "price_limit_multiple",
+          "restructure",
+          "session",
+          "timezone",
+          "vcm"
+        ],
+        "type": "object"
+      },
+      "RulesFees": {
+        "properties": {
+          "commission": {
+            "format": "double",
+            "type": "number"
+          },
+          "stamp_duty": {
+            "format": "double",
+            "type": "number"
+          },
+          "stamp_duty_on": {
+            "$ref": "#/components/schemas/OrderSide",
+            "description": "印花税由哪一方缴纳"
+          }
+        },
+        "required": [
+          "commission",
+          "stamp_duty",
+          "stamp_duty_on"
+        ],
+        "type": "object"
+      },
+      "RulesIpo": {
+        "properties": {
+          "clawback": {
+            "items": {
+              "$ref": "#/components/schemas/ClawbackBand"
+            },
+            "type": "array"
+          },
+          "public_base": {
+            "format": "double",
+            "type": "number"
+          },
+          "subscription_days": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "clawback",
+          "public_base",
+          "subscription_days"
+        ],
+        "type": "object"
+      },
+      "RulesRestructure": {
+        "properties": {
+          "per_season": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "threshold_ratio": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "per_season",
+          "threshold_ratio"
+        ],
+        "type": "object"
+      },
+      "RulesSession": {
+        "properties": {
+          "auction_start": {
+            "type": "string"
+          },
+          "close": {
+            "type": "string"
+          },
+          "close_is_next_day": {
+            "type": "boolean"
+          },
+          "daily_close": {
+            "type": "string"
+          },
+          "day_rollover": {
+            "type": "string"
+          },
+          "open": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "auction_start",
+          "close",
+          "close_is_next_day",
+          "daily_close",
+          "day_rollover",
+          "open"
+        ],
+        "type": "object"
+      },
+      "RulesVcm": {
+        "properties": {
+          "cool_minutes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "later_bands": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "threshold": {
+            "format": "double",
+            "type": "number"
+          },
+          "window_minutes": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cool_minutes",
+          "later_bands",
+          "threshold",
+          "window_minutes"
+        ],
+        "type": "object"
+      },
+      "SearchHit": {
+        "properties": {
+          "change": {
+            "format": "double",
+            "type": "number"
+          },
+          "matched": {
+            "$ref": "#/components/schemas/SearchMatch"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
+          "status": {
+            "description": "开放枚举：subscribing、listed、delisted",
+            "type": "string"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          }
+        },
+        "required": [
+          "change",
+          "matched",
+          "price",
+          "score",
+          "status",
+          "stock"
+        ],
+        "type": "object"
+      },
+      "SearchMatch": {
+        "properties": {
+          "field": {
+            "description": "code、title、title_ja、title_romaji、title_en、alias",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "text"
+        ],
+        "type": "object"
+      },
+      "SearchResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            },
+            "type": "array"
+          },
+          "query": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "query"
+        ],
+        "type": "object"
+      },
+      "StockDetail": {
+        "properties": {
+          "audiences": {
+            "$ref": "#/components/schemas/Audiences"
+          },
+          "cover_url": {
+            "type": "string"
+          },
+          "delisted_on": {
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dividends": {
+            "items": {
+              "$ref": "#/components/schemas/DividendPaid"
+            },
+            "type": "array"
+          },
+          "episode_days": {
+            "items": {
+              "$ref": "#/components/schemas/EpisodeDay"
+            },
+            "type": "array"
+          },
+          "episodes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "episodes_aired": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_air": {
+            "format": "date",
+            "type": "string"
+          },
+          "holders": {
+            "$ref": "#/components/schemas/Holders"
+          },
+          "ipo": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Ipo"
+              }
+            ]
+          },
+          "ipo_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "is_long_runner": {
+            "type": "boolean"
+          },
+          "listed_on": {
+            "format": "date",
+            "type": "string"
+          },
+          "next_episode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NextEpisode"
+              }
+            ]
+          },
+          "quote": {
+            "$ref": "#/components/schemas/StockQuote"
+          },
+          "ratios": {
+            "$ref": "#/components/schemas/Ratios"
+          },
+          "revenue_weeks": {
+            "items": {
+              "$ref": "#/components/schemas/RevenueWeek"
+            },
+            "type": "array"
+          },
+          "shares": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "description": "开放枚举：subscribing、listed、delisted",
+            "type": "string"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "studio": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title_en": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title_ja": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "vcm": {
+            "$ref": "#/components/schemas/Vcm"
+          }
+        },
+        "required": [
+          "audiences",
+          "cover_url",
+          "delisted_on",
+          "dividends",
+          "episode_days",
+          "episodes",
+          "episodes_aired",
+          "first_air",
+          "holders",
+          "ipo",
+          "ipo_price",
+          "is_long_runner",
+          "listed_on",
+          "next_episode",
+          "quote",
+          "ratios",
+          "revenue_weeks",
+          "shares",
+          "status",
+          "stock",
+          "studio",
+          "title_en",
+          "title_ja",
+          "trading_day",
+          "vcm"
+        ],
+        "type": "object"
+      },
+      "StockQuote": {
+        "properties": {
+          "change": {
+            "format": "double",
+            "type": "number"
+          },
+          "high": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "ipo_remaining": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "low": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "market_cap": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "open": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "open_reference": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "prev_close": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "turnover": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "volume": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "change",
+          "high",
+          "ipo_remaining",
+          "low",
+          "market_cap",
+          "open",
+          "open_reference",
+          "prev_close",
+          "price",
+          "turnover",
+          "volume"
+        ],
+        "type": "object"
+      },
+      "StockRef": {
+        "description": "股票的简要引用",
+        "properties": {
+          "code": {
+            "description": "6 位显示代码",
+            "type": "string"
+          },
+          "id": {
+            "description": "AniList 作品 id，也是公司 id；路径参数一律用它",
+            "format": "int64",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "id",
+          "title"
+        ],
+        "type": "object"
+      },
+      "SubscriptionRequest": {
+        "properties": {
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "quantity"
+        ],
+        "type": "object"
+      },
+      "SubscriptionResponse": {
+        "properties": {
+          "frozen": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ipo": {
+            "$ref": "#/components/schemas/Ipo"
+          }
+        },
+        "required": [
+          "frozen",
+          "ipo"
+        ],
+        "type": "object"
+      },
+      "Timestamp": {
+        "description": "时间戳，RFC 3339，带 `+08:00` 偏移。",
+        "format": "date-time",
+        "type": "string"
+      },
+      "TradingDay": {
+        "description": "交易日 `YYYY-MM-DD`（04:00 换日）。",
+        "format": "date",
+        "type": "string"
+      },
+      "UserRef": {
+        "properties": {
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "type": "object"
+      },
+      "Vcm": {
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "count_today": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "high": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "low": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "until": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ]
+          }
+        },
+        "required": [
+          "active",
+          "count_today",
+          "high",
+          "low",
+          "until"
+        ],
+        "type": "object"
+      },
+      "WsClientMessage": {
+        "description": "客户端→服务器的消息（每帧一个 JSON 对象，最大 16 KB）",
+        "properties": {
+          "ping": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resync": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "since": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "断线重连时各主题最后见到的 seq：`{\"news\": 8890, \"events\": 10233}`",
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "sub": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "unsub": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "WsLimits": {
+        "properties": {
+          "queue": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stocks": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "queue",
+          "stocks"
+        ],
+        "type": "object"
+      },
+      "WsRejected": {
+        "properties": {
+          "code": {
+            "description": "unknown_topic、unauthenticated、forbidden、too_many_stocks、stock_not_found",
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "topic"
+        ],
+        "type": "object"
+      },
+      "WsServerMessage": {
+        "description": "服务器→客户端的消息（NDJSON：一帧一条或多条，以换行分隔）",
+        "oneOf": [
+          {
+            "properties": {
+              "bot": {
+                "type": "boolean"
+              },
+              "limits": {
+                "$ref": "#/components/schemas/WsLimits"
+              },
+              "me": {
+                "type": "boolean"
+              },
+              "now": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "phase": {
+                "$ref": "#/components/schemas/Phase"
+              },
+              "server_version": {
+                "type": "string"
+              },
+              "t": {
+                "enum": [
+                  "hello"
+                ],
+                "type": "string"
+              },
+              "trading_day": {
+                "$ref": "#/components/schemas/TradingDay"
+              },
+              "v": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "bot",
+              "limits",
+              "me",
+              "now",
+              "phase",
+              "server_version",
+              "t",
+              "trading_day",
+              "v"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "rejected": {
+                "items": {
+                  "$ref": "#/components/schemas/WsRejected"
+                },
+                "type": "array"
+              },
+              "t": {
+                "enum": [
+                  "subscribed"
+                ],
+                "type": "string"
+              },
+              "topics": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "rejected",
+              "t",
+              "topics"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "ping": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "pong"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ping",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "last_closed_day": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TradingDay"
+                  }
+                ]
+              },
+              "now": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "phase": {
+                "$ref": "#/components/schemas/Phase"
+              },
+              "phase_ends_at": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  }
+                ]
+              },
+              "t": {
+                "enum": [
+                  "time"
+                ],
+                "type": "string"
+              },
+              "trading_day": {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            },
+            "required": [
+              "last_closed_day",
+              "now",
+              "phase",
+              "phase_ends_at",
+              "t",
+              "trading_day"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "t": {
+                "enum": [
+                  "reset"
+                ],
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "t",
+              "topic"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "行：`[id, price, prev_close, volume, turnover, vcm_active]`（列见 `cols`）",
+            "properties": {
+              "cols": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "full": {
+                "type": "boolean"
+              },
+              "rows": {
+                "items": {
+                  "items": {},
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "quotes"
+                ],
+                "type": "string"
+              },
+              "trading_day": {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            },
+            "required": [
+              "cols",
+              "full",
+              "rows",
+              "seq",
+              "t",
+              "trading_day"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "档位 `[price, quantity, orders]`，成交 `[id, price, quantity, at]`",
+            "properties": {
+              "as_of": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "asks": {
+                "items": {
+                  "items": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "auction": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AuctionIndication"
+                  }
+                ]
+              },
+              "bids": {
+                "items": {
+                  "items": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "full": {
+                "type": "boolean"
+              },
+              "high": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Money"
+                  }
+                ]
+              },
+              "id": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "low": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Money"
+                  }
+                ]
+              },
+              "open": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Money"
+                  }
+                ]
+              },
+              "open_reference": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Money"
+                  }
+                ]
+              },
+              "prev_close": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "price": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "stock"
+                ],
+                "type": "string"
+              },
+              "trades": {
+                "items": {
+                  "items": {},
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "trading_day": {
+                "$ref": "#/components/schemas/TradingDay"
+              },
+              "turnover": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "vcm": {
+                "$ref": "#/components/schemas/Vcm"
+              },
+              "volume": {
+                "format": "int64",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "as_of",
+              "asks",
+              "auction",
+              "bids",
+              "full",
+              "high",
+              "id",
+              "low",
+              "open",
+              "open_reference",
+              "prev_close",
+              "price",
+              "seq",
+              "t",
+              "trades",
+              "trading_day",
+              "turnover",
+              "vcm",
+              "volume"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "item": {
+                "$ref": "#/components/schemas/NewsItem"
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "news"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "item",
+              "seq",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "order": {
+                "$ref": "#/components/schemas/Order"
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "order"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "order",
+              "seq",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "fill"
+                ],
+                "type": "string"
+              },
+              "trade": {
+                "$ref": "#/components/schemas/MyTrade"
+              }
+            },
+            "required": [
+              "seq",
+              "t",
+              "trade"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "available_cash": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "cash": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "frozen_cash": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "cash"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "available_cash",
+              "cash",
+              "frozen_cash",
+              "seq",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Event"
+              },
+              {
+                "properties": {
+                  "t": {
+                    "enum": [
+                      "event"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "t"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "securitySchemes": {
+      "bot": {
+        "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<QQ号> 代表已绑定的玩家",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "网页前端和 QQ 机器人共用的公开接口（docs/api-v1.md）。金额一律是整数分；比例是小数；时间戳带 +08:00；交易日 04:00 换日。",
+    "license": {
+      "name": ""
+    },
+    "title": "安易 AniEx API",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "登录",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "已退出"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "退出登录",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "注册",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/bot/bindings": {
+      "post": {
+        "operationId": "redeem",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedeemResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bot": []
+          }
+        ],
+        "summary": "机器人兑换绑定码",
+        "tags": [
+          "bot"
+        ]
+      }
+    },
+    "/api/v1/bot/bindings/{platform}/{external_id}": {
+      "delete": {
+        "operationId": "bot_remove",
+        "parameters": [
+          {
+            "description": "qq",
+            "in": "path",
+            "name": "platform",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "QQ 号",
+            "in": "path",
+            "name": "external_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已解除"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bot": []
+          }
+        ],
+        "summary": "机器人解除绑定（群里 /解绑）",
+        "tags": [
+          "bot"
+        ]
+      }
+    },
+    "/api/v1/ipos": {
+      "get": {
+        "operationId": "ipos",
+        "parameters": [
+          {
+            "description": "upcoming、open、allotted、listed、cancelled，可逗号分隔；默认 upcoming,open,allotted",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "status 含 listed 时：上市日不早于这天，默认 60 天前",
+            "in": "query",
+            "name": "listed_since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IposResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "新股",
+        "tags": [
+          "ipos"
+        ]
+      }
+    },
+    "/api/v1/ipos/{id}": {
+      "get": {
+        "operationId": "ipo_one",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ipo"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "一支新股",
+        "tags": [
+          "ipos"
+        ]
+      }
+    },
+    "/api/v1/ipos/{id}/subscription": {
+      "delete": {
+        "operationId": "unsubscribe",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IpoEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "撤回认购（幂等）",
+        "tags": [
+          "ipos"
+        ]
+      },
+      "put": {
+        "operationId": "subscribe",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "认购新股（设定数量，幂等）",
+        "tags": [
+          "ipos"
+        ]
+      }
+    },
+    "/api/v1/leaderboard": {
+      "get": {
+        "operationId": "leaderboard",
+        "parameters": [
+          {
+            "description": "all（默认）、week、season",
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Leaderboard"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "排行榜",
+        "tags": [
+          "leaderboard"
+        ]
+      }
+    },
+    "/api/v1/market/airings": {
+      "get": {
+        "operationId": "airings",
+        "parameters": [
+          {
+            "description": "本交易日（默认）或下一个交易日",
+            "in": "query",
+            "name": "trading_day",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiringsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "本交易日要播的集数",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/indices": {
+      "get": {
+        "operationId": "indices",
+        "parameters": [
+          {
+            "description": "false 时不带走势",
+            "in": "query",
+            "name": "series",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndicesResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "指数与涨跌家数",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/macro": {
+      "get": {
+        "operationId": "macro_days",
+        "parameters": [
+          {
+            "description": "交易日，含",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "交易日，含",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MacroResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "宏观数据，一天一行",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/quotes": {
+      "get": {
+        "operationId": "quotes",
+        "parameters": [
+          {
+            "description": "逗号分隔的股票 id",
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuotesResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "全部上市股票的行情",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/market/status": {
+      "get": {
+        "operationId": "status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketStatus"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "市场状态",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的账户",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/asset-history": {
+      "get": {
+        "operationId": "asset_history",
+        "parameters": [
+          {
+            "description": "交易日，含",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "交易日，含",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetHistory"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "资产曲线",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/bind-codes": {
+      "post": {
+        "operationId": "create_code",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindCode"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "生成绑定码（仅网页）",
+        "tags": [
+          "bindings"
+        ]
+      }
+    },
+    "/api/v1/me/bindings": {
+      "get": {
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BindingsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的绑定（仅网页）",
+        "tags": [
+          "bindings"
+        ]
+      }
+    },
+    "/api/v1/me/bindings/{id}": {
+      "delete": {
+        "operationId": "remove",
+        "parameters": [
+          {
+            "description": "绑定 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已解除"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "解除绑定（仅网页）",
+        "tags": [
+          "bindings"
+        ]
+      }
+    },
+    "/api/v1/me/ledger": {
+      "get": {
+        "operationId": "ledger",
+        "parameters": [
+          {
+            "description": "可逗号分隔",
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "某支股票",
+            "in": "query",
+            "name": "stock_id",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "某个交易日",
+            "in": "query",
+            "name": "trading_day",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "默认 50，最大 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "资金流水",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/orders": {
+      "get": {
+        "operationId": "orders",
+        "parameters": [
+          {
+            "description": "open（默认）、closed、all",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "某支股票",
+            "in": "query",
+            "name": "stock_id",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "默认 50，最大 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的委托",
+        "tags": [
+          "account"
+        ]
+      },
+      "post": {
+        "operationId": "place",
+        "parameters": [
+          {
+            "description": "同一账号 24 小时内重复的 key 返回第一次的结果",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaceOrderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "下单",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/orders/{id}": {
+      "delete": {
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "description": "委托 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "撤单",
+        "tags": [
+          "account"
+        ]
+      },
+      "get": {
+        "operationId": "order_one",
+        "parameters": [
+          {
+            "description": "委托 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Order"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "一笔委托",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/portfolio": {
+      "get": {
+        "operationId": "portfolio",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Portfolio"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "持仓",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/restructure": {
+      "post": {
+        "operationId": "restructure",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestructureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeEnvelope"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "破产重整",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/trades": {
+      "get": {
+        "operationId": "my_trades",
+        "parameters": [
+          {
+            "description": "某支股票",
+            "in": "query",
+            "name": "stock_id",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "默认 50，最大 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyTradePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的成交",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/news": {
+      "get": {
+        "operationId": "news",
+        "parameters": [
+          {
+            "description": "某支股票的资讯",
+            "in": "query",
+            "name": "stock_id",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "flash、notice、airing、close，可逗号分隔",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "具体类型，可逗号分隔",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "某个交易日",
+            "in": "query",
+            "name": "trading_day",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "默认 50，最大 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "游标：更旧的一页",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "游标：比它更新的，从旧到新",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "资讯，游标分页",
+        "tags": [
+          "news"
+        ]
+      }
+    },
+    "/api/v1/news/{id}": {
+      "get": {
+        "operationId": "news_one",
+        "parameters": [
+          {
+            "description": "资讯 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewsItem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "一条资讯",
+        "tags": [
+          "news"
+        ]
+      }
+    },
+    "/api/v1/rules": {
+      "get": {
+        "operationId": "rules",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rules"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "游戏规则",
+        "tags": [
+          "market"
+        ]
+      }
+    },
+    "/api/v1/stocks/search": {
+      "get": {
+        "operationId": "search",
+        "parameters": [
+          {
+            "description": "1–50 个字符",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "默认 5，最大 20",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "默认 listed,subscribing；可加 delisted",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "按名字或代码找股票",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}": {
+      "get": {
+        "operationId": "detail",
+        "parameters": [
+          {
+            "description": "股票 id（AniList 作品 id）",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "一支股票的完整资料",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/book": {
+      "get": {
+        "operationId": "book",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "1–20，默认 5",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "盘口",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/candles": {
+      "get": {
+        "operationId": "candles",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "交易日，含",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "交易日，含",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "只支持 1d",
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandlesResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "日 K 线",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/cover": {
+      "get": {
+        "operationId": "cover",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {}
+            },
+            "description": "图片"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "作品封面（图片）",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/intraday": {
+      "get": {
+        "operationId": "intraday",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "默认本交易日",
+            "in": "query",
+            "name": "trading_day",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntradayResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "分时",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/trades": {
+      "get": {
+        "operationId": "trades",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "默认 50，最大 200",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "游标",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicTradePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "公开成交，游标分页",
+        "tags": [
+          "stocks"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "市场",
+      "name": "market"
+    },
+    {
+      "description": "股票",
+      "name": "stocks"
+    },
+    {
+      "description": "资讯",
+      "name": "news"
+    },
+    {
+      "description": "新股",
+      "name": "ipos"
+    },
+    {
+      "description": "账户",
+      "name": "account"
+    },
+    {
+      "description": "排行",
+      "name": "leaderboard"
+    },
+    {
+      "description": "认证",
+      "name": "auth"
+    },
+    {
+      "description": "绑定",
+      "name": "bindings"
+    },
+    {
+      "description": "机器人",
+      "name": "bot"
+    }
+  ]
+}

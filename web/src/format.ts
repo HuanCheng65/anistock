@@ -1,5 +1,7 @@
 // Number, percent and time formatting (docs/copywriting.md §6).
 // Negatives use U+2212; up = "+", flat has no sign. Large counts use 万 / 亿; exact amounts use commas.
+// Amounts from the API are integer cents (`Money`): money(), signed() and bigMoney() take cents; num()
+// and signedNum() take plain numbers (index points).
 
 export const MINUS = '−'
 const DASH = '–'
@@ -8,19 +10,47 @@ function fixed(v: number, digits: number): string {
   return Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
 
-/** Exact amount: 84,213.50 (negatives with −). */
-export function money(v: number | null | undefined, digits = 2): string {
+/** A plain number with fixed decimals: 1,043.27 (negatives with −). */
+export function num(v: number | null | undefined, digits = 2): string {
   if (v == null || Number.isNaN(v)) return DASH
   const s = fixed(v, digits)
   return v < 0 && s !== fixed(0, digits) ? MINUS + s : s
 }
 
-/** Signed amount: +2,318.40 / −1.20 / 0.00 */
-export function signed(v: number | null | undefined, digits = 2): string {
+/** A signed plain number: +4.37 / −1.20 / 0.00 */
+export function signedNum(v: number | null | undefined, digits = 2): string {
   if (v == null || Number.isNaN(v)) return DASH
   const s = fixed(v, digits)
   if (s === fixed(0, digits)) return s
   return (v > 0 ? '+' : MINUS) + s
+}
+
+/** Exact amount from cents: 8421350 -> 84,213.50 */
+export function money(cents: number | null | undefined, digits = 2): string {
+  return cents == null ? DASH : num(cents / 100, digits)
+}
+
+/** Signed amount from cents: +2,318.40 / −1.20 / 0.00 */
+export function signed(cents: number | null | undefined, digits = 2): string {
+  return cents == null ? DASH : signedNum(cents / 100, digits)
+}
+
+/** Compact amount from cents: 1.2万, 3.4亿 */
+export function bigMoney(cents: number | null | undefined): string {
+  return cents == null ? DASH : big(cents / 100)
+}
+
+/** 币 text typed by the player -> cents; null unless a positive number with at most two decimals. */
+export function toCents(text: string): number | null {
+  const t = text.trim()
+  if (!/^\d+(\.\d{1,2})?$/.test(t)) return null
+  const c = Math.round(Number(t) * 100)
+  return c > 0 ? c : null
+}
+
+/** Cents as the text of a price input: 22045 -> "220.45" */
+export function centsText(cents: number): string {
+  return (cents / 100).toFixed(2)
 }
 
 /** Ratio as signed percent: 0.0961 -> +9.61% */
@@ -122,11 +152,11 @@ export function localDay(d = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/** The trading day changes at 04:00 (server game.toml `day_rollover`, also in /api/status as `rollover`):
+/** The trading day changes at 04:00 (server game.toml `day_rollover`, also in /api/v1/rules):
  * the night session after midnight belongs to the previous day. */
 export const ROLLOVER_H = 4
 
-/** Today's trading day, from this device's clock (prefer the server's `status.day`). */
+/** Today's trading day, from this device's clock (prefer the server's `status.trading_day`). */
 export function tradingDay(now = new Date()): string {
   return localDay(new Date(now.getTime() - ROLLOVER_H * 3600_000))
 }
@@ -163,37 +193,15 @@ export function weekdayTime(ts: string): string {
 
 // ---------------------------------------------------------------- labels
 
-export const LEDGER_REASON: Record<string, string> = {
-  dividend: '分红',
-  dividend_tax: '股息税',
-  commission: '佣金',
-  stamp_duty: '印花税',
-  interest: '存款利息',
-  transfer: '财政补贴',
-  grant: '初始资金',
-  delisting: '退市返还',
-  ipo: '新股认购缴款',
-  ipo_refund: '认购退款',
-  restructure: '破产重整',
-  trade: '成交',
-}
-
-/** News kinds grouped into the four badges of the 资讯 page. */
-export const NEWS_GROUP: Record<string, { label: string; tone: 'flash' | 'notice' | 'air' | 'close' }> = {
-  vcm: { label: '快讯', tone: 'flash' },
+/** The four news groups (the server's `category`) as badges. */
+export const NEWS_CATEGORY: Record<string, { label: string; tone: 'flash' | 'notice' | 'air' | 'close' }> = {
   flash: { label: '快讯', tone: 'flash' },
-  warning: { label: '公告', tone: 'notice' },
-  premiere: { label: '放送', tone: 'air' },
-  finale: { label: '放送', tone: 'air' },
-  ipo: { label: '公告', tone: 'notice' },
-  allotment: { label: '公告', tone: 'notice' },
-  delisting: { label: '公告', tone: 'notice' },
-  system: { label: '公告', tone: 'notice' },
-  dividend: { label: '日结', tone: 'close' },
-  rate: { label: '日结', tone: 'close' },
+  notice: { label: '公告', tone: 'notice' },
+  airing: { label: '放送', tone: 'air' },
+  close: { label: '日结', tone: 'close' },
 }
-export function newsGroup(kind: string) {
-  return NEWS_GROUP[kind] ?? { label: '公告', tone: 'notice' as const }
+export function newsGroup(category: string) {
+  return NEWS_CATEGORY[category] ?? NEWS_CATEGORY.notice
 }
 
 export const PHASE_LABEL: Record<string, string> = { auction: '集合竞价', continuous: '交易中', closed: '休市' }
@@ -205,16 +213,21 @@ export function episodeText(aired: number, total: number | null, longRunner: boo
   return `${Math.min(aired, total)} / ${total}`
 }
 
-/** Dividend-tax brackets from the server's [[maxDays, rate], …] (max days inclusive, FIFO lot age) as labelled rows. */
-export const DEFAULT_DIVIDEND_TAX: [number, number][] = [[0, 0.2], [27, 0.1], [100000, 0]]
-export function taxBrackets(t: [number, number][] = DEFAULT_DIVIDEND_TAX): { k: string; v: string }[] {
+/** Dividend-tax brackets from /rules (`max_holding_days` inclusive, null = no limit; FIFO lot age) as labelled rows. */
+export const DEFAULT_DIVIDEND_TAX = [
+  { max_holding_days: 0, rate: 0.2 },
+  { max_holding_days: 27, rate: 0.1 },
+  { max_holding_days: null, rate: 0 },
+] as { max_holding_days: number | null; rate: number }[]
+export function taxBrackets(t: { max_holding_days: number | null; rate: number }[] = DEFAULT_DIVIDEND_TAX): { k: string; v: string }[] {
   const span = (d: number) => (d >= 7 && d % 7 === 0 ? `${d / 7} 周` : `${d} 天`)
   let prev = -1
-  return t.map(([days, rate]) => {
+  return t.map(({ max_holding_days, rate }) => {
+    const days = max_holding_days ?? Infinity
     const start = prev + 1
     prev = days
     let k: string
-    if (days >= 100000) k = `持有满 ${span(start)}`
+    if (max_holding_days == null) k = `持有满 ${span(start)}`
     else if (start === 0 && days === 0) k = '当天买入'
     else if (start === 0) k = `持有不满 ${span(days + 1)}`
     else k = `持有 ${span(start)}到不满 ${span(days + 1)}`

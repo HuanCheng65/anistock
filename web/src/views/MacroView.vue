@@ -1,21 +1,23 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { api, ApiError, type MacroDay } from '../api'
+import { api, call, errorText, type MacroRow } from '../api'
 import { usePoll } from '../composables/usePoll'
 import BackButton from '../components/BackButton.vue'
 import EmptyState from '../components/EmptyState.vue'
-import { big, pct } from '../format'
+import { bigMoney, pct } from '../format'
 import { useSession } from '../stores/session'
 
 const session = useSession()
-const days = ref<MacroDay[] | null>(null)
+/** the closed days (rows with the central bank's figures) */
+const days = ref<(MacroRow & { policy_rate: number; m2: number })[] | null>(null)
 const error = ref('')
 usePoll(async () => {
   try {
-    days.value = (await api.get<{ days: MacroDay[] }>('/api/macro')).days
+    const rows = (await call(api.GET('/api/v1/market/macro', { params: { query: { from: '2000-01-01' } } }))).items
+    days.value = rows.filter((r): r is MacroRow & { policy_rate: number; m2: number } => r.policy_rate != null && r.m2 != null)
     error.value = ''
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '无法加载'
+    error.value = errorText(e, '无法加载')
   }
 }, 60000)
 
@@ -28,7 +30,7 @@ function line(vals: number[]) {
   const y = (v: number) => T + (H - T - B) * (1 - (v - lo) / span)
   return { d: vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(''), lo, hi, y }
 }
-const rate = computed(() => line((days.value ?? []).map((d) => d.rate * 100)))
+const rate = computed(() => line((days.value ?? []).map((d) => d.policy_rate * 100)))
 const m2 = computed(() => line((days.value ?? []).map((d) => d.m2)))
 const last = computed(() => days.value?.[days.value.length - 1])
 </script>
@@ -40,10 +42,10 @@ const last = computed(() => days.value?.[days.value.length - 1])
       <h1>宏观</h1>
     </header>
     <dl class="facts g4 gutter">
-      <div><dt>政策利率</dt><dd>{{ session.status ? (session.status.rate * 100).toFixed(2) + '%' : '–' }}</dd></div>
+      <div><dt>政策利率</dt><dd>{{ session.status ? (session.status.policy_rate * 100).toFixed(2) + '%' : '–' }}</dd></div>
       <div><dt>存款利率</dt><dd>{{ session.status ? (session.status.deposit_rate * 100).toFixed(2) + '%' : '–' }}</dd></div>
       <div><dt>M2 年化增速</dt><dd>{{ last?.m2_growth != null ? pct(last.m2_growth, 1) : '–' }}</dd></div>
-      <div><dt>货币供应量</dt><dd>{{ last ? big(last.m2) : '–' }}</dd></div>
+      <div><dt>货币供应量</dt><dd>{{ last ? bigMoney(last.m2) : '–' }}</dd></div>
     </dl>
     <p v-if="error" class="msg error gutter">{{ error }}</p>
     <EmptyState v-if="days && days.length < 2" text="每次日结记录一次宏观数据，数日后显示走势" />
@@ -55,19 +57,19 @@ const last = computed(() => days.value?.[days.value.length - 1])
           <text :x="L - 6" :y="rate.y(rate.lo) + 4" class="axis" text-anchor="end">{{ rate.lo.toFixed(2) }}%</text>
           <line :x1="L" :x2="W" :y1="rate.y(rate.lo)" :y2="rate.y(rate.lo)" class="baseline" />
           <path :d="rate.d" fill="none" class="l1" stroke-width="2" />
-          <text :x="L" :y="H - 4" class="axis">{{ days[0].day.slice(5) }}</text>
-          <text :x="W - 4" :y="H - 4" class="axis" text-anchor="end">{{ days[days.length - 1].day.slice(5) }}</text>
+          <text :x="L" :y="H - 4" class="axis">{{ days[0].trading_day.slice(5) }}</text>
+          <text :x="W - 4" :y="H - 4" class="axis" text-anchor="end">{{ days[days.length - 1].trading_day.slice(5) }}</text>
         </svg>
       </section>
       <section class="sec">
         <h2>货币供应量</h2>
         <svg v-if="m2" :viewBox="`0 0 ${W} ${H}`" class="chart" role="img" aria-label="货币供应量走势">
-          <text :x="L - 6" :y="m2.y(m2.hi) + 4" class="axis" text-anchor="end">{{ big(m2.hi) }}</text>
-          <text :x="L - 6" :y="m2.y(m2.lo) + 4" class="axis" text-anchor="end">{{ big(m2.lo) }}</text>
+          <text :x="L - 6" :y="m2.y(m2.hi) + 4" class="axis" text-anchor="end">{{ bigMoney(m2.hi) }}</text>
+          <text :x="L - 6" :y="m2.y(m2.lo) + 4" class="axis" text-anchor="end">{{ bigMoney(m2.lo) }}</text>
           <line :x1="L" :x2="W" :y1="m2.y(m2.lo)" :y2="m2.y(m2.lo)" class="baseline" />
           <path :d="m2.d" fill="none" class="l2" stroke-width="2" />
-          <text :x="L" :y="H - 4" class="axis">{{ days[0].day.slice(5) }}</text>
-          <text :x="W - 4" :y="H - 4" class="axis" text-anchor="end">{{ days[days.length - 1].day.slice(5) }}</text>
+          <text :x="L" :y="H - 4" class="axis">{{ days[0].trading_day.slice(5) }}</text>
+          <text :x="W - 4" :y="H - 4" class="axis" text-anchor="end">{{ days[days.length - 1].trading_day.slice(5) }}</text>
         </svg>
       </section>
     </template>

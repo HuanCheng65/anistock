@@ -2,6 +2,7 @@
 // K-line (day / week / month) or intraday line, with per-episode air markers (dashed line + label) and
 // dividend markers (diamonds) drawn in an overlay that follows the chart's time scale.
 // Up = hollow red, down = solid green. Replay days (before the market opened) are drawn faded.
+// Data arrive in cents; the chart's price scale is in 币 (cents / 100), the readout formats cents.
 import {
   createChart, CrosshairMode, LineStyle,
   type IChartApi, type ISeriesApi, type IPriceLine, type Time, type UTCTimestamp,
@@ -18,8 +19,8 @@ const props = defineProps<{
   period: Period
   intraday?: IntradayPoint[]
   prevClose?: number
-  episodes?: { n: number; day: string }[]
-  dividends?: { day: string; ps: number }[]
+  episodes?: { episode: number; trading_day: string }[]
+  dividends?: { trading_day: string; per_share: number }[]
   wide?: boolean
   /** trading and receiving pushes: the intraday line's last point pulses */
   live?: boolean
@@ -56,10 +57,18 @@ function bucket(day: string, p: Period): string {
   return day
 }
 
-const bars = computed<Candle[]>(() => {
-  if (props.period === 'day' || props.period === 'intraday') return props.candles
-  const out: Candle[] = []
-  for (const k of props.candles) {
+/** a bar in cents, keyed by its first trading day */
+interface Bar { time: string; open: number; high: number; low: number; close: number; volume: number; replay: boolean }
+const toBar = (k: Candle): Bar => ({
+  time: k.trading_day, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume, replay: k.source === 'replay',
+})
+const yuan = (c: number) => c / 100
+
+const bars = computed<Bar[]>(() => {
+  if (props.period === 'day' || props.period === 'intraday') return props.candles.map(toBar)
+  const out: Bar[] = []
+  for (const c of props.candles) {
+    const k = toBar(c)
     const t = bucket(k.time, props.period)
     const last = out[out.length - 1]
     if (last && last.time === t) {
@@ -104,19 +113,19 @@ function draw() {
     const pc = props.prevClose ?? pts[0]?.price ?? 0
     const col = last == null || last === pc ? c.ink2 : last > pc ? c.up : c.down
     line.applyOptions({ color: col, visible: true })
-    line.setData(pts.map((p) => ({ time: minuteTime(p.minute), value: p.price })))
+    line.setData(pts.map((p) => ({ time: minuteTime(p.minute), value: yuan(p.price) })))
     vol.setData(pts.map((p, i) => ({
       time: minuteTime(p.minute), value: p.volume,
       color: hexA(p.price >= (i ? pts[i - 1].price : pc) ? c.up : c.down, 0.35),
     })))
     if (prevLine) line.removePriceLine(prevLine)
-    prevLine = props.prevClose ? line.createPriceLine({ price: props.prevClose, color: c.base, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: '' }) : null
+    prevLine = props.prevClose ? line.createPriceLine({ price: yuan(props.prevClose), color: c.base, lineStyle: LineStyle.Dashed, lineWidth: 1, axisLabelVisible: false, title: '' }) : null
   } else {
     line.setData([])
     line.applyOptions({ visible: false })
     if (prevLine) { line.removePriceLine(prevLine); prevLine = null }
     candle.setData(bars.value.map((k) => {
-      const base = { time: k.time as Time, open: k.open, high: k.high, low: k.low, close: k.close }
+      const base = { time: k.time as Time, open: yuan(k.open), high: yuan(k.high), low: yuan(k.low), close: yuan(k.close) }
       if (!k.replay) return base
       const up = k.close >= k.open
       const col = hexA(up ? c.up : c.down, 0.45)
@@ -141,7 +150,7 @@ function extend() {
   const p = pts[i]
   const pc = props.prevClose ?? pts[0].price
   line.applyOptions({ color: p.price === pc ? c.ink2 : p.price > pc ? c.up : c.down })
-  line.update({ time: minuteTime(p.minute), value: p.price })
+  line.update({ time: minuteTime(p.minute), value: yuan(p.price) })
   vol.update({ time: minuteTime(p.minute), value: p.volume, color: hexA(p.price >= (i ? pts[i - 1].price : pc) ? c.up : c.down, 0.35) })
   if (shown !== pts.length) ch.timeScale().fitContent()
   shown = pts.length
@@ -163,7 +172,7 @@ function placeDot() {
   }
   const p = pts[pts.length - 1]
   const x = ch.timeScale().timeToCoordinate(minuteTime(p.minute))
-  const y = line.priceToCoordinate(p.price)
+  const y = line.priceToCoordinate(yuan(p.price))
   const pc = props.prevClose ?? pts[0].price
   dot.value = x == null || y == null ? null : { x: Number(x), y: Number(y), up: p.price === pc ? null : p.price > pc }
 }
@@ -192,17 +201,17 @@ function place() {
   // newest first so the latest episodes keep their labels when crowded
   for (let i = eps.length - 1; i >= 0; i--) {
     const e = eps[i]
-    const px = x(e.day)
+    const px = x(e.trading_day)
     if (px == null || px < 0 || px > w - 50) continue
-    const label = props.wide ? `第 ${e.n} 集` : String(e.n)
+    const label = props.wide ? `第 ${e.episode} 集` : String(e.episode)
     const lw = labelW(label)
     const show = lastRight === -Infinity || px + lw / 2 + 2 < lastRight
-    out.push({ x: px, label: show ? label : '', key: e.day })
+    out.push({ x: px, label: show ? label : '', key: e.trading_day })
     if (show) lastRight = px - lw / 2
   }
   marks.value = out
   divs.value = (props.dividends ?? [])
-    .map((d) => ({ x: x(d.day), key: d.day, ps: d.ps }))
+    .map((d) => ({ x: x(d.trading_day), key: d.trading_day, ps: d.per_share }))
     .filter((d): d is { x: number; key: string; ps: number } => d.x != null && d.x >= 0 && d.x <= w - 50)
 }
 

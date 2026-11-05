@@ -38,7 +38,7 @@ function spineText(t: string): string {
 <template>
   <span class="cover" :style="{ width: w + 'px', height: h + 'px', background: tone }">
     <span v-if="spine && !loaded" class="spine serif" :style="{ fontSize: size + 'px', maxHeight: h - 20 + 'px' }" aria-hidden="true">{{ short }}</span>
-    <img v-if="!failed" :src="`/api/covers/${id}`" :alt="title" loading="lazy" decoding="async" :class="{ on: loaded }" @load="loaded = true" @error="onError" />
+    <img v-if="!failed" :src="`/api/v1/stocks/${id}/cover`" :alt="title" loading="lazy" decoding="async" :class="{ on: loaded }" @load="loaded = true" @error="onError" />
     <slot />
   </span>
 </template>
