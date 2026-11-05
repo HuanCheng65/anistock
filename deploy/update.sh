@@ -78,7 +78,9 @@ say "更新 systemd 服务定义（$(server_kind)）"
 sed "s#%h/.local/bin/uv#$UV#" "$(server_unit_file)" > ~/.config/systemd/user/anistock-server.service
 sed "s#%h/.local/bin/uv#$UV#" deploy/anistock-collect.service > ~/.config/systemd/user/anistock-collect.service
 cp deploy/anistock-collect.timer ~/.config/systemd/user/
+cp deploy/anistock-flash.service deploy/anistock-flash.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
+systemctl --user enable --now anistock-flash.timer
 
 say "重启游戏服务"
 if port_taken_by_other; then
