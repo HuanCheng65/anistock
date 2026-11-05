@@ -209,6 +209,7 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
                 "c": round(new, 4), "v": round(V, 4), "rev": round(revenue_hist[s.id][-1], 2),
                 "div_w": round(weekly_div, 4), "aired": at(s, s.aired, d, 0),
                 "rm": [round(rev_by_market[s.id][m], 2) for m in MARKETS],
+                "book": round(book, 4),
             })
 
         # 7. stamp duty on daily turnover (sellers are households)

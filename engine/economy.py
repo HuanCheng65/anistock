@@ -53,7 +53,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None) -> tuple[l
     max_day = max(d for t in trends.values() for d in t)
     if end is None:
         end = max_day - timedelta(days=1)    # the last day is usually partial
-    gaps = find_gap_days(trends)
+    gaps = find_gap_days(trends, end)
 
     u = p["universe"]
     shows = []
@@ -93,7 +93,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None) -> tuple[l
     return shows, end
 
 
-def find_gap_days(trends: dict[int, dict[date, dict]]) -> set[date]:
+def find_gap_days(trends: dict[int, dict[date, dict]], end: date | None = None) -> set[date]:
     """Days AniList lost data for everyone (e.g. 2026-07-06/07 have no rows at all). A day is a gap when
     it has under half the usual row count, or its total trending is under 25% of the surrounding week's."""
     import statistics
@@ -107,7 +107,10 @@ def find_gap_days(trends: dict[int, dict[date, dict]]) -> set[date]:
     days = sorted(rows)
     gaps = set()
     d = days[0]
-    while d <= days[-1]:
+    # days after the last data day (the collector has not run yet, or ran early) are gaps too,
+    # so a live daily close carries the last day forward instead of seeing zero attention
+    last = max(days[-1], end) if end else days[-1]
+    while d <= last:
         near = [rows.get(d + timedelta(days=k), 0) for k in range(-7, 8) if k]
         near_t = [trend[d + timedelta(days=k)] for k in range(-3, 4) if k and rows.get(d + timedelta(days=k), 0)]
         if rows.get(d, 0) < 0.5 * statistics.median(near) or (near_t and trend[d] < 0.25 * statistics.median(near_t)):
