@@ -7,6 +7,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import { api, call, errorText, type PlaceOrderResponse, type StockDetail } from '../api'
 import { centsText, hm, money, qty as fmtQty, sessionText, toCents } from '../format'
 import { useAccount } from '../stores/account'
+import { MODE_LABEL, useCredit } from '../stores/credit'
 import { useSession } from '../stores/session'
 import type { Book } from '../stores/stock'
 import { markEditing } from '../version'
@@ -15,6 +16,7 @@ const props = defineProps<{ stock: StockDetail; book: Book; pick: { price: numbe
 const emit = defineEmits<{ placed: [] }>()
 const session = useSession()
 const account = useAccount()
+const credit = useCredit()
 const route = useRoute()
 
 const side = ref<'buy' | 'sell'>(props.initialSide ?? 'buy')
@@ -39,6 +41,7 @@ watch(() => props.stock.stock.id, () => {
   price.value = centsText(props.stock.quote.price)
   qty.value = ''
 })
+
 
 const st = computed(() => session.status)
 const rules = computed(() => session.rules)
@@ -65,11 +68,65 @@ const cash = computed(() => session.me?.available_cash ?? 0)
 const position = computed(() => (account.positions ?? []).find((p) => p.stock.id === props.stock.stock.id) ?? null)
 const sellable = computed(() => position.value?.available_quantity ?? 0)
 const myOrders = computed(() => (account.orders ?? []).filter((o) => o.stock.id === props.stock.stock.id && o.status === 'open'))
+
+// ---- 融资融券: the trading mode on each side, shown once credit is open (docs/v2-margin.md)
+type Mode = 'plain' | 'margin_buy' | 'short_sell' | 'sell_repay' | 'buy_return'
+const mode = ref<Mode>('plain')
+const sm = computed(() => credit.margins[props.stock.stock.id] ?? null)
+const ca = computed(() => credit.account)
+watch([() => credit.usable, () => props.stock.stock.id], ([u, id]) => {
+  if (!u) return
+  credit.loadMargin(id).catch(() => {})
+  if (!credit.account) credit.refresh().catch(() => {})
+}, { immediate: true })
+const short = computed(() => ca.value?.shorts.find((s) => s.stock.id === props.stock.stock.id) ?? null)
+const owedShares = computed(() => short.value?.quantity ?? 0)
+const owedCash = computed(() => (ca.value ? ca.value.debt + ca.value.interest : 0))
+const modes = computed<Mode[]>(() => {
+  if (!credit.usable || !ca.value) return ['plain']
+  const open = !!sm.value?.eligible && ca.value.status === 'normal'
+  if (side.value === 'buy') {
+    if (owedShares.value) return ['buy_return']
+    return open ? ['plain', 'margin_buy'] : ['plain']
+  }
+  const out: Mode[] = ['plain']
+  if (open && !position.value?.quantity) out.push('short_sell')
+  if (owedCash.value > 0 && sellable.value > 0) out.push('sell_repay')
+  return out
+})
+watch(modes, (ms) => { if (!ms.includes(mode.value)) mode.value = ms[0] }, { immediate: true })
+const creditMode = computed(() => (mode.value === 'plain' ? null : mode.value))
+watch(creditMode, (m) => { if (m) kind.value = 'limit' })
 const worstAsk = computed(() => props.book.asks.reduce((m, a) => Math.max(m, a.price), bestAsk.value ?? props.stock.quote.price))
 const maxBuy = computed(() => {
   const p = kind.value === 'market' ? worstAsk.value : px.value
   if (!(p > 0)) return 0
   return Math.max(0, Math.floor(cash.value / (p * (1 + commissionRate.value) + 1)))
+})
+const last = computed(() => props.stock.quote.price)
+/** the most this mode allows at the entered price */
+const maxQty = computed(() => {
+  const p = px.value
+  const per = p * (1 + commissionRate.value) + 1
+  const c = ca.value
+  switch (mode.value) {
+    case 'margin_buy': {
+      if (!(p > 0) || !c || !sm.value) return 0
+      const byMargin = Math.floor(c.available_margin / (per * (1 + c.margin_ratio) - sm.value.haircut * p))
+      return Math.max(0, Math.min(byMargin, Math.floor(sm.value.financing_room / per)))
+    }
+    case 'short_sell': {
+      if (!(p > 0) || !c || !sm.value) return 0
+      return Math.max(0, Math.min(sm.value.lendable, Math.floor(c.available_margin / (c.margin_ratio * Math.max(p, last.value)))))
+    }
+    case 'buy_return':
+      if (!(p > 0)) return 0
+      return Math.max(0, Math.min(owedShares.value, Math.floor((cash.value + (short.value?.proceeds ?? 0)) / per)))
+    case 'sell_repay':
+      return sellable.value
+    default:
+      return side.value === 'buy' ? maxBuy.value : sellable.value
+  }
 })
 const notional = computed(() => (n.value && px.value > 0 ? px.value * n.value : 0))
 const commission = computed(() => (notional.value > 0 ? Math.ceil(notional.value * commissionRate.value) : 0))
@@ -118,6 +175,9 @@ const impactText = computed(() => {
 const problem = computed(() => {
   if (!n.value) return qty.value ? '数量需为正整数' : ''
   if (kind.value === 'limit' && !(px.value > 0)) return '价格需大于 0，最多两位小数'
+  if (mode.value === 'short_sell' && px.value < last.value) return `融券卖出价格不能低于最新价 ${money(last.value)}`
+  if (creditMode.value && n.value > maxQty.value) return `最多${MODE_LABEL[mode.value]} ${fmtQty(maxQty.value)} 股`
+  if (creditMode.value) return ''
   if (side.value === 'buy' && n.value > maxBuy.value) return `可用资金最多买入 ${fmtQty(maxBuy.value)} 股`
   if (side.value === 'sell' && n.value > sellable.value) return `可卖 ${fmtQty(sellable.value)} 股`
   return ''
@@ -127,9 +187,18 @@ const outsideBand = computed(() =>
   (px.value < vcm.value.low || px.value > vcm.value.high))
 
 function fill(frac: number) {
-  const m = side.value === 'buy' ? maxBuy.value : sellable.value
-  qty.value = String(Math.max(0, Math.floor(m * frac)))
+  qty.value = String(Math.max(0, Math.floor(maxQty.value * frac)))
 }
+const modeFact = computed<{ k: string; v: string } | null>(() => {
+  switch (mode.value) {
+    case 'margin_buy': return { k: '可用保证金', v: money(ca.value?.available_margin ?? 0) }
+    case 'short_sell': return { k: '可融券', v: fmtQty(sm.value?.lendable ?? 0) }
+    case 'buy_return': return { k: '欠券', v: fmtQty(owedShares.value) }
+    case 'sell_repay': return { k: '融资欠款', v: money(owedCash.value) }
+    default: return null
+  }
+})
+const submitText = computed(() => (creditMode.value ? MODE_LABEL[mode.value] : side.value === 'buy' ? '买入' : '卖出'))
 
 async function submit() {
   if (busy.value || problem.value || !n.value) return
@@ -140,12 +209,17 @@ async function submit() {
       body: {
         stock_id: props.stock.stock.id, side: side.value, type: kind.value, quantity: n.value,
         price: kind.value === 'limit' ? px.value : null,
+        ...(creditMode.value ? { credit: creditMode.value } : {}),
       },
       headers: { 'Idempotency-Key': `${Date.now()}-${Math.random().toString(36).slice(2)}` },
     }))
     msg.value = describe(r, n.value)
     if (r.order.filled_quantity > 0 || r.order.status === 'open') qty.value = ''
     if (account.orders) account.refreshOrders().catch(() => {})
+    if (creditMode.value || credit.account?.opened) {
+      credit.refresh().catch(() => {})
+      credit.loadMargin(props.stock.stock.id).catch(() => {})
+    }
     emit('placed')
   } catch (e) {
     msg.value = { kind: 'error', text: errorText(e, '无法提交委托') }
@@ -192,8 +266,14 @@ async function cancel(id: number) {
     </div>
     <div class="kinds" role="tablist" aria-label="委托类型">
       <button type="button" role="tab" :aria-selected="kind === 'limit'" @click="kind = 'limit'">限价</button>
-      <button type="button" role="tab" :aria-selected="kind === 'market'" :disabled="auction" @click="kind = 'market'">市价</button>
+      <button type="button" role="tab" :aria-selected="kind === 'market'" :disabled="auction || !!creditMode" @click="kind = 'market'">市价</button>
     </div>
+    <div v-if="modes.length > 1 || modes[0] !== 'plain'" class="modes" role="tablist" aria-label="交易方式">
+      <button v-for="m in modes" :key="m" type="button" role="tab" :aria-selected="mode === m" @click="mode = m">
+        {{ m === 'plain' ? '普通' : MODE_LABEL[m] }}
+      </button>
+    </div>
+    <p v-if="mode === 'short_sell'" class="note">融券卖出价格不低于最新价 <span class="num">{{ money(last) }}</span></p>
     <p v-if="auction" class="note">集合竞价时段只接受限价委托，{{ sess.open }} 统一成交</p>
     <p v-if="vcm" class="note warn">冷静期至 {{ hm(vcm.until) }}，只在 <span class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</span> 之间成交</p>
 
@@ -207,7 +287,7 @@ async function cancel(id: number) {
     <p v-if="impactText" class="note impact num">{{ impactText }}</p>
     <label class="row">数量
       <input class="tinput num" inputmode="numeric" v-model="qty" autocomplete="off" aria-label="数量"
-             :placeholder="side === 'buy' ? `最多 ${fmtQty(maxBuy)}` : `可卖 ${fmtQty(sellable)}`" />
+             :placeholder="side === 'sell' && !creditMode ? `可卖 ${fmtQty(sellable)}` : `最多 ${fmtQty(maxQty)}`" />
     </label>
     <div class="fracs">
       <button type="button" class="tbtn plain num" @click="fill(1 / 4)">1/4</button>
@@ -215,7 +295,8 @@ async function cancel(id: number) {
       <button type="button" class="tbtn plain num" @click="fill(1 / 2)">1/2</button>
       <button type="button" class="tbtn plain" @click="fill(1)">全部</button>
     </div>
-    <div class="kv"><span>{{ side === 'buy' ? '可用资金' : '可卖' }}</span><span class="num v">{{ side === 'buy' ? money(cash) : fmtQty(sellable) }}</span></div>
+    <div v-if="modeFact" class="kv"><span>{{ modeFact.k }}</span><span class="num v">{{ modeFact.v }}</span></div>
+    <div v-else class="kv"><span>{{ side === 'buy' ? '可用资金' : '可卖' }}</span><span class="num v">{{ side === 'buy' ? money(cash) : fmtQty(sellable) }}</span></div>
     <div class="kv" :title="`含佣金${side === 'sell' ? '和印花税' : ''}`"><span>{{ side === 'buy' ? '预计花费' : '预计到账' }}</span><span class="num v">{{ n ? money(total) : '–' }}</span></div>
 
     <p v-if="problem" class="note err" role="alert">{{ problem }}</p>
@@ -224,7 +305,7 @@ async function cancel(id: number) {
     <RouterLink v-if="!session.me" :to="{ name: 'login', query: { next: route.fullPath } }" class="tbtn buy cta">登录后交易</RouterLink>
     <template v-else>
       <button type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || !n || phase === 'closed'">
-        {{ busy ? '提交中…' : side === 'buy' ? '买入' : '卖出' }}
+        {{ busy ? '提交中…' : submitText }}
       </button>
       <p v-if="phase === 'closed'" class="note">休市中。集合竞价 {{ sess.auction_start }}–{{ sess.open }}，连续交易 {{ sessionText(sess.open, sess.close) }}</p>
     </template>
@@ -251,6 +332,9 @@ async function cancel(id: number) {
 .kinds button { border: 0; background: none; padding: 2px 0; color: var(--t-ink-2); }
 .kinds button[aria-selected="true"] { color: var(--t-ink); font-weight: 700; }
 .kinds button:disabled { opacity: 0.4; }
+.modes { display: flex; gap: 6px; flex-wrap: wrap; }
+.modes button { height: 28px; padding: 0 10px; border: 1px solid var(--t-field-border); background: transparent; color: var(--t-ink-2); font-size: 12px; }
+.modes button[aria-selected="true"] { border-color: var(--t-ink); color: var(--t-ink); font-weight: 700; }
 .row { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 8px; font-size: 12px; color: var(--t-ink-2); }
 .tinput { height: 36px; font-size: 16px; }
 .pricebox { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; min-width: 0; }

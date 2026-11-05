@@ -3,10 +3,12 @@ import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import BottomNav from './components/BottomNav.vue'
 import DeskHeader from './components/DeskHeader.vue'
+import MarginBanner from './components/MarginBanner.vue'
 import Toaster from './components/Toaster.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
 import { liveState, reconnectLive, startLive, subscribe, unsubscribe } from './live'
 import { useAccount } from './stores/account'
+import { useCredit } from './stores/credit'
 import { useMarket } from './stores/market'
 import { usePrefs } from './stores/prefs'
 import { useSession } from './stores/session'
@@ -16,6 +18,7 @@ const route = useRoute()
 const session = useSession()
 const market = useMarket()
 useAccount() // applies `me` pushes
+useCredit() // applies `credit` pushes (追保, 强制平仓)
 useStock() // applies `stock:<id>` pushes
 usePrefs() // applies the saved theme
 const bare = computed(() => !!route.meta.bare)
@@ -64,6 +67,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <DeskHeader v-if="!bare" />
+  <MarginBanner v-if="!bare" />
   <RouterView v-slot="{ Component }">
     <component :is="Component" :key="route.path" />
   </RouterView>

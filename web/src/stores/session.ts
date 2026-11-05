@@ -64,6 +64,8 @@ export const useSession = defineStore('session', () => {
   onLive('time', (m) => {
     const s = status.value
     if (!s) return
+    // a new trading day brings a new market sentiment: fetch the whole status once
+    if (s.trading_day !== m.trading_day) void loadStatus()
     s.now = m.now
     s.trading_day = m.trading_day
     s.phase = m.phase

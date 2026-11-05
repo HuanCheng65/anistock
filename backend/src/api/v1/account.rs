@@ -36,6 +36,7 @@ fn restructure_reason(r: &crate::restructure::Refusal) -> (&'static str, String)
         NotPoor(c) => ("not_poor", format!("总资产低于 {} 币才能申请重整", error::coins(*c).trim_end_matches(".00"))),
         ThisSeason => ("this_season", "本季已经重整过一次".into()),
         MarketClosed => ("market_closed", "连续交易时段才能申请重整".into()),
+        Margin => ("margin_debt", "先了结融资融券负债才能申请重整".into()),
         Broken(_) => ("broken", "暂时无法申请重整".into()),
     }
 }
@@ -73,11 +74,16 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         .map_err(sql)?;
     let (username, cash, frozen) = row.ok_or_else(error::unauthenticated)?;
     let stock = stock_value(c, id)?;
-    let total = cash + stock;
+    let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
+    let total = cash + stock - liab;
     let initial = initial_cents(&st.cfg);
     let (factor, base, count, last_day) = player_return(c, id, initial)?;
     let today = st.clock.today();
-    let eligible = crate::restructure::check(total, initial, st.cfg.game.restructure_threshold, last_day.as_deref(), &today)
+    // 融资融券: open debts block restructuring; a default (穿仓) may restructure whatever the season
+    let defaulted = credit_status.as_deref() == Some(crate::margin::DEFAULTED);
+    let season_day = if defaulted { None } else { last_day.clone() };
+    let eligible = crate::restructure::check(total, initial, st.cfg.game.restructure_threshold, season_day.as_deref(), &today)
+        .and_then(|()| if liab > bad_debt { Err(crate::restructure::Refusal::Margin) } else { Ok(()) })
         .and_then(|()| match st.phase() {
             CPhase::Continuous => Ok(()),
             _ => Err(crate::restructure::Refusal::MarketClosed),
@@ -101,12 +107,14 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         frozen_cash: m(frozen),
         available_cash: m(cash - frozen),
         stock_value: m(stock),
+        liabilities: m(liab),
         total_assets: m(total),
         initial_cash: m(initial),
         total_return: crate::restructure::linked_return(factor, base, total),
         dividends: m(divs),
         deposit_rate: r6(deposit_rate(&st.cfg, rate)),
         restructure: RestructureState { count, eligible: eligible.is_ok(), reason, message },
+        credit_status,
     })
 }
 
@@ -132,7 +140,9 @@ pub fn positions(c: &Connection, id: i64) -> R<Vec<Position>> {
                (SELECT COALESCE(SUM(amount),0) FROM ledger WHERE to_id=h.account_id AND company_id=h.company_id AND reason='dividend'),
                (SELECT MIN(acquired_on) FROM lots l WHERE l.account_id=h.account_id AND l.company_id=h.company_id)
              FROM holdings h JOIN companies co ON co.id = h.company_id
-             WHERE h.account_id=? AND h.qty > 0 ORDER BY co.code",
+             WHERE h.account_id=? AND h.qty > 0
+               AND NOT EXISTS (SELECT 1 FROM short_positions s WHERE s.account_id=h.account_id AND s.company_id=h.company_id AND s.qty > 0)
+             ORDER BY co.code",
         )
         .map_err(sql)?;
     let rows = s
@@ -173,6 +183,7 @@ pub async fn portfolio(State(st): State<Arc<AppState>>, Extension(caller): Exten
                 frozen_cash: me.frozen_cash,
                 available_cash: me.available_cash,
                 stock_value: me.stock_value,
+                liabilities: me.liabilities,
                 total_assets: me.total_assets,
             },
             items: positions(c, id)?,
@@ -203,18 +214,19 @@ pub async fn asset_history(
         let mut items: Vec<AssetDay> = {
             let mut s = c
                 .prepare_cached(
-                    "SELECT day, cash, stock_value, return_index, restructured FROM player_days
+                    "SELECT day, cash, stock_value, return_index, restructured, liabilities FROM player_days
                      WHERE account_id=? AND day>=? AND day<=? ORDER BY day",
                 )
                 .map_err(sql)?;
             let rows = s
                 .query_map(rusqlite::params![id, from, to], |r| {
-                    let (cash, sv, idx): (i64, i64, f64) = (r.get(1)?, r.get(2)?, r.get(3)?);
+                    let (cash, sv, idx, liab): (i64, i64, f64, i64) = (r.get(1)?, r.get(2)?, r.get(3)?, r.get(5)?);
                     Ok(AssetDay {
                         trading_day: day(r.get::<_, String>(0)?),
                         cash: m(cash),
                         stock_value: m(sv),
-                        total_assets: m(cash + sv),
+                        liabilities: m(liab),
+                        total_assets: m(cash + sv - liab),
                         return_index: r6(idx),
                         total_return: r6(idx - 1.0),
                         restructured: r.get::<_, i64>(4)? != 0,
@@ -232,6 +244,7 @@ pub async fn asset_history(
                 trading_day: day(today.clone()),
                 cash: me.cash,
                 stock_value: me.stock_value,
+                liabilities: me.liabilities,
                 total_assets: me.total_assets,
                 return_index: r6(me.total_return + 1.0),
                 total_return: r6(me.total_return),
@@ -250,7 +263,7 @@ pub async fn asset_history(
 const ORDER_COLS: &str = "o.id, o.company_id, o.side, o.kind, o.price, o.qty, o.filled, o.frozen, o.status, o.created_at, o.updated_at,
     (SELECT SUM(t.price*t.qty) FROM trades t WHERE (t.buyer_id=o.account_id AND t.buy_order=o.id) OR (t.seller_id=o.account_id AND t.sell_order=o.id)),
     (SELECT SUM(t.qty) FROM trades t WHERE (t.buyer_id=o.account_id AND t.buy_order=o.id) OR (t.seller_id=o.account_id AND t.sell_order=o.id)),
-    c.code, c.title";
+    c.code, c.title, (SELECT mo.mode FROM margin_orders mo WHERE mo.order_id=o.id)";
 
 pub fn order_from_row(st: &AppState, r: &rusqlite::Row) -> rusqlite::Result<Order> {
     let notional: Option<i64> = r.get(11)?;
@@ -274,6 +287,7 @@ pub fn order_from_row(st: &AppState, r: &rusqlite::Row) -> rusqlite::Result<Orde
         trading_day: day(trading_day_of(st, &created)),
         created_at: ts(created),
         updated_at: ts(r.get::<_, String>(10)?),
+        credit: r.get(15)?,
     })
 }
 
@@ -454,6 +468,22 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
     if ph == CPhase::Closed {
         return Err(market_closed(&st));
     }
+    let mode = match body_str(&b, "credit")? {
+        None => None,
+        Some(s) => {
+            let mode = crate::margin::Mode::parse(&s).ok_or_else(|| error::invalid(vec![error::not_allowed("credit")]))?;
+            if mode.side().as_str() != side {
+                return Err(error::invalid(vec![error::field("credit", "not_allowed", "信用委托的买卖方向不对")]));
+            }
+            if kind != "limit" {
+                return Err(E::new(422, "credit_limit_only", "信用委托只接受限价"));
+            }
+            if ph != CPhase::Continuous {
+                return Err(E::new(422, "credit_continuous_only", "信用委托只在连续交易时段接受"));
+            }
+            Some(mode)
+        }
+    };
     let (d, t) = (st.clock.today(), st.clock.ts());
     let order_id = engine(&st, move |ctx| -> R<i64> {
         let e = &mut ctx.engine;
@@ -476,7 +506,7 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
                 )
                 .details(json!({"max": hi, "min": lo})));
             }
-            if side == "buy" {
+            if side == "buy" && mode.is_none() {
                 let need_cash = e.fees.buy_reserve(p, qty);
                 let avail = e.available_cash(me);
                 if avail < need_cash {
@@ -485,7 +515,7 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
                 }
             }
         }
-        if side == "sell" {
+        if side == "sell" && matches!(mode, None | Some(crate::margin::Mode::SellRepay)) {
             let avail = e.available_shares(me, stock_id);
             if avail < qty {
                 return Err(E::new(422, "insufficient_shares", format!("可卖数量不足：可卖 {} 股", error::group(avail)))
@@ -503,9 +533,18 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
             ts: &t,
             match_: ph == CPhase::Continuous,
         };
-        let res = if ph == CPhase::Continuous { e.open_and_place(&req) } else { e.place_order(&req) };
+        let res = match mode {
+            Some(mode) => {
+                if e.state("auction_day") != Some(d.as_str()) {
+                    e.open_market(&d, &t);
+                }
+                e.place_credit(&req, mode)
+            }
+            None if ph == CPhase::Continuous => e.open_and_place(&req),
+            None => e.place_order(&req),
+        };
         e.flush().map_err(error::internal)?;
-        res.map(|p| p.order_id).map_err(|err| order_error(&err.0))
+        res.map(|p| p.order_id).map_err(|err| super::credit::credit_error(&err.0).unwrap_or_else(|| order_error(&err.0)))
     })
     .await??;
     let st2 = st.clone();
@@ -633,6 +672,12 @@ pub fn reason_label(reason: &str) -> String {
         "ipo_refund" => "认购退款",
         "restructure" => "破产重整",
         "trade" => "成交",
+        "margin_loan" => "融资借款",
+        "margin_repay" => "融资还款",
+        "margin_interest" => "融资利息",
+        "lending_fee" => "融券费用",
+        "short_dividend" => "分红补偿",
+        "short_settle" => "融券了结",
         _ => "其他",
     }
     .to_string()
@@ -834,10 +879,11 @@ pub async fn unsubscribe(
 fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i64)>> {
     let mut s = c
         .prepare_cached(
-            "SELECT a.id, a.username, a.cash + COALESCE((SELECT SUM(h.qty*co.last_price) FROM holdings h
-               JOIN companies co ON co.id=h.company_id WHERE h.account_id=a.id), 0),
+            &format!("SELECT a.id, a.username, a.cash + COALESCE((SELECT SUM(h.qty*co.last_price) FROM holdings h
+               JOIN companies co ON co.id=h.company_id WHERE h.account_id=a.id), 0) - {},
                COALESCE(p.return_factor, 1.0), COALESCE(p.segment_base, ?), COALESCE(p.restructures, 0)
              FROM accounts a LEFT JOIN player_returns p ON p.account_id=a.id WHERE a.kind='player' ORDER BY a.id",
+            super::credit::liabilities_expr("a.id")),
         )
         .map_err(sql)?;
     let rows = s

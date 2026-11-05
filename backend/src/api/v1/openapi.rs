@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, bind, market, search, stocks};
+use super::{account, bind, credit, market, search, stocks};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -24,7 +24,7 @@ use super::{account, bind, market, search, stocks};
         stocks::ipos, stocks::ipo_one, account::subscribe, account::unsubscribe,
         account::me, account::portfolio, account::asset_history, account::orders, account::order_one, account::place,
         account::cancel, account::my_trades, account::ledger, account::restructure,
-        account::leaderboard,
+        account::leaderboard, credit::credit, credit::open, credit::repay, credit::stock_margin,
         account::register, account::login, account::logout,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
     ),
@@ -43,7 +43,7 @@ pub struct ApiDoc;
 /// Request bodies: optional fields stay optional.
 const REQUESTS: &[&str] = &[
     "PlaceOrderRequest", "SubscriptionRequest", "RestructureRequest", "RegisterRequest", "LoginRequest",
-    "BindCodeRequest", "RedeemRequest", "WsClientMessage",
+    "BindCodeRequest", "RedeemRequest", "WsClientMessage", "RepayRequest",
 ];
 
 fn require_all(v: &mut Value) {

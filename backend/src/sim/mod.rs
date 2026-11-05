@@ -126,6 +126,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     };
     let tap = TapSink::default();
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
+    e.margin = cfg.margin.clone();
     let params = Params::from_config(cfg)?;
     let last_closed = e.state("last_closed").ok_or("world has no last_closed")?.to_string();
 
@@ -270,6 +271,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut flashes = data.flashes.clone();
     flashes.sort_by_key(|f| f.at);
     let mut fi = 0;
+    // published 热度快讯 (what players see): (company, at, direction)
+    let mut published: Vec<(i64, i64, i8)> = Vec::new();
+    let mut published_keys: HashSet<(i64, u64)> = HashSet::new();
     let mut npc_time = 0.0f64;
     if let Some(b) = &bot {
         rec.watch_account(b.account);
@@ -281,6 +285,8 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let t_open = at_local(day, 8, 45);
         m.refresh_universe(&e, t_open);
         rec.day_start(&e, day);
+        rec.sentiment(day, m.sentiment_of_day(day));
+        let band = m.sentiment_band(day);
         // the trading day, minute by minute (NPCs act inside each minute at their own times)
         let mut t = t_open;
         let t_end = at_local(day, 23, 0);
@@ -296,6 +302,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 m.step_until(&mut e, f.at.max(m.now));
                 if let Some(out) = m.apply_flash(&mut e, cfg, f.company_id, f.episode, f.hours, f.comments, &f.prev, f.at.max(m.now)) {
                     rec.flash(f.company_id, f.at, out.surprise);
+                    if out.surprise.abs() >= m.cfg.flash_news_min && published_keys.insert((f.company_id, f.episode.to_bits())) {
+                        published.push((f.company_id, f.at.max(m.now), if out.surprise > 0.0 { 1 } else { -1 }));
+                    }
                 }
             }
             let tick = std::time::Instant::now();
@@ -311,7 +320,8 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             if s >= 9 * 3600 && s < 23 * 3600 && k >= BOT_START_DAY {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
-                    b.on_minute(&mut e, t, &heat);
+                    let ctx = bots::BotCtx { band, flashes: &published };
+                    b.on_minute(&mut e, t, &heat, &ctx);
                 }
                 if let Some(p) = probe.as_mut() {
                     let heat = |c: i64| m.heat(c);
@@ -320,6 +330,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                         p.sample_impact(&e, &heat);
                     }
                 }
+            }
+            // 融资融券: forced liquidation runs once a minute in continuous trading
+            if s >= 9 * 3600 {
+                e.margin_sweep(&day_of(t), &ts_of(t));
             }
             if (s / 60) % opts.spread_every_min == 0 && s >= 9 * 3600 {
                 rec.sample_spreads(&e, &m, t);
@@ -354,6 +368,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 nature,
                 half_life_h: 24.0,
                 title,
+                change: 0.0,
             };
             if prev_aired == 0 && s.aired > 0 {
                 let ev = mk("premiere", 1, 4.0, Nature::Sentiment, format!("《{}》开播", c.title));
@@ -385,6 +400,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 nature: Nature::Fundamental,
                 half_life_h: 24.0,
                 title: format!("退市预警：《{title}》营收连续偏低，下周日可能退市"),
+                change: 0.0,
             };
             rec.event(&ev);
             m.post_event(&mut e, ev, Some("warning"));
@@ -397,6 +413,8 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         m.fund_flows(&mut e, day, &ts_close);
         m.prune(t_close);
+        // (the live server logs these for restarts; a simulation has nothing to restart)
+        m.fresh.clear();
         rec.after_close(&e, &m, day, &next_day);
         rec.note_info(&inp, &prev, day);
         {
@@ -463,6 +481,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             "return": w as f64 / b.start_cash as f64 - 1.0, "orders": b.trades_placed,
             "transfers": watched.0, "dividends": watched.1,
             "return_ex_transfers": (w - watched.0) as f64 / b.start_cash as f64 - 1.0,
+            "margin": b.mstats,
         })
     });
     let actions: u64 = m.stats.actions.values().sum::<u64>();

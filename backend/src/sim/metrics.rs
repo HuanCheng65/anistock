@@ -42,6 +42,8 @@ pub struct Series {
     pub intraday: Vec<(i64, String, Vec<(i64, f64)>)>,
     /// every stock: (company, group, [(day, close, fair)])
     pub paths: Vec<(i64, String, Vec<(String, i64, i64, i64)>)>,
+    /// market sentiment per day, standard units (empty when the sentiment layer is off)
+    pub sentiment: Vec<f64>,
 }
 
 pub struct Recorder {
@@ -86,6 +88,8 @@ pub struct Recorder {
     first_day: String,
     watch_transfers: i64,
     watch_dividends: i64,
+    /// market sentiment per day (sentiment layer on)
+    sentiment: HashMap<String, f64>,
 }
 
 fn quantile(v: &mut [f64], q: f64) -> f64 {
@@ -131,6 +135,22 @@ fn kurtosis(x: &[f64]) -> f64 {
     m4 / (m2 * m2)
 }
 
+fn pearson(x: &[f64], y: &[f64]) -> f64 {
+    let n = x.len().min(y.len());
+    if n < 3 {
+        return f64::NAN;
+    }
+    let mx = x[..n].iter().sum::<f64>() / n as f64;
+    let my = y[..n].iter().sum::<f64>() / n as f64;
+    let (mut c, mut vx, mut vy) = (0.0, 0.0, 0.0);
+    for i in 0..n {
+        c += (x[i] - mx) * (y[i] - my);
+        vx += (x[i] - mx).powi(2);
+        vy += (y[i] - my).powi(2);
+    }
+    c / (vx * vy).sqrt()
+}
+
 fn sd(x: &[f64]) -> f64 {
     let n = x.len() as f64;
     if n < 2.0 {
@@ -141,8 +161,7 @@ fn sd(x: &[f64]) -> f64 {
 }
 
 fn wealth(e: &Engine, acct: i64) -> i64 {
-    e.account(acct).map_or(0, |a| a.cash)
-        + e.holdings_of(acct).map(|h| h.qty * e.company(h.company_id).map_or(0, |c| c.last_price)).sum::<i64>()
+    e.net_assets(acct)
 }
 
 impl Recorder {
@@ -183,6 +202,7 @@ impl Recorder {
             first_day: String::new(),
             watch_transfers: 0,
             watch_dividends: 0,
+            sentiment: HashMap::new(),
         }
     }
 
@@ -241,6 +261,13 @@ impl Recorder {
             if kind == "flash" && crate::market::day_of(*at) == day {
                 self.info.insert((*c, day.to_string()));
             }
+        }
+    }
+
+    pub fn sentiment(&mut self, day: &str, level: Option<f64>) {
+        if let Some(v) = level {
+            self.sentiment.insert(day.to_string(), v);
+            self.series.sentiment.push(v);
         }
     }
 
@@ -593,6 +620,92 @@ impl Recorder {
             let phi = num / den;
             let half_life = if phi > 0.0 && phi < 1.0 { -(2f64.ln()) / phi.ln() } else { f64::INFINITY };
             let dev_sd = sd(&cs.iter().filter_map(|c| dev.get(c)).flatten().copied().collect::<Vec<_>>());
+            // ---- stylised facts (docs/v2-sentiment.md §4)
+            // short-term reversal at a day: lag-1 autocorrelation of daily returns
+            let rd: Vec<Vec<f64>> = cs.iter().filter_map(|c| daily.get(c)).map(|v| v.iter().map(|x| x.1).collect()).collect();
+            // bounded deviation: quantiles of log(price / value), and the longest run of a stock's days on one
+            // side beyond ±10% (p90 and max over stocks)
+            let mut devs: Vec<f64> = cs.iter().filter_map(|c| dev.get(c)).flatten().copied().collect();
+            let runs: Vec<f64> = cs
+                .iter()
+                .filter_map(|c| dev.get(c))
+                .map(|x| {
+                    let (mut best, mut cur, mut side) = (0usize, 0usize, 0i8);
+                    for v in x {
+                        let sg = if *v > 0.1 { 1 } else if *v < -0.1 { -1 } else { 0 };
+                        cur = if sg != 0 && sg == side { cur + 1 } else if sg != 0 { 1 } else { 0 };
+                        side = sg;
+                        best = best.max(cur);
+                    }
+                    best as f64
+                })
+                .collect();
+            // volume and attention: trades per day against heat, pooled over stock-days and within a stock
+            // (each stock's own means removed); trades on a stock's event days against its other days
+            let (mut vx, mut vy, mut wx, mut wy) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            let mut ev_ratio = Vec::new();
+            for c in &cs {
+                let Some(rows) = self.rows.get(c) else { continue };
+                let pts: Vec<(f64, f64)> =
+                    rows.values().filter(|r| r.heat > 0.0 && r.close > 0).map(|r| (r.heat.ln(), (1.0 + r.trades as f64).ln())).collect();
+                if pts.len() >= 5 {
+                    let mx = pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64;
+                    let my = pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64;
+                    for (x, y) in &pts {
+                        vx.push(*x);
+                        vy.push(*y);
+                        wx.push(x - mx);
+                        wy.push(y - my);
+                    }
+                }
+                let (mut on, mut off) = (Vec::new(), Vec::new());
+                for (d, r) in rows {
+                    if r.close <= 0 {
+                        continue;
+                    }
+                    if event_days.contains(&(*c, d.clone())) { on.push(r.trades as f64) } else { off.push(r.trades as f64) }
+                }
+                if !on.is_empty() && off.len() >= 3 {
+                    let m_off = off.iter().sum::<f64>() / off.len() as f64;
+                    if m_off > 0.0 {
+                        ev_ratio.push(on.iter().sum::<f64>() / on.len() as f64 / m_off);
+                    }
+                }
+            }
+            // market sentiment and mispricing: mean log(price / value) on 火热 days minus on 冷淡 days
+            let cut = 0.67;
+            let (mut hot_dev, mut cold_dev) = (Vec::new(), Vec::new());
+            for c in &cs {
+                if let Some(rows) = self.rows.get(c) {
+                    for (d, r) in rows {
+                        if r.close <= 0 || r.fair <= 0 {
+                            continue;
+                        }
+                        let Some(sv) = self.sentiment.get(d) else { continue };
+                        let x = (r.close as f64 / r.fair as f64).ln();
+                        if *sv > cut {
+                            hot_dev.push(x);
+                        } else if *sv < -cut {
+                            cold_dev.push(x);
+                        }
+                    }
+                }
+            }
+            let mean = |v: &[f64]| if v.is_empty() { f64::NAN } else { v.iter().sum::<f64>() / v.len() as f64 };
+            let stylised = json!({
+                "acf_daily_lag1": acf_pooled(&rd, 1),
+                "acf_daily_lag2": acf_pooled(&rd, 2),
+                "deviation_p05": quantile(&mut devs, 0.05),
+                "deviation_p50": quantile(&mut devs, 0.5),
+                "deviation_p95": quantile(&mut devs, 0.95),
+                "deviation_run_10pct_p90_days": quantile(&mut runs.clone(), 0.9),
+                "deviation_run_10pct_max_days": runs.iter().cloned().fold(0.0, f64::max),
+                "corr_trades_heat_pooled": pearson(&vx, &vy),
+                "corr_trades_heat_within": pearson(&wx, &wy),
+                "trades_event_day_ratio_median": median(ev_ratio.clone()),
+                "deviation_hot_minus_cold_sentiment": mean(&hot_dev) - mean(&cold_dev),
+                "sentiment_days_hot_cold": [hot_dev.len(), cold_dev.len()],
+            });
             let mut sp: Vec<f64> = cs.iter().filter_map(|c| self.spreads.get(c)).flatten().copied().collect();
             let two: (u32, u32) =
                 cs.iter().filter_map(|c| self.two_sided.get(c)).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
@@ -626,6 +739,7 @@ impl Recorder {
                     "spread_median": quantile(&mut sp, 0.5),
                     "spread_p90": quantile(&mut sp, 0.9),
                     "two_sided_share": two.0 as f64 / two.1.max(1) as f64,
+                    "stylised": stylised,
                 }),
             );
         }

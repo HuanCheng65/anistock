@@ -11,6 +11,7 @@ pub mod exchange;
 pub mod inputs;
 pub mod market;
 pub mod ipo;
+pub mod margin;
 pub mod model;
 pub mod npc;
 pub mod pyfmt;

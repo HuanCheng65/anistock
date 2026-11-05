@@ -16,7 +16,22 @@ use crate::api::AppState;
 use crate::config::{hm, next_daily_step, prev_day, Phase};
 
 pub fn spawn(st: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
-    vec![tokio::spawn(npc_loop(st.clone())), tokio::spawn(daily_loop(st.clone()))]
+    vec![tokio::spawn(npc_loop(st.clone())), tokio::spawn(daily_loop(st.clone())), tokio::spawn(margin_loop(st.clone()))]
+}
+
+/// 融资融券 (crate::margin): every 30 seconds of continuous trading, lift covered margin calls and run one
+/// round of every forced liquidation.
+async fn margin_loop(st: Arc<AppState>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        if st.phase() != Phase::Continuous {
+            continue;
+        }
+        let (day, ts) = (st.clock.today(), st.clock.ts());
+        if st.actor.call(move |ctx| ctx.engine.margin_sweep(&day, &ts)).await.is_err() {
+            return;
+        }
+    }
 }
 
 async fn npc_loop(st: Arc<AppState>) {

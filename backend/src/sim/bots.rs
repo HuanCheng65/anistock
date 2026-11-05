@@ -7,6 +7,10 @@ use crate::engine::{Engine, NewOrder};
 use crate::exchange::cooling;
 use crate::market::{day_of, local, ts_of};
 
+/// 融资融券 bots (docs/v2-margin.md §9)
+#[path = "margin_bots.rs"]
+pub mod margin;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BotKind {
     /// buy every listed stock equally on day one, hold (the baseline)
@@ -59,10 +63,32 @@ pub enum BotKind {
     /// buy each stock the evening before its finale and sell it 8 days after (once the finale week and the
     /// at-finale sequel announcement are known): is the move across the finale predictable?
     FinaleFlip,
+    /// 融资融券: buy every stock equally with own cash, then keep all the available margin in financed buys
+    LeverHold,
+    /// 融资融券: short the five stocks priced furthest over their public value, cover at the value
+    ShortRich,
+    /// 融资融券: short the highest expected dividend yields on Sunday evening, cover on Monday
+    ShortDividend,
+    /// sentiment layer (docs/v2-sentiment.md §3): after each published 热度快讯, buy the stock if it was bad
+    /// news (betting on an over-reaction) and sell a day later
+    FadeFlash,
+    /// after each published good-news 热度快讯, buy the stock and sell a day later (betting on under-reaction)
+    RideFlash,
+    /// every morning hold the five stocks that rose most over the last k sessions (k = 5 and 1)
+    MomentumK,
+    Momentum1,
+    /// every morning hold the five stocks that fell most over the last k sessions (k = 5 and 1)
+    ContrarianK,
+    Contrarian1,
+    /// hold the market (equal weight), sell everything when the sentiment band turns 火热, buy back when it
+    /// turns 冷淡
+    SentimentTimer,
+    /// buy each new show the evening before its premiere, sell the evening after
+    PremiereRush,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 21] {
+    pub fn all() -> [BotKind; 32] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -85,6 +111,17 @@ impl BotKind {
             BotKind::HoldHottest,
             BotKind::FinaleHold,
             BotKind::FinaleFlip,
+            BotKind::LeverHold,
+            BotKind::ShortRich,
+            BotKind::ShortDividend,
+            BotKind::FadeFlash,
+            BotKind::RideFlash,
+            BotKind::MomentumK,
+            BotKind::Momentum1,
+            BotKind::ContrarianK,
+            BotKind::Contrarian1,
+            BotKind::SentimentTimer,
+            BotKind::PremiereRush,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -110,6 +147,17 @@ impl BotKind {
             BotKind::HoldHottest => "hold_hottest",
             BotKind::FinaleHold => "finale_hold",
             BotKind::FinaleFlip => "finale_flip",
+            BotKind::LeverHold => "lever_hold",
+            BotKind::ShortRich => "short_rich",
+            BotKind::ShortDividend => "short_dividend",
+            BotKind::FadeFlash => "fade_flash",
+            BotKind::RideFlash => "ride_flash",
+            BotKind::MomentumK => "momentum_k",
+            BotKind::Momentum1 => "momentum_1",
+            BotKind::ContrarianK => "contrarian_k",
+            BotKind::Contrarian1 => "contrarian_1",
+            BotKind::SentimentTimer => "sentiment_timer",
+            BotKind::PremiereRush => "premiere_rush",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -126,6 +174,14 @@ impl BotKind {
     }
 }
 
+/// What a bot can see besides the engine: the public sentiment band of the day and the published 热度快讯.
+pub struct BotCtx<'a> {
+    /// -1 冷淡, 0 平稳, 1 火热 (None: the sentiment layer is off)
+    pub band: Option<i8>,
+    /// published 热度快讯 so far: (company, unix seconds, direction)
+    pub flashes: &'a [(i64, i64, i8)],
+}
+
 pub struct Bot {
     pub kind: BotKind,
     pub account: i64,
@@ -136,10 +192,18 @@ pub struct Bot {
     since: i64,
     sold: Vec<i64>,
     /// the finale bots' positions: (company, day number to sell on)
-    exits: Vec<(i64, i64)>,
+    finale_exits: Vec<(i64, i64)>,
     pub trades_placed: u64,
+    /// positions to close at a time: (company, unix seconds)
+    exits: Vec<(i64, i64)>,
+    /// published flashes already looked at
+    flashes_seen: usize,
+    /// each stock's price at the start of every session (the last session's close), oldest first
+    opens: std::collections::HashMap<i64, Vec<i64>>,
     /// the fan bots' foresight: (company, day) -> the hidden value at that day's open, cents
     pub foresight: Option<std::sync::Arc<std::collections::HashMap<(i64, String), (i64, i64)>>>,
+    /// drawdown, liabilities, margin calls (sampled by the 融资融券 bots)
+    pub mstats: margin::MStats,
 }
 
 fn place(e: &mut Engine, acct: i64, c: i64, side: &str, kind: &str, qty: i64, price: Option<i64>, t: i64) -> bool {
@@ -180,24 +244,184 @@ fn affordable(e: &Engine, budget: i64, price: i64) -> i64 {
 
 impl Bot {
     pub fn new(kind: BotKind, account: i64, start_cash: i64) -> Bot {
-        Bot { kind, account, start_cash, bought_initial: false, target: None, state: 0, since: 0, sold: Vec::new(), exits: Vec::new(), trades_placed: 0, foresight: None }
+        Bot {
+            kind,
+            account,
+            start_cash,
+            bought_initial: false,
+            target: None,
+            state: 0,
+            since: 0,
+            sold: Vec::new(),
+            trades_placed: 0,
+            exits: Vec::new(),
+            finale_exits: Vec::new(),
+            flashes_seen: 0,
+            opens: Default::default(),
+            foresight: None,
+            mstats: Default::default(),
+        }
     }
 
     /// Wealth at last prices, cents.
     pub fn wealth(&self, e: &Engine) -> i64 {
-        let cash = e.account(self.account).map_or(0, |a| a.cash);
-        cash + e
-            .holdings_of(self.account)
-            .map(|h| h.qty * e.company(h.company_id).map_or(0, |c| c.last_price))
-            .sum::<i64>()
+        e.net_assets(self.account)
+    }
+
+    /// Buy up to `budget` cents of `c` (limit 0.5% over the last price).
+    fn buy(&mut self, e: &mut Engine, c: i64, budget: i64, t: i64) {
+        let Some(p) = e.company(c).filter(|x| x.status == "listed").map(|x| x.last_price).filter(|p| *p > 0) else { return };
+        let lim = p * 1005 / 1000 + 1;
+        let q = affordable(e, budget.min(e.available_cash(self.account)), lim);
+        if place(e, self.account, c, "buy", "limit", q, Some(lim), t) {
+            self.trades_placed += 1;
+        }
+    }
+
+    /// Sell all of `c` (limit 1% under the last price).
+    fn sell_all(&mut self, e: &mut Engine, c: i64, t: i64) {
+        e.cancel_all(self.account, c, &ts_of(t));
+        let free = e.available_shares(self.account, c);
+        let Some(p) = e.company(c).filter(|x| x.status == "listed").map(|x| x.last_price) else { return };
+        if place(e, self.account, c, "sell", "limit", free, Some((p * 99 / 100).max(1)), t) {
+            self.trades_placed += 1;
+        }
+    }
+
+    /// Close the positions whose time has come (retried every minute until nothing is left).
+    fn run_exits(&mut self, e: &mut Engine, t: i64) {
+        let due: Vec<i64> = self.exits.iter().filter(|x| t >= x.1).map(|x| x.0).collect();
+        for c in &due {
+            let left = e.holding(self.account, *c).map_or(0, |h| h.qty);
+            if left > 0 && (t / 60) % 10 == 0 {
+                self.sell_all(e, *c, t);
+            }
+        }
+        self.exits.retain(|x| t < x.1 || e.holding(self.account, x.0).is_some_and(|h| h.qty > 0));
     }
 
     /// Called once per simulated minute during continuous trading.
-    pub fn on_minute(&mut self, e: &mut Engine, t: i64, heat: &dyn Fn(i64) -> f64) {
+    pub fn on_minute(&mut self, e: &mut Engine, t: i64, heat: &dyn Fn(i64) -> f64, ctx: &BotCtx) {
         let (_, s) = local(t);
         let acct = self.account;
         let ts = ts_of(t);
+        if s % 1800 == 0 {
+            self.mstats.sample(e, acct);
+        }
+        if s == 9 * 3600 {
+            // the price at the open is the last session's close
+            for c in e.companies().filter(|c| c.status == "listed" && c.last_price > 0) {
+                self.opens.entry(c.id).or_default().push(c.last_price);
+            }
+        }
         match self.kind {
+            BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
+            BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
+                if !self.exits.is_empty() {
+                    self.run_exits(e, t);
+                }
+                let wealth = self.wealth(e);
+                if self.kind == BotKind::PremiereRush {
+                    // 20:00: every show premiering tomorrow (its first air day)
+                    if s != 20 * 3600 {
+                        return;
+                    }
+                    let today = crate::vclose::day_no(&day_of(t)).unwrap_or(0);
+                    let new: Vec<(i64, i64)> = e
+                        .companies()
+                        .filter(|c| c.status == "listed" && crate::vclose::day_no(&c.first_air) == Some(today + 1))
+                        .map(|c| (c.id, crate::vclose::day_no(&c.first_air).unwrap_or(today + 1)))
+                        .collect();
+                    for (c, first) in new {
+                        self.buy(e, c, wealth / 4, t);
+                        // sell the evening after the premiere day
+                        let exit_day = chrono::NaiveDate::from_num_days_from_ce_opt((first + 1) as i32)
+                            .map(|d| d.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default();
+                        if !exit_day.is_empty() {
+                            self.exits.push((c, crate::market::at_local(&exit_day, 21, 0)));
+                        }
+                    }
+                    return;
+                }
+                while self.flashes_seen < ctx.flashes.len() {
+                    let (c, _, d) = ctx.flashes[self.flashes_seen];
+                    self.flashes_seen += 1;
+                    let want = if self.kind == BotKind::RideFlash { d > 0 } else { d < 0 };
+                    if want && !self.exits.iter().any(|x| x.0 == c) {
+                        self.buy(e, c, wealth / 5, t);
+                        self.exits.push((c, t + 86_400));
+                    }
+                }
+            }
+            BotKind::MomentumK | BotKind::Momentum1 | BotKind::ContrarianK | BotKind::Contrarian1 => {
+                if s != 10 * 3600 {
+                    return;
+                }
+                let k = if matches!(self.kind, BotKind::MomentumK | BotKind::ContrarianK) { 5 } else { 1 };
+                let up = matches!(self.kind, BotKind::MomentumK | BotKind::Momentum1);
+                // return over the last k sessions (open to open); stocks under 1 币 are left out (a tick is
+                // a large share of the price)
+                let mut r: Vec<(f64, i64)> = e
+                    .companies()
+                    .filter(|c| c.status == "listed" && c.last_price >= 100)
+                    .filter_map(|c| {
+                        let o = self.opens.get(&c.id)?;
+                        (o.len() > k).then(|| (o[o.len() - 1] as f64 / o[o.len() - 1 - k].max(1) as f64 - 1.0, c.id))
+                    })
+                    .collect();
+                if r.len() < 10 {
+                    return;
+                }
+                r.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
+                if !up {
+                    r.reverse();
+                }
+                let pick: Vec<i64> = r.iter().take(5).map(|x| x.1).collect();
+                let held: Vec<i64> = e.holdings_of(acct).filter(|h| h.qty > 0).map(|h| h.company_id).collect();
+                for c in held {
+                    if !pick.contains(&c) {
+                        self.sell_all(e, c, t);
+                    }
+                }
+                let per = self.wealth(e) / 5;
+                for c in pick {
+                    let p = e.company(c).map_or(0, |x| x.last_price);
+                    let have = e.holding(acct, c).map_or(0, |h| h.qty) * p;
+                    if have < per * 8 / 10 {
+                        e.cancel_all(acct, c, &ts);
+                        self.buy(e, c, per - have, t);
+                    }
+                }
+            }
+            BotKind::SentimentTimer => {
+                // 10:00 each day: in the market (equal weight) unless the band was 火热; back in at 冷淡
+                if s != 10 * 3600 {
+                    return;
+                }
+                let Some(band) = ctx.band else { return };
+                if band > 0 && self.state != 1 {
+                    let held: Vec<i64> = e.holdings_of(acct).filter(|h| h.qty > 0).map(|h| h.company_id).collect();
+                    for c in held {
+                        self.sell_all(e, c, t);
+                    }
+                    self.state = 1;
+                } else if (band < 0 || !self.bought_initial) && band <= 0 {
+                    // (re)build: anything under 80% of its equal share
+                    self.state = 0;
+                    self.bought_initial = true;
+                    let listed: Vec<i64> = e.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+                    let per = self.wealth(e) / listed.len().max(1) as i64;
+                    for c in listed {
+                        let p = e.company(c).map_or(0, |x| x.last_price);
+                        let have = e.holding(acct, c).map_or(0, |h| h.qty) * p;
+                        if have < per * 8 / 10 {
+                            e.cancel_all(acct, c, &ts);
+                            self.buy(e, c, per - have, t);
+                        }
+                    }
+                }
+            }
             BotKind::AirCalendar | BotKind::AirEarly | BotKind::ExDividend if self.bought_initial => {
                 let (d, _) = local(t);
                 let today = crate::vclose::day_no(&day_of(t)).unwrap_or(0);
@@ -554,7 +778,7 @@ impl Bot {
                         let Some(eps) = e.company(c).and_then(|x| x.episodes) else { continue };
                         let Some(&last) = air.last() else { continue };
                         let fin = last + 7 * (eps - air.len() as i64);
-                        if fin != today + 1 || self.exits.iter().any(|x| x.0 == c) {
+                        if fin != today + 1 || self.finale_exits.iter().any(|x| x.0 == c) {
                             continue;
                         }
                         let p = e.company(c).unwrap().last_price;
@@ -562,18 +786,18 @@ impl Bot {
                         let q = affordable(e, (self.start_cash / 10).min(e.available_cash(acct)), lim);
                         if place(e, acct, c, "buy", "limit", q, Some(lim), t) {
                             self.trades_placed += 1;
-                            self.exits.push((c, if self.kind == BotKind::FinaleFlip { fin + 8 } else { i64::MAX }));
+                            self.finale_exits.push((c, if self.kind == BotKind::FinaleFlip { fin + 8 } else { i64::MAX }));
                         }
                     }
                 } else if s == 9 * 3600 + 1800 {
-                    let due: Vec<i64> = self.exits.iter().filter(|x| x.1 <= today).map(|x| x.0).collect();
+                    let due: Vec<i64> = self.finale_exits.iter().filter(|x| x.1 <= today).map(|x| x.0).collect();
                     for c in due {
                         let q = e.holding(acct, c).map_or(0, |h| h.qty - h.qty_frozen);
                         let p = e.company(c).map_or(1, |x| x.last_price);
                         if q > 0 && place(e, acct, c, "sell", "limit", q, Some((p * 99 / 100).max(1)), t) {
                             self.trades_placed += 1;
                         }
-                        self.exits.retain(|x| x.0 != c);
+                        self.finale_exits.retain(|x| x.0 != c);
                     }
                 }
             }

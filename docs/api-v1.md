@@ -252,7 +252,26 @@
 | 422 | `ipo_not_open` | 不在认购期（认购时间是 2026-11-06 至 2026-11-09） | `sub_start`、`sub_end` |
 | 422 | `ipo_closed` | 认购已截止，无法撤回 | — |
 | 422 | `bad_invite` | 邀请码不正确，可以向社团管理员索取 | — |
-| 422 | `restructure_not_eligible` | 总资产低于 10,000 币才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed`，`threshold` |
+| 422 | `restructure_not_eligible` | 总资产低于 10,000 币才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
+| 409 | `credit_open` | 信用账户已经开通 | — |
+| 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 币才能开通 / 穿仓后需要先申请重整 | — |
+| 422 | `credit_not_open` | 尚未开通信用账户 | — |
+| 422 | `credit_defaulted` | 信用账户已穿仓 | — |
+| 422 | `credit_limit_only` | 信用委托只接受限价 | — |
+| 422 | `credit_continuous_only` | 信用委托只在连续交易时段接受 | — |
+| 422 | `margin_call_active` | 追保或强制平仓期间不能新增融资融券 | — |
+| 422 | `not_marginable` | 这支股票不是融资融券标的 | — |
+| 422 | `insufficient_margin` | 可用保证金不足 | — |
+| 422 | `financing_cap` | 这支股票的融资额度已满 | — |
+| 422 | `lending_pool_empty` | 可融券数量不足：最多 120 股 | — |
+| 422 | `short_price_rule` | 融券卖出价格不能低于最新价 5.21 | — |
+| 422 | `concentration` | 单支股票的融资融券不能超过净资产 | — |
+| 422 | `holds_long` | 持有这支股票时不能融券卖出 | — |
+| 422 | `has_short` | 欠这支股票的券时，买入请用买券还券 | — |
+| 422 | `no_debt` | 没有融资欠款 | — |
+| 422 | `no_short` | 没有这支股票的融券负债 | — |
+| 422 | `return_too_many` | 还券数量超过欠券：最多 80 股 | — |
+| 422 | `liquidating` | 强制平仓期间不能买入 | — |
 | 422 | `bind_code_invalid` | 绑定码不正确或已过期 | — |
 | 429 | `rate_limited` | 操作太频繁，稍后重试 | `retry_after`（秒） |
 | 500 | `internal` | 服务器暂时无法响应，稍后重试 | — |
@@ -606,9 +625,11 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "last_closed_day": "2026-11-05",
   "launched_on": "2026-11-04",
   "policy_rate": 0.03,
-  "deposit_rate": 0.02
+  "deposit_rate": 0.02,
+  "sentiment": "neutral"
 }
 ```
+- `sentiment`：当天的市场情绪档位（封闭枚举）`cold` 冷淡 / `neutral` 平稳 / `hot` 火热，交易日内不变；NPC 市场或情绪层未开启时为 null。只给档位，不给数值（docs/v2-sentiment.md）。
 - `phase_ends_at`、`next_phase`：当前阶段何时结束、之后是什么。休市时 `phase_ends_at` = `next_open_at`。开发开关 `ANISTOCK_ALWAYS_OPEN` 下两者为 null。
 - `next_open_at`：下一次集合竞价开始的时间（交易中时也给出，方便显示“下次开盘”）。
 - 旧字段 `trading`（布尔）删除，用 `phase != "closed"`；`day` 改名 `trading_day`；`auction_start`/`open`/`close`/`rollover`/`rules` 移到 `/rules`。
@@ -978,11 +999,14 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "dividends": 12800,
   "deposit_rate": 0.02,
   "restructure": {"count": 0, "eligible": false, "reason": "not_poor",
-                  "message": "总资产低于 10,000 币才能申请重整"}
+                  "message": "总资产低于 10,000 币才能申请重整"},
+  "liabilities": 0, "credit_status": null
 }
 ```
+- `total_assets` 是**净资产**：现金 + 持仓市值 − `liabilities`（融资融券负债，§4.5.11）。没有开通信用账户时负债为 0，和以前的总资产相同。排行榜、资产曲线、重整门槛都用它。
+- `credit_status`：信用账户状态 `normal` / `call`（追保）/ `liquidating`（强制平仓中）/ `defaulted`（已穿仓）；未开通为 null。
 - `total_return`：**链接收益率**（时间加权），玩家没重整过时就是 `总资产 / 初始资金 − 1`（旧 `return_pct`）。
-- `restructure`：来自开发中的破产重整（`restructures`、`can_restructure`、`restructure_reason` 三个旧字段收成一个对象）。`reason` 是 `not_poor` / `this_season` / `market_closed` / null（可以申请时），`message` 是对应文案。
+- `restructure`：来自开发中的破产重整（`restructures`、`can_restructure`、`restructure_reason` 三个旧字段收成一个对象）。`reason` 是 `not_poor` / `this_season` / `market_closed` / `margin_debt`（有融资融券负债）/ null（可以申请时），`message` 是对应文案。穿仓后不受每季一次的限制。
 - 字段改名：`frozen` → `frozen_cash`，`available` → `available_cash`，`total` → `total_assets`，`initial` → `initial_cash`（且从浮点币改为分）。
 
 #### 4.5.2 `GET /api/v1/me/portfolio`
@@ -999,7 +1023,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   ]
 }
 ```
-按 `code` 排序，只含数量大于 0 的持仓。
+按 `code` 排序，只含数量大于 0 的持仓（融券借来、还没卖出的股票不算持仓）。`summary.liabilities` 是融资融券负债，`summary.total_assets` 是净资产。
 
 #### 4.5.3 `GET /api/v1/me/orders`
 
@@ -1030,6 +1054,17 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 }
 ```
 `fills` 是这次下单当场撮合的成交（集合竞价阶段为空）。旧接口返回 `{order_id, status, filled, avg_price}`，前端要再请求委托列表；现在直接给出完整委托。
+
+**信用委托**（融资融券，docs/v2-margin.md）：加 `"credit": "<类型>"`，只接受限价、只在连续交易时段：
+
+| `credit` | `side` | 说明 |
+|---|---|---|
+| `margin_buy` | buy | 融资买入：下单时借出 `价格 × 数量 + 佣金 + 每股 1 分`，冻结在委托里；没用完的部分在委托结束时还回 |
+| `short_sell` | sell | 融券卖出：价格不低于最新价；下单时从制作委员会借券，成交所得冻结；没卖出的股票在委托结束时还回 |
+| `sell_repay` | sell | 卖券还款：卖出持仓，所得先还这支股票的融资欠款（先利息后本金），再还其他 |
+| `buy_return` | buy | 买券还券：先用冻结的融券卖出所得，不够再用可用资金；买到的股票直接还给出借人 |
+
+`Order.credit` 是委托的类型，普通委托为 null。信用委托另外可能返回的错误见 §2.9（`credit_*`、`insufficient_margin` 等）。
 
 错误：`unauthenticated`、`invalid_request`、`stock_not_found`、`stock_not_tradable`、`market_closed`、`auction_limit_only`、`price_required`、`price_out_of_range`、`insufficient_cash`、`insufficient_shares`、`rate_limited`。
 
@@ -1064,7 +1099,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 ], "next_cursor": "c_120290", "has_more": true}
 ```
 - `amount` 有正负：收入为正，支出为负（与旧接口相同）。
-- `reason`（开放枚举），玩家可能看到的：`grant`（初始资金）、`dividend`（分红）、`dividend_tax`（股息税）、`commission`（佣金）、`stamp_duty`（印花税）、`interest`（存款利息）、`transfer`（财政补贴）、`delisting`（退市返还）、`ipo`（新股认购缴款）、`ipo_refund`（认购退款）、`restructure`（破产重整，开发中，名称以实现为准）。括号里就是服务器给出的 `reason_label`（已决定，Q8）：显示用的中文标签，机器人和网页共用一份文案，前端的 `LEDGER_REASON` 删除。客户端按 `reason` 分支，按 `reason_label` 显示；遇到不认识的 `reason` 也能显示标签。
+- `reason`（开放枚举），玩家可能看到的：`grant`（初始资金）、`dividend`（分红）、`dividend_tax`（股息税）、`commission`（佣金）、`stamp_duty`（印花税）、`interest`（存款利息）、`transfer`（财政补贴）、`delisting`（退市返还）、`ipo`（新股认购缴款）、`ipo_refund`（认购退款）、`restructure`（破产重整，开发中，名称以实现为准）、`margin_loan`（融资借款）、`margin_repay`（融资还款）、`margin_interest`（融资利息）、`lending_fee`（融券费用）、`short_dividend`（分红补偿）、`short_settle`（融券了结）。括号里就是服务器给出的 `reason_label`（已决定，Q8）：显示用的中文标签，机器人和网页共用一份文案，前端的 `LEDGER_REASON` 删除。客户端按 `reason` 分支，按 `reason_label` 显示；遇到不认识的 `reason` 也能显示标签。
 - `npc_*`、`revenue`、`operating_cost`、`corp_tax`、`production_fee` 只发生在非玩家账户之间，玩家的流水里不会出现。
 
 #### 4.5.9 `POST /api/v1/me/restructure`
@@ -1111,6 +1146,17 @@ CREATE TABLE player_days (
 - **写入**：日结的最后一步（价格、分红、利息、转移支付都已入账之后），每个玩家一行，和日结同一个事务。日结补跑时按 `last_closed` 幂等。
 - **回填**：迁移时从开服日起逐日重放每个玩家的成交和流水，用当天的收盘价（`candles`）计算持仓市值，写出历史各行；最后一天的结果必须等于当前账户状态，否则回填中止并只保留从迁移当天开始的快照（日志说明原因）。重整开始之前（V4 之前）的历史没有断点，`return_index = 总资产 / 初始资金`。
 - 新注册的玩家从注册当天的日结开始有记录。
+- V7 增加 `liabilities` 列（日结时的融资融券负债）；`AssetDay.liabilities`，`total_assets = cash + stock_value − liabilities`。
+
+#### 4.5.11 融资融券
+
+规则见 `docs/v2-margin.md`。
+
+- `GET /api/v1/me/credit` → `{"credit": <CreditAccount>}`：是否开通（`opened`）、未开通时能否开通（`can_open`、`open_message`）、状态、追保日、净资产、毛资产、负债及其构成（`debt`、`interest`、`short_value`、`fees`、`bad_debt`）、冻结的融券卖出所得（`locked`）、可用保证金、维持担保比例（没有负债时为 null）、融资利率、融券费率、各条线（`margin_ratio`、`call_ratio`、`liquidate_ratio`、`target_ratio`）、`debts`（每支股票的融资本金和未付利息）、`shorts`（每支股票的欠券数量、市值、冻结所得、未付费用）。
+- `POST /api/v1/me/credit`：开通，200 返回 `{"credit": ...}`。错误：`credit_open`（409）、`credit_not_eligible`。
+- `POST /api/v1/me/credit/repay`：直接还款，请求 `{"amount": 500000}`（省略则用可用资金还清全部），先还利息再还本金。200：`{"paid": 500000, "credit": ...}`。错误：`no_debt`、`insufficient_cash`、`market_closed`。
+- `GET /api/v1/stocks/{id}/margin` → `StockMargin`：是否标的（`eligible`，否则 `reason`：`new_listing` / `penny` / `delisting` / `not_listed`）、折算率、可融券数量、剩余融资额度、融资利率、融券费率。公开接口。
+- WebSocket `me` 主题的 `credit` 消息（§5.3.5）：状态变化时推送。
 
 ---
 
@@ -1269,6 +1315,7 @@ v1（三种消息共用 `me` 主题的 `seq`）：
 {"t": "fill", "seq": 413, "trade": <与 /me/trades 的一项相同>}
 {"t": "cash", "seq": 414, "cash": 6230000, "frozen_cash": 884000, "available_cash": 5346000}
 ```
+- 融资融券（§4.5.11）：信用账户状态变化（追保、强制平仓、穿仓、恢复正常、重整后关闭）时推 `{"t": "credit", "seq": 415, "status": "call", "call_day": "2026-11-06"}`，`status` 为 null 表示信用账户已关闭。
 - `order` 去掉多余的 `open` 布尔（看 `status`）。`fill` 的内容改成和 REST 成交记录同一个对象，客户端可以直接插进成交列表。
 - 持仓数量的变化不单独推送：客户端收到 `fill` 后自己更新，或者重新请求 `/me/portfolio`。
 

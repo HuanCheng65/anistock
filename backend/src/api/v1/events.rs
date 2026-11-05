@@ -187,7 +187,7 @@ pub fn leaderboard_weekly(c: &Connection, d: &str) -> R<Value> {
     let monday = (end - chrono::Duration::days(6)).format("%Y-%m-%d").to_string();
     let mut s = c
         .prepare(
-            "SELECT a.id, a.username, e.cash + e.stock_value, e.return_index,
+            "SELECT a.id, a.username, e.cash + e.stock_value - e.liabilities, e.return_index,
                (SELECT return_index FROM player_days b WHERE b.account_id=a.id AND b.day<?1 ORDER BY b.day DESC LIMIT 1),
                COALESCE((SELECT restructures FROM player_returns p WHERE p.account_id=a.id), 0)
              FROM accounts a JOIN player_days e ON e.account_id=a.id AND e.day=?2 WHERE a.kind='player'",

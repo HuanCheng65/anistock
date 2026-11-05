@@ -219,6 +219,8 @@ pub struct Snapshot {
     pub company_works: BTreeMap<i64, i64>,
     /// players who have restructured (table player_returns, migration V4)
     pub player_returns: BTreeMap<i64, PlayerReturn>,
+    /// 融资融券 (migration V7; empty for older databases)
+    pub margin: crate::margin::MarginState,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -394,6 +396,7 @@ pub fn load(conn: &Connection) -> DbResult<Snapshot> {
         let p = p?;
         s.player_returns.insert(p.account_id, p);
     }
+    s.margin = crate::margin::load(conn)?;
     s.max_order_id = max_id(conn, "orders")?;
     s.max_trade_id = max_id(conn, "trades")?;
     s.max_ledger_id = max_id(conn, "ledger")?;

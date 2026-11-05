@@ -38,6 +38,11 @@ const idx = computed(() => market.indices?.items ?? [])
 const main = computed(() => idx.value.find((i) => i.key === 'all') ?? null)
 const subs = computed(() => idx.value.filter((i) => i.key !== 'all'))
 const spark = computed(() => (main.value?.series ?? []).slice(-30).map((p) => p.value))
+const MOOD = { cold: '冷淡', neutral: '平稳', hot: '火热' } as const
+const mood = computed(() => {
+  const s = session.status?.sentiment
+  return s ? MOOD[s] : null
+})
 const breadth = computed(() => {
   const s = market.stocks ?? []
   return {
@@ -128,6 +133,10 @@ function remember(key: string, label: string, rows: Quote[]) {
           <div v-for="i in subs" :key="i.key" class="sub">
             <span class="lbl">{{ i.name }}</span>
             <span class="num v">{{ num(i.value) }}&nbsp;&nbsp;<span :class="dir(i.change)">{{ pct(i.change) }}</span></span>
+          </div>
+          <div v-if="mood" class="sub mood">
+            <span class="lbl">市场情绪</span>
+            <span class="v">{{ mood }}</span>
           </div>
         </div>
         <div v-if="market.stocks" class="breadth" role="img" :aria-label="`上涨 ${breadth.up} 支，平盘 ${breadth.flat} 支，下跌 ${breadth.down} 支`">
@@ -282,9 +291,9 @@ function remember(key: string, label: string, rows: Quote[]) {
 .level { font-size: 38px; font-weight: 600; line-height: 1.05; letter-spacing: -0.02em; }
 .delta { font-size: 15px; font-weight: 500; }
 .subs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px; border-top: 1px solid var(--hair); }
-.sub { padding: 10px 0; display: flex; flex-direction: column; gap: 2px; }
-.sub:first-child { border-right: 1px solid var(--hair); }
-.sub:nth-child(2) { padding-left: 14px; }
+.sub { padding: 10px 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sub:nth-child(2) { padding-left: 14px; border-left: 1px solid var(--hair); }
+.sub.mood { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: baseline; padding-left: 0; border-left: 0; border-top: 1px solid var(--hair); }
 .v { font-size: 15px; }
 .breadth { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
 .bar { display: flex; height: 6px; gap: 2px; }
@@ -321,6 +330,8 @@ function remember(key: string, label: string, rows: Quote[]) {
   .mod .modhead { border-bottom-color: var(--rule); }
   .phone-hide { display: block; }
   .m-index { grid-column: span 5; }
+  .subs { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .sub.mood { grid-column: auto; flex-direction: column; justify-content: flex-start; align-items: stretch; padding-left: 14px; border-left: 1px solid var(--hair); border-top: 0; }
   .m-index .modhead { margin-bottom: 14px; }
   .m-watch { grid-column: span 4; }
   .m-news { grid-column: span 3; }

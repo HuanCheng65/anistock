@@ -389,3 +389,48 @@ async fn closed_market_and_rate_limits() {
     err(&r, 429, "rate_limited");
     assert!(r.headers.get("retry-after").is_some());
 }
+
+#[tokio::test]
+async fn credit_account_and_credit_orders() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let c = Some(ck.as_str());
+    let cr = a.checked("/api/v1/me/credit", "/api/v1/me/credit", c).await;
+    assert_eq!(cr["credit"]["opened"], false);
+    assert_eq!(cr["credit"]["can_open"], false, "registered today");
+    err(&a.req("POST", "/api/v1/me/credit", None, &h).await, 422, "credit_not_eligible");
+    a.st.actor.call(|ctx| ctx.engine.margin.min_days = 0).await.unwrap();
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/credit", 200), &r.json, "open");
+    assert_eq!(r.json["credit"]["status"], "normal");
+    err(&a.req("POST", "/api/v1/me/credit", None, &h).await, 409, "credit_open");
+    let sm = a.checked("/api/v1/stocks/{id}/margin", "/api/v1/stocks/1/margin", None).await;
+    assert_eq!(sm["eligible"], true);
+
+    let place = |b: Value| a.req("POST", "/api/v1/me/orders", Some(b), &h);
+    let r = place(json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 500, "quantity": 10, "credit": "margin_buy"})).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/orders", 201), &r.json, "margin buy");
+    assert_eq!(r.json["order"]["credit"], "margin_buy");
+    let id = r.json["order"]["id"].as_i64().unwrap();
+    let cr = a.checked("/api/v1/me/credit", "/api/v1/me/credit", c).await;
+    assert_eq!(cr["credit"]["debt"], 5_012, "drawn for the resting order");
+    let me = a.checked("/api/v1/me", "/api/v1/me", c).await;
+    assert_eq!(me["liabilities"], 5_012);
+    assert_eq!(me["credit_status"], "normal");
+    // cancelling repays the loan
+    a.req("DELETE", &format!("/api/v1/me/orders/{id}"), None, &h).await;
+    let cr = a.checked("/api/v1/me/credit", "/api/v1/me/credit", c).await;
+    assert_eq!(cr["credit"]["debt"], 0);
+    err(&a.req("POST", "/api/v1/me/credit/repay", None, &h).await, 422, "no_debt");
+    // alice holds the stock: no short sale of it
+    err(&place(json!({"stock_id": 1, "side": "sell", "type": "limit", "price": 500, "quantity": 1, "credit": "short_sell"})).await, 422, "holds_long");
+    err(&place(json!({"stock_id": 1, "side": "buy", "type": "market", "quantity": 1, "credit": "margin_buy"})).await, 422, "credit_limit_only");
+    err(&place(json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 500, "quantity": 1, "credit": "short_sell"})).await, 400, "invalid_request");
+    err(&place(json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 500, "quantity": 1, "credit": "buy_return"})).await, 422, "no_short");
+    let orders = a.checked("/api/v1/me/orders", "/api/v1/me/orders?status=all", c).await;
+    assert_eq!(orders["items"][0]["credit"], "margin_buy");
+    a.checked("/api/v1/me/ledger", "/api/v1/me/ledger", c).await;
+}
