@@ -5,6 +5,7 @@ import { api, call, errorText, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
 import { hm } from '../format'
 import { useAccount } from '../stores/account'
+import { useCredit } from '../stores/credit'
 import { usePrefs, type Theme } from '../stores/prefs'
 import { useSession } from '../stores/session'
 import { markEditing } from '../version'
@@ -17,6 +18,7 @@ const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色
 async function logout() {
   await session.logout()
   account.clear()
+  useCredit().clear()
   router.push('/')
 }
 

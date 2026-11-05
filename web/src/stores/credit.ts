@@ -1,7 +1,7 @@
 // 融资融券: the player's credit account, opening it, direct repayment, and each stock's margin terms
 // (docs/v2-margin.md). The `credit` push on the `me` topic carries status changes (追保, 强制平仓, 穿仓).
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api, call, type CreditAccount, type StockMargin } from '../api'
 import { onLive } from '../live'
 import { useSession } from './session'
@@ -42,6 +42,14 @@ export const useCredit = defineStore('credit', () => {
   function clear() {
     account.value = null
   }
+
+  // another player (or nobody) signed in on this device: forget the last one's account and terms
+  watch(() => useSession().me?.id ?? null, (id, old) => {
+    if (id !== old) {
+      account.value = null
+      margins.value = {}
+    }
+  })
 
   onLive('credit', (m) => {
     const me = useSession().me
