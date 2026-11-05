@@ -13,6 +13,17 @@ port_taken_by_other() {
   curl -s -o /dev/null --max-time 3 --noproxy '*' "http://127.0.0.1:$(game_port)/" && ! is_ours
 }
 
+# systemd keeps everything after "=", trailing "# comment" included: flag such lines in .env
+check_env() {
+  local bad
+  bad="$(grep -nE '^[A-Za-z_][A-Za-z0-9_]*=.*[[:space:]]#' .env 2>/dev/null || true)"
+  if [ -n "$bad" ]; then
+    printf '\033[1;33m!! .env 里这些行带了行尾注释，systemd 会把注释当成值的一部分（比如仓库地址、代理地址会失效）：\033[0m\n%s\n' "$bad"
+    printf '\033[1;33m!! 请把注释挪到单独一行再运行\033[0m\n'
+    return 1
+  fi
+}
+
 # Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
 # Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com),
 # and the docker command with DOCKER="sudo docker" if your user is not in the docker group.
@@ -43,6 +54,7 @@ UV="$(command -v uv)"
 
 say "拉取代码"
 git pull --ff-only
+check_env || exit 1
 
 say "更新依赖、构建前端"
 "$UV" sync
