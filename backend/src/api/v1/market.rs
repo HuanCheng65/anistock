@@ -115,6 +115,21 @@ pub fn market_status(st: &AppState, c: &Connection) -> R<MarketStatus> {
         launched_on: state(c, "launched_on")?.filter(|s| !s.is_empty()).map(day),
         policy_rate: rate,
         deposit_rate: r6(deposit_rate(&st.cfg, rate)),
+        sentiment: sentiment(&st.cfg, &st.clock.today()),
+    })
+}
+
+/// The market sentiment band of trading day `day` (docs/v2-sentiment.md): a pure function of the market seed,
+/// the server secret and the day, so the API computes it without the engine.
+pub fn sentiment(cfg: &Config, day: &str) -> Option<Sentiment> {
+    if !cfg.market.enabled || cfg.economy_v1 {
+        return None;
+    }
+    let salt = crate::market::secret_salt(&cfg.secret);
+    crate::market::sentiment_band(&cfg.market, salt, day).map(|b| match b {
+        b if b > 0 => Sentiment::Hot,
+        b if b < 0 => Sentiment::Cold,
+        _ => Sentiment::Neutral,
     })
 }
 

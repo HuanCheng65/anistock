@@ -156,6 +156,19 @@ pub struct Market {
     last_fair: HashMap<i64, i64>,
     /// (company, episode) whose 热度快讯 has been published (one per episode; later hours only revise)
     flashed: std::collections::HashSet<(i64, u64)>,
+    /// sentiment layer: the salt mixed into its draws (from the server secret), the sentiment of the
+    /// current trading day (day number, level), premiere air times, (day, company) already on the movers'
+    /// lists today, the next movers' check, and the over/under-reaction of each revision (company, at) ->
+    /// (multiplier, half-life h)
+    salt: u64,
+    sent_cache: Option<(i64, f64)>,
+    sens_mean: f64,
+    premiere_at: HashMap<i64, i64>,
+    ranked: HashSet<(i64, i64)>,
+    next_rank_check: i64,
+    reactions: HashMap<(i64, i64), (f64, f64)>,
+    /// events the market created itself (revisions, attention), for the caller to log (restart safety)
+    pub fresh: Vec<Event>,
     rng: Rng,
     pub stats: MarketStats,
     pub now: i64,
@@ -185,6 +198,14 @@ impl Market {
             subscribed: HashSet::new(),
             last_fair: HashMap::new(),
             flashed: Default::default(),
+            salt: secret_salt(&game.secret),
+            sent_cache: None,
+            sens_mean: 1.0,
+            premiere_at: HashMap::new(),
+            ranked: HashSet::new(),
+            next_rank_check: 0,
+            reactions: HashMap::new(),
+            fresh: Vec::new(),
             stats: MarketStats::default(),
             now: 0,
             fees_commission: game.game.commission,
@@ -224,6 +245,9 @@ impl Market {
             // a floor so cold stocks still trade now and then
             self.heat.insert(id, if total > 0.0 { (v * n / total).max(0.05) } else { 1.0 });
         }
+        // sentiment sensitivities average 1 over the listed stocks
+        let raw: Vec<f64> = self.heat.keys().map(|c| self.sentiment_sens_raw(*c)).collect();
+        self.sens_mean = if raw.is_empty() { 1.0 } else { raw.iter().sum::<f64>() / raw.len() as f64 };
     }
 
     pub fn heat(&self, company: i64) -> f64 {
@@ -310,7 +334,7 @@ impl Market {
         if self.air.get(&c).is_some_and(|ts| ts.iter().any(|&at| t >= at - 3600 && t <= at + after)) {
             return true;
         }
-        self.events.iter().any(|e| e.company_id == c && t >= e.at && t - e.at <= 7200)
+        self.events.iter().any(|e| e.company_id == c && e.kind != "attention" && t >= e.at && t - e.at <= 7200)
     }
 
     /// Adaptive liquidity: the retail and trend agents' activity in `c`, ×`adapt_rate_max` when no human
@@ -324,6 +348,212 @@ impl Market {
 
     fn prune_events(&mut self, t: i64) {
         self.events.retain(|e| t - e.at < 8 * DAY);
+    }
+
+    // ------------------------------------------------------------ sentiment layer (docs/v2-sentiment.md)
+
+    /// Market sentiment of the trading day containing `t`, standard units (0 when off).
+    fn sentiment_at(&mut self, t: i64) -> f64 {
+        if self.cfg.sentiment_strength == 0.0 {
+            return 0.0;
+        }
+        let (d, _) = local(t - ROLLOVER_S);
+        match self.sent_cache {
+            Some((cd, v)) if cd == d => v,
+            _ => {
+                let v = sentiment_level(&self.cfg, self.salt, d);
+                self.sent_cache = Some((d, v));
+                v
+            }
+        }
+    }
+
+    /// Band of the market sentiment on trading day `day` (-1 冷淡, 0 平稳, 1 火热; None when off).
+    pub fn sentiment_band(&self, day: &str) -> Option<i8> {
+        sentiment_band(&self.cfg, self.salt, day)
+    }
+
+    /// Market sentiment of trading day `day`, standard units (None when off; for reports).
+    pub fn sentiment_of_day(&self, day: &str) -> Option<f64> {
+        if self.cfg.sentiment_strength == 0.0 {
+            return None;
+        }
+        Some(sentiment_level(&self.cfg, self.salt, day_number(day)?))
+    }
+
+    /// How sentiment-prone stock `c` is: (1 / heat)^x within `sentiment_sens` (Baker–Wurgler: small, young,
+    /// hard-to-value stocks move most with sentiment; here heat stands for size and coverage).
+    fn sentiment_sens_raw(&self, c: i64) -> f64 {
+        let [lo, hi] = self.cfg.sentiment_sens;
+        (1.0 / self.heat(c).max(1e-6)).powf(self.cfg.sentiment_heat_exp).clamp(lo, hi)
+    }
+
+    /// The same, scaled so the listed stocks average 1 (`sentiment_strength` is then the tilt per standard
+    /// deviation for the average stock; the coldest are `sentiment_sens[1] / sentiment_sens[0]` times as
+    /// sensitive as the hottest).
+    fn sentiment_sens(&self, c: i64) -> f64 {
+        self.sentiment_sens_raw(c) / self.sens_mean.max(1e-6)
+    }
+
+    /// The log tilt market sentiment gives a retail or trend agent's appetite for stock `c` at `t`.
+    fn sentiment_tilt(&mut self, c: i64, t: i64) -> f64 {
+        if self.cfg.sentiment_strength == 0.0 {
+            return 0.0;
+        }
+        self.cfg.sentiment_strength * self.sentiment_at(t) * self.sentiment_sens(c)
+    }
+
+    /// Attention on stock `c` at `t` (Barber–Odean): the sum of live attention episodes, each triggered by the
+    /// premiere night, a published 热度快讯 or entering the movers' lists; whether a trigger draws attention,
+    /// how much and for how long are random (hashed, so the same after a restart).
+    pub fn attention(&self, c: i64, t: i64) -> f64 {
+        if self.cfg.attention == 0.0 {
+            return 0.0;
+        }
+        let mut a = 0.0;
+        if let Some(&t0) = self.premiere_at.get(&c) {
+            a += self.attention_episode(c, t0, 1, 1.0, t);
+        }
+        for e in &self.events {
+            if e.kind == "attention" && e.company_id == c {
+                let (code, w) = if e.source == "rank" { (3, self.cfg.attention_rank_weight) } else { (2, 1.0) };
+                a += self.attention_episode(c, e.at, code, w, t);
+            }
+        }
+        a
+    }
+
+    fn attention_episode(&self, c: i64, t0: i64, code: u64, w: f64, t: i64) -> f64 {
+        if t < t0 {
+            return 0.0;
+        }
+        let key = |j: u64| [self.cfg.seed, 0xa77e, self.salt, c as u64, t0 as u64, code, j];
+        if unit(hash(&key(1))) >= self.cfg.attention_prob {
+            return 0.0;
+        }
+        let sg = self.cfg.attention_sigma;
+        let strength = (sg * normal(&key(2)) - sg * sg / 2.0).exp();
+        let hl = log_uniform(self.cfg.attention_half_life_h, unit(hash(&key(3))));
+        let age_h = (t - t0) as f64 / 3600.0;
+        if age_h > 12.0 * hl {
+            return 0.0;
+        }
+        w * strength * 0.5f64.powf(age_h / hl)
+    }
+
+    /// An attention trigger for `c` at `t` (`source`: flash | rank), kept with the events (and logged).
+    fn post_attention(&mut self, c: i64, t: i64, source: &str) {
+        if self.cfg.attention == 0.0 {
+            return;
+        }
+        let ev = Event {
+            company_id: c,
+            kind: "attention".into(),
+            direction: 0,
+            magnitude: 0.0,
+            credibility: Credibility::Media,
+            source: source.into(),
+            at: t,
+            nature: Nature::Sentiment,
+            half_life_h: 0.0,
+            title: String::new(),
+            change: 0.0,
+        };
+        self.fresh.push(ev.clone());
+        self.events.push(ev);
+    }
+
+    /// 上热榜: stocks entering the day's top gainers or losers (the lists on the market page) draw attention,
+    /// once per stock and trading day. Checked every half hour of the session.
+    fn note_movers(&mut self, engine: &Engine, t: i64) {
+        let n = self.cfg.attention_rank_n;
+        if n == 0 || self.cfg.attention == 0.0 {
+            return;
+        }
+        let (_, s) = local(t);
+        if self.curve(s) == 0.0 || (8 * 3600..9 * 3600 + 1800).contains(&s) {
+            return;
+        }
+        let mut moves: Vec<(f64, i64)> = engine
+            .companies()
+            .filter(|c| c.status == "listed" && c.prev_close > 0 && c.last_price > 0)
+            .map(|c| (c.last_price as f64 / c.prev_close as f64 - 1.0, c.id))
+            .collect();
+        moves.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
+        let gainers = moves.iter().filter(|m| m.0 > 0.0).take(n).map(|m| m.1);
+        let losers = moves.iter().rev().filter(|m| m.0 < 0.0).take(n).map(|m| m.1);
+        let picked: Vec<i64> = gainers.chain(losers).collect();
+        let (today, _) = local(t - ROLLOVER_S);
+        for c in picked {
+            if self.ranked.insert((today, c)) {
+                self.post_attention(c, t, "rank");
+            }
+        }
+    }
+
+    /// Reaction multiplier and half-life (hours) of the news agents to event `e`: for a revision with the
+    /// reaction layer on, from its streak (Barberis–Shleifer–Vishny); otherwise (1, the usual half-life).
+    fn reaction_of(&self, e: &Event) -> (f64, f64) {
+        if self.cfg.reaction && e.kind == "revision" {
+            if let Some(&r) = self.reactions.get(&(e.company_id, e.at)) {
+                return r;
+            }
+        }
+        (1.0, self.cfg.event_activity_half_life_h)
+    }
+
+    /// Index the revisions not yet indexed: the streak of each (same-sign revisions of the company in a row,
+    /// each within `reaction_window_days` of the previous) and its random reaction. The first surprise in a
+    /// direction is under-weighted (a factor drawn from `reaction_first`), the k-th in a row over-weighted
+    /// (1 + (k - 1) * step, step drawn from `reaction_step`, at most `reaction_max`); the half-life of the
+    /// reaction is drawn too. Call after events are added (they are in time order).
+    pub fn index_reactions(&mut self) {
+        if !self.cfg.reaction {
+            return;
+        }
+        let window = (self.cfg.reaction_window_days * 86_400.0) as i64;
+        let mut last: HashMap<i64, (i64, f64, u32)> = HashMap::new();
+        let mut out = Vec::new();
+        for e in self.events.iter().filter(|e| e.kind == "revision" && e.change != 0.0) {
+            let k = match last.get(&e.company_id) {
+                Some(&(at, ch, k)) if e.at - at <= window && (ch > 0.0) == (e.change > 0.0) => k + 1,
+                _ => 1,
+            };
+            last.insert(e.company_id, (e.at, e.change, k));
+            if self.reactions.contains_key(&(e.company_id, e.at)) {
+                continue;
+            }
+            let u = |j: u64| unit(hash(&[self.cfg.seed, 0xb5f1, self.salt, e.company_id as u64, e.at as u64, j]));
+            let mult = if k == 1 {
+                lerp(self.cfg.reaction_first, u(1))
+            } else {
+                (1.0 + (k - 1) as f64 * lerp(self.cfg.reaction_step, u(2))).min(self.cfg.reaction_max)
+            };
+            let hl = log_uniform(self.cfg.reaction_half_life_h, u(3));
+            out.push(((e.company_id, e.at), (mult, hl)));
+        }
+        self.reactions.extend(out);
+    }
+
+    /// The news agents' reaction (multiplier, half-life h) to the revision of `c` at `at`, once indexed.
+    pub fn reaction(&self, c: i64, at: i64) -> Option<(f64, f64)> {
+        self.reactions.get(&(c, at)).copied()
+    }
+
+    /// Length of the current streak of same-sign revisions of `c` (0: none).
+    pub fn streak(&self, c: i64) -> u32 {
+        let window = (self.cfg.reaction_window_days * 86_400.0) as i64;
+        let mut k = 0;
+        let mut prev: Option<(i64, f64)> = None;
+        for e in self.events.iter().rev().filter(|e| e.kind == "revision" && e.company_id == c && e.change != 0.0) {
+            match prev {
+                None => k = 1,
+                Some((at, ch)) if at - e.at <= window && (ch > 0.0) == (e.change > 0.0) => k += 1,
+                _ => break,
+            }
+            prev = Some((e.at, e.change));
+        }
+        k
     }
 
     // ------------------------------------------------------------ beliefs
@@ -608,6 +838,18 @@ impl Market {
             }
         }
         self.mms.retain(|c, _| live.contains(c));
+        // premiere nights: the first air time, when it is the show's first episode
+        for &c in &listed {
+            if self.premiere_at.contains_key(&c) {
+                continue;
+            }
+            let first = engine.company(c).and_then(|x| day_number(&x.first_air));
+            if let Some(&t0) = self.air.get(&c).and_then(|v| v.iter().min()) {
+                if first.zip(day_number(&day_of(t0))).is_some_and(|(a, b)| (a - b).abs() <= 1) {
+                    self.premiere_at.insert(c, t0);
+                }
+            }
+        }
         if self.schedule.iter().all(|Reverse((_, a))| !matches!(a, Actor::Agent(_))) {
             for i in 0..self.agents.len() {
                 let t = now + self.next_gap(i);
@@ -684,7 +926,8 @@ impl Market {
         let mut p = 0.0;
         for e in &self.events {
             if e.direction != 0 && a.watch.contains(&e.company_id) {
-                p += e.magnitude / 10.0 * e.activity_weight(t, self.cfg.event_activity_half_life_h);
+                let (mult, hl) = self.reaction_of(e);
+                p += e.magnitude / 10.0 * e.activity_weight(t, hl) * mult;
             }
         }
         p
@@ -712,6 +955,10 @@ impl Market {
             }
             self.schedule.pop();
             self.now = t;
+            if t >= self.next_rank_check {
+                self.note_movers(engine, t);
+                self.next_rank_check = (t / 1800 + 1) * 1800;
+            }
             match actor {
                 Actor::Agent(i) => {
                     let i = i as usize;
@@ -908,15 +1155,19 @@ impl Market {
         let r = (now_p as f64 / then.max(1) as f64).ln();
         let held = engine.available_shares(a.account, c);
         engine.cancel_all(a.account, c, &ts_of(t));
-        if r > a.threshold {
+        // market sentiment is risk appetite: in a hot market a smaller rise is enough to chase it, positions
+        // are larger, and a fall must be larger before they sell (cold: the reverse)
+        let ss = self.sentiment_tilt(c, t);
+        let (thr_buy, thr_sell) = (a.threshold * (-ss).exp(), a.threshold * ss.exp());
+        if r > thr_buy {
             let wealth = self.wealth(engine, a.account) as f64;
             let room = self.cfg.max_position_frac * wealth - held as f64 * now_p as f64;
-            let strength = (r / a.threshold / 2.0).min(1.0);
-            let budget = (engine.available_cash(a.account) as f64 * self.cfg.trend_size * strength).min(room);
+            let strength = (r / thr_buy / 2.0).min(1.0);
+            let budget = (engine.available_cash(a.account) as f64 * self.cfg.trend_size * strength * ss.exp()).min(room);
             let limit = Self::clamp_price(engine, &rules, c, now_p as f64 * 1.01, t);
             let q = self.affordable(budget, limit);
             self.place(engine, "trend", a.account, c, "buy", "limit", q, Some(limit), t);
-        } else if r < -a.threshold && held > 0 {
+        } else if r < -thr_sell && held > 0 {
             let limit = Self::clamp_price(engine, &rules, c, now_p as f64 * 0.99, t);
             self.place(engine, "trend", a.account, c, "sell", "limit", held, Some(limit), t);
         } else if held > 0 && r.abs() < a.threshold / 3.0 && self.rng.f64() < 0.2 {
@@ -938,9 +1189,9 @@ impl Market {
             if e.direction == 0 || !a.watch.contains(&e.company_id) {
                 continue;
             }
-            let w = e.magnitude / 10.0
-                * e.activity_weight(t, self.cfg.event_activity_half_life_h)
-                * e.credibility_weight(&self.cfg.credibility);
+            // under- and over-reaction: a revision's reaction is scaled and lasts by its place in a streak
+            let (mult, hl) = self.reaction_of(e);
+            let w = e.magnitude / 10.0 * e.activity_weight(t, hl) * e.credibility_weight(&self.cfg.credibility) * mult;
             if w > 0.05 && best.is_none_or(|b| w > b.0) {
                 best = Some((w, e.company_id, e.direction, e.magnitude));
             }
@@ -994,7 +1245,11 @@ impl Market {
         let rules = engine.rules;
         let p = engine.company(c).unwrap().last_price.max(1) as f64;
         let held = engine.available_shares(a.account, c);
-        let sell = held > 0 && self.rng.f64() < 0.5;
+        // attention (a stock in the news is bought, not sold: buying means choosing among all stocks, selling
+        // only among one's own) and market sentiment (risk appetite) tilt the buy/sell split and the size
+        let ss = self.sentiment_tilt(c, t);
+        let tilt = self.cfg.attention * self.attention(c, t) + ss;
+        let sell = held > 0 && self.rng.f64() < 0.5 * (1.0 - tilt.tanh());
         let market = !Self::phase_auction(t) && self.rng.f64() < self.cfg.retail_market_prob;
         let limit = Self::clamp_price(engine, &rules, c, p * (1.0 + self.cfg.retail_price_sd * self.rng.normal()), t);
         if sell {
@@ -1006,7 +1261,7 @@ impl Market {
                 self.place(engine, "retail", a.account, c, "sell", "limit", q, Some(limit), t);
             }
         } else {
-            let frac = self.rng.range(self.cfg.retail_size[0], self.cfg.retail_size[1]);
+            let frac = self.rng.range(self.cfg.retail_size[0], self.cfg.retail_size[1]) * ss.exp();
             let wealth = self.wealth(engine, a.account) as f64;
             let room = self.cfg.max_position_frac * wealth - held as f64 * p;
             let budget = (engine.available_cash(a.account) as f64 * frac).min(room);
@@ -1446,14 +1701,17 @@ impl Market {
                         nature: Nature::Sentiment,
                         half_life_h: self.cfg.event_activity_half_life_h,
                         title: String::new(),
+                        change: r,
                     });
                 }
             }
         }
         for ev in evs {
             self.stats.events += 1;
+            self.fresh.push(ev.clone());
             self.events.push(ev);
         }
+        self.index_reactions();
     }
 
     /// A 热度快讯 observation: update the show's filter and value (`Engine::valuation_flash`), publish the
@@ -1474,6 +1732,7 @@ impl Market {
                 format!("播出 {:.0} 小时后的 Bangumi 单集吐槽数。估值随之修正：{} → {} 币。", hours, crate::exchange::yuan_str(out.old_value), crate::exchange::yuan_str(out.new_value)),
             );
             self.stats.flashes += 1;
+            self.post_attention(company, t, "flash");
         }
         self.note_revisions(engine, t);
         Some(out)
@@ -1496,7 +1755,66 @@ impl Market {
 
     pub fn prune(&mut self, t: i64) {
         self.prune_events(t);
+        let (today, _) = local(t - ROLLOVER_S);
+        self.ranked.retain(|(d, _)| *d >= today - 1);
+        let live: HashSet<(i64, i64)> = self.events.iter().map(|e| (e.company_id, e.at)).collect();
+        self.reactions.retain(|k, _| live.contains(k));
     }
+}
+
+/// A salt from the server secret: the sentiment layer's draws are deterministic per (seed, secret) but cannot
+/// be computed from the public repository (the seed is in server/game.toml).
+pub fn secret_salt(secret: &[u8]) -> u64 {
+    let mut h = 0x5ec2_e75a_17u64;
+    for chunk in secret.chunks(8) {
+        let mut b = [0u8; 8];
+        b[..chunk.len()].copy_from_slice(chunk);
+        h = hash(&[h, u64::from_le_bytes(b)]);
+    }
+    h
+}
+
+/// Days since 1970-01-01 of `YYYY-MM-DD`.
+pub fn day_number(day: &str) -> Option<i64> {
+    let d = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
+    Some(d.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).num_days())
+}
+
+/// Market sentiment of trading day number `d` (days since 1970-01-01), standard units: a daily AR(1) with
+/// half-life `sentiment_half_life_days` and unit stationary variance, from hashed innovations (a pure function
+/// of seed, secret and day: nothing to store, the same after a restart).
+pub fn sentiment_level(cfg: &MarketConfig, salt: u64, d: i64) -> f64 {
+    let phi = 0.5f64.powf(1.0 / cfg.sentiment_half_life_days.max(0.1));
+    let scale = (1.0 - phi * phi).sqrt();
+    let mut s = 0.0;
+    let mut w = 1.0;
+    let mut j = 0i64;
+    while w >= 1e-4 && j < 2000 {
+        s += w * normal(&[cfg.seed, 0x5e47, salt, (d - j) as u64]);
+        w *= phi;
+        j += 1;
+    }
+    s * scale
+}
+
+/// The band players see for trading day `day` (YYYY-MM-DD): -1 冷淡, 0 平稳, 1 火热; None when the layer is off.
+pub fn sentiment_band(cfg: &MarketConfig, salt: u64, day: &str) -> Option<i8> {
+    if cfg.sentiment_strength == 0.0 {
+        return None;
+    }
+    let v = sentiment_level(cfg, salt, day_number(day)?);
+    Some(if v > cfg.sentiment_band {
+        1
+    } else if v < -cfg.sentiment_band {
+        -1
+    } else {
+        0
+    })
+}
+
+fn log_uniform(r: [f64; 2], u: f64) -> f64 {
+    let (a, b) = (r[0].max(0.01).ln(), r[1].max(0.01).ln());
+    (a + (b - a) * u).exp()
 }
 
 fn lerp(r: [f64; 2], u: f64) -> f64 {
