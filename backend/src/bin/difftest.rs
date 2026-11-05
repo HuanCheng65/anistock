@@ -5,8 +5,11 @@
 
 use std::io::{BufRead, BufWriter, Write};
 
+use anistock::daily::CloseOutcome;
 use anistock::engine::NewOrder;
-use anistock::{store, Engine, Fees, Rules};
+use anistock::inputs::Inputs;
+use anistock::pyrandom::PyRandom;
+use anistock::{store, Config, Engine, Fees, Rules};
 use serde_json::{json, Value};
 
 fn s<'a>(op: &'a Value, k: &str) -> &'a str {
@@ -37,6 +40,30 @@ fn edge_price(e: &Engine, op: &Value) -> i64 {
     }
 }
 
+fn subscribing(e: &Engine, idx: i64) -> i64 {
+    let ids: Vec<i64> = e.companies().filter(|c| c.status == "subscribing").map(|c| c.id).collect();
+    if ids.is_empty() {
+        999_999_999
+    } else {
+        ids[(idx as usize) % ids.len()]
+    }
+}
+
+/// The close result in v1's dict shape.
+fn close_json(r: Result<CloseOutcome, String>) -> Value {
+    match r {
+        Ok(CloseOutcome::Skipped) => json!({"skipped": true}),
+        Ok(CloseOutcome::Closed(s)) => json!({
+            "day": s.day, "injected": s.injected, "exported": s.exported, "taxes": s.taxes,
+            "interest": s.interest, "rate": s.rate,
+        }),
+        Err(err) => {
+            println!("rust: close failed: {err}");
+            json!({"error": "close failed"})
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 4 {
@@ -45,7 +72,11 @@ fn main() {
     }
     let db = std::path::Path::new(&args[1]);
     store::migrate(db).expect("migrate");
-    let mut e = Engine::open(db, Fees::default(), Rules::default()).expect("load");
+    let cfg = Config::load_from(&anistock::config::find_root(), |_| None).expect("config");
+    let (fees, rules) = (cfg.fees(), cfg.rules());
+    assert_eq!((fees, rules), (Fees::default(), Rules::default()), "driver.py uses v1's defaults");
+    let mut e = Engine::open(db, fees, rules).expect("load");
+    let mut rng = PyRandom::new(0);
     let ops = std::io::BufReader::new(std::fs::File::open(&args[2]).expect("ops"));
     let mut out = BufWriter::new(std::fs::File::create(&args[3]).expect("results"));
     let mut placed: Vec<(i64, i64)> = Vec::new();
@@ -106,8 +137,77 @@ fn main() {
                 // drop the engine (flushing everything) and load it back from the database
                 e.flush().expect("flush");
                 drop(e);
-                e = Engine::open(db, Fees::default(), Rules::default()).expect("reload");
+                e = Engine::open(db, fees, rules).expect("reload");
                 json!({"ok": true})
+            }
+            "rng" => {
+                rng = PyRandom::new(i(&op, "seed") as i128);
+                json!({"ok": true})
+            }
+            "npc_tick" => {
+                e.npc_tick(&cfg, s(&op, "day"), s(&op, "ts"), &mut rng, op["auction"].as_bool().unwrap());
+                json!({"ok": true})
+            }
+            "place_rel" => {
+                let ids: Vec<i64> = e.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
+                let co = ids[(i(&op, "co_idx") as usize) % ids.len()];
+                let last = e.company(co).unwrap().last_price;
+                let kind = s(&op, "kind");
+                let price = (kind == "limit")
+                    .then(|| 1i64.max((last as f64 * op["rel"].as_f64().unwrap()).round_ties_even() as i64));
+                match e.place_order(&NewOrder {
+                    account_id: i(&op, "acct"),
+                    company_id: co,
+                    side: s(&op, "side"),
+                    kind,
+                    qty: i(&op, "qty"),
+                    price,
+                    day: s(&op, "day"),
+                    ts: s(&op, "ts"),
+                    match_: op["match"].as_bool().unwrap(),
+                }) {
+                    Ok(p) => {
+                        placed.push((p.order_id, i(&op, "acct")));
+                        serde_json::to_value(&p).unwrap()
+                    }
+                    Err(err) => json!({"error": err.0}),
+                }
+            }
+            "subscribe" => {
+                let co = subscribing(&e, i(&op, "idx"));
+                let qty = i(&op, "qty");
+                match e.subscribe(i(&op, "acct"), co, qty, s(&op, "today"), s(&op, "ts")) {
+                    Ok(frozen) => json!({"ok": true, "qty": qty, "frozen": frozen}),
+                    Err(err) => json!({"error": err.0}),
+                }
+            }
+            "unsubscribe" => {
+                let co = subscribing(&e, i(&op, "idx"));
+                match e.unsubscribe(i(&op, "acct"), co) {
+                    Ok(()) => json!({"ok": true}),
+                    Err(err) => json!({"error": err.0}),
+                }
+            }
+            "close" => {
+                let inp = Inputs::read(std::path::Path::new(s(&op, "inputs"))).expect("inputs");
+                close_json(e.run_day(&cfg, s(&op, "day"), s(&op, "ts"), &inp))
+            }
+            "catch_up" => {
+                let dir = s(&op, "inputs").to_string();
+                let mut res = Vec::new();
+                // like the Python driver: one result per day, stopping at the first failure
+                let ts = s(&op, "ts").to_string();
+                let r = e.catch_up_clocked(&cfg, s(&op, "today"), || ts.clone(), |day| {
+                    Inputs::read(&std::path::Path::new(&dir).join(format!("{day}.json")))
+                });
+                match r {
+                    Ok(v) => res.extend(v.into_iter().map(|o| close_json(Ok(o)))),
+                    Err(err) => {
+                        println!("rust: catch_up failed: {err}");
+                        res.push(json!({"error": "close failed"}));
+                    }
+                }
+                Value::Array(res)
             }
             "auction" => {
                 e.open_market(s(&op, "day"), s(&op, "ts"));

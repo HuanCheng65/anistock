@@ -198,6 +198,17 @@ pub struct Snapshot {
     /// per company, the trades of that company's latest trading day (for the VCM look-back), id order
     pub recent_trades: BTreeMap<i64, Vec<Trade>>,
     pub state: BTreeMap<String, String>,
+    /// hidden rowid of every holdings row
+    pub holding_rowids: Vec<((i64, i64), i64)>,
+    pub ipo_apps: BTreeMap<(i64, i64), IpoApplication>,
+    pub company_days: BTreeMap<(i64, String), CompanyDay>,
+    pub macro_days: BTreeMap<String, MacroDay>,
+    /// (company, day) -> (open, high, low, close, volume) of trades on days after `last_closed`
+    pub day_aggs: BTreeMap<(i64, String), (i64, i64, i64, i64, i64)>,
+    /// (seller, day) -> SUM(price*qty) sold by 'company' accounts on days after `last_closed`
+    pub company_proceeds: std::collections::HashMap<(i64, String), i64>,
+    /// day -> gov's corp_tax + dividend_tax + stamp_duty receipts (days after `last_closed` - 10)
+    pub gov_taxes: BTreeMap<String, i64>,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -309,10 +320,16 @@ pub fn load(conn: &Connection) -> DbResult<Snapshot> {
         let c = c?;
         s.companies.insert(c.id, c);
     }
-    for h in conn.prepare("SELECT account_id, company_id, qty, qty_frozen FROM holdings")?.query_map([], |r| {
-        Ok(Holding { account_id: r.get(0)?, company_id: r.get(1)?, qty: r.get(2)?, qty_frozen: r.get(3)? })
-    })? {
-        let h = h?;
+    for h in
+        conn.prepare("SELECT rowid, account_id, company_id, qty, qty_frozen FROM holdings")?.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                Holding { account_id: r.get(1)?, company_id: r.get(2)?, qty: r.get(3)?, qty_frozen: r.get(4)? },
+            ))
+        })?
+    {
+        let (rowid, h) = h?;
+        s.holding_rowids.push(((h.account_id, h.company_id), rowid));
         s.holdings.insert((h.account_id, h.company_id), h);
     }
     for l in
@@ -351,6 +368,7 @@ pub fn load(conn: &Connection) -> DbResult<Snapshot> {
         let (k, v) = kv?;
         s.state.insert(k, v);
     }
+    load_daily(conn, &mut s)?;
     s.max_order_id = max_id(conn, "orders")?;
     s.max_trade_id = max_id(conn, "trades")?;
     s.max_ledger_id = max_id(conn, "ledger")?;
@@ -366,4 +384,105 @@ pub fn order_owner_status(conn: &Connection, order_id: i64) -> DbResult<Option<(
             Ok((r.get(0)?, r.get(1)?))
         })
         .optional()?)
+}
+
+/// The tables and aggregates the daily close reads (v1 queries them with SQL inside the close).
+fn load_daily(conn: &Connection, s: &mut Snapshot) -> DbResult<()> {
+    for a in conn
+        .prepare("SELECT company_id, account_id, qty, frozen, allotted, created_at FROM ipo_applications")?
+        .query_map([], |r| {
+            Ok(IpoApplication {
+                company_id: r.get(0)?,
+                account_id: r.get(1)?,
+                qty: r.get(2)?,
+                frozen: r.get(3)?,
+                allotted: r.get(4)?,
+                created_at: r.get(5)?,
+            })
+        })?
+    {
+        let a = a?;
+        s.ipo_apps.insert((a.company_id, a.account_id), a);
+    }
+    for d in conn
+        .prepare("SELECT company_id, day, revenue, rev_us, rev_cn, rev_jp, aired, dividend_ps FROM company_days")?
+        .query_map([], |r| {
+            Ok(CompanyDay {
+                company_id: r.get(0)?,
+                day: r.get(1)?,
+                revenue: r.get(2)?,
+                rev_us: r.get(3)?,
+                rev_cn: r.get(4)?,
+                rev_jp: r.get(5)?,
+                aired: r.get(6)?,
+                dividend_ps: r.get(7)?,
+            })
+        })?
+    {
+        let d = d?;
+        s.company_days.insert((d.company_id, d.day.clone()), d);
+    }
+    for m in conn
+        .prepare("SELECT day, rate, m2, m2_growth, injected, exported, taxes, interest FROM macro_days")?
+        .query_map([], |r| {
+            Ok(MacroDay {
+                day: r.get(0)?,
+                rate: r.get(1)?,
+                m2: r.get(2)?,
+                m2_growth: r.get(3)?,
+                injected: r.get(4)?,
+                exported: r.get(5)?,
+                taxes: r.get(6)?,
+                interest: r.get(7)?,
+            })
+        })?
+    {
+        let m = m?;
+        s.macro_days.insert(m.day.clone(), m);
+    }
+    let last_closed = s.state.get("last_closed").cloned().unwrap_or_default();
+    let mut aggs = conn.prepare(
+        "SELECT company_id, day, MIN(price), MAX(price), SUM(qty), MIN(id), MAX(id) FROM trades WHERE day > ?
+         GROUP BY company_id, day",
+    )?;
+    let rows: Vec<(i64, String, i64, i64, i64, i64, i64)> = aggs
+        .query_map([&last_closed], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    let mut price_of = conn.prepare("SELECT price FROM trades WHERE id=?")?;
+    for (c, day, lo, hi, vol, first, last) in rows {
+        let open: i64 = price_of.query_row([first], |r| r.get(0))?;
+        let close: i64 = price_of.query_row([last], |r| r.get(0))?;
+        s.day_aggs.insert((c, day), (open, hi, lo, close, vol));
+    }
+    for r in conn
+        .prepare(
+            "SELECT t.seller_id, t.day, SUM(t.price * t.qty) FROM trades t JOIN accounts a ON a.id = t.seller_id
+             WHERE a.kind = 'company' AND t.day > ? GROUP BY t.seller_id, t.day",
+        )?
+        .query_map([&last_closed], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))?
+    {
+        let (seller, day, v) = r?;
+        s.company_proceeds.insert((seller, day), v);
+    }
+    let gov: Option<i64> =
+        conn.query_row("SELECT id FROM accounts WHERE kind='gov' ORDER BY id LIMIT 1", [], |r| r.get(0)).optional()?;
+    if let Some(gov) = gov {
+        let since = match chrono::NaiveDate::parse_from_str(&last_closed, "%Y-%m-%d") {
+            Ok(d) => (d - chrono::Duration::days(10)).format("%Y-%m-%d").to_string(),
+            Err(_) => String::new(),
+        };
+        for r in conn
+            .prepare(
+                "SELECT day, SUM(amount) FROM ledger WHERE to_id = ? AND day > ?
+                 AND reason IN ('corp_tax', 'dividend_tax', 'stamp_duty') GROUP BY day",
+            )?
+            .query_map(params![gov, since], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        {
+            let (day, v) = r?;
+            s.gov_taxes.insert(day, v);
+        }
+    }
+    Ok(())
 }

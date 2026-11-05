@@ -201,3 +201,55 @@ pub struct News {
     pub title: String,
     pub body: Option<String>,
 }
+
+/// `ipo_applications`: one subscription per player per company; cash frozen until allotment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IpoApplication {
+    pub company_id: i64,
+    pub account_id: i64,
+    pub qty: i64,
+    pub frozen: i64,
+    /// None until allotment
+    pub allotted: Option<i64>,
+    pub created_at: String,
+}
+
+/// `company_days`: what a business did on one day.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompanyDay {
+    pub company_id: i64,
+    pub day: String,
+    pub revenue: i64,
+    pub rev_us: i64,
+    pub rev_cn: i64,
+    pub rev_jp: i64,
+    pub aired: i64,
+    pub dividend_ps: i64,
+}
+
+/// `macro_days`: the economy on one day.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MacroDay {
+    pub day: String,
+    pub rate: f64,
+    pub m2: i64,
+    pub m2_growth: Option<f64>,
+    pub injected: i64,
+    pub exported: i64,
+    pub taxes: i64,
+    pub interest: i64,
+}
+
+/// `candles`: one stock's daily bar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Candle {
+    pub company_id: i64,
+    pub day: String,
+    pub open: i64,
+    pub high: i64,
+    pub low: i64,
+    pub close: i64,
+    pub volume: i64,
+    /// live | replay
+    pub source: String,
+}

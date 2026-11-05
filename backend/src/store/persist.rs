@@ -59,6 +59,36 @@ pub enum Change {
     },
     /// A new company row (every column).
     CompanyInsert(Company),
+    /// Every column of an existing company (engine-owned row).
+    CompanyUpdate(Company),
+    /// `INSERT OR REPLACE INTO company_days` (the row is deleted and re-inserted, like v1).
+    CompanyDayReplace(CompanyDay),
+    /// `INSERT OR IGNORE INTO company_days(...) VALUES (c, day, 0,0,0,0,0)`
+    CompanyDayInsertIgnore {
+        company_id: i64,
+        day: String,
+    },
+    /// `UPDATE company_days SET dividend_ps`
+    CompanyDayDividend {
+        company_id: i64,
+        day: String,
+        dividend_ps: i64,
+    },
+    /// `INSERT OR REPLACE INTO candles`
+    CandleReplace(Candle),
+    /// `INSERT OR REPLACE INTO macro_days`
+    MacroDayReplace(MacroDay),
+    IpoAppInsert(IpoApplication),
+    IpoAppDelete {
+        company_id: i64,
+        account_id: i64,
+    },
+    /// `UPDATE ipo_applications SET allotted=?, frozen=0`
+    IpoAppAllot {
+        company_id: i64,
+        account_id: i64,
+        allotted: i64,
+    },
     NewsInsert(News),
     StateSet {
         key: String,
@@ -218,6 +248,100 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 c.delisted_on
             ])?;
         }
+        Change::CompanyUpdate(c) => {
+            conn.prepare_cached(
+                "UPDATE companies SET code=?, title=?, title_ja=?, title_en=?, studio=?, episodes=?, long_runner=?,
+                   first_air=?, listed_on=?, status=?, sub_start=?, sub_end=?, shares=?, ipo_price=?, prev_close=?,
+                   open_ref=?, vcm_until=?, vcm_low=?, vcm_high=?, vcm_count=?, last_price=?, fair_value=?,
+                   profit_week=?, low_weeks=?, delisted_on=? WHERE id=?",
+            )?
+            .execute(params![
+                c.code,
+                c.title,
+                c.title_ja,
+                c.title_en,
+                c.studio,
+                c.episodes,
+                c.long_runner,
+                c.first_air,
+                c.listed_on,
+                c.status,
+                c.sub_start,
+                c.sub_end,
+                c.shares,
+                c.ipo_price,
+                c.prev_close,
+                c.open_ref,
+                c.vcm_until,
+                c.vcm_low,
+                c.vcm_high,
+                c.vcm_count,
+                c.last_price,
+                c.fair_value,
+                c.profit_week,
+                c.low_weeks,
+                c.delisted_on,
+                c.id
+            ])?;
+        }
+        Change::CompanyDayReplace(d) => {
+            conn.prepare_cached(
+                "INSERT OR REPLACE INTO company_days(company_id, day, revenue, rev_us, rev_cn, rev_jp, aired, dividend_ps)
+                 VALUES (?,?,?,?,?,?,?,?)",
+            )?
+            .execute(params![d.company_id, d.day, d.revenue, d.rev_us, d.rev_cn, d.rev_jp, d.aired, d.dividend_ps])?;
+        }
+        Change::CompanyDayInsertIgnore { company_id, day } => {
+            conn.prepare_cached(
+                "INSERT OR IGNORE INTO company_days(company_id, day, revenue, rev_us, rev_cn, rev_jp, aired)
+                 VALUES (?,?,0,0,0,0,0)",
+            )?
+            .execute(params![company_id, day])?;
+        }
+        Change::CompanyDayDividend { company_id, day, dividend_ps } => {
+            conn.prepare_cached("UPDATE company_days SET dividend_ps=? WHERE company_id=? AND day=?")?
+                .execute(params![dividend_ps, company_id, day])?;
+        }
+        Change::CandleReplace(c) => {
+            conn.prepare_cached(
+                "INSERT OR REPLACE INTO candles(company_id, day, open, high, low, close, volume, source)
+                 VALUES (?,?,?,?,?,?,?,?)",
+            )?
+            .execute(params![c.company_id, c.day, c.open, c.high, c.low, c.close, c.volume, c.source])?;
+        }
+        Change::MacroDayReplace(m) => {
+            conn.prepare_cached(
+                "INSERT OR REPLACE INTO macro_days(day, rate, m2, m2_growth, injected, exported, taxes, interest)
+                 VALUES (?,?,?,?,?,?,?,?)",
+            )?
+            .execute(params![
+                m.day,
+                m.rate,
+                m.m2,
+                m.m2_growth,
+                m.injected,
+                m.exported,
+                m.taxes,
+                m.interest
+            ])?;
+        }
+        Change::IpoAppInsert(a) => {
+            conn.prepare_cached(
+                "INSERT INTO ipo_applications(company_id, account_id, qty, frozen, allotted, created_at)
+                 VALUES (?,?,?,?,?,?)",
+            )?
+            .execute(params![a.company_id, a.account_id, a.qty, a.frozen, a.allotted, a.created_at])?;
+        }
+        Change::IpoAppDelete { company_id, account_id } => {
+            conn.prepare_cached("DELETE FROM ipo_applications WHERE company_id=? AND account_id=?")?
+                .execute(params![company_id, account_id])?;
+        }
+        Change::IpoAppAllot { company_id, account_id, allotted } => {
+            conn.prepare_cached(
+                "UPDATE ipo_applications SET allotted=?, frozen=0 WHERE company_id=? AND account_id=?",
+            )?
+            .execute(params![allotted, company_id, account_id])?;
+        }
         Change::NewsInsert(n) => {
             conn.prepare_cached("INSERT INTO news(id, ts, day, kind, company_id, title, body) VALUES (?,?,?,?,?,?,?)")?
                 .execute(params![n.id, n.ts, n.day, n.kind, n.company_id, n.title, n.body])?;
@@ -243,6 +367,10 @@ pub trait ChangeSink: Send {
     fn send(&mut self, changes: Vec<Change>);
     /// Block until everything sent so far is durable (or report why it is not).
     fn flush(&mut self) -> Result<(), String>;
+    /// A write that failed: the database is behind memory from here on.
+    fn failure(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Handle to the persistence thread.
@@ -315,6 +443,9 @@ impl ChangeSink for Persister {
     }
     fn flush(&mut self) -> Result<(), String> {
         Persister::flush(self)
+    }
+    fn failure(&self) -> Option<String> {
+        self.error()
     }
 }
 
