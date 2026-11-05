@@ -5,15 +5,20 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
-# Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com)
+# Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com),
+# and the docker command with DOCKER="sudo docker" if your user is not in the docker group.
 build_web() {
   if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
     ( cd web && npm ci && npm run build )
   elif command -v docker >/dev/null; then
     local image="${NODE_IMAGE:-node:22-alpine}"
     echo "本机没有 Node.js 20+，用容器 $image 构建前端"
+    if ! ${DOCKER:-docker} info >/dev/null 2>&1; then
+      echo "当前用户不能访问 Docker。用 DOCKER=\"sudo docker\" 重新运行本脚本，或者把自己加入 docker 组" >&2
+      return 1
+    fi
     mkdir -p "$HOME/.cache/anistock-npm"
-    docker run --rm --network host -u "$(id -u):$(id -g)" \
+    ${DOCKER:-docker} run --rm --network host -u "$(id -u):$(id -g)" \
       -e HOME=/tmp -e npm_config_cache=/tmp/.npm \
       ${NPM_REGISTRY:+-e npm_config_registry="$NPM_REGISTRY"} \
       ${https_proxy:+-e https_proxy="$https_proxy"} ${HTTPS_PROXY:+-e HTTPS_PROXY="$HTTPS_PROXY"} \
