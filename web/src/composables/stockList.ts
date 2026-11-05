@@ -4,7 +4,7 @@ import type { MarketStock } from '../api'
 export interface ListCtx {
   watch: Set<number>
   seasonStart: string
-  ratio: Map<number, { pe: number | null; dividend_yield: number | null }>
+  ratio: Map<number, { pe_dyn: number | null; dividend_yield_dyn: number | null }>
 }
 
 export const FILTERS: { key: string; label: string; test: (s: MarketStock, c: ListCtx) => boolean }[] = [
@@ -23,8 +23,8 @@ export const SORTS: { key: SortKey; label: string }[] = [
   { key: 'change', label: '涨跌幅' },
   { key: 'turnover', label: '成交额' },
   { key: 'cap', label: '市值' },
-  { key: 'pe', label: '市盈率' },
-  { key: 'dy', label: '股息率' },
+  { key: 'pe', label: '市盈率(动)' },
+  { key: 'dy', label: '股息率(动)' },
   { key: 'rev', label: '本周营收' },
   { key: 'eps', label: '集数' },
 ]
@@ -35,8 +35,8 @@ export function sortValue(s: MarketStock, k: SortKey, c: ListCtx): number | null
     case 'change': return s.change
     case 'turnover': return s.turnover
     case 'cap': return s.market_cap
-    case 'pe': return c.ratio.get(s.id)?.pe ?? null
-    case 'dy': return c.ratio.get(s.id)?.dividend_yield ?? null
+    case 'pe': return c.ratio.get(s.id)?.pe_dyn ?? null
+    case 'dy': return c.ratio.get(s.id)?.dividend_yield_dyn ?? null
     case 'rev': return s.week_revenue
     case 'eps': return s.aired
   }

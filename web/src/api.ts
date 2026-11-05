@@ -354,7 +354,7 @@ export interface Profile {
   episodes: { n: number; day: string }[]
   next_episode: { episode: number; airing_at: string } | null
   dividends: { day: string; ps: number }[]
-  ratios: { pe: number | null; dividend_yield: number | null; pb: number | null }
+  ratios: { pe: number | null; dividend_yield: number | null; pb: number | null; pe_dyn: number | null; dividend_yield_dyn: number | null }
   holders: { committee: number; npc: number; player: number; unissued: number }
   shares: number
 }
@@ -371,7 +371,7 @@ export interface Listing {
 }
 
 export interface Ratios {
-  rows: { id: number; pe: number | null; dividend_yield: number | null }[]
+  rows: { id: number; pe: number | null; dividend_yield: number | null; pe_dyn: number | null; dividend_yield_dyn: number | null }[]
   season_start: string
 }
 

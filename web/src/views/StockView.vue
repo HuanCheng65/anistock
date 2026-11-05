@@ -82,7 +82,9 @@ const stats = computed(() => {
     { k: '市值', v: big(cap.value), c: '' },
   ]
   return desk.value
-    ? [...base, { k: '昨收', v: money(x.prev_close), c: '' }, ...tail, { k: '市盈率', v: p.value?.ratios.pe != null ? p.value.ratios.pe.toFixed(1) : '–', c: '' }]
+    ? [...base, { k: '昨收', v: money(x.prev_close), c: '' }, ...tail,
+       { k: '市盈率(动)', v: p.value?.ratios.pe_dyn != null ? p.value.ratios.pe_dyn.toFixed(1) : '–', c: '' },
+       { k: '股息率(动)', v: p.value?.ratios.dividend_yield_dyn != null ? share(p.value.ratios.dividend_yield_dyn, 1) : '–', c: '' }]
     : [...base, ...tail]
 })
 const periods = [
@@ -107,8 +109,10 @@ const holders = computed(() => {
 const ratios = computed(() => {
   const r = p.value?.ratios
   return [
-    { k: '市盈率', v: r?.pe != null ? r.pe.toFixed(1) : '–' },
-    { k: '股息率', v: r?.dividend_yield != null ? share(r.dividend_yield, 1) : '–' },
+    { k: '市盈率(动)', v: r?.pe_dyn != null ? r.pe_dyn.toFixed(1) : '–' },
+    { k: '市盈率(TTM)', v: r?.pe != null ? r.pe.toFixed(1) : '–' },
+    { k: '股息率(动)', v: r?.dividend_yield_dyn != null ? share(r.dividend_yield_dyn, 1) : '–' },
+    { k: '股息率(TTM)', v: r?.dividend_yield != null ? share(r.dividend_yield, 1) : '–' },
     { k: '市净率', v: r?.pb != null ? r.pb.toFixed(2) : '–' },
   ]
 })

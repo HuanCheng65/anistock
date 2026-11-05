@@ -25,6 +25,8 @@
 //!   (1 − corp_tax) / shares — the company's own cost and tax rules applied to its published revenue.
 //!   A season's earnings arrive within a few months, so seasonal works show low ratios.
 //! - 股息率 = dividends per share paid in the trailing 365 days / price (null until one is paid).
+//! - 市盈率(动) / 股息率(动): the last 28 days annualised (`dyn_ratios`). A show earns within a season, so
+//!   these are what the table and the quote strip show; the TTM ones stay as `pe` / `dividend_yield`.
 //! - 市净率 = price / (company cash / shares), the same book value v1 shows as `book_value_ps`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -413,6 +415,10 @@ async fn profile(st: &Arc<AppState>, id: i64) -> Result<Value, ApiError> {
         let eps = rev_ttm as f64 * (1.0 - cost) * (1.0 - tax) / shares.max(1) as f64;
         let pe = if eps > 0.0 && price > 0 { Some(r4(price as f64 / eps)) } else { None };
         let dy = if dps_ttm > 0 && price > 0 { Some(r4(dps_ttm as f64 / price as f64)) } else { None };
+        let s28 = since(28);
+        let rev28: i64 = daily.iter().filter(|d| d.0 > s28).map(|d| d.1).sum();
+        let divs28: Vec<i64> = daily.iter().filter(|d| d.0 > s28).map(|d| d.2).collect();
+        let (pe_dyn, dy_dyn) = dyn_ratios(rev28, &divs28, shares, price, cost, tax);
         let cash: Option<i64> = c
             .query_row("SELECT cash FROM accounts WHERE kind='company' AND company_id=?", [id], |r| r.get(0))
             .optional()
@@ -451,7 +457,7 @@ async fn profile(st: &Arc<AppState>, id: i64) -> Result<Value, ApiError> {
             "episodes": episodes,
             "next_episode": next,
             "dividends": dividends,
-            "ratios": {"pe": pe, "dividend_yield": dy, "pb": pb},
+            "ratios": {"pe": pe, "dividend_yield": dy, "pb": pb, "pe_dyn": pe_dyn, "dividend_yield_dyn": dy_dyn},
             "holders": holders,
             "shares": shares,
         }))
@@ -624,30 +630,53 @@ fn fetch_cover(st: &AppState, id: i64, path: &std::path::Path) -> Option<Vec<u8>
 // ---------------------------------------------------------------- bulk ratios and market-wide revenue
 
 /// Same definitions as `profile`, for every listed company in one pass.
+/// 动态 ratios from the last four weeks, annualised (the A-share 市盈率(动) convention, on a four-week basis
+/// because a show earns within one season): EPS(动) = revenue of the last 28 days × 365/28 after the
+/// company's cost and tax; 股息率(动) = the mean of the dividends paid in the last 28 days × 52 / price.
+fn dyn_ratios(rev28: i64, divs28: &[i64], shares: i64, price: i64, cost: f64, tax: f64) -> (Option<f64>, Option<f64>) {
+    let eps = rev28 as f64 * 365.0 / 28.0 * (1.0 - cost) * (1.0 - tax) / shares.max(1) as f64;
+    let pe = if eps > 0.0 && price > 0 { Some(r4(price as f64 / eps)) } else { None };
+    let paid: Vec<i64> = divs28.iter().copied().filter(|d| *d > 0).collect();
+    let dy = if !paid.is_empty() && price > 0 {
+        Some(r4(paid.iter().sum::<i64>() as f64 / paid.len() as f64 * 52.0 / price as f64))
+    } else {
+        None
+    };
+    (pe, dy)
+}
+
 async fn ratios(st: &Arc<AppState>) -> Result<Value, ApiError> {
     let st2 = st.clone();
     st.read(move |c| {
         let cfg = &st2.cfg;
         let t = NaiveDate::parse_from_str(&st2.clock.today(), "%Y-%m-%d").map_err(|e| super::internal(e.to_string()))?;
         let s365 = (t - chrono::Duration::days(365)).format("%Y-%m-%d").to_string();
+        let s28 = (t - chrono::Duration::days(28)).format("%Y-%m-%d").to_string();
         let cost = param_f64(cfg, "company.operating_cost_ratio", 0.5);
         let tax = param_f64(cfg, "company.corp_tax", 0.25);
         let mut s = c
             .prepare(
                 "SELECT co.id, co.shares, co.last_price,
                    COALESCE((SELECT SUM(revenue) FROM company_days d WHERE d.company_id=co.id AND d.day>?1), 0),
-                   COALESCE((SELECT SUM(dividend_ps) FROM company_days d WHERE d.company_id=co.id AND d.day>?1), 0)
+                   COALESCE((SELECT SUM(dividend_ps) FROM company_days d WHERE d.company_id=co.id AND d.day>?1), 0),
+                   COALESCE((SELECT SUM(revenue) FROM company_days d WHERE d.company_id=co.id AND d.day>?2), 0),
+                   COALESCE((SELECT GROUP_CONCAT(dividend_ps) FROM company_days d WHERE d.company_id=co.id AND d.day>?2 AND d.dividend_ps>0), '')
                  FROM companies co WHERE co.status='listed'",
             )
             .map_err(sql)?;
         let rows = s
-            .query_map([&s365], |r| {
+            .query_map([&s365, &s28], |r| {
                 let (id, shares, price, rev, dps): (i64, i64, i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?);
+                let (rev28, divs): (i64, String) = (r.get(5)?, r.get(6)?);
+                let divs: Vec<i64> = divs.split(',').filter_map(|x| x.parse().ok()).collect();
                 let eps = rev as f64 * (1.0 - cost) * (1.0 - tax) / shares.max(1) as f64;
+                let (pe_dyn, dy_dyn) = dyn_ratios(rev28, &divs, shares, price, cost, tax);
                 Ok(json!({
                     "id": id,
                     "pe": if eps > 0.0 && price > 0 { Some(r4(price as f64 / eps)) } else { None },
                     "dividend_yield": if dps > 0 && price > 0 { Some(r4(dps as f64 / price as f64)) } else { None },
+                    "pe_dyn": pe_dyn,
+                    "dividend_yield_dyn": dy_dyn,
                 }))
             })
             .map_err(sql)?;
