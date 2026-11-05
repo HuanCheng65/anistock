@@ -270,6 +270,20 @@ async fn orders_and_their_errors() {
     assert_eq!(r.status, 201, "{}", r.json);
     a.validate(&a.schema("POST", "/api/v1/me/orders", 201), &r.json, "place");
     let id = r.json["order"]["id"].as_i64().unwrap();
+    // the same Idempotency-Key, twice at once and once after: one order
+    let keyed = [("cookie", ck.as_str()), ("idempotency-key", "k-1")];
+    let body = json!({"stock_id": 1, "side": "sell", "type": "limit", "price": 650, "quantity": 1});
+    let (r1, r2) = tokio::join!(
+        a.req("POST", "/api/v1/me/orders", Some(body.clone()), &keyed),
+        a.req("POST", "/api/v1/me/orders", Some(body.clone()), &keyed)
+    );
+    let r3 = a.req("POST", "/api/v1/me/orders", Some(body), &keyed).await;
+    assert_eq!(r1.status, 201, "{}", r1.json);
+    assert_eq!(r1.json["order"]["id"], r2.json["order"]["id"]);
+    assert_eq!(r1.json["order"]["id"], r3.json["order"]["id"]);
+    let open = a.req("GET", "/api/v1/me/orders?stock_id=1", None, &h).await;
+    assert_eq!(open.json["items"].as_array().unwrap().len(), 2, "{}", open.json);
+    a.req("DELETE", &format!("/api/v1/me/orders/{}", r1.json["order"]["id"]), None, &h).await;
     let r = a.req("GET", &format!("/api/v1/me/orders/{id}"), None, &h).await;
     assert_eq!(r.json["status"], "open");
     let r = a.req("DELETE", &format!("/api/v1/me/orders/{id}"), None, &h).await;

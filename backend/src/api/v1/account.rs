@@ -381,21 +381,50 @@ pub async fn place(
 ) -> R<Response> {
     let me = caller.player()?;
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::to_string);
-    if let Some(k) = &key {
-        if k.is_empty() || k.len() > 64 {
-            return Err(error::invalid(vec![error::bad_format("idempotency-key")]));
-        }
-        let idem = st.v1.idem.lock().unwrap();
-        if let Some((at, status, bytes)) = idem.get(&(me, k.clone())) {
-            if at.elapsed().as_secs() < 86400 {
-                let mut r = Response::new(axum::body::Body::from(bytes.clone()));
-                *r.status_mut() = StatusCode::from_u16(*status).unwrap_or(StatusCode::OK);
-                r.headers_mut().insert("content-type", HeaderValue::from_static("application/json"));
-                return Ok(r);
+    let Some(k) = key else { return place_new(&st, me, &headers, &body).await.map(super::created) };
+    if k.is_empty() || k.len() > 64 {
+        return Err(error::invalid(vec![error::bad_format("idempotency-key")]));
+    }
+    // the first request with a key leaves an in-flight marker (status 0); a concurrent repeat waits for
+    // its result instead of placing a second order
+    let id = (me, k);
+    for _ in 0..200 {
+        {
+            let mut idem = st.v1.idem.lock().unwrap();
+            idem.retain(|_, v| v.0.elapsed().as_secs() < 86400);
+            match idem.get(&id) {
+                Some((_, 0, _)) => {}
+                Some((_, status, bytes)) => {
+                    let mut r = Response::new(axum::body::Body::from(bytes.clone()));
+                    *r.status_mut() = StatusCode::from_u16(*status).unwrap_or(StatusCode::OK);
+                    r.headers_mut().insert("content-type", HeaderValue::from_static("application/json"));
+                    return Ok(r);
+                }
+                None => {
+                    idem.insert(id.clone(), (std::time::Instant::now(), 0, Vec::new()));
+                    break;
+                }
             }
         }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    let b = json_body(&headers, &body)?;
+    let res = place_new(&st, me, &headers, &body).await;
+    let mut idem = st.v1.idem.lock().unwrap();
+    match res {
+        Ok(out) => {
+            idem.insert(id, (std::time::Instant::now(), 201, serde_json::to_vec(&out).unwrap_or_default()));
+            Ok(super::created(out))
+        }
+        Err(e) => {
+            // a rejected order is not remembered: the same key may try again
+            idem.remove(&id);
+            Err(e)
+        }
+    }
+}
+
+async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]) -> R<PlaceOrderResponse> {
+    let b = json_body(headers, body)?;
     let stock_id = need(body_int(&b, "stock_id")?, "stock_id")?;
     let side = need(body_str(&b, "side")?, "side")?;
     if side != "buy" && side != "sell" {
@@ -480,7 +509,7 @@ pub async fn place(
     })
     .await??;
     let st2 = st.clone();
-    let out = read(&st, move |c| {
+    read(st, move |c| {
         let order = order_of(&st2, c, me, order_id)?.ok_or_else(|| error::internal("placed order missing"))?;
         let col = if order.side == OrderSide::Buy { "buy_order" } else { "sell_order" };
         let mut s = c.prepare(&format!("SELECT id, price, qty FROM trades WHERE {col}=? ORDER BY id")).map_err(sql)?;
@@ -491,14 +520,7 @@ pub async fn place(
             .map_err(sql)?;
         Ok(PlaceOrderResponse { order, fills })
     })
-    .await?;
-    if let Some(k) = key {
-        let bytes = serde_json::to_vec(&out).unwrap_or_default();
-        let mut idem = st.v1.idem.lock().unwrap();
-        idem.retain(|_, v| v.0.elapsed().as_secs() < 86400);
-        idem.insert((me, k), (std::time::Instant::now(), 201, bytes));
-    }
-    Ok(super::created(out))
+    .await
 }
 
 /// 撤单
