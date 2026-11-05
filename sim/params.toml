@@ -93,6 +93,7 @@ r_max = 0.20
 k_money = 0.5                 # rate response to (M2 growth - target)
 m2_growth_target = 0.20       # annualised
 max_step = 0.0025             # per weekly decision
+growth_lookback_days = 28     # M2 growth the rule reacts to: annualised over this many days
 deposit_spread = 0.01         # deposits earn policy rate minus this
 bill_share_base = 0.10        # share of household liquid wealth held in central bank bills at r_neutral
 bill_share_slope = 4.0        # extra bill share per unit of (r - r_neutral)

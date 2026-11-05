@@ -1,0 +1,86 @@
+# Written by sim/sweep.py: the stable macro configuration picked by rule from sim/out/sweep.csv.
+# growth (last 8 weeks) 22.1% ± 6.7%, final rate 3.50%, rate swing over the last 8 weeks 0.75%
+
+seed = 42
+
+[window]
+start = "2026-07-01"
+end = ""
+
+[universe]
+formats = ["TV", "TV_SHORT", "ONA"]
+min_popularity = 3000
+ipo_lead_days = 21
+
+[markets]
+us = 0.3
+cn = 0.5
+jp = 0.2
+
+[economy]
+players = 60
+initial_cash = 100000
+
+[revenue]
+w_in_progress = 0.0
+w_new_adds = 2.0
+w_trending = 1.0
+score_ref = 70
+score_power = 2.0
+score_mult_min = 0.7
+score_mult_max = 1.4
+demand_base_week = 40000
+demand_elasticity = 0.5
+
+[company]
+shares = 10000
+ipo_discount = 0.1
+ipo_price_min = 0.1
+ipo_float = 0.25
+production_fee_ratio = 0.8
+corp_tax = 0.25
+payout_ratio = 0.6
+dividend_tax = 0.1
+
+[valuation]
+equity_premium = 0.08
+post_finale_profile = [0.4, 0.3, 0.22, 0.16, 0.14]
+post_finale_tail_decay = 0.78
+long_runner_decay = 0.995
+long_runner_years = 2
+default_episodes = 13
+min_remaining_weeks = 4
+preair_attention_per_user = 1.09
+preair_cn_per_member = 0.0156
+preair_jp_per_member = 0.226
+premiere_drop = 0.85
+in_season_retention = 0.98
+min_days_after_premiere = 2
+
+[market]
+kappa = 0.15
+mu = 0.3
+sigma = 0.03
+limit = 0.1
+gap_sigma = 0.01
+ipo_free_days = 5
+airing_free_days = 0
+daily_turnover = 0.02
+stamp_duty = 0.0005
+
+[government]
+transfer_ratio = 0.25
+
+[central_bank]
+r_neutral = 0.03
+r_min = 0.0
+r_max = 0.2
+k_money = 0.5
+m2_growth_target = 0.2
+max_step = 0.0025
+growth_lookback_days = 28
+deposit_spread = 0.01
+bill_share_base = 0.1
+bill_share_slope = 4.0
+bill_share_max = 0.6
+bill_adjust_speed = 0.1

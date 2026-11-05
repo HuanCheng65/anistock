@@ -448,8 +448,9 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
             tax_week = 0.0
             m2 = hh_cash + sum(co_cash.values())
             m2_hist[-1] = m2
-            if len(m2_hist) > 28:
-                g = (m2_hist[-1] / m2_hist[-29]) ** (365 / 28) - 1
+            L = cb["growth_lookback_days"]
+            if len(m2_hist) > L:
+                g = (m2_hist[-1] / m2_hist[-1 - L]) ** (365 / L) - 1
                 want = cb["r_neutral"] + cb["k_money"] * (g - cb["m2_growth_target"])
                 want = min(cb["r_max"], max(cb["r_min"], want))
                 rate += max(-cb["max_step"], min(cb["max_step"], want - rate))
@@ -461,7 +462,8 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
         assert hh_cash >= 0 and gov >= 0, f"negative balance on {d}: households={hh_cash:.0f} gov={gov:.0f}"
         total_prev = total
 
-        g4 = (m2_hist[-1] / m2_hist[-29]) ** (365 / 28) - 1 if len(m2_hist) > 28 else None
+        L = cb["growth_lookback_days"]
+        g4 = (m2_hist[-1] / m2_hist[-1 - L]) ** (365 / L) - 1 if len(m2_hist) > L else None
         macro.append({
             "d": d.isoformat(), "rate": round(rate, 5), "m2": round(m2, 2), "m2_growth_ann": g4 and round(g4, 4),
             "hh_cash": round(hh_cash, 2), "bills": round(bills, 2), "co_cash": round(sum(co_cash.values()), 2),
