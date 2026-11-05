@@ -173,11 +173,7 @@ impl Bot {
 
     /// Wealth at last prices, cents.
     pub fn wealth(&self, e: &Engine) -> i64 {
-        let cash = e.account(self.account).map_or(0, |a| a.cash);
-        cash + e
-            .holdings_of(self.account)
-            .map(|h| h.qty * e.company(h.company_id).map_or(0, |c| c.last_price))
-            .sum::<i64>()
+        e.net_assets(self.account)
     }
 
     /// Called once per simulated minute during continuous trading.

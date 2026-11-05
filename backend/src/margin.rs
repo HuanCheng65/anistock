@@ -583,21 +583,29 @@ impl Engine {
 
     // ------------------------------------------------------------ opening
 
-    /// Open credit for a player (`initial_cents`: the starting cash, for the asset condition).
-    pub fn open_credit(&mut self, account_id: i64, initial_cents: i64, day: &str, ts: &str) -> Result<(), OrderError> {
+    /// Why this player cannot open credit now (None: they can).
+    pub fn credit_open_refusal(&self, account_id: i64, initial_cents: i64, day: &str) -> Option<String> {
         if !self.margin.enabled {
-            return Err(err("暂未开放融资融券"));
+            return Some("暂未开放融资融券".into());
         }
         if let Some(c) = self.credit(account_id) {
-            return Err(err(if c.status == DEFAULTED { "穿仓后需要先申请重整" } else { "信用账户已经开通" }));
+            return Some(if c.status == DEFAULTED { "穿仓后需要先申请重整".into() } else { "信用账户已经开通".into() });
         }
-        let a = self.account(account_id).ok_or_else(|| err("找不到账户"))?;
+        let Some(a) = self.account(account_id) else { return Some("找不到账户".into()) };
         if days_between(&a.created_at, day) < self.margin.min_days {
-            return Err(err(format!("注册满 {} 天后才能开通", self.margin.min_days)));
+            return Some(format!("注册满 {} 天后才能开通", self.margin.min_days));
         }
         let need = (initial_cents as f64 * self.margin.min_assets).round() as i64;
         if self.net_assets(account_id) < need {
-            return Err(err(format!("净资产不低于 {} 币才能开通", crate::pyfmt::int_grouped(need / 100))));
+            return Some(format!("净资产不低于 {} 币才能开通", crate::pyfmt::int_grouped(need / 100)));
+        }
+        None
+    }
+
+    /// Open credit for a player (`initial_cents`: the starting cash, for the asset condition).
+    pub fn open_credit(&mut self, account_id: i64, initial_cents: i64, day: &str, ts: &str) -> Result<(), OrderError> {
+        if let Some(why) = self.credit_open_refusal(account_id, initial_cents, day) {
+            return Err(OrderError(why));
         }
         self.do_open_credit(account_id, ts);
         self.commit();

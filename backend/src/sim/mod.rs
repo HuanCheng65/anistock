@@ -322,6 +322,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                     }
                 }
             }
+            // 融资融券: forced liquidation runs once a minute in continuous trading
+            if s >= 9 * 3600 {
+                e.margin_sweep(&day_of(t), &ts_of(t));
+            }
             if (s / 60) % opts.spread_every_min == 0 && s >= 9 * 3600 {
                 rec.sample_spreads(&e, &m, t);
             }

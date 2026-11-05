@@ -245,6 +245,8 @@ pub struct Order {
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub trading_day: TradingDay,
+    /// 信用委托的类型，开放枚举：margin_buy（融资买入）、short_sell（融券卖出）、sell_repay（卖券还款）、buy_return（买券还券）；普通委托为 null
+    pub credit: Option<String>,
 }
 
 #[derive(Serialize, ToSchema, Clone, Debug)]
@@ -718,7 +720,7 @@ pub struct IpoEnvelope {
 pub struct RestructureState {
     pub count: i64,
     pub eligible: bool,
-    /// not_poor、this_season、market_closed；可以申请时为 null
+    /// not_poor、this_season、market_closed、margin_debt；可以申请时为 null
     pub reason: Option<String>,
     pub message: Option<String>,
 }
@@ -732,6 +734,9 @@ pub struct Me {
     pub frozen_cash: Money,
     pub available_cash: Money,
     pub stock_value: Money,
+    /// 融资融券负债
+    pub liabilities: Money,
+    /// 净资产：现金 + 持仓市值 − 负债
     pub total_assets: Money,
     pub initial_cash: Money,
     /// 链接收益率（时间加权）
@@ -739,6 +744,8 @@ pub struct Me {
     pub dividends: Money,
     pub deposit_rate: f64,
     pub restructure: RestructureState,
+    /// 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null
+    pub credit_status: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -747,6 +754,7 @@ pub struct PortfolioSummary {
     pub frozen_cash: Money,
     pub available_cash: Money,
     pub stock_value: Money,
+    pub liabilities: Money,
     pub total_assets: Money,
 }
 
@@ -762,6 +770,7 @@ pub struct AssetDay {
     pub trading_day: TradingDay,
     pub cash: Money,
     pub stock_value: Money,
+    pub liabilities: Money,
     pub total_assets: Money,
     pub return_index: f64,
     pub total_return: f64,
@@ -784,6 +793,8 @@ pub struct PlaceOrderRequest {
     /// 限价，整数分；市价委托省略或为 null
     pub price: Option<Money>,
     pub quantity: i64,
+    /// 信用委托：margin_buy、short_sell（side 为 sell）、sell_repay（sell）、buy_return（buy）；只接受限价，只在连续交易时段
+    pub credit: Option<String>,
 }
 
 #[derive(Serialize, ToSchema, Clone)]
