@@ -12,6 +12,10 @@ For day D (yesterday):
 
 Data the day needs but does not have (the collector missed a run) is carried forward by the
 engine's gap handling; the step never crashes the clock for missing data.
+
+Everything the close needs from the economic model comes from one file per day, written by
+engine/daily_inputs.py (the Python -> Rust interface); the formulas that combine it with game state
+are in engine/valuation.py. Nothing here calls the model directly.
 """
 
 from __future__ import annotations
@@ -20,13 +24,13 @@ import json
 import logging
 import math
 from datetime import date, timedelta
-from pathlib import Path
 
-from engine import economy as E
+from engine import daily_inputs as DI
+from engine import valuation as V
 
 from . import db as gdb
 from . import exchange as ex
-from .config import ROOT, Config
+from .config import Config
 
 log = logging.getLogger("daily")
 MARKET_KINDS = ("player", "mm", "noise", "committee", "company")
@@ -34,15 +38,23 @@ MARKET_KINDS = ("player", "mm", "noise", "committee", "company")
 
 # ---------------------------------------------------------------- inputs
 
-def load_inputs(cfg: Config, conn, day: str):
-    p = cfg.params
+def load_inputs(cfg: Config, conn, day: str) -> DI.Inputs:
+    """Build the model's inputs for `day` from the latest collector data, keep a copy in
+    data/derived/inputs/<day>.json (the day's record, and what a Rust close would read), and parse them
+    back from that JSON text, so the close uses exactly what the file says."""
     start = date.fromisoformat(gdb.get_state(conn, "window_start"))
-    shows, _ = E.load_shows(cfg.collector_db, p, start, date.fromisoformat(day),
-                            upcoming_days=cfg.game["ipo_subscription_days"] + 1)
-    mpath = ROOT / "data" / "derived" / "markets.json"
-    markets = {int(k): v for k, v in json.loads(mpath.read_text(encoding="utf-8"))["series"].items()} if mpath.exists() else {}
-    aud = E.load_audiences(cfg.collector_db)
-    return {s.id: s for s in shows}, markets, aud
+    raw = DI.daily_inputs(day, cfg, window_start=start)
+    text = DI.dumps(raw)
+    try:
+        DI.write(raw)
+    except OSError:
+        log.exception("could not write the inputs file for %s", day)
+    return DI.parse(json.loads(text))
+
+
+def as_inputs(inputs) -> DI.Inputs:
+    """Accept parsed inputs or the raw JSON dict (e.g. json.load of an inputs file)."""
+    return inputs if isinstance(inputs, DI.Inputs) else DI.parse(inputs)
 
 
 def ex_fees(cfg: Config) -> ex.Fees:
@@ -60,50 +72,19 @@ def news(conn, day: str, ts: str, kind: str, title: str, body: str = "", company
 
 # ---------------------------------------------------------------- valuation
 
-def margin(p: dict) -> float:
-    co = p["company"]
-    return (1 - co.get("operating_cost_ratio", 0)) * (1 - co["corp_tax"]) * co["payout_ratio"]
-
-
-def expected_share(show, d: date, listed_shows, p, markets, aud) -> float:
+def expected_share(show, listed_shows, inp: DI.Inputs, p) -> float:
     """This show's expected share of external demand, with every listed show's expectation in the denominator."""
-    rv, val, w = p["revenue"], p["valuation"], p["markets"]
-    tot = {m: 0.0 for m in E.MARKETS}
-    own = None
-    for s in listed_shows:
-        a = E.expected_att(s, d, rv, markets, val, aud)
-        for m in E.MARKETS:
-            tot[m] += a[m]
-        if s.id == show.id:
-            own = a
-    if own is None:
-        own = E.expected_att(show, d, rv, markets, val, aud)
-        for m in E.MARKETS:
-            tot[m] += own[m]
-    share, _ = E.blended_share(own, tot, w)
-    return share
+    return V.expected_share(show.id, [s.id for s in listed_shows], inp.expected, p["markets"])
 
 
 def fair_value(conn, cfg: Config, show, d: date, company: dict, book_cents: int, rate: float,
                demand_week: float, pre_share: float) -> int:
     """Per-share value in cents: the simulation's valuation applied to the company's own revenue history."""
-    p = cfg.params
-    shares = company["shares"]
-    since = (d - show.first_air).days + 1
     rows = conn.execute("SELECT revenue FROM company_days WHERE company_id=? AND day<=? ORDER BY day DESC LIMIT 7",
                         (company["id"], d.isoformat())).fetchall()
-    revs = [r["revenue"] / 100 for r in rows]
-    preair_weekly = demand_week * pre_share
-    if since < 7:
-        hist = revs[:max(1, since)]
-        weekly_rev = sum(hist) + preair_weekly / 7 * (7 - len(hist))
-    else:
-        weekly_rev = sum(revs) * 7 / max(1, len(revs))
-    weekly_div = weekly_rev * margin(p) / shares
-    preair_div = preair_weekly * margin(p) / shares
-    use_pre = not E.has_real_data(show, d, p["valuation"])
-    v = E.fundamental(show, d, weekly_div, book_cents / 100 / shares, rate, p, preair_div, use_preair=use_pre)
-    return max(1, round(v * 100))
+    return V.fair_value_cents([r["revenue"] for r in rows], (d - show.first_air).days + 1, company["shares"],
+                              book_cents, rate, demand_week, pre_share, show.aired, show.episodes,
+                              show.episodes_known, show.long_runner, show.has_real_data, cfg.params)
 
 
 # ---------------------------------------------------------------- the step
@@ -115,7 +96,10 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
     p, g = cfg.params, cfg.game
     co_p, rv = p["company"], p["revenue"]
     d = date.fromisoformat(day)
-    shows, markets, aud = inputs or load_inputs(cfg, conn, day)
+    inp = as_inputs(inputs) if inputs is not None else load_inputs(cfg, conn, day)
+    if inp.day != day:
+        raise ValueError(f"inputs are for {inp.day}, not {day}")
+    shows = inp.shows
     world, cb, gov = (gdb.special(conn, k) for k in ("world", "cb", "gov"))
     rate = float(gdb.get_state(conn, "rate"))
     a_ref = float(gdb.get_state(conn, "a_ref"))
@@ -127,17 +111,17 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
         listed_shows = [shows[c["id"]] for c in companies if c["id"] in shows]
 
         # 1. revenue
-        att = {s.id: E.market_att(s, d, rv, markets) for s in listed_shows}
-        totals = {m: sum(a[m] for a in att.values()) for m in E.MARKETS}
+        att = {s.id: s.att for s in listed_shows}
+        totals = {m: sum(a[m] for a in att.values()) for m in V.MARKETS}
         tot_us = totals["us"]
-        demand_day = rv["demand_base_week"] / 7 * ((tot_us / a_ref) ** rv["demand_elasticity"] if tot_us > 0 else 0)
+        demand_day = V.demand_day(tot_us, a_ref, rv)
         for c in companies:
             s = shows.get(c["id"])
             if s is None:
                 continue
-            share, parts = E.blended_share(att[s.id], totals, p["markets"])
+            share, parts = V.blended_share(att[s.id], totals, p["markets"])
             rev = round(demand_day * share * 100)
-            split = [round(demand_day * parts[m] * 100) for m in E.MARKETS]
+            split = [round(demand_day * parts[m] * 100) for m in V.MARKETS]
             acct = account_of(conn, "company", c["id"])
             ex.transfer(conn, world, acct, rev, "revenue", day=day, ts=ts, company_id=c["id"])
             cost = round(rev * co_p.get("operating_cost_ratio", 0))
@@ -145,7 +129,7 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
             tax = round((rev - cost) * co_p["corp_tax"])
             ex.transfer(conn, acct, gov, tax, "corp_tax", day=day, ts=ts, company_id=c["id"])
             conn.execute("UPDATE companies SET profit_week = profit_week + ? WHERE id=?", (rev - cost - tax, c["id"]))
-            aired = E.at(s, s.aired, d, 0)
+            aired = s.aired
             prev = conn.execute("SELECT aired FROM company_days WHERE company_id=? ORDER BY day DESC LIMIT 1",
                                 (c["id"],)).fetchone()
             conn.execute("""INSERT OR REPLACE INTO company_days(company_id, day, revenue, rev_us, rev_cn, rev_jp, aired)
@@ -187,7 +171,7 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
                 summary["exported"] += fee
 
         # 5. valuations, delistings
-        demand_week = rv["demand_base_week"] * ((tot_us / a_ref) ** rv["demand_elasticity"] if tot_us > 0 else 0)
+        demand_week = V.demand_week(tot_us, a_ref, rv)
         total_week_rev = conn.execute("SELECT COALESCE(SUM(revenue),0) FROM company_days WHERE day>?",
                                       ((d - timedelta(days=7)).isoformat(),)).fetchone()[0]
         for c in companies:
@@ -195,7 +179,7 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
             if s is None:
                 continue
             book = conn.execute("SELECT cash FROM accounts WHERE kind='company' AND company_id=?", (c["id"],)).fetchone()["cash"]
-            pre = expected_share(s, d, listed_shows, p, markets, aud)
+            pre = expected_share(s, listed_shows, inp, p)
             fv = fair_value(conn, cfg, s, d, c, book, rate, demand_week, pre)
             conn.execute("UPDATE companies SET fair_value=? WHERE id=?", (fv, c["id"]))
             if d.weekday() == 6:
@@ -213,12 +197,12 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
         for c in conn.execute("SELECT * FROM companies WHERE status='listed'").fetchall():
             close_candle(conn, c, day)
 
-        refresh_titles(conn, cfg)
+        refresh_titles(conn, inp.cn_titles)
 
         # 8. allot subscriptions that closed today, then open new ones
         for c in conn.execute("SELECT * FROM companies WHERE status='subscribing' AND sub_end<=?", (day,)).fetchall():
             allot(conn, cfg, dict(c), day, ts, summary)
-        list_new(conn, cfg, day, ts, shows, listed_shows, markets, aud, rate, demand_week)
+        list_new(conn, cfg, day, ts, inp, listed_shows, rate, demand_week)
 
         m2 = conn.execute(f"SELECT COALESCE(SUM(cash),0) FROM accounts WHERE kind IN {MARKET_KINDS}").fetchone()[0]
         old = conn.execute("SELECT m2 FROM macro_days WHERE day=?", ((d - timedelta(days=28)).isoformat(),)).fetchone()
@@ -237,22 +221,26 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
     return summary
 
 
-def revalue_all(conn, cfg: Config, day: str, shows: dict, markets, aud, rate: float) -> int:
+def revalue_all(conn, cfg: Config, day: str, inputs, rate: float) -> int:
     """Value every listed company with the game's own method (used at launch). Returns how many were valued."""
     p, rv = cfg.params, cfg.params["revenue"]
     d = date.fromisoformat(day)
+    inp = as_inputs(inputs)
+    if inp.day != day:
+        raise ValueError(f"inputs are for {inp.day}, not {day}")
+    shows = inp.shows
     a_ref = float(gdb.get_state(conn, "a_ref"))
     companies = [dict(r) for r in conn.execute("SELECT * FROM companies WHERE status='listed'").fetchall()]
     listed_shows = [shows[c["id"]] for c in companies if c["id"] in shows]
-    tot_us = sum(E.market_att(s, d, rv, markets)["us"] for s in listed_shows)
-    demand_week = rv["demand_base_week"] * ((tot_us / a_ref) ** rv["demand_elasticity"] if tot_us > 0 else 0)
+    tot_us = sum(s.att["us"] for s in listed_shows)
+    demand_week = V.demand_week(tot_us, a_ref, rv)
     n = 0
     for c in companies:
         s = shows.get(c["id"])
         if s is None:
             continue
         book = conn.execute("SELECT cash FROM accounts WHERE kind='company' AND company_id=?", (c["id"],)).fetchone()["cash"]
-        pre = expected_share(s, d, listed_shows, p, markets, aud)
+        pre = expected_share(s, listed_shows, inp, p)
         conn.execute("UPDATE companies SET fair_value=? WHERE id=?",
                      (fair_value(conn, cfg, s, d, c, book, rate, demand_week, pre), c["id"]))
         n += 1
@@ -338,7 +326,7 @@ def rate_decision(conn, cfg: Config, day: str, ts: str, rate: float) -> float:
 def maybe_delist(conn, cfg: Config, day: str, ts: str, c: dict, s, total_week_rev: int, summary: dict) -> None:
     g = cfg.game
     d = date.fromisoformat(day)
-    finished = (not s.long_runner) and s.episodes and E.at(s, s.aired, d, 0) >= s.episodes
+    finished = V.finished(s.aired, s.episodes, s.long_runner)
     week_rev = conn.execute("SELECT COALESCE(SUM(revenue),0) FROM company_days WHERE company_id=? AND day>?",
                             (c["id"], (d - timedelta(days=7)).isoformat())).fetchone()[0]
     low = finished and week_rev < g["delist_revenue_share"] * max(1, total_week_rev)
@@ -388,24 +376,13 @@ def close_candle(conn, c, day: str) -> None:
                     vcm_high=NULL, vcm_count=0 WHERE id=?""", (cl, cl, cl, c["id"]))
 
 
-_CN: dict = {}
-
-
-def cn_titles(cfg: Config) -> dict[int, str]:
-    """Chinese titles, reloaded when sim/matches.json or the collector DB changes."""
-    key = tuple((p.stat().st_mtime if p.exists() else 0) for p in (ROOT / "sim" / "matches.json", cfg.collector_db))
-    if _CN.get("key") != key:
-        _CN["key"], _CN["map"] = key, E.load_cn_titles(cfg.collector_db)
-    return _CN["map"]
-
-
-def refresh_titles(conn, cfg: Config) -> None:
+def refresh_titles(conn, cn_titles: dict[int, str]) -> None:
     """Pick up Chinese titles that appeared after listing (new Bangumi entries, manual fixes)."""
-    for cid, name in cn_titles(cfg).items():
+    for cid, name in cn_titles.items():
         conn.execute("UPDATE companies SET title=? WHERE id=? AND title != ?", (name, cid, name))
 
 
-def list_new(conn, cfg: Config, day: str, ts: str, shows: dict, listed_shows: list, markets, aud,
+def list_new(conn, cfg: Config, day: str, ts: str, inp: DI.Inputs, listed_shows: list,
              rate: float, demand_week: float) -> None:
     """Open IPO subscriptions for shows that list within the subscription window. A show lists
     `ipo_lead_days` before its premiere; its subscription runs the `ipo_subscription_days` before that."""
@@ -414,7 +391,7 @@ def list_new(conn, cfg: Config, day: str, ts: str, shows: dict, listed_shows: li
     lead = p["universe"]["ipo_lead_days"]
     window = g["ipo_subscription_days"]
     existing = {r["id"] for r in conn.execute("SELECT id FROM companies").fetchall()}
-    for s in shows.values():
+    for s in inp.shows.values():
         if s.id in existing or s.popularity_end < g["min_listing_popularity"]:
             continue
         if not (s.first_air - timedelta(days=lead + window) <= tomorrow):
@@ -422,21 +399,21 @@ def list_new(conn, cfg: Config, day: str, ts: str, shows: dict, listed_shows: li
         if s.first_air < tomorrow - timedelta(days=60) and not s.long_runner:
             continue                                   # long finished before the game noticed it
         listed_on = max(s.first_air - timedelta(days=lead), tomorrow + timedelta(days=window))
-        create_company(conn, cfg, s, listed_on.isoformat(), day, ts, listed_shows, markets, aud, rate, demand_week,
+        create_company(conn, cfg, s, listed_on.isoformat(), day, ts, inp, listed_shows, rate, demand_week,
                        subscription=(tomorrow.isoformat(), (listed_on - timedelta(days=1)).isoformat()))
 
 
-def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, listed_shows, markets, aud,
+def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, inp: DI.Inputs, listed_shows,
                    rate: float, demand_week: float, ipo_price: int | None = None,
                    subscription: tuple[str, str] | None = None) -> int:
     """Create a company with its accounts. With `subscription` (start, end) it opens an IPO subscription
     and the public float is created at allotment; without it (launch seeding) the market maker holds the float."""
     p, co = cfg.params, cfg.params["company"]
     shares = co["shares"]
-    title = cn_titles(cfg).get(s.id) or s.title
+    title = inp.cn_titles.get(s.id) or s.title_ja
     if ipo_price is None:
         d = date.fromisoformat(day)
-        share = expected_share(s, d, listed_shows, p, markets, aud)
+        share = expected_share(s, listed_shows, inp, p)
         fake = {"id": s.id, "shares": shares}
         v = fair_value(conn, cfg, s, d, fake, 0, rate, demand_week, share)
         ipo_price = max(round(co["ipo_price_min"] * 100), round(v * (1 - co["ipo_discount"])))
@@ -447,7 +424,7 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
     conn.execute("""INSERT INTO companies(id, code, title, title_ja, title_en, studio, episodes, long_runner, first_air,
                     listed_on, status, sub_start, sub_end, shares, ipo_price, prev_close, last_price, open_ref, fair_value)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                 (s.id, code, title, s.title, s.title_en, s.studio, s.episodes if s.episodes_known else None,
+                 (s.id, code, title, s.title_ja, s.title_en, s.studio, s.episodes if s.episodes_known else None,
                   int(s.long_runner), s.first_air.isoformat(), listed_on, status, sub_start, sub_end, shares,
                   ipo_price, ipo_price, ipo_price, ipo_price, ipo_price))
     conn.execute("INSERT INTO accounts(kind, name, company_id, created_at) VALUES ('company', ?, ?, ?)",

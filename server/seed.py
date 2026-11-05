@@ -14,6 +14,7 @@ import json
 import sys
 from datetime import date, timedelta
 
+from engine import daily_inputs as DI
 from engine import economy as E
 
 from . import db as gdb
@@ -48,6 +49,8 @@ def main() -> None:
     print(f"replaying {start}..{end} with {len(shows)} shows")
     res = SIM.simulate(shows, start, end, p, markets, aud)
     by_id = {s.id: s for s in shows}
+    # the model's view of the launch day, in the same form the daily close reads
+    inp = DI.parse(json.loads(DI.dumps(DI.build(shows, markets, aud, E.load_cn_titles(cfg.collector_db), end, p, start))))
 
     # the demand index reference: AniList attention of the first week, as the simulation computes it
     rv = p["revenue"]
@@ -80,10 +83,9 @@ def main() -> None:
         sid = int(sid)
         if not rows or sid not in by_id:
             continue
-        s = by_id[sid]
         last = rows[-1]
         ipo = round(rows[0]["pc"] * 100)
-        create_company(conn, cfg, s, rows[0]["d"], day, ts, [], markets, aud, res["macro"][-1]["rate"], 0,
+        create_company(conn, cfg, inp.shows[sid], rows[0]["d"], day, ts, inp, [], res["macro"][-1]["rate"], 0,
                        ipo_price=ipo)
         # the company's cash (retained earnings + kept IPO money) carries over: it is part of its value
         book_cash = round(last.get("book", 0) * 100) * cfg.params["company"]["shares"]
@@ -102,7 +104,7 @@ def main() -> None:
         n += 1
     # opening reference price: the game's own valuation, so the first day's limits are centred where the
     # market makers will quote (the replay's price path lags its values and used a different rate)
-    revalue_all(conn, cfg, day, by_id, markets, aud, p["central_bank"]["r_neutral"])
+    revalue_all(conn, cfg, day, inp, p["central_bank"]["r_neutral"])
     # the replay's price path is a stand-in: scale each stock's whole replay (and its IPO price) so it
     # ends exactly at the opening price; shape and returns are unchanged, and the chart has no gap
     for c in conn.execute("SELECT id, fair_value, last_price FROM companies WHERE status='listed'").fetchall():

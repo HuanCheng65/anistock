@@ -1,6 +1,8 @@
 """Shared economics for the simulation (sim/) and the game server (server/).
 
 Moved verbatim from sim/simulate.py: data loading, attention per market, revenue shares and valuation.
+The pure formulas (blended share, fundamental value) live in engine/valuation.py; the wrappers here
+adapt them to Show objects.
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
+
+from engine import valuation as V
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -173,7 +177,7 @@ def attention(s: Show, d: date, r: dict) -> float:
     return a * score_mult(s.score[i], r)
 
 
-MARKETS = ("us", "cn", "jp")
+MARKETS = V.MARKETS
 
 
 def market_att(s: Show, d: date, r: dict, markets: dict) -> dict[str, float]:
@@ -188,11 +192,8 @@ def market_att(s: Show, d: date, r: dict, markets: dict) -> dict[str, float]:
 
 
 def blended_share(own: dict[str, float], totals: dict[str, float], weights: dict) -> tuple[float, dict]:
-    """Σ_m w_m * own_m/T_m, renormalised over markets that have any data. Returns (share, per-market part)."""
-    live = [m for m in MARKETS if totals[m] > 0]
-    wsum = sum(weights[m] for m in live) or 1.0
-    parts = {m: (weights[m] / wsum) * own[m] / totals[m] if m in live else 0.0 for m in MARKETS}
-    return sum(parts.values()), parts
+    """Σ_m w_m * own_m/T_m, renormalised over markets that have any data (engine/valuation.py)."""
+    return V.blended_share(own, totals, weights)
 
 
 def preair_att(s: Show, d: date, val: dict, aud: dict) -> dict[str, float]:
@@ -206,7 +207,7 @@ def preair_att(s: Show, d: date, val: dict, aud: dict) -> dict[str, float]:
 def has_real_data(s: Show, d: date, val: dict) -> bool:
     """Premiered long enough ago that every market has reported (cn/jp lag the premiere by a day).
     Keyed on the premiere date, not AniList episode markers: long-runners such as Doraemon have none."""
-    return (d - s.first_air).days >= val["min_days_after_premiere"]
+    return V.has_real_data((d - s.first_air).days, val)
 
 
 def expected_att(s: Show, d: date, r: dict, markets: dict, val: dict, aud: dict) -> dict[str, float]:
@@ -222,35 +223,9 @@ def expected_att(s: Show, d: date, r: dict, markets: dict, val: dict, aud: dict)
 
 def fundamental(s: Show, d: date, weekly_div: float, book: float, rate: float, p: dict,
                 preair_div: float, use_preair: bool = False) -> float:
-    """Per-share value: discounted expected dividends + book value per share.
-
-    Expected weekly dividend runs at the current level, falls once by `premiere_drop` if only the
-    premiere has aired, then by `in_season_retention` per week until the finale, then follows the
-    measured post-finale profile."""
-    v = p["valuation"]
-    rw = (rate + v["equity_premium"]) / 52
-    disc = 1 / (1 + rw)
-    aired = at(s, s.aired, d, 0)
-    div = preair_div if use_preair else weekly_div
-    if s.long_runner:
-        g = v["long_runner_decay"]
-        pv = div * g * disc / (1 - g * disc)
-    else:
-        remaining = max(0, s.episodes - aired)
-        if not s.episodes_known and aired > 0:
-            remaining = max(remaining, v["min_remaining_weeks"])
-        rho = v["in_season_retention"]
-        level = div * (v["premiere_drop"] if aired == 1 and not use_preair else 1.0)
-        pv = 0.0
-        for k in range(1, remaining + 1):
-            pv += level * rho ** (k - 1) * disc ** k
-        last = level * rho ** max(0, remaining - 1)
-        prof, tail = v["post_finale_profile"], v["post_finale_tail_decay"]
-        for j, f in enumerate(prof, start=1):
-            pv += last * f * disc ** (remaining + j)
-        n = remaining + len(prof)
-        pv += last * prof[-1] * (disc ** n) * (tail * disc) / (1 - tail * disc)
-    return pv + book
+    """Per-share value: discounted expected dividends + book value per share (engine/valuation.py)."""
+    return V.fundamental(at(s, s.aired, d, 0), s.episodes, s.episodes_known, s.long_runner,
+                         weekly_div, book, rate, p, preair_div, use_preair=use_preair)
 
 
 # ---------------------------------------------------------------- simulation

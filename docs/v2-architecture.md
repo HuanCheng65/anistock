@@ -17,7 +17,7 @@ v2 把游戏服务器从 Python（FastAPI）换成 Rust，目标是：撮合常�
 | **游戏服务器** `backend/`（新） | Rust | 撮合、账户与账本、NPC、日结中所有资金流动、估值公式、HTTP / WebSocket、认证 |
 | 前端 `web/` | Vue | 第 1 步不改；之后把轮询换成 WebSocket 推送 |
 
-Rust 只移植**把模型输出和游戏状态结合起来**的那部分公式：`blended_share`、预期份额的分母、`fair_value`、`fundamental`（合计约 80 行）。
+Rust 只移植**把模型输出和游戏状态结合起来**的那部分公式，集中在 `engine/valuation.py`：`blended_share`、`expected_share`（预期份额的分母）、`demand_day`/`demand_week`、`margin`、`fair_value_cents`、`fundamental`、`finished`（函数体合计约 80 行）。
 
 ## 2. 进程内结构
 
@@ -43,28 +43,35 @@ Rust 只移植**把模型输出和游戏状态结合起来**的那部分公式�
 
 ## 3. Python 与 Rust 的接口：每日输入文件
 
-日结 D 日时，Rust 运行 `uv run engine/daily_inputs.py --day D`，读取 `data/derived/inputs/D.json`：
+日结 D 日时，Rust 运行 `uv run engine/daily_inputs.py --day D`，读取 `data/derived/inputs/D.json`（`--out` 或环境变量 `ANISTOCK_INPUTS_DIR` 可改位置）。v1 的日结（`server/daily.py`）已经改为只从这个文件取模型数据，两边读的是同一份输入。字段的权威说明在 `engine/daily_inputs.py` 的文档字符串里：
 
 ```json
 {
-  "day": "2026-11-05",
-  "demand_week": 2500000,
-  "shows": {
-    "171018": {
-      "title": "中文名", "title_ja": "…", "title_en": "…",
+  "day": "2026-11-04",
+  "window_start": "2026-07-01",
+  "cn_titles": {"171018": "中文名", "…": "…"},
+  "shows": [
+    {
+      "id": 171018,
+      "title_ja": "…", "title_en": "…", "studio": "…",
       "first_air": "2026-10-03", "episodes": 12, "episodes_known": true, "long_runner": false,
+      "popularity_end": 52000,
       "aired": 5, "has_real_data": true,
       "att":      {"us": 0.0, "cn": 0.0, "jp": 0.0},
       "expected": {"us": 0.0, "cn": 0.0, "jp": 0.0}
     }
-  }
+  ]
 }
 ```
 
-- `att`：D 日实际热度（用于营收份额）；`expected`：预期热度（用于新股定价、估值和预期份额的分母）。
-- 包含已上市的番和未来几天内要上市的番。
-- 具体字段在实现时按 `server/daily.py` 里每一处 `E.` 调用逐一核对，保证不漏。
-- 文件留在 `data/` 下（不进仓库），同时可以作为日结的复盘记录。
+- `shows` 是**数组，顺序有意义**：新股按这个顺序创建，股票代码按创建顺序编号。包含模型范围内已播出的番和 `ipo_subscription_days + 1` 天内要上市的番。
+- `att`：D 日实际热度（营收份额、需求指数）；`expected`：预期热度（新股定价、估值和预期份额的分母）。
+- `episodes`：估值用的集数，未知时为默认集数（`episodes_known = false`，公司表里存 null）；只有长篇且无集数时为 null。`aired`：截至 D 日已播集数。`popularity_end`：上市门槛 `min_listing_popularity` 用。
+- `cn_titles`：所有匹配到的中文名（不只是 `shows` 里的），日结用它给任何同 id 的公司改名（含已退市的）；新公司取 `cn_titles[id]`，没有则用 `title_ja`。
+- **不在文件里**：需求指数（由*已上市*公司的 `att.us` 之和与游戏状态里的 `a_ref` 算出，`demand_day = base/7 * x` 与 `demand_week = base * x` 是两个公式）、市场权重（配置）、利率、价格。
+- Rust 要移植的纯公式都在 `engine/valuation.py`（无 I/O）。浮点求和顺序必须一致：营收的 `totals` 按 `SELECT * FROM companies WHERE status='listed'` 的行序求和；预期份额的分母按同样的已上市顺序求和，未上市的番最后加入。
+- 文件确定性：同样的采集数据、市场序列和参数得到相同字节；留在 `data/` 下（不进仓库），同时是日结的复盘记录。
+- 差分对比工具：`uv run python -m server.tools.compare_close A.db B.db`。
 
 ## 4. 数据库与迁移
 
