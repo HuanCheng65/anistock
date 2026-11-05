@@ -26,9 +26,11 @@ import argparse
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import time
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -484,6 +486,10 @@ query ($titles: [String!]) {
 }
 """ % WORK_FIELDS
 
+def _flat(s: str | None) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", s or "")).lower()
+
+
 DISCOVER_MIN_POPULARITY = 3000  # AniList list entries, the listing gate (game.min_listing_popularity)
 
 
@@ -509,7 +515,8 @@ def discover_annict(http: "Http", store: Store) -> int:
             continue
         t = m.get("title") or {}
         seen: list[str] = []
-        for title in dict.fromkeys(x for x in (t.get("native"), t.get("romaji")) if x):
+        bare = re.sub(r"\s*[(（][^)）]*[)）]\s*$", "", t.get("native") or "")  # ドラえもん (2005) -> ドラえもん
+        for title in dict.fromkeys(x for x in (t.get("native"), t.get("romaji"), bare) if x):
             try:
                 nodes = http.graphql(ANNICT, ANNICT_BY_TITLE, {"titles": [title]})["searchWorks"]["nodes"]
             except Exception as e:  # one failed search must not stop the day's collection
@@ -517,6 +524,12 @@ def discover_annict(http: "Http", store: Store) -> int:
                 break
             seen += [f'{w["annictId"]} {w["title"]} mal={w.get("malAnimeId")}' for w in nodes[:5]]
             hit = next((w for w in nodes if w.get("malAnimeId") and int(w["malAnimeId"]) == int(mal)), None)
+            if hit is None:
+                # Annict leaves malAnimeId empty on some long-runners: accept the TV work whose title is exactly
+                # the AniList native title (spacing and full-width forms ignored), only when it has no MAL id
+                want = _flat(t.get("native"))
+                hit = next((w for w in nodes if not w.get("malAnimeId") and w.get("media") == "TV"
+                            and want and _flat(w.get("title")) == want), None)
             if hit:
                 store.register("annict", hit["annictId"], hit["title"], mal)
                 by_mal[int(mal)] = hit["annictId"]
