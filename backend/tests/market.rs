@@ -138,9 +138,9 @@ fn actions_arrive_at_the_configured_rates() {
         let got = *m.stats.actions.get(kind).unwrap_or(&0) as f64;
         assert!((got / expected - 1.0).abs() < 0.1, "{kind}: {got} actions, expected {expected:.0}");
     }
-    // the curve is respected: nothing outside 08:45-23:00
+    // the curve is respected: nothing in the closed hours 04:00-08:45 (the night session is tests/night.rs)
     assert_eq!(m.curve(8 * 3600), 0.0);
-    assert_eq!(m.curve(23 * 3600 + 1), 0.0);
+    assert_eq!(m.curve(4 * 3600), 0.0);
 }
 
 #[test]

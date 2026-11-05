@@ -109,6 +109,8 @@ export interface Status {
   auction_start: string
   open: string
   close: string
+  /** the trading day changes here (04:00): the night session belongs to the previous day */
+  rollover?: string
   last_closed: string
   launched_on: string
   rate: number

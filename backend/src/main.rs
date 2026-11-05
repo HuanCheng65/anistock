@@ -60,7 +60,14 @@ fn main() {
             Clock::fixed(cfg.tz, t.trim())
         }
         None => Clock::new(cfg.tz),
-    };
+    }
+    .with_rollover(&cfg.game.day_rollover);
+    // the NPC market keeps its own (UTC+8, 04:00) day arithmetic
+    if cfg.market.enabled
+        && (anistock::config::hm(&cfg.game.day_rollover) - chrono::NaiveTime::MIN).num_seconds() != anistock::market::ROLLOVER_S
+    {
+        fail(format!("game.day_rollover {} must be 04:00 while [market] is enabled", cfg.game.day_rollover), 1);
+    }
     // go-live of the filtered valuation (docs/v2-valuation.md): start it from the inputs history once
     match engine.valuation_go_live(&cfg, &clock.ts()) {
         Ok(Some(n)) => eprintln!("valuation: started the filter from the inputs history, {n} companies valued"),

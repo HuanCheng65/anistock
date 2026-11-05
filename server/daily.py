@@ -190,7 +190,7 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
         # hours, must not cancel what players placed today)
         for o in conn.execute("""SELECT o.* FROM orders o JOIN accounts a ON a.id = o.account_id
                                  WHERE o.status='open' AND a.kind != 'company' AND o.created_at < ?""",
-                              ((d + timedelta(days=1)).isoformat(),)).fetchall():
+                              (f"{(d + timedelta(days=1)).isoformat()}T{g.get('day_rollover', '00:00')}:00",)).fetchall():
             ex._close(conn, o, "cancelled", ts)
 
         # 7. candles and next day's reference price

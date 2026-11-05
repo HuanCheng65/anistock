@@ -36,7 +36,7 @@ pub async fn place(st: &Arc<AppState>, r: &Req) -> ApiResult {
     if ph == Phase::Closed {
         return Err(http(
             400,
-            format!("现在休市（集合竞价 {}，连续交易 {}–{}）", g.auction_start, g.trading_open, g.trading_close),
+            format!("现在休市（集合竞价 {}–{}，连续交易 {}）", g.auction_start, g.trading_open, g.session_text()),
         ));
     }
     let price = if o.kind == "limit" {

@@ -94,8 +94,8 @@ export function when(ts: string | null | undefined, today?: string): string {
   if (diff >= 0 && diff < 60) return `${Math.floor(diff)} 秒前`
   if (diff >= 0 && diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
   const p = parts(ts)
-  const day = ts.slice(0, 10)
-  const now = today ?? localDay()
+  const day = tradingDayOf(ts)
+  const now = today ?? tradingDay()
   if (day === now) return `今天 ${p.hm}`
   if (p.y === now.slice(0, 4)) return `${p.mo}-${p.d} ${p.hm}`
   return `${day} ${p.hm}`
@@ -103,7 +103,7 @@ export function when(ts: string | null | undefined, today?: string): string {
 
 /** Day label for grouping: 今天 / 昨天 / MM-dd / yyyy-MM-dd */
 export function dayLabel(day: string, today?: string): string {
-  const now = today ?? localDay()
+  const now = today ?? tradingDay()
   if (day === now) return '今天'
   if (day === addDays(now, -1)) return '昨天'
   if (day.slice(0, 4) === now.slice(0, 4)) return day.slice(5)
@@ -112,7 +112,7 @@ export function dayLabel(day: string, today?: string): string {
 
 /** Short day for lists: 今天 / MM-dd */
 export function shortDay(day: string, today?: string): string {
-  const now = today ?? localDay()
+  const now = today ?? tradingDay()
   if (day === now) return '今天'
   if (day.slice(0, 4) === now.slice(0, 4)) return day.slice(5)
   return day
@@ -120,6 +120,26 @@ export function shortDay(day: string, today?: string): string {
 
 export function localDay(d = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** The trading day changes at 04:00 (server game.toml `day_rollover`, also in /api/status as `rollover`):
+ * the night session after midnight belongs to the previous day. */
+export const ROLLOVER_H = 4
+
+/** Today's trading day, from this device's clock (prefer the server's `status.day`). */
+export function tradingDay(now = new Date()): string {
+  return localDay(new Date(now.getTime() - ROLLOVER_H * 3600_000))
+}
+
+/** Trading day of a game timestamp (`2026-11-06T01:30:00+08:00` -> `2026-11-05`), by its own wall time. */
+export function tradingDayOf(ts: string): string {
+  const h = Number(ts.slice(11, 13))
+  return h < ROLLOVER_H ? addDays(ts.slice(0, 10), -1) : ts.slice(0, 10)
+}
+
+/** Continuous trading hours: 09:00–23:00, or 09:00 至次日 04:00 when the session runs past midnight. */
+export function sessionText(open = '09:00', close = '04:00'): string {
+  return close < open ? `${open} 至次日 ${close}` : `${open}–${close}`
 }
 
 export function addDays(day: string, n: number): string {

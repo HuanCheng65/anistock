@@ -4,7 +4,7 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { api, ApiError, type PlaceResult, type StockDetail } from '../api'
-import { hm, money, qty as fmtQty } from '../format'
+import { hm, money, qty as fmtQty, sessionText } from '../format'
 import { useAccount } from '../stores/account'
 import { useSession } from '../stores/session'
 
@@ -168,7 +168,7 @@ async function cancel(id: number) {
       <button type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || !n || phase === 'closed'">
         {{ busy ? '提交中…' : side === 'buy' ? '买入' : '卖出' }}
       </button>
-      <p v-if="phase === 'closed'" class="note">休市中。集合竞价 {{ st?.auction_start ?? '08:45' }}–{{ st?.open ?? '09:00' }}，连续交易 {{ st?.open ?? '09:00' }}–{{ st?.close ?? '23:00' }}</p>
+      <p v-if="phase === 'closed'" class="note">休市中。集合竞价 {{ st?.auction_start ?? '08:45' }}–{{ st?.open ?? '09:00' }}，连续交易 {{ sessionText(st?.open, st?.close) }}</p>
     </template>
     <p v-if="msg" class="note" :class="msg.kind === 'error' ? 'err' : 'ok'" role="status">{{ msg.text }}</p>
 

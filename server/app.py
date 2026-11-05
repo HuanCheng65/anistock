@@ -34,11 +34,11 @@ from pydantic import BaseModel, Field
 from . import daily, npc
 from . import db as gdb
 from . import exchange as ex
-from .config import ROOT, Clock, load, next_daily_step
+from .config import ROOT, Clock, load, next_daily_step, within
 
 log = logging.getLogger("server")
 cfg = load()
-clock = Clock(cfg.tz)
+clock = Clock(cfg.tz, cfg.game.get("day_rollover", "00:00"))
 LOCK = asyncio.Lock()
 conn: sqlite3.Connection | None = None
 ALWAYS_OPEN = os.environ.get("ANISTOCK_ALWAYS_OPEN") == "1"
@@ -64,11 +64,11 @@ def phase() -> str:
     """auction (集合竞价, orders rest) | continuous | closed."""
     if ALWAYS_OPEN:
         return "continuous"
-    t = clock.now().strftime("%H:%M")
+    t = clock.now().time().replace(second=0, microsecond=0)
     g = cfg.game
-    if g["auction_start"] <= t < g["trading_open"]:
+    if within(t, g["auction_start"], g["trading_open"]):
         return "auction"
-    if g["trading_open"] <= t < g["trading_close"]:
+    if within(t, g["trading_open"], g["trading_close"]):
         return "continuous"
     return "closed"
 
@@ -367,6 +367,7 @@ async def status():
     return {
         "now": clock.ts(), "day": clock.today(), "trading": trading_open(), "phase": phase(),
         "auction_start": cfg.game["auction_start"], "open": cfg.game["trading_open"], "close": cfg.game["trading_close"],
+        "rollover": cfg.game.get("day_rollover", "00:00"),
         "last_closed": gdb.get_state(c, "last_closed"), "launched_on": gdb.get_state(c, "launched_on"),
         "rate": rate, "deposit_rate": max(0.0, rate - cfg.params["central_bank"]["deposit_spread"]),
         "rules": {"vcm_threshold": cfg.game["vcm_threshold"], "vcm_window_min": cfg.game["vcm_window_min"],

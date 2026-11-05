@@ -447,8 +447,9 @@ impl Engine {
             }
         }
 
-        // 6. orders are good for the day only; a late close must not cancel what was placed after D
-        let cutoff = iso(d + Duration::days(1));
+        // 6. orders are good for the day only, to the session's end at the day rollover (04:00 the next
+        // morning); a late close must not cancel what was placed after D's session
+        let cutoff = format!("{}T{}:00", iso(d + Duration::days(1)), cx.g().day_rollover);
         let mut expire: Vec<i64> = self
             .st
             .orders

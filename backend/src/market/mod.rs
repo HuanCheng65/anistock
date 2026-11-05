@@ -28,6 +28,9 @@ use rng::{hash, normal, unit, Rng};
 
 pub const TZ_OFFSET: i64 = 8 * 3600;
 const DAY: i64 = 86_400;
+/// The trading day changes at 04:00 local (`game.day_rollover`; checked at startup): the night session
+/// 00:00-04:00 belongs to the previous day.
+pub const ROLLOVER_S: i64 = 4 * 3600;
 
 /// Local (UTC+8) day number and seconds into the day.
 pub fn local(t: i64) -> (i64, i64) {
@@ -42,9 +45,9 @@ pub fn ts_of(t: i64) -> String {
     crate::config::format_ts(&dt)
 }
 
-/// `YYYY-MM-DD` of the local day containing `t`.
+/// `YYYY-MM-DD` of the trading day containing `t` (the local date of `t` - 04:00).
 pub fn day_of(t: i64) -> String {
-    let (d, _) = local(t);
+    let (d, _) = local(t - ROLLOVER_S);
     chrono::NaiveDate::from_num_days_from_ce_opt((d + 719_163) as i32).unwrap().format("%Y-%m-%d").to_string()
 }
 
@@ -502,11 +505,14 @@ impl Market {
         }
     }
 
-    /// Intraday activity factor at local seconds `s` (0 outside 08:45-23:00).
+    /// Intraday activity factor at local seconds `s` (0 in the closed hours 04:00-08:45).
     pub fn curve(&self, s: i64) -> f64 {
         let hm = |h: i64, m: i64| h * 3600 + m * 60;
         let c = &self.cfg.curve;
+        let n = &self.cfg.curve_night;
         match s {
+            x if x < hm(2, 0) => n[0],
+            x if x < hm(4, 0) => n[1],
             x if x < hm(8, 45) => 0.0,
             x if x < hm(9, 0) => c[0],
             x if x < hm(12, 0) => c[1],
@@ -514,12 +520,12 @@ impl Market {
             x if x < hm(18, 0) => c[3],
             x if x < hm(20, 0) => c[4],
             x if x < hm(23, 0) => c[5],
-            _ => 0.0,
+            _ => n[0],
         }
     }
 
     fn peak(&self, kind: AgentKind) -> f64 {
-        let cmax = self.cfg.curve.iter().cloned().fold(0.0, f64::max);
+        let cmax = self.cfg.curve.iter().chain(&self.cfg.curve_night).cloned().fold(0.0, f64::max);
         match kind {
             // news agents wake up with events: thinning bound includes the event amplification
             AgentKind::News => cmax * (1.0 + self.cfg.event_activity * 10.0) * 3.0,
@@ -596,7 +602,7 @@ impl Market {
 
     fn phase_auction(t: i64) -> bool {
         let (_, s) = local(t);
-        s < 9 * 3600
+        (8 * 3600 + 45 * 60..9 * 3600).contains(&s)
     }
 
     fn place(

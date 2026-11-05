@@ -21,7 +21,12 @@ pub struct GameRules {
     pub initial_cash: f64,
     pub auction_start: String,
     pub trading_open: String,
+    /// end of continuous trading; earlier than `trading_open` means the next morning (night session)
     pub trading_close: String,
+    /// when the trading day changes (`Clock::today`): a trade at 01:30 belongs to the previous day's
+    /// session when this is 04:00. Absent: midnight (v1).
+    #[serde(default = "midnight")]
+    pub day_rollover: String,
     pub daily_step_at: String,
     pub vcm_threshold: f64,
     pub vcm_window_min: i64,
@@ -36,6 +41,21 @@ pub struct GameRules {
     pub ipo_subscription_days: i64,
     pub ipo_public_base: f64,
     pub ipo_clawback: Vec<(f64, f64)>,
+}
+
+impl GameRules {
+    /// The continuous session for players: `09:00–23:00`, or `09:00 至次日 04:00` past midnight.
+    pub fn session_text(&self) -> String {
+        if hm(&self.trading_close) < hm(&self.trading_open) {
+            format!("{} 至次日 {}", self.trading_open, self.trading_close)
+        } else {
+            format!("{}–{}", self.trading_open, self.trading_close)
+        }
+    }
+}
+
+fn midnight() -> String {
+    "00:00".into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -244,12 +264,20 @@ impl Phase {
 #[derive(Clone)]
 pub struct Clock {
     pub tz: Tz,
+    /// time of day the trading day changes (`today`)
+    rollover: chrono::Duration,
     frozen: Arc<Mutex<Option<DateTime<Tz>>>>,
 }
 
 impl Clock {
     pub fn new(tz: Tz) -> Clock {
-        Clock { tz, frozen: Arc::new(Mutex::new(None)) }
+        Clock { tz, rollover: chrono::Duration::zero(), frozen: Arc::new(Mutex::new(None)) }
+    }
+
+    /// The trading day changes at `at` (`HH:MM`) instead of midnight (`GameRules::day_rollover`).
+    pub fn with_rollover(mut self, at: &str) -> Clock {
+        self.rollover = hm(at) - NaiveTime::MIN;
+        self
     }
 
     /// A clock frozen at an ISO timestamp (any offset; converted to `tz`).
@@ -279,9 +307,10 @@ impl Clock {
         }
     }
 
-    /// `YYYY-MM-DD`, like `Clock.today()`.
+    /// The trading day, `YYYY-MM-DD`: the date of (now - rollover), so with a 04:00 rollover 01:30 on the
+    /// 6th is still the 5th's session. Like v1 `Clock.today()` when the rollover is midnight.
     pub fn today(&self) -> String {
-        self.now().date_naive().format("%Y-%m-%d").to_string()
+        (self.now().naive_local() - self.rollover).date().format("%Y-%m-%d").to_string()
     }
 
     /// `2026-11-05T10:00:00+08:00`, byte-identical to Python's `isoformat(timespec="seconds")`.
@@ -293,20 +322,29 @@ impl Clock {
         if always_open {
             return Phase::Continuous;
         }
-        let t = self.now().format("%H:%M").to_string();
-        if game.auction_start.as_str() <= t.as_str() && t.as_str() < game.trading_open.as_str() {
+        let t = self.now().time();
+        if within(t, &game.auction_start, &game.trading_open) {
             Phase::Auction
-        } else if game.trading_open.as_str() <= t.as_str() && t.as_str() < game.trading_close.as_str() {
+        } else if within(t, &game.trading_open, &game.trading_close) {
             Phase::Continuous
         } else {
             Phase::Closed
         }
     }
 
-    /// Like `Clock.trading`: between trading_open and trading_close.
+    /// Like `Clock.trading`: between trading_open and trading_close (past midnight when close < open).
     pub fn trading(&self, game: &GameRules) -> bool {
-        let t = self.now().time();
-        hm(&game.trading_open) <= t && t < hm(&game.trading_close)
+        within(self.now().time(), &game.trading_open, &game.trading_close)
+    }
+}
+
+/// `from <= t < to` by time of day; a window with `to` before `from` wraps past midnight.
+fn within(t: NaiveTime, from: &str, to: &str) -> bool {
+    let (a, b) = (hm(from), hm(to));
+    if a <= b {
+        a <= t && t < b
+    } else {
+        t >= a || t < b
     }
 }
 

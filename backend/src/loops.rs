@@ -58,11 +58,12 @@ async fn market_loop(st: Arc<AppState>) {
         if st.actor.call(move |ctx| ctx.ops.market_tick(&mut ctx.engine, now)).await.is_err() {
             return;
         }
-        // at five past every hour from 08:00 to 03:00 (late-night anime), fetch today's episode comments
+        // at five past every hour from 08:05 to 03:05 (late-night anime; the session runs to 04:00), fetch
+        // the episode comments of the last 26 hours
         let (_, s) = crate::market::local(now);
         let hour = now.div_euclid(3600);
         let h = s / 3600;
-        if (s % 3600) >= 300 && hour != last_fetch_hour && (h >= 8 || h < 3) {
+        if (s % 3600) >= 300 && hour != last_fetch_hour && (h >= 8 || h < 4) {
             last_fetch_hour = hour;
             let cfg = st.cfg.clone();
             tokio::task::spawn_blocking(move || crate::inputs::fetch_flashes(&cfg));

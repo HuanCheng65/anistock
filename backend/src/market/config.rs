@@ -38,6 +38,8 @@ pub struct MarketConfig {
     /// intraday curve (factor by local time): auction, morning, lunch (12:00-13:30), afternoon,
     /// evening (18:00-20:00), night (20:00-23:00)
     pub curve: [f64; 6],
+    /// night session: 23:00-02:00 (late-night anime has just aired) and 02:00-04:00
+    pub curve_night: [f64; 2],
     /// activity multiplier per unit event magnitude (magnitude 10 => 1 + 10 * x), decaying with
     /// `event_activity_half_life_h`
     pub event_activity: f64,
@@ -153,6 +155,7 @@ impl Default for MarketConfig {
             rate_news: 0.3,
             rate_retail: 3.0,
             curve: [0.5, 1.0, 1.3, 0.9, 1.2, 2.0],
+            curve_night: [2.4, 1.0],
             event_activity: 0.4,
             event_activity_half_life_h: 2.0,
             air_activity: 2.0,

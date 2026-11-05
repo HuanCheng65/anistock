@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BackButton from '../components/BackButton.vue'
-import { taxBrackets } from '../format'
+import { sessionText, taxBrackets } from '../format'
 import { useSession } from '../stores/session'
 
 const session = useSession()
@@ -34,7 +34,8 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
     <section class="sec">
       <h2>交易时间</h2>
       <ul>
-        <li>{{ st?.auction_start ?? '08:45' }}–{{ st?.open ?? '09:00' }} 开盘集合竞价；{{ st?.open ?? '09:00' }}–{{ st?.close ?? '23:00' }} 连续交易；每天 06:30 日结。<span class="simp">简化</span>真实交易所每天只开几个小时，社团成员晚上才有空。</li>
+        <li>{{ st?.auction_start ?? '08:45' }}–{{ st?.open ?? '09:00' }} 开盘集合竞价；{{ sessionText(st?.open, st?.close) }} 连续交易；每天 06:30 日结。<span class="simp">简化</span>真实交易所每天只开几个小时；社团成员晚上才有空，深夜番播出后也能交易。</li>
+        <li>凌晨 {{ st?.rollover ?? '04:00' }} 以前的委托和成交都算前一个交易日，K 线、涨跌幅和分红登记也按交易日计算。</li>
         <li>没成交的委托在每天日结时自动撤销（委托当日有效）。</li>
       </ul>
     </section>
@@ -44,7 +45,7 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
       <ul>
         <li>竞价时段只收限价单，先不成交。页面会显示当前的参考开盘价和可成交股数。</li>
         <li>{{ st?.open ?? '09:00' }} 时，按能成交最多股数的那一个价格，把所有能成交的买卖单一次性撮合，这就是当天的开盘价，然后进入连续交易。没有可成交的单子时，以昨收为开盘价。</li>
-        <li>深夜播出的剧集无论好坏，第二天所有人在同一时间按同一价格反应。</li>
+        <li>收盘后出来的消息无论好坏，第二天所有人在同一时间按同一价格反应。</li>
       </ul>
     </section>
 

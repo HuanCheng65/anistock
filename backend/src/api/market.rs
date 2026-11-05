@@ -38,7 +38,7 @@ pub async fn status(st: &Arc<AppState>) -> ApiResult {
         Ok(Reply::ok(obj! {
             "now" => st2.clock.ts(), "day" => st2.clock.today(), "trading" => ph != Phase::Closed, "phase" => ph.as_str(),
             "auction_start" => game(cfg, "auction_start"), "open" => game(cfg, "trading_open"),
-            "close" => game(cfg, "trading_close"),
+            "close" => game(cfg, "trading_close"), "rollover" => cfg.game.day_rollover.clone(),
             "last_closed" => state(c, "last_closed")?, "launched_on" => state(c, "launched_on")?,
             "rate" => rate, "deposit_rate" => deposit_rate(cfg, rate),
             "rules" => obj! {

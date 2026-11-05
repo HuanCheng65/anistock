@@ -13,7 +13,7 @@ import Sparkline from '../components/Sparkline.vue'
 import Tabs from '../components/Tabs.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
-import { big, dir, hm, localDay, longDate, money, pct, signed } from '../format'
+import { big, dir, hm, longDate, money, pct, signed, tradingDay } from '../format'
 import { useIpo } from '../stores/ipo'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
@@ -33,7 +33,7 @@ usePoll(() => market.refreshNews(40), 30000)
 usePoll(() => market.refreshMacro(), 300000)
 usePoll(() => Promise.all([session.loadLeaders(), ipo.refresh()]), 60000)
 
-const today = computed(() => session.status?.day ?? localDay())
+const today = computed(() => session.status?.day ?? tradingDay())
 const idx = computed(() => market.indices?.indices ?? [])
 const main = computed(() => idx.value.find((i) => i.key === 'all') ?? null)
 const subs = computed(() => idx.value.filter((i) => i.key !== 'all'))

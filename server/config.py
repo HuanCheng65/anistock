@@ -58,8 +58,9 @@ def load() -> Config:
 class Clock:
     """Wall clock in game time. Tests and replays can pin it with `freeze`."""
 
-    def __init__(self, tz: ZoneInfo):
+    def __init__(self, tz: ZoneInfo, rollover: str = "00:00"):
         self.tz = tz
+        self.rollover = _hm(rollover)  # the trading day changes here (game.day_rollover)
         self._frozen: datetime | None = None
 
     def now(self) -> datetime:
@@ -69,14 +70,20 @@ class Clock:
         self._frozen = when
 
     def today(self) -> str:
-        return self.now().date().isoformat()
+        r = self.rollover
+        return (self.now() - timedelta(hours=r.hour, minutes=r.minute)).date().isoformat()
 
     def ts(self) -> str:
         return self.now().isoformat(timespec="seconds")
 
     def trading(self, game: dict) -> bool:
-        t = self.now().time()
-        return _hm(game["trading_open"]) <= t < _hm(game["trading_close"])
+        return within(self.now().time(), game["trading_open"], game["trading_close"])
+
+
+def within(t: time, start: str, end: str) -> bool:
+    """start <= t < end by time of day; an end before the start wraps past midnight (night session)."""
+    a, b = _hm(start), _hm(end)
+    return a <= t < b if a <= b else (t >= a or t < b)
 
 
 def _hm(s: str) -> time:

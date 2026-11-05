@@ -23,7 +23,8 @@ timezone = "Asia/Shanghai"
 initial_cash = 100000          # 币 per new player
 auction_start = "08:45"        # opening auction (集合竞价): orders collect, one price at trading_open
 trading_open = "09:00"
-trading_close = "23:59"
+trading_close = "04:00"        # the next morning: one trading day runs 09:00 to 04:00 (late-night anime airs 22:00-01:00)
+day_rollover = "04:00"         # the trading day changes here, like a gacha game's 4 AM reset (orders, trades, candles, today)
 daily_step_at = "06:30"        # after the collector (06:00)
 # no daily price limit; Hong Kong-style volatility control instead (see server/exchange.py Rules)
 vcm_threshold = 0.10           # first trigger: a trade >10% away from the price 5 minutes ago
@@ -71,6 +72,7 @@ rate_trend = 1.5
 rate_news = 0.3
 rate_retail = 3.0
 curve = [0.5, 1.0, 1.3, 0.9, 1.2, 2.0]   # auction, morning, lunch, afternoon, 18-20h, 20-23h
+curve_night = [2.4, 1.0]       # 23-02h (anime has just aired), 02-04h
 bias_sigma = 0.05              # spread of the value agents' views (§4)
 bias_half_life_days = 4.0
 event_shock = 0.12             # belief shift of a magnitude-10 official event
