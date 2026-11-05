@@ -59,7 +59,7 @@ def main() -> None:
 
     gdb.init(cfg.game_db)
     conn = gdb.connect(cfg.game_db)
-    clock = Clock(cfg.tz)
+    clock = Clock(cfg.tz, cfg.game.get("day_rollover", "00:00"))
     ts = clock.ts()
     day = end.isoformat()
     conn.execute("BEGIN")
