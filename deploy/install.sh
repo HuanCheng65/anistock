@@ -49,7 +49,7 @@ build_web() {
       -e HOME=/tmp -e npm_config_cache=/tmp/.npm \
       ${NPM_REGISTRY:+-e npm_config_registry="$NPM_REGISTRY"} \
       ${https_proxy:+-e https_proxy="$https_proxy"} ${HTTPS_PROXY:+-e HTTPS_PROXY="$HTTPS_PROXY"} \
-      -v "$PWD/web:/app" -v "$HOME/.cache/anistock-npm:/tmp/.npm" -w /app \
+      -v "$PWD:/repo" -v "$HOME/.cache/anistock-npm:/tmp/.npm" -w /repo/web \
       "$image" sh -c "npm ci && npm run build"
   else
     echo "既没有 Node.js 20+，也没有 Docker：装其中一个再运行" >&2
