@@ -27,6 +27,19 @@ impl PerMarket {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct PerMarketVec {
+    us: Vec<f64>,
+    cn: Vec<f64>,
+    jp: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SeasonListing {
+    pub from_day: i64,
+    pub u: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct RawParams {
     curve_us: Vec<f64>,
     drift: PerMarket,
@@ -48,6 +61,32 @@ struct RawParams {
     flash_min_expected: Option<f64>,
     #[serde(default)]
     ipo_risk: Option<f64>,
+    /// v0.3.2: the common correlation of the three markets' prior log levels (0: independent markets)
+    #[serde(default)]
+    rho: Option<f64>,
+    /// v0.3.2: "us" = cn/jp priors derive from the us pre-air estimate (prior_bias per market converts it)
+    #[serde(default)]
+    prior: Option<String>,
+    /// v0.3.2: mean and variance of the pre-air estimate's log growth from k days before its freeze (index k)
+    #[serde(default)]
+    preair_growth: Vec<[f64; 2]>,
+    /// v0.3.2: the share of a season's attention not yet listed, by days from the season start
+    #[serde(default)]
+    season_listing: Option<SeasonListing>,
+    /// v0.3.2: attention by week after the finale week, and its weekly tail, per market
+    /// v0.3.2: elasticity of each market's prior to the us pre-air estimate (us 1)
+    #[serde(default)]
+    prior_beta: Option<PerMarket>,
+    /// v0.3.2: daily drift per market for weeks 0-3, 4-7, 8+ since the premiere
+    #[serde(default)]
+    drift_by_week: Option<PerMarketVec>,
+    /// v0.3.2: attention in the finale's week relative to the level, per market
+    #[serde(default)]
+    finale_bump: Option<PerMarket>,
+    #[serde(default)]
+    post_finale: Option<PerMarketVec>,
+    #[serde(default)]
+    post_finale_tail: Option<PerMarket>,
 
 }
 
@@ -67,6 +106,23 @@ pub struct FilterParams {
     pub horizon_days: usize,
     pub flash_min_expected: f64,
     pub ipo_risk: f64,
+    /// common correlation of the markets' prior log levels
+    pub rho: f64,
+    /// cn/jp priors from the us pre-air estimate (v0.3.2 fit), else from each market's own estimate
+    pub prior_from_us: bool,
+    /// the pre-air estimate's expected log growth (and its variance) until it freezes, by days left
+    pub preair_growth: Vec<[f64; 2]>,
+    /// the share of a season's attention not yet listed, by days from the season start
+    pub season_listing: Option<SeasonListing>,
+    /// the elasticity of each market's prior log level to the log us pre-air estimate
+    pub prior_beta: M3,
+    /// per market: daily drift in weeks 0-3, 4-7 and 8+ since the premiere (empty: `drift` throughout)
+    pub drift_by_week: [Vec<f64>; 3],
+    /// per market: attention in the finale's week relative to the level (1: none)
+    pub finale_bump: M3,
+    /// per market: attention by week after the finale week and its weekly tail (empty: the game's profile)
+    pub post_finale: [Vec<f64>; 3],
+    pub post_finale_tail: M3,
     /// long-runners' weekly level factor (`[valuation] long_runner_decay`; their filter's drift)
     pub long_runner_decay: f64,
 }
@@ -90,9 +146,61 @@ impl FilterParams {
         Ok(fp)
     }
 
+    /// Expected log growth and its variance of the pre-air estimate over the `k` days until it freezes (the
+    /// day before the premiere); the last entry beyond the table.
+    pub fn growth(&self, k: i64) -> (f64, f64) {
+        if k <= 0 || self.preair_growth.is_empty() {
+            return (0.0, 0.0);
+        }
+        let g = self.preair_growth[(k as usize).min(self.preair_growth.len() - 1)];
+        (g[0], g[1])
+    }
+
+    /// The share of a season's attention not listed yet, `j` days after its start (negative: before). Without
+    /// the table: everything is listed by the season start.
+    pub fn unlisted(&self, j: i64) -> f64 {
+        match &self.season_listing {
+            Some(sl) if !sl.u.is_empty() => {
+                let i = j - sl.from_day;
+                if i < 0 {
+                    1.0
+                } else {
+                    sl.u[(i as usize).min(sl.u.len() - 1)]
+                }
+            }
+            _ => {
+                if j < 0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+
     /// The filter's daily drift for market `m`: the fitted one, or for a long-runner the one that matches
     /// its valuation path (level × long_runner_decay per week), so its value doesn't fall all week and jump
     /// back at each observation.
+    /// Market `m`'s daily drift in week `w` since the premiere (Python `drift_at`).
+    pub fn drift_at(&self, m: usize, w: i64) -> f64 {
+        let seg = &self.drift_by_week[m];
+        if seg.len() < 3 {
+            return self.drift[m];
+        }
+        if w < DRIFT_WEEKS[0] {
+            seg[0]
+        } else if w < DRIFT_WEEKS[1] {
+            seg[1]
+        } else {
+            seg[2]
+        }
+    }
+
+    /// The total log drift from day `t0` to `t1` for a show premiering on `premiere` (Python `cum_drift`).
+    pub fn cum_drift(&self, m: usize, t0: i64, t1: i64, premiere: i64) -> f64 {
+        (t0..t1).map(|t| self.drift_at(m, (t - premiere).div_euclid(7))).sum()
+    }
+
     pub fn drift_for(&self, m: usize, long_runner: bool) -> f64 {
         if long_runner { self.long_runner_decay.ln() / 7.0 - 0.5 * self.q[m] } else { self.drift[m] }
     }
@@ -120,6 +228,15 @@ impl FilterParams {
             flash_min_expected: r.flash_min_expected.unwrap_or(5.0),
             ipo_risk: r.ipo_risk.unwrap_or(0.25),
             long_runner_decay: 1.0,
+            rho: r.rho.unwrap_or(0.0),
+            prior_from_us: r.prior.as_deref() == Some("us"),
+            preair_growth: r.preair_growth,
+            season_listing: r.season_listing,
+            prior_beta: r.prior_beta.map_or([1.0; 3], |b| b.m3()),
+            finale_bump: r.finale_bump.map_or([1.0; 3], |b| b.m3()),
+            drift_by_week: r.drift_by_week.map_or([Vec::new(), Vec::new(), Vec::new()], |v| [v.us, v.cn, v.jp]),
+            post_finale: r.post_finale.map_or([Vec::new(), Vec::new(), Vec::new()], |v| [v.us, v.cn, v.jp]),
+            post_finale_tail: r.post_finale_tail.map_or([0.0; 3], |t| t.m3()),
         })
     }
 }
@@ -164,6 +281,44 @@ pub fn kf_update(mean: f64, var: f64, y: f64, r: f64, clip: f64) -> (f64, f64, f
     }
     let k = var / s;
     (mean + k * v, (1.0 - k) * var, v)
+}
+
+/// The in-season fade changes speed after these weeks since the premiere (Python `DRIFT_WEEKS`).
+pub const DRIFT_WEEKS: [i64; 2] = [4, 8];
+
+/// The joint filter's 3×3 covariance (us, cn, jp).
+pub type Cov = [[f64; 3]; 3];
+
+/// Prior covariance of the three markets' log levels: variances p0, one common correlation rho (Python
+/// `prior_cov`).
+pub fn prior_cov(p0: &M3, rho: f64) -> Cov {
+    let sd = [p0[0].sqrt(), p0[1].sqrt(), p0[2].sqrt()];
+    std::array::from_fn(|i| std::array::from_fn(|j| if i == j { p0[i] } else { rho * sd[i] * sd[j] }))
+}
+
+/// Each market's level drifts on its own (Python `kf_predict_joint`).
+pub fn kf_predict_joint(mean: &M3, cov: &Cov, days: i64, drift: &M3, q: &M3) -> (M3, Cov) {
+    let m2 = std::array::from_fn(|i| mean[i] + drift[i] * days as f64);
+    let c2 = std::array::from_fn(|i| std::array::from_fn(|j| cov[i][j] + if i == j { q[i] * days as f64 } else { 0.0 }));
+    (m2, c2)
+}
+
+/// One observation y of market m's log level, noise variance r; moves every market through the covariance
+/// (Python `kf_update_joint`). Returns (mean, cov, log-likelihood, innovation variance).
+pub fn kf_update_joint(mean: &M3, cov: &Cov, m: usize, y: f64, r: f64, clip: f64) -> (M3, Cov, f64, f64) {
+    let s = cov[m][m] + r;
+    let sd = s.sqrt();
+    let mut v = y - mean[m];
+    let ll = -0.5 * ((2.0 * std::f64::consts::PI * s).ln() + v * v / s);
+    if v > clip * sd {
+        v = clip * sd;
+    } else if v < -clip * sd {
+        v = -clip * sd;
+    }
+    let k: M3 = std::array::from_fn(|i| cov[i][m] / s);
+    let m2 = std::array::from_fn(|i| mean[i] + k[i] * v);
+    let c2 = std::array::from_fn(|i| std::array::from_fn(|j| cov[i][j] - k[i] * cov[m][j]));
+    (m2, c2, ll, s)
 }
 
 /// An observation that averages `n` daily log values describes the level about (n-1)/2 days ago: moved to
@@ -214,10 +369,12 @@ pub fn att_path(
     long_runner: bool,
     horizon: usize,
 ) -> Vec<f64> {
-    let (drift, q) = (fp.drift[m], fp.q[m]);
-    let prof = &p.post_finale_profile;
-    let tail = p.post_finale_tail_decay;
+    let q = fp.q[m];
+    let (prof, tail) = post_finale_curve(fp, p, m);
     let fin = if !sched.is_empty() && !long_runner { Some(*sched.last().unwrap()) } else { None };
+    // the level drifts from today, or from the premiere for a show not yet airing (Python `att_path`)
+    let base = today.max(first_air);
+    let mut cd = 0.0; // cumulative drift from base to t
     let mut out = Vec::with_capacity(horizon);
     for j in 1..=horizon as i64 {
         let t = today + j;
@@ -231,8 +388,8 @@ pub fn att_path(
         }
         if let Some(fin) = fin {
             if t >= fin + 7 {
-                let jf = fin + 7 - today;
-                let lvl = (mean + drift * jf as f64 + 0.5 * (var + q * jf as f64)).exp();
+                let jf = (fin + 7 - base).max(0);
+                let lvl = (mean + fp.cum_drift(m, base, base + jf, first_air) + 0.5 * (var + q * jf as f64)).exp() * fp.finale_bump[m];
                 let w = (t - fin - 7).div_euclid(7);
                 let f = if (w as usize) < prof.len() {
                     prof[w as usize]
@@ -244,7 +401,15 @@ pub fn att_path(
             }
         }
         let k = last_air_before(sched, t).map(|a| t - a);
-        out.push((mean + drift * j as f64 + 0.5 * (var + q * j as f64)).exp() * curve(fp, m, k));
+        let je = (t - base) as f64;
+        if t - 1 >= base {
+            cd += fp.drift_at(m, (t - 1 - first_air).div_euclid(7));
+        }
+        let bump = match fin {
+            Some(f) if f <= t && t < f + 7 => fp.finale_bump[m],
+            _ => 1.0,
+        };
+        out.push((mean + cd + 0.5 * (var + q * je)).exp() * curve(fp, m, k) * bump);
     }
     out
 }
@@ -252,6 +417,31 @@ pub fn att_path(
 pub fn discount_day(rate: f64, p: &Params) -> f64 {
     let rw = (rate + p.equity_premium) / 52.0;
     (1.0 / (1.0 + rw)).powf(1.0 / 7.0)
+}
+
+/// Market `m`'s attention by week after the finale week and its weekly tail (Python `post_finale_curve`):
+/// fitted per market, else the game's profile.
+pub fn post_finale_curve<'a>(fp: &'a FilterParams, p: &'a Params, m: usize) -> (&'a [f64], f64) {
+    if !fp.post_finale[m].is_empty() {
+        (&fp.post_finale[m], fp.post_finale_tail[m])
+    } else {
+        (&p.post_finale_profile, p.post_finale_tail_decay)
+    }
+}
+
+/// The post-finale factor of market `m`'s level on day `t` for a show whose last episode aired on `fin`
+/// (Python `post_finale_factor`): 1 until a week after it, then the profile and its tail.
+pub fn post_finale_factor(fp: &FilterParams, p: &Params, m: usize, fin: i64, t: i64) -> f64 {
+    if t < fin + 7 {
+        return 1.0;
+    }
+    let (prof, tail) = post_finale_curve(fp, p, m);
+    let w = (t - fin - 7).div_euclid(7);
+    if (w as usize) < prof.len() {
+        prof[w as usize]
+    } else {
+        prof[prof.len() - 1] * tail.powf((w - prof.len() as i64 + 1) as f64)
+    }
 }
 
 /// Per-share value (yuan) from the attention paths (Python `value_from_paths`).
@@ -268,7 +458,8 @@ pub fn value_from_paths(
     long_runner: bool,
 ) -> f64 {
     let disc = discount_day(rate, p);
-    let keep = (1.0 - p.operating_cost_ratio) * (1.0 - p.corp_tax) * p.payout_ratio;
+    // all after-tax profit reaches the shareholders (dividends, or retained cash in the book value)
+    let keep = (1.0 - p.operating_cost_ratio) * (1.0 - p.corp_tax);
     let h = own[0].len();
     let mut pv = 0.0;
     let mut f = 1.0;
@@ -334,12 +525,36 @@ mod tests {
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
-        assert!(ulps(a, 16.59818302388184) <= 2, "{a}");
-        assert!(ulps(b, 332.39168735880236) <= 2, "{b}");
-        assert!(ulps(own1[0][5], 885.327647311102) <= 2, "{}", own1[0][5]);
-        assert!(ulps(own1[1][100], 1.4512623796487945) <= 2, "{}", own1[1][100]);
+        assert!(ulps(a, 22.23599386634486) <= 2, "{a}");
+        assert!(ulps(b, 359.9638471331933) <= 2, "{b}");
+        assert!(ulps(own1[0][5], 835.2637132741504) <= 2, "{}", own1[0][5]);
+        assert!(ulps(own1[1][100], 2.8463816081531292) <= 2, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
         assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.644)));
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
+        // a show not airing yet: no fading before its premiere; the post-finale profile
+        let s3 = schedule(&[today + 10], Some(12), false);
+        let o3 = att_path(&fp, &p, 0, 7.0, 0.1, today, &s3, today + 10, false, 120);
+        assert_eq!(o3[5], 0.0);
+        // (after the finale the tail's power and the summed drift may differ in the last few bits)
+        assert!(ulps(o3[15], 456.9515821577898) <= 2 && (o3[110] / 224.61921276713286 - 1.0).abs() < 1e-13, "{} {}", o3[15], o3[110]);
+        assert!(ulps(post_finale_factor(&fp, &p, 0, today, today + 30), 0.179913) <= 2);
+        // the joint filter (v0.3.2)
+        let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
+        let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];
+        for (i, w) in want_c.iter().enumerate() {
+            assert!(ulps(c[i / 3][i % 3], *w) <= 2, "prior_cov {i}");
+        }
+        let (m, c2) = kf_predict_joint(&[1.0, -4.0, -2.5], &c, 3, &[-0.02, -0.022, -0.027], &[0.01, 0.015, 0.019]);
+        let (m3, c3, ll, sv) = kf_update_joint(&m, &c2, 1, -3.2, 0.0146, 4.0);
+        let want_m = [1.1642603980902466, -3.2110947700947703, -2.2294656306566374];
+        let want_c3 = [0.3035773955773956, 0.0037808335012904926, 0.14355009745167968, 0.0037808335012904926, 0.014412951912951888, 0.005926560961216021, 0.1435500974516797, 0.005926560961216021, 0.7292187434187434];
+        for i in 0..3 {
+            assert!(ulps(m3[i], want_m[i]) <= 2, "kf_update_joint mean {i}: {}", m3[i]);
+        }
+        for (i, w) in want_c3.iter().enumerate() {
+            assert!(ulps(c3[i / 3][i % 3], *w) <= 2, "kf_update_joint cov {i}: {}", c3[i / 3][i % 3]);
+        }
+        assert!(ulps(ll, -1.3133207190690046) <= 2 && ulps(sv, 1.1396) <= 2, "{ll} {sv}");
     }
 }

@@ -26,6 +26,10 @@ use metrics::Recorder;
 pub struct Tap {
     pub trades: Vec<metrics::TradeRec>,
     pub ledger: Vec<(i64, i64, i64, String)>,
+    /// for the replay report (events.json): every news item, and every VCM trigger (company, until, count)
+    pub news: Vec<serde_json::Value>,
+    pub vcm: Vec<(i64, String, i64)>,
+    vcm_last: std::collections::HashMap<i64, String>,
 }
 
 #[derive(Clone, Default)]
@@ -47,6 +51,15 @@ impl ChangeSink for TapSink {
                 Change::LedgerInsert(l) => {
                     if !matches!(l.reason.as_str(), "trade" | "commission" | "stamp_duty") {
                         tap.ledger.push((l.from_id, l.to_id, l.amount, l.reason));
+                    }
+                }
+                Change::NewsInsert(n) => tap.news.push(serde_json::json!({
+                    "ts": n.ts, "day": n.day, "kind": n.kind, "company_id": n.company_id, "title": n.title, "body": n.body,
+                })),
+                Change::CompanyMarket { id, vcm_until: Some(u), vcm_count, .. } => {
+                    if tap.vcm_last.get(&id) != Some(&u) {
+                        tap.vcm_last.insert(id, u.clone());
+                        tap.vcm.push((id, u, vcm_count));
                     }
                 }
                 _ => {}
@@ -87,6 +100,8 @@ pub struct SimOptions {
 }
 
 pub struct SimResult {
+    /// news, VCM triggers and the companies (for the replay report)
+    pub events: serde_json::Value,
     pub metrics: serde_json::Value,
     pub bot: Option<serde_json::Value>,
     pub series: metrics::Series,
@@ -331,5 +346,21 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         "us_per_npc_order": npc_time * 1e6 / m.stats.orders.values().sum::<u64>().max(1) as f64,
         "orders_per_min_median": q(0.5), "orders_per_min_p99": q(0.99), "orders_per_min_max": m.stats.peak_orders_per_min,
     });
-    Ok(SimResult { metrics, bot: bot_json, series })
+    let events = {
+        let tp = tap.0.lock().unwrap();
+        let companies: Vec<serde_json::Value> = e
+            .companies()
+            .map(|c| {
+                serde_json::json!({"id": c.id, "title": c.title, "title_ja": c.title_ja, "ipo_price": c.ipo_price,
+                    "listed_on": c.listed_on, "first_air": c.first_air, "episodes": c.episodes, "long_runner": c.long_runner != 0,
+                    "status": c.status, "delisted_on": c.delisted_on, "shares": c.shares})
+            })
+            .collect();
+        serde_json::json!({
+            "news": tp.news,
+            "vcm": tp.vcm.iter().map(|(c, u, n)| serde_json::json!({"company_id": c, "until": u, "count": n})).collect::<Vec<_>>(),
+            "companies": companies,
+        })
+    };
+    Ok(SimResult { events, metrics, bot: bot_json, series })
 }

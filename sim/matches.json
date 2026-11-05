@@ -1,5 +1,5 @@
 {
- "note": "id pairs only. Put corrections under 'manual' keyed by AniList id, e.g. {\"12345\": {\"bgm\": 678}}",
+ "note": "id pairs only. Put corrections under 'manual' keyed by AniList id, e.g. {\"12345\": {\"bgm\": 678}} Entries under \"exclude\" (AniList id -> reason, e.g. \"promo\") are never listed.",
  "manual": {
   "21": {
    "bgm": 602059,
@@ -8,13 +8,17 @@
    "title_cn": "航海王"
   },
   "210482": {
-   "title_cn": "飙马野郎 JOJO的奇妙冒险 第二&第三赛段"
+   "title_cn": "飙马野郎 JOJO的奇妙冒险 第二&第三赛段",
+   "bgm": 639938,
+   "via": "manual: title word order differs on Bangumi"
   },
   "188034": {
    "title_cn": "少女与战车 lovelove大作战！"
   },
   "203275": {
-   "title_cn": "恶魔纹章"
+   "title_cn": "恶魔纹章",
+   "bgm": 612608,
+   "via": "manual: Bangumi date (2026-11-06) far from AniList's"
   }
  },
  "matches": {
@@ -1774,5 +1778,6 @@
    "name_cn": "世界计划 缤纷舞台！ feat. 初音未来 6周年纪念曲『Emerald』2DMV",
    "date": "2026-10-31"
   }
- ]
+ ],
+ "exclude": {}
 }

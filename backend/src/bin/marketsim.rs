@@ -91,6 +91,7 @@ fn main() {
     }
     std::fs::write(out.join("metrics.json"), serde_json::to_string_pretty(&res.metrics).unwrap()).unwrap();
     std::fs::write(out.join("series.json"), serde_json::to_string(&res.series).unwrap()).unwrap();
+    std::fs::write(out.join("events.json"), serde_json::to_string(&res.events).unwrap()).unwrap();
     std::fs::write(out.join("bots.json"), serde_json::to_string_pretty(&bot_results).unwrap()).unwrap();
     let mut metrics = res.metrics.clone();
     if let Ok(t) = std::fs::read_to_string(cfg.root.join("sim/calibration/valuation_filter.json")) {

@@ -8,6 +8,8 @@ adapt them to Show objects.
 from __future__ import annotations
 
 import json
+import re
+import os
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -42,6 +44,33 @@ class Show:
     long_runner: bool = False
     episodes_known: bool = True
     adult: bool = False              # AniList isAdult or the Hentai genre: never listed
+    promo: bool = False              # a PV / CM / teaser compilation, not a show (`is_promo`): never listed
+
+
+# promotional material catalogued as an "anime": PVs, CMs, teasers, trailers (as a word, so "CMYK" or a
+# romaji word containing "pv" does not match)
+PROMO_RE = re.compile(r"(?i)(?<![a-z])(pvs?|cms?|teasers?|trailers?)(?![a-z])|ティザー|プロモーション|予告|特報|告知映像|宣伝映像")
+
+
+def is_promo(mid: int, m: dict) -> bool:
+    """A PV / CM / teaser entry, not a show: its title (native, romaji, English) or a synonym names it as
+    one, or sim/matches.json lists it under "exclude" with reason "promo"."""
+    titles = [(m.get("title") or {}).get(k) or "" for k in ("native", "romaji", "english")] + list(m.get("synonyms") or [])
+    if any(PROMO_RE.search(t) for t in titles):
+        return True
+    return manual_excludes().get(str(mid)) == "promo"
+
+
+_EXCLUDES: dict | None = None
+
+
+def manual_excludes() -> dict[str, str]:
+    """sim/matches.json "exclude": {AniList id: reason} for entries the rule cannot see."""
+    global _EXCLUDES
+    if _EXCLUDES is None:
+        f = ROOT / "sim" / "matches.json"
+        _EXCLUDES = json.loads(f.read_text(encoding="utf-8")).get("exclude", {}) if f.exists() else {}
+    return _EXCLUDES
 
 
 def load_shows(db_path: Path, p: dict, start: date, end: date | None,
@@ -78,6 +107,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
             popularity_end=m.get("popularity") or 0,
             studio=(m.get("studios", {}).get("nodes") or [{}])[0].get("name"),
             adult=bool(m.get("isAdult")) or "Hentai" in (m.get("genres") or []),
+            promo=is_promo(mid, m),
         )
         _fill_grid(s, t, end, gaps)
         if not s.days:
@@ -206,6 +236,27 @@ def preair_att(s: Show, d: date, val: dict, aud: dict) -> dict[str, float]:
             "jp": val["preair_jp_per_member"] * a.get("jp", 0) / 7}
 
 
+def preair_pit(s: Show, d: date, val: dict, aud_dated: dict) -> dict[str, float]:
+    """Point-in-time pre-air estimate of daily attention (the valuation filter's prior), frozen at the premiere:
+    only data that existed on min(D, premiere - 1). us from the AniList list entries on that day; cn/jp only
+    from a Bangumi/Annict audience snapshot taken before the premiere (0 = none: the filter then derives
+    cn/jp from the us estimate with its fitted per-market factors)."""
+    df = min(d, s.first_air - timedelta(days=1))
+    out = {"us": val["preair_attention_per_user"] * at(s, s.popularity, df) / 7, "cn": 0.0, "jp": 0.0}
+    a = aud_dated.get(s.id, {})
+    for m, k in (("cn", "preair_cn_per_member"), ("jp", "preair_jp_per_member")):
+        before = [count for count, snap_day in a.get(m, []) if snap_day <= df]
+        if before:
+            out[m] = val[k] * before[-1] / 7
+    return out
+
+
+def observed_markets(s: Show, d: date, markets: dict) -> dict[str, bool]:
+    """Whether each market reported on D (us always; cn/jp: a value in the rebuilt series, 0 included)."""
+    row = markets.get(s.id, {}).get(d.isoformat(), {})
+    return {"us": True, "cn": "cn" in row, "jp": "jp" in row}
+
+
 def has_real_data(s: Show, d: date, val: dict) -> bool:
     """Premiered long enough ago that every market has reported (cn/jp lag the premiere by a day).
     Keyed on the premiere date, not AniList episode markers: long-runners such as Doraemon have none."""
@@ -233,12 +284,54 @@ def fundamental(s: Show, d: date, weekly_div: float, book: float, rate: float, p
 # ---------------------------------------------------------------- simulation
 
 
+def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
+    """AniList id (str) -> {"bgm": id, "annict": id, ...}: sim/matches.json, plus an Annict work for every
+    AniList show without one whose MAL id an Annict work in the collector carries (the `works` table, where
+    the collector registers works it discovers by title, and the Annict work snapshots), plus the `manual`
+    corrections, which win. So the server picks up newly collected works without re-running sim/match.py."""
+    data = json.loads((ROOT / "sim" / "matches.json").read_text(encoding="utf-8"))
+    out = {k: dict(v) for k, v in data["matches"].items()}
+    path = db_path or Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db"))
+    if path.exists():
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            mal_of: dict[str, str] = {}
+            annict_of_mal: dict[str, int] = {}
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "works" in tables:
+                for src, ext, mal in db.execute("SELECT source, external_id, mal_id FROM works WHERE mal_id IS NOT NULL AND mal_id != ''"):
+                    if src == "anilist":
+                        mal_of[str(ext)] = str(mal)
+                    elif src == "annict":
+                        annict_of_mal.setdefault(str(mal), int(ext))
+            for ext, x in db.execute("SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day"):
+                mal = json.loads(x).get("idMal")
+                if mal:
+                    mal_of[str(ext)] = str(mal)
+            for ext, x in db.execute("SELECT external_id, data FROM snapshots WHERE source='annict' AND kind='work' ORDER BY day"):
+                mal = json.loads(x).get("malAnimeId")
+                if mal:
+                    annict_of_mal.setdefault(str(mal), int(ext))
+        finally:
+            db.close()
+        for aid, mal in mal_of.items():
+            r = out.setdefault(aid, {"anilist": int(aid)})
+            if not r.get("annict") and mal in annict_of_mal:
+                r["annict"] = annict_of_mal[mal]
+                r["annict_via"] = "mal_id"
+    for k, v in data.get("manual", {}).items():
+        r = out.setdefault(k, {"anilist": int(k)})
+        for key in ("bgm", "annict"):
+            if key in v:
+                r[key] = v[key]
+    return out
+
+
 def load_audiences(db_path: Path) -> dict[int, dict[str, float]]:
     """Bangumi (想看+在看+看过) and Annict watchers per AniList id, from the latest snapshot."""
-    mfile = ROOT / "sim" / "matches.json"
-    if not mfile.exists():
+    if not (ROOT / "sim" / "matches.json").exists():
         return {}
-    matches = json.loads(mfile.read_text(encoding="utf-8"))["matches"]
+    matches = effective_matches(db_path)
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     bg = {int(i): json.loads(x) for i, x in db.execute(
         "SELECT external_id, data FROM snapshots WHERE source='bgm' AND kind='subject' ORDER BY day")}
@@ -254,6 +347,39 @@ def load_audiences(db_path: Path) -> dict[int, dict[str, float]]:
             a["jp"] = an[r["annict"]].get("watchersCount", 0)
         out[int(aid)] = a
     return out
+
+
+def load_audiences_dated(db_path: Path) -> dict[int, dict[str, list[tuple[float, date]]]]:
+    """Like load_audiences, with every snapshot and its day, oldest first: {AniList id: {"cn": [(count, day),
+    ...], "jp": [...]}} (preair_pit takes the last one before the premiere)."""
+    if not (ROOT / "sim" / "matches.json").exists():
+        return {}
+    matches = effective_matches(db_path)
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    bg: dict[int, list] = {}
+    an: dict[int, list] = {}
+    for i, day, x in db.execute("SELECT external_id, day, data FROM snapshots WHERE source='bgm' AND kind='subject' ORDER BY day"):
+        c = json.loads(x).get("collection") or {}
+        bg.setdefault(int(i), []).append((c.get("wish", 0) + c.get("doing", 0) + c.get("collect", 0), date.fromisoformat(day)))
+    for i, day, x in db.execute("SELECT external_id, day, data FROM snapshots WHERE source='annict' AND kind='work' ORDER BY day"):
+        an.setdefault(int(i), []).append((json.loads(x).get("watchersCount", 0), date.fromisoformat(day)))
+    db.close()
+    out = {}
+    for aid, r in matches.items():
+        a = {}
+        if r.get("bgm") in bg:
+            a["cn"] = bg[r["bgm"]]
+        if r.get("annict") in an:
+            a["jp"] = an[r["annict"]]
+        out[int(aid)] = a
+    return out
+
+
+def mapped_sources(db_path: Path | None = None) -> dict[int, dict[str, bool]]:
+    """Which market data sources a show is mapped to (`effective_matches`): cn = Bangumi, jp = Annict."""
+    if not (ROOT / "sim" / "matches.json").exists():
+        return {}
+    return {int(k): {"cn": bool(v.get("bgm")), "jp": bool(v.get("annict"))} for k, v in effective_matches(db_path).items()}
 
 
 def load_cn_titles(db_path: Path) -> dict[int, str]:

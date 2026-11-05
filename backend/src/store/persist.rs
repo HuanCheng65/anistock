@@ -24,19 +24,9 @@ pub const BATCH_WINDOW: Duration = Duration::from_millis(50);
 pub enum Change {
     AccountInsert(Account),
     /// `UPDATE accounts SET cash, cash_frozen`
-    /// `INSERT OR REPLACE INTO valuation_state`
-    ValuationState {
-        company_id: i64,
-        market: String,
-        mean: f64,
-        var: f64,
-        last_obs: Option<f64>,
-        day: String,
-        acc: f64,
-        acc_n: i64,
-        updated_at: String,
-    },
-    ValuationStateDelete { company_id: i64, market: String },
+    /// `INSERT OR REPLACE INTO valuation_joint` (the joint filter's state of one show, JSON)
+    ValuationJoint { company_id: i64, state: String, day: String, updated_at: String },
+    ValuationJointDelete { company_id: i64 },
     /// `UPDATE accounts SET kind`
     AccountKind { id: i64, kind: String },
     AccountBalance {
@@ -130,19 +120,15 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 a.created_at
             ])?;
         }
-        Change::ValuationState { company_id, market, mean, var, last_obs, day, acc, acc_n, updated_at } => {
+        Change::ValuationJoint { company_id, state, day, updated_at } => {
             conn.prepare_cached(
-                "INSERT INTO valuation_state(company_id, market, mean, var, last_obs, day, acc, acc_n, updated_at)
-                 VALUES (?,?,?,?,?,?,?,?,?)
-                 ON CONFLICT(company_id, market) DO UPDATE SET mean=excluded.mean, var=excluded.var,
-                   last_obs=excluded.last_obs, day=excluded.day, acc=excluded.acc, acc_n=excluded.acc_n,
-                   updated_at=excluded.updated_at",
+                "INSERT INTO valuation_joint(company_id, state, day, updated_at) VALUES (?,?,?,?)
+                 ON CONFLICT(company_id) DO UPDATE SET state=excluded.state, day=excluded.day, updated_at=excluded.updated_at",
             )?
-            .execute(params![company_id, market, mean, var, last_obs, day, acc, acc_n, updated_at])?;
+            .execute(params![company_id, state, day, updated_at])?;
         }
-        Change::ValuationStateDelete { company_id, market } => {
-            conn.prepare_cached("DELETE FROM valuation_state WHERE company_id=? AND market=?")?
-                .execute(params![company_id, market])?;
+        Change::ValuationJointDelete { company_id } => {
+            conn.prepare_cached("DELETE FROM valuation_joint WHERE company_id=?")?.execute(params![company_id])?;
         }
         Change::AccountKind { id, kind } => {
             conn.prepare_cached("UPDATE accounts SET kind=? WHERE id=?")?.execute(params![kind, id])?;

@@ -33,6 +33,9 @@ import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "data" / "anistock.db"
+# ANISTOCK_DERIVED_DIR: where markets.json is written (default data/derived; annict_airtimes.json is read from
+# data/derived unless it exists there)
+DERIVED_OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived"))
 DERIVED = ROOT / "data" / "derived"
 CALIBRATION = ROOT / "sim" / "calibration"   # tracked in git: small aggregate curves, costly to re-measure
 UA = "anistock-collector/0.1 (anime club market game)"
@@ -62,7 +65,11 @@ def latest(source: str, kind: str) -> dict[int, dict]:
 
 
 def matches() -> dict:
-    return json.loads((ROOT / "sim" / "matches.json").read_text(encoding="utf-8"))["matches"]
+    # sim/matches.json plus the Annict works the collector found by MAL id, plus the manual corrections
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from engine.economy import effective_matches
+    return effective_matches(DB)
 
 
 def annict_gql(client: httpx.Client, query: str, variables: dict, partial_ok: bool = False) -> dict:
@@ -324,7 +331,10 @@ def episode_series(min_age: float = 3.0) -> dict[str, dict[int, list[tuple[datet
     for wid, w in latest("annict", "work").items():
         if wid not in an_by_work:
             continue
-        times = air.get(str(wid)) or fallback.get(wid, {})
+        # Annict's program list can miss a work's early episodes (it lists recent programs): those episodes'
+        # records exist but had no air time and were dropped, so the jp series started weeks late. Fill the
+        # gaps with the Bangumi-aligned fallback; Annict's own times win where they exist.
+        times = {**fallback.get(wid, {}), **(air.get(str(wid)) or {})}
         for e in w.get("episodes", []):
             t = times.get(str(e["annictId"]))
             if not t:
@@ -476,8 +486,8 @@ def cmd_build() -> None:
             stats[mk]["observed_days"] += len(daily)
             for day, v in daily.items():
                 out[str(aid)].setdefault(day.isoformat(), {})[mk] = round(v, 3)
-    DERIVED.mkdir(parents=True, exist_ok=True)
-    (DERIVED / "markets.json").write_text(json.dumps({"snapshot_day": snap_day.isoformat(), "stats": stats,
+    DERIVED_OUT.mkdir(parents=True, exist_ok=True)
+    (DERIVED_OUT / "markets.json").write_text(json.dumps({"snapshot_day": snap_day.isoformat(), "stats": stats,
                                                       "series": out}), encoding="utf-8")
     print(f"snapshot {snap_day}: " + "  ".join(f"{mk} shows={v['shows']} days={v['observed_days']} "
                                                 f"(extended {v['extended_days']})" for mk, v in stats.items()))

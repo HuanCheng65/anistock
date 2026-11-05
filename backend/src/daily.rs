@@ -226,22 +226,27 @@ impl Engine {
 
         // 0. adult titles are not traded here: buy out any listed one at today's last price and close
         //    any open subscription with full refunds
-        let adult: Vec<Company> = cx.companies.iter().filter(|c| cx.inp.show(c.id).is_some_and(|s| s.adult)).cloned().collect();
-        for c in &adult {
-            self.buyout(cx, c)?;
+        let adult: Vec<(Company, &'static str)> = cx
+            .companies
+            .iter()
+            .filter_map(|c| cx.inp.show(c.id).and_then(|s| s.excluded()).map(|why| (c.clone(), why)))
+            .collect();
+        for (c, why) in &adult {
+            self.buyout(cx, c, why)?;
         }
         if !adult.is_empty() {
-            cx.companies.retain(|c| !adult.iter().any(|a| a.id == c.id));
-            cx.listed.retain(|s| !s.adult);
+            cx.companies.retain(|c| !adult.iter().any(|(a, _)| a.id == c.id));
+            cx.listed.retain(|s| s.excluded().is_none());
         }
         let subs: Vec<Company> = self
             .st
             .companies
             .values()
-            .filter(|c| c.status == "subscribing" && cx.inp.show(c.id).is_some_and(|s| s.adult))
+            .filter(|c| c.status == "subscribing" && cx.inp.show(c.id).is_some_and(|s| s.excluded().is_some()))
             .cloned()
             .collect();
         for c in subs {
+            let why = cx.inp.show(c.id).and_then(|s| s.excluded()).unwrap_or("该作品不在安易交易");
             let apps: Vec<i64> = self.ipo_applications(c.id).iter().map(|a| a.account_id).collect();
             for a in apps {
                 self.do_withdraw(c.id, a);
@@ -250,7 +255,7 @@ impl Engine {
             co.status = "delisted".into();
             co.delisted_on = Some(day.clone());
             self.mark_company(c.id);
-            self.push_news(&ts, &day, "delisting", Some(c.id), format!("《{}》取消发行", c.title), "成人向作品不在安易交易，认购资金已全部退回。".to_string());
+            self.push_news(&ts, &day, "delisting", Some(c.id), format!("《{}》取消发行", c.title), format!("{why}，认购资金已全部退回。"));
         }
 
         // 1. revenue
@@ -264,6 +269,19 @@ impl Engine {
         }
         let tot_us = totals[0];
         let demand_day = V::demand_day(tot_us, a_ref, &p);
+        if let Ok(path) = std::env::var("SIM_FORECAST") {
+            // the realised side (sim/forecast_check.py): totals, demand, each listed show's attention and revenue
+            use std::io::Write;
+            let shows: Vec<serde_json::Value> = cx
+                .companies
+                .iter()
+                .filter_map(|c| cx.inp.show(c.id).map(|s| serde_json::json!([c.id, s.att.m3(), V::blended_share(&s.att.m3(), &totals, &p.market_weights).0])))
+                .collect();
+            let line = serde_json::json!({"real": crate::vclose::day_no(&day), "tot": totals, "dd": demand_day, "shows": shows}).to_string();
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "{line}");
+            }
+        }
         for c in cx.companies.clone() {
             let Some(s) = cx.inp.show(c.id) else { continue };
             let (share, parts) = V::blended_share(&s.att.m3(), &totals, &p.market_weights);
@@ -381,12 +399,26 @@ impl Engine {
             let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
             for c in &cx.companies {
                 if let Some(s) = cx.inp.show(c.id) {
-                    self.valuation_step(&fp, s, &day, &ts);
+                    self.valuation_step(&fp, &p, s, &day, &ts);
+                }
+            }
+            // shows in their subscription window have a value too (the offer is priced off it)
+            let mut subscribing: Vec<i64> = self.st.companies.values().filter(|c| c.status == "subscribing").map(|c| c.id).collect();
+            subscribing.sort_unstable();
+            for id in &subscribing {
+                if let Some(s) = cx.inp.show(*id) {
+                    self.valuation_step(&fp, &p, s, &day, &ts);
                 }
             }
             let today = crate::vclose::day_no(&day).ok_or("bad day")?;
             self.record_total(today);
             let (vals, totals) = self.valuation_values(&fp, &p, today, rate, a_ref);
+            for id in &subscribing {
+                if let Some(v) = vals.get(id) {
+                    self.st.companies.get_mut(id).unwrap().fair_value = *v;
+                    self.mark_company(*id);
+                }
+            }
             cx.vtotals = Some(totals);
             Some(vals)
         };
@@ -459,6 +491,18 @@ impl Engine {
             .collect();
         for id in due {
             self.allot(cx, id)?;
+            // listed tomorrow: its value now includes the offer's proceeds (cash per share)
+            if !cx.cfg.economy_v1 {
+                if let Some(totals) = cx.vtotals.clone() {
+                    let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+                    let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
+                    let today = crate::vclose::day_no(&day).ok_or("bad day")?;
+                    if let Some(v) = self.valuation_value_of(&fp, &cx.p, id, today, &totals, rate, a_ref) {
+                        self.st.companies.get_mut(&id).unwrap().fair_value = v;
+                        self.mark_company(id);
+                    }
+                }
+            }
         }
         self.list_new(cx, rate, demand_week)?;
 
@@ -676,11 +720,11 @@ impl Engine {
         self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
     }
 
-    /// Take `c` off the market at today's last price (an adult title, step 0): cancel its open orders, the
+    /// Take `c` off the market at today's last price (an adult title or a promo entry, step 0): cancel its open orders, the
     /// world account pays every holder but the company and the committee `last_price` per share, the shares
     /// are retired and the company's cash goes to the world account. Holders keep exactly what the stock was
     /// worth on their screen.
-    fn buyout(&mut self, cx: &mut Ctx, c: &Company) -> Result<(), String> {
+    fn buyout(&mut self, cx: &mut Ctx, c: &Company, why: &str) -> Result<(), String> {
         let (day, ts) = (cx.day.clone(), cx.ts.clone());
         let mut open: Vec<i64> = self
             .st
@@ -707,7 +751,7 @@ impl Engine {
         co.status = "delisted".into();
         co.delisted_on = Some(day.clone());
         self.mark_company(c.id);
-        let body = format!("成人向作品不在安易交易，按 {} 币每股收回全部股份。", fixed(per as f64 / 100.0, 2));
+        let body = format!("{why}，按 {} 币每股收回全部股份。", fixed(per as f64 / 100.0, 2));
         self.push_news(&ts, &day, "delisting", Some(c.id), format!("《{}》摘牌", c.title), body);
         Ok(())
     }
@@ -912,7 +956,7 @@ impl Engine {
         let existing: HashSet<i64> = self.st.companies.keys().copied().collect();
         let inp = cx.inp;
         for s in &inp.shows {
-            if existing.contains(&s.id) || s.adult || s.popularity_end < cx.g().min_listing_popularity {
+            if existing.contains(&s.id) || s.excluded().is_some() || s.popularity_end < cx.g().min_listing_popularity {
                 continue;
             }
             let first_air = date(&s.first_air)?;

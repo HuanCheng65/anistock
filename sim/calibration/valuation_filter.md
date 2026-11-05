@@ -1,34 +1,44 @@
 # Valuation filter fit
 
-Data: the summer 2026 season, daily inputs 2026-07-01 to 2026-10-06 from engine/daily_inputs.py (140 shows).
+Data: daily inputs 2026-07-01 to 2026-11-03 from engine/daily_inputs.py (v0.3.2 schema; market series rebuilt with the air-time fix in sim/reconstruct.py; 142 shows), i.e. the summer 2026 season and the first five weeks of autumn. Observations from a week after a show\'s finale are left out (the server reads them through the post-finale profile).
 
-us within-episode curve (day 0..6 after airing, mean 1): [0.6004, 2.5475, 1.4329, 0.8589, 0.617, 0.5001, 0.4432]
+us within-episode curve (day 0..6 after airing, mean 1): [0.5952, 2.4934, 1.4687, 0.8811, 0.6225, 0.4996, 0.4395]
 
-Plain Kalman filter (`--gaussian`, no outlier component): the outlier mixture was also fitted and gave no better held-out coverage, so the simpler model is used.
+Joint filter (v0.3.2): one state per show, the three markets' log levels. Prior at the premiere: log(point-in-time us pre-air estimate) + bias_m, variances p0_m, common correlation rho = 0.534 (summer fit 0.646, autumn fit 0.539). 115 shows with a prior (53 premiering before 2026-09-15, 62 after). Two stages: each market's drift, q, r from its own filter; then bias, p0 and rho by maximum likelihood of the joint filter.
+
+Plain Kalman filter (`--gaussian`, no outlier component): the outlier mixture was also fitted in v0.3.0 and gave no better held-out coverage, so the simpler model is used.
+
+Finale week: attention relative to the level two to three weeks before it: {'us': 1.507413, 'cn': 1.118205, 'jp': 0.966828}.
 
 ## us
 
-shows 65, observations 818; drift -0.00957/day (×0.935/week), q 0.00377/day, r 0.0442, p0 0.283, prior bias +0.020, outliers 0.0% with extra variance 1.042; log-likelihood -234.8.
+drift by weeks since the premiere (0-3, 4-7, 8+) [-0.01912, -0.00653, 2e-05]/day, q 0.00380/day, r 0.0174 (own filter); prior: bias +0.254 + 1.000 × log(us pre-air estimate) (level-unbiased; maximum likelihood +0.230), variance 0.426 (joint filter).
 
-80% interval coverage: 81.9% in sample, 82.6% on held-out shows (453 observations; fit on even ids, tested on odd).
-
-Prior bias used by the server: +0.086 (maximum likelihood +0.020 is unbiased in log; this one makes the value's first revision after the premiere zero on average).
+80% interval coverage of the next observation: 87.0% (817) in sample; 90.2% (420) on held-out shows (fit on even ids, tested on odd); 66.1% (230) on autumn shows with the summer fit; 34.9% (587) on summer shows with the autumn fit. Prior bias fitted on summer alone +0.213, on autumn alone +0.344.
 
 ## cn
 
-shows 80, observations 1287; drift -0.01634/day (×0.892/week), q 0.01666/day, r 0.0159, p0 0.255, prior bias +0.126, outliers 0.0% with extra variance 4.010; log-likelihood -342.9.
+drift by weeks since the premiere (0-3, 4-7, 8+) [-0.01977, -0.0019, -0.00481]/day, q 0.00883/day, r 0.0235 (own filter); prior: bias -2.641 + 0.622 × log(us pre-air estimate) (level-unbiased; maximum likelihood -2.670), variance 0.910 (joint filter).
 
-80% interval coverage: 84.8% in sample, 83.0% on held-out shows (712 observations; fit on even ids, tested on odd).
-
-Prior bias used by the server: +0.179 (maximum likelihood +0.126 is unbiased in log; this one makes the value's first revision after the premiere zero on average).
+80% interval coverage of the next observation: 83.7% (1482) in sample; 82.3% (779) on held-out shows (fit on even ids, tested on odd); 82.0% (545) on autumn shows with the summer fit; 86.6% (937) on summer shows with the autumn fit. Prior bias fitted on summer alone -4.115, on autumn alone -0.657.
 
 ## jp
 
-shows 72, observations 790; drift -0.01684/day (×0.889/week), q 0.01240/day, r 0.0044, p0 0.024, prior bias +0.130, outliers 0.0% with extra variance 2.482; log-likelihood -22.7.
+drift by weeks since the premiere (0-3, 4-7, 8+) [-0.01723, -0.00472, -0.00022]/day, q 0.00902/day, r 0.0588 (own filter); prior: bias +0.695 + 0.381 × log(us pre-air estimate) (level-unbiased; maximum likelihood +0.690), variance 0.295 (joint filter).
 
-80% interval coverage: 89.7% in sample, 89.5% on held-out shows (399 observations; fit on even ids, tested on odd).
+80% interval coverage of the next observation: 97.8% (1435) in sample; 98.6% (737) on held-out shows (fit on even ids, tested on odd); 67.1% (529) on autumn shows with the summer fit; 78.6% (906) on summer shows with the autumn fit. Prior bias fitted on summer alone +0.106, on autumn alone +2.077.
 
-Prior bias used by the server: +0.222 (maximum likelihood +0.130 is unbiased in log; this one makes the value's first revision after the premiere zero on average).
+## Pre-air estimate until the premiere
+
+Mean log growth of the point-in-time estimate from k days before the day before the premiere (k = 7, 14, 21, 28): [0.103771, 0.24072, 0.342765, 0.385468], variance [0.006617, 0.017171, 0.03502, 0.046655] ([79, 65, 64, 6] shows).
+
+## After the finale
+
+Attention by week after the finale week, relative to the level at its end (us observed, cn/jp the rebuilt series the revenue uses): {'us': [0.446671, 0.299977, 0.225845, 0.179913, 0.162655], 'cn': [0.49496, 0.325196, 0.239016, 0.174467, 0.148673], 'jp': [0.524435, 0.373252, 0.280391, 0.222116, 0.176345]}; then ×{'us': 0.939826, 'cn': 0.821925, 'jp': 0.95} a week. The game's `[valuation] post_finale_profile` (measured on AniList in v1) was [0.40, 0.30, 0.22, 0.16, 0.14], ×0.78.
+
+## Arrival of a season's shows
+
+Share of a season's pre-air attention not yet listed, by days from the season start (−30, −14, 0, +14, +30): [0.924121, 0.102761, 0.0, 0.0, 0.0] (seasons: ['2026-10-01']).
 
 ## 热度快讯 hourly curve
 

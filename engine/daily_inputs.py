@@ -32,8 +32,18 @@ File format (JSON, one object):
         air_dates       ["YYYY-MM-DD", ...] the day each episode aired so far (one entry per episode; since v0.3.0)
         adult           true for an adult title (AniList isAdult or the Hentai genre); absent otherwise.
                         Never listed; a listed one is bought out at the next close (since v0.3.1)
-        preair          {"us","cn","jp"}  the audience-based pre-air estimate of daily attention per market: the
-                        valuation filter's prior (since v0.3.0)
+        promo           true for a PV / CM / teaser entry (engine/economy.py is_promo); absent otherwise. Treated
+                        like `adult` (since v0.3.2)
+        preair          {"us","cn","jp"}  the audience-based pre-air estimate of daily attention per market, from
+                        the LATEST audience snapshot (look-ahead for shows already airing; since v0.3.0, not used
+                        by the valuation since v0.3.2)
+        prior           {"us","cn","jp"}  point-in-time pre-air estimate, frozen at the premiere: us from AniList
+                        list entries on min(D, premiere-1); cn/jp only from a Bangumi/Annict snapshot taken by then,
+                        else 0 (the filter derives them from us). The valuation filter's prior (since v0.3.2)
+        observed        {"us","cn","jp"}  whether the market reported on D (cn/jp: a value in the rebuilt weekly
+                        series, 0 included; false = no data, not zero) (since v0.3.2)
+        sources         {"us","cn","jp"}  whether the show is mapped to the market's data source (Bangumi, Annict
+                        in sim/matches.json); an unmapped market earns nothing (since v0.3.2)
         att             {"us","cn","jp"}  realised attention on D per market (revenue shares, demand index)
         expected        {"us","cn","jp"}  expected attention on D: `att` once the show has real data, else the
                         per-market max of `att` and the audience-based pre-air estimate (expected-share
@@ -66,7 +76,7 @@ def inputs_dir() -> Path:
 
 
 def load_markets() -> dict[int, dict]:
-    mpath = ROOT / "data" / "derived" / "markets.json"
+    mpath = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "markets.json"
     if not mpath.exists():
         return {}
     return {int(k): v for k, v in json.loads(mpath.read_text(encoding="utf-8"))["series"].items()}
@@ -85,9 +95,11 @@ def air_dates(s: E.Show, day: date) -> list[str]:
 
 
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
-          window_start: date) -> dict:
+          window_start: date, aud_dated: dict | None = None, sources: dict | None = None) -> dict:
     """The inputs dict for `day` from already-loaded model objects (no I/O)."""
     rv, val = p["revenue"], p["valuation"]
+    aud_dated = aud_dated or {}
+    sources = sources or {}
     out = []
     for s in shows:
         att = E.market_att(s, day, rv, markets)
@@ -105,9 +117,13 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "has_real_data": E.has_real_data(s, day, val),
             "att": {m: att[m] for m in E.MARKETS},
             "preair": {m: v for m, v in E.preair_att(s, day, val, aud).items()},
+            "prior": E.preair_pit(s, day, val, aud_dated),
+            "observed": E.observed_markets(s, day, markets),
+            "sources": {"us": True, **sources.get(s.id, {"cn": False, "jp": False})},
+            **({"adult": True} if s.adult else {}),
+            **({"promo": True} if s.promo else {}),
             "air_dates": air_dates(s, day),
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
-            **({"adult": True} if s.adult else {}),
         })
     return {
         "day": day.isoformat(),
@@ -142,7 +158,7 @@ def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
     shows, _ = E.load_shows(cfg.collector_db, cfg.params, start, d,
                             upcoming_days=cfg.game["ipo_subscription_days"] + 1)
     return build(shows, load_markets(), E.load_audiences(cfg.collector_db), E.load_cn_titles(cfg.collector_db),
-                 d, cfg.params, start)
+                 d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), E.mapped_sources(cfg.collector_db))
 
 
 def dumps(inputs: dict) -> str:
@@ -178,6 +194,10 @@ class ShowInputs:
     preair: dict | None = None             # since v0.3.0
     air_dates: list = field(default_factory=list)
     adult: bool = False                    # since v0.3.1
+    promo: bool = False                    # since v0.3.2
+    prior: dict | None = None              # since v0.3.2
+    observed: dict | None = None           # since v0.3.2
+    sources: dict | None = None            # since v0.3.2
 
 
 @dataclass(frozen=True)
@@ -201,6 +221,7 @@ def main() -> None:
     ap.add_argument("--day", required=True, help="the day being closed, YYYY-MM-DD")
     ap.add_argument("--out", type=Path, help="output path (default: data/derived/inputs/<day>.json)")
     ap.add_argument("--window-start", help="override the game's window start (default: game DB state)")
+    ap.add_argument("--force", action="store_true", help="with --from: rewrite files that exist")
     ap.add_argument("--from", dest="start",
                     help="also write every day from this one up to --day into the default directory, skipping "
                          "files that exist (history for the server's valuation bootstrap at go-live)")
@@ -209,7 +230,7 @@ def main() -> None:
     if args.start:
         d, end = date.fromisoformat(args.start), date.fromisoformat(args.day)
         while d <= end:
-            if not (inputs_dir() / f"{d.isoformat()}.json").exists():
+            if args.force or not (inputs_dir() / f"{d.isoformat()}.json").exists():
                 inputs = daily_inputs(d.isoformat(), window_start=ws)
                 print(f"{write(inputs, None)}: {len(inputs['shows'])} shows")
             d += timedelta(days=1)

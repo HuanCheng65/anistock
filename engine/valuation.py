@@ -192,6 +192,60 @@ def kf_update(mean: float, var: float, y: float, r: float, clip: float) -> tuple
     return mean + k * v, (1.0 - k) * var, v
 
 
+# ---- the joint filter (v0.3.2): one state per show, the log levels of the three markets
+
+
+def prior_cov(p0: list[float], rho: float) -> list[list[float]]:
+    """Prior covariance of the three markets' log levels: variances p0, one common correlation rho (a show
+    that beats its pre-air estimate in one market tends to beat it in the others)."""
+    sd = [v ** 0.5 for v in p0]
+    return [[p0[i] if i == j else rho * sd[i] * sd[j] for j in range(3)] for i in range(3)]
+
+
+def kf_predict_joint(mean: list[float], cov: list[list[float]], days: int, drift: list[float],
+                     q: list[float]) -> tuple[list[float], list[list[float]]]:
+    """Each market's level drifts on its own (independent process noise q per market)."""
+    m2 = [mean[i] + drift[i] * days for i in range(3)]
+    c2 = [[cov[i][j] + (q[i] * days if i == j else 0.0) for j in range(3)] for i in range(3)]
+    return m2, c2
+
+
+def kf_update_joint(mean: list[float], cov: list[list[float]], m: int, y: float, r: float,
+                    clip: float) -> tuple[list[float], list[list[float]], float, float]:
+    """One observation y of market m's log level with noise variance r. Moves every market through the
+    covariance. The innovation is clipped at `clip` standard deviations, as in `kf_update`. Returns (mean,
+    cov, log-likelihood of y, innovation variance)."""
+    s = cov[m][m] + r
+    sd = s ** 0.5
+    v = y - mean[m]
+    ll = -0.5 * (math.log(2.0 * math.pi * s) + v * v / s)
+    if v > clip * sd:
+        v = clip * sd
+    elif v < -clip * sd:
+        v = -clip * sd
+    k = [cov[i][m] / s for i in range(3)]
+    m2 = [mean[i] + k[i] * v for i in range(3)]
+    c2 = [[cov[i][j] - k[i] * cov[m][j] for j in range(3)] for i in range(3)]
+    return m2, c2, ll, s
+
+
+DRIFT_WEEKS = (4, 8)   # the in-season fade changes speed after these weeks since the premiere
+
+
+def drift_at(fp: dict, m: str, w: int) -> float:
+    """Market m's daily log drift in week w since the premiere: fitted by period (weeks 0-3, 4-7, 8+; a show
+    fades fast after its premiere and more slowly later), else one rate."""
+    seg = fp.get("drift_by_week", {}).get(m)
+    if not seg:
+        return fp["drift"][m]
+    return seg[0] if w < DRIFT_WEEKS[0] else (seg[1] if w < DRIFT_WEEKS[1] else seg[2])
+
+
+def cum_drift(fp: dict, m: str, t0: int, t1: int, premiere: int) -> float:
+    """The level's total log drift from day t0 to day t1 (t1 >= t0) for a show premiering on `premiere`."""
+    return sum(drift_at(fp, m, (t - premiere) // 7) for t in range(t0, t1))
+
+
 def week_observation(y_mean: float, n: int, drift: float) -> float:
     """An observation that averages n daily log values describes the level about (n-1)/2 days ago: moved to
     today with the drift."""
@@ -224,9 +278,13 @@ def att_path(fp: dict, p: dict, m: str, mean: float, var: float, today: int, sch
     (`schedule`); after the last one's week the measured post-finale decay applies."""
     drift, q = fp["drift"][m], fp["q"][m]
     val = p["valuation"]
-    prof, tail = val["post_finale_profile"], val["post_finale_tail_decay"]
+    prof, tail = post_finale_curve(fp, p, m)
     out = []
     final = sched[-1] if (sched and not long_runner) else None
+    # the level drifts from today, or from the premiere for a show not yet airing (the prior is the level at
+    # the premiere: before it there is nothing to fade)
+    base = max(today, first_air)
+    cd = 0.0   # cumulative drift from base to t (incremented day by day)
     for j in range(1, horizon + 1):
         t = today + j
         if t < first_air:
@@ -237,16 +295,43 @@ def att_path(fp: dict, p: dict, m: str, mean: float, var: float, today: int, sch
             continue
         if final is not None and t >= final + 7:
             # after the last episode's week: the measured post-finale decay of the level at the finale
-            jf = final + 7 - today
-            lvl = math.exp(mean + drift * jf + 0.5 * (var + q * jf))
+            jf = max(0, final + 7 - base)
+            lvl = math.exp(mean + cum_drift(fp, m, base, base + jf, first_air) + 0.5 * (var + q * jf)) * finale_bump(fp, m)
             w = (t - final - 7) // 7
             f = prof[w] if w < len(prof) else prof[-1] * tail ** (w - len(prof) + 1)
             out.append(lvl * f)
             continue
         a = last_air_before(sched, t)
         k = None if a is None else t - a
-        out.append(math.exp(mean + drift * j + 0.5 * (var + q * j)) * curve(fp, m, k))
+        je = t - base
+        cd += drift_at(fp, m, (t - 1 - first_air) // 7) if t - 1 >= base else 0.0
+        bump = finale_bump(fp, m) if (final is not None and final <= t < final + 7) else 1.0
+        out.append(math.exp(mean + cd + 0.5 * (var + q * je)) * curve(fp, m, k) * bump)
     return out
+
+
+def finale_bump(fp: dict, m: str) -> float:
+    """Market m's attention in the finale's week relative to the level (fitted; AniList completions)."""
+    return fp.get("finale_bump", {}).get(m, 1.0)
+
+
+def post_finale_curve(fp: dict, p: dict, m: str) -> tuple[list[float], float]:
+    """Market m's attention by week after the finale week and its weekly tail: fitted per market
+    (sim/fit_valuation.py `post_finale`), else the game's `[valuation] post_finale_profile`."""
+    if fp.get("post_finale", {}).get(m):
+        return fp["post_finale"][m], fp["post_finale_tail"][m]
+    val = p["valuation"]
+    return val["post_finale_profile"], val["post_finale_tail_decay"]
+
+
+def post_finale_factor(fp: dict, p: dict, m: str, final: int, t: int) -> float:
+    """The post-finale factor of market m's level on day t for a show whose last episode aired on `final`: 1
+    until a week after it, then the profile and its tail (the same as in `att_path`)."""
+    if t < final + 7:
+        return 1.0
+    prof, tail = post_finale_curve(fp, p, m)
+    w = (t - final - 7) // 7
+    return prof[w] if w < len(prof) else prof[-1] * tail ** (w - len(prof) + 1)
 
 
 def discount_day(rate: float, p: dict) -> float:
@@ -260,7 +345,10 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     own/totals: market -> expected attention per future day (the same length)."""
     rv, co = p["revenue"], p["company"]
     disc = discount_day(rate, p)
-    keep = (1 - co.get("operating_cost_ratio", 0)) * (1 - co["corp_tax"]) * co["payout_ratio"]
+    # all after-tax profit reaches the shareholders: the paid-out part as dividends, the retained part as the
+    # company's cash (book value, returned at delisting); counting only the payout made every day's retained
+    # cash a predictable rise of the value
+    keep = (1 - co.get("operating_cost_ratio", 0)) * (1 - co["corp_tax"])
     h = len(own["us"])
     pv = 0.0
     f = 1.0

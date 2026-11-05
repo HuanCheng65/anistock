@@ -3,7 +3,7 @@
     .venv/bin/python engine/flash_fetch.py --inbox data/events/inbox [--game-db data/game.db] [--now ISO]
 
 The game server runs this once an hour while shows air (08:00-03:00). For every listed show whose episode
-aired within the last 26 hours (Annict air times via sim/matches.json; else Bangumi's air date at 23:00
+aired within the last 26 hours (Annict air times via the effective AniList→Annict mapping; else Bangumi's air date at 23:00
 JST), it makes ONE request to the Bangumi API (the show's episode list), and writes one observation per show
 as a JSON file into the inbox:
 
@@ -67,11 +67,10 @@ def main() -> None:
     args = ap.parse_args()
     now = datetime.fromisoformat(args.now) if args.now else datetime.now(timezone.utc)
 
-    m = json.loads((ROOT / "sim" / "matches.json").read_text(encoding="utf-8"))
-    matches = {k: v for k, v in m.get("matches", {}).items()}
-    for k, v in m.get("manual", {}).items():
-        if "bgm" in v:
-            matches.setdefault(k, {})["bgm"] = v["bgm"]
+    # the same mapping as the daily inputs: sim/matches.json, Annict works found by MAL id, manual corrections
+    sys.path.insert(0, str(ROOT))
+    from engine.economy import effective_matches
+    matches = effective_matches(Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db")))
     companies = listed_companies(args.game_db)
     times = air_times(matches)
 

@@ -49,6 +49,31 @@ pub struct ShowInputs {
     /// an adult title (AniList isAdult or the Hentai genre): never listed, bought out if it is (since v0.3.1)
     #[serde(default)]
     pub adult: bool,
+    /// a PV / CM / teaser entry, not a show: treated like `adult` (since v0.3.2)
+    #[serde(default)]
+    pub promo: bool,
+    /// point-in-time pre-air estimate, frozen at the premiere (since v0.3.2)
+    #[serde(default)]
+    pub prior: Option<Markets>,
+    /// which markets reported on the day (since v0.3.2)
+    #[serde(default)]
+    pub observed: Option<Flags>,
+    /// which markets' data sources the show is mapped to (since v0.3.2)
+    #[serde(default)]
+    pub sources: Option<Flags>,
+}
+
+/// One flag per market.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Flags {
+    #[serde(default = "yes")]
+    pub us: bool,
+    pub cn: bool,
+    pub jp: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,6 +93,19 @@ pub struct Inputs {
     pub shows: Vec<ShowInputs>,
     pub index: HashMap<i64, usize>,
     pub cn_titles: BTreeMap<i64, String>,
+}
+
+impl ShowInputs {
+    /// Why the show is not traded here, if it isn't: the news copy for its buyout or cancelled offer.
+    pub fn excluded(&self) -> Option<&'static str> {
+        if self.adult {
+            Some("成人向作品不在安易交易")
+        } else if self.promo {
+            Some("宣传片不在安易交易")
+        } else {
+            None
+        }
+    }
 }
 
 impl Inputs {

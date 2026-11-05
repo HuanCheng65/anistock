@@ -39,12 +39,14 @@ pub enum BotKind {
     /// next four weeks (the value 25 days ahead plus the dividends until then) with a 30% error fixed per
     /// show; rebalances weekly and holds
     FanLong,
+    /// subscribe to every new issue (an equal budget each) and hold what is allotted
+    IpoAll,
     /// hold the market, but sell everything on Sunday evening (before the dividend) and buy back on Monday
     ExDividend,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 15] {
+    pub fn all() -> [BotKind; 16] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -61,6 +63,7 @@ impl BotKind {
             BotKind::Fan10,
             BotKind::Fan30,
             BotKind::FanLong,
+            BotKind::IpoAll,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -79,6 +82,7 @@ impl BotKind {
             BotKind::Fan10 => "fan_0.1",
             BotKind::Fan30 => "fan_0.3",
             BotKind::FanLong => "fan_long_0.3",
+            BotKind::IpoAll => "ipo_all",
             BotKind::ExDividend => "ex_dividend",
         }
     }
@@ -259,6 +263,30 @@ impl Bot {
                         if place(e, acct, c, "sell", "limit", free, Some(lim), t) {
                             self.trades_placed += 1;
                         }
+                    }
+                }
+            }
+            BotKind::IpoAll => {
+                if s != 12 * 3600 {
+                    return;
+                }
+                let day = day_of(t);
+                let open: Vec<(i64, i64)> = e
+                    .companies()
+                    .filter(|c| {
+                        c.sub_start.as_deref().is_some_and(|x| x <= day.as_str()) && c.sub_end.as_deref().is_some_and(|x| day.as_str() <= x)
+                    })
+                    .map(|c| (c.id, c.ipo_price))
+                    .collect();
+                for (c, price) in open {
+                    if self.sold.contains(&c) || price <= 0 {
+                        continue;
+                    }
+                    let budget = (self.start_cash / 15).min(e.available_cash(acct));
+                    let q = budget / price;
+                    if q > 0 && e.subscribe(acct, c, q, &day, &ts).is_ok() {
+                        self.trades_placed += 1;
+                        self.sold.push(c);
                     }
                 }
             }

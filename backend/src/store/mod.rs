@@ -211,8 +211,9 @@ pub struct Snapshot {
     pub gov_taxes: BTreeMap<String, i64>,
     /// company -> trailing live closes under 1 币 (面值退市 countdown), from `candles`
     pub penny_days: std::collections::HashMap<i64, i64>,
-    /// the valuation filter's state (table valuation_state, migration V2)
-    pub vstate: std::collections::HashMap<(i64, usize), crate::vclose::VState>,
+    /// the joint valuation filter's state (table valuation_joint, migration V3; converted from the per-market
+    /// valuation_state of V2 when empty)
+    pub jstate: std::collections::HashMap<i64, crate::vclose::JState>,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -486,25 +487,41 @@ fn load_daily(conn: &Connection, s: &mut Snapshot) -> DbResult<()> {
             }
         }
     }
-    if table_exists(conn, "valuation_state")? {
-        let mut st = conn.prepare("SELECT company_id, market, mean, var, last_obs, day, acc, acc_n FROM valuation_state")?;
+    if table_exists(conn, "valuation_joint")? {
+        let mut st = conn.prepare("SELECT company_id, state FROM valuation_joint")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (c, js) = row?;
+            match serde_json::from_str::<crate::vclose::JState>(&js) {
+                Ok(v) => {
+                    s.jstate.insert(c, v);
+                }
+                Err(e) => eprintln!("valuation_joint row {c}: {e} (dropped; the next close restarts it)"),
+            }
+        }
+    }
+    if s.jstate.is_empty() && table_exists(conn, "valuation_state")? {
+        // v0.3.0 per-market rows: one joint state per show, no cross-covariance
+        let mut st = conn.prepare("SELECT company_id, market, mean, var, last_obs, day, acc, acc_n FROM valuation_state ORDER BY company_id")?;
         let rows = st.query_map([], |r| {
-            Ok((
-                (r.get::<_, i64>(0)?, r.get::<_, String>(1)?),
-                crate::vclose::VState {
-                    mean: r.get(2)?,
-                    var: r.get(3)?,
-                    last_obs: r.get(4)?,
-                    day: r.get(5)?,
-                    acc: r.get(6)?,
-                    acc_n: r.get(7)?,
-                },
-            ))
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?, r.get::<_, Option<f64>>(4)?,
+                r.get::<_, String>(5)?, r.get::<_, f64>(6)?, r.get::<_, i64>(7)?))
         })?;
         for row in rows {
-            let ((c, m), v) = row?;
-            if let Some(mi) = crate::vfilter::MARKETS.iter().position(|x| *x == m) {
-                s.vstate.insert((c, mi), v);
+            let (c, m, mean, var, last_obs, day, acc, acc_n) = row?;
+            let Some(mi) = crate::vfilter::MARKETS.iter().position(|x| *x == m) else { continue };
+            let j = s.jstate.entry(c).or_insert_with(|| crate::vclose::JState::empty(&day));
+            j.mean[mi] = mean;
+            j.cov[mi][mi] = var;
+            j.active[mi] = true;
+            j.seen[mi] = last_obs.is_some();
+            j.last_obs[mi] = last_obs;
+            if mi == 0 {
+                j.acc = acc;
+                j.acc_n = acc_n;
+            }
+            if day > j.day {
+                j.day = day;
             }
         }
     }

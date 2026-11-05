@@ -115,7 +115,7 @@ pub(crate) struct State {
     /// trading days in a row each listed stock has closed under 1 币 (面值退市 countdown)
     pub penny_days: HashMap<i64, i64>,
     /// the valuation filter's state per (company, market index)
-    pub vstate: HashMap<(i64, usize), crate::vclose::VState>,
+    pub jstate: HashMap<i64, crate::vclose::JState>,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -1218,7 +1218,7 @@ impl State {
             company_proceeds: s.company_proceeds.clone(),
             gov_taxes: s.gov_taxes.clone(),
             penny_days: s.penny_days.clone(),
-            vstate: s.vstate.clone(),
+            jstate: s.jstate.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,
             last_ledger_id: s.max_ledger_id,
