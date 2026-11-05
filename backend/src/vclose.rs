@@ -350,8 +350,9 @@ impl Engine {
             _ => Self::tail_mult_of(fp, s),
         };
         let prev_state = self.st.jstate.get(&s.id).cloned();
+        // (the sequel hazard's inputs follow the inputs every day: unlike the tail prior they do not say how the
+        // observations are read, and "itself a sequel" may only become known once the relations are collected)
         let (seq_z, seq_zs) = match (&prev_state, &fp.sequel) {
-            (Some(j), _) if after_finale => (j.seq_z, j.seq_zs),
             (_, Some(sp)) => {
                 let z = F::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
                 (z, if s.prequel { z } else { z + sp.beta.sequel })

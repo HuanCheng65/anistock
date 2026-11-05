@@ -1089,23 +1089,26 @@ impl Engine {
                 continue;
             }
             if let Some(&c) = s.series.and_then(|k| series.get(&k)) {
-                // a new season of a listed series: no new shares, a company notice; its attention joins the company
+                // a work of a listed series: no new shares, a company notice; its attention joins the company. A new
+                // season joins when its subscription would have opened; an earlier work (its long tail) when the
+                // series is first known, unless it premiered long before (the same 60 days as a listing)
                 let first_air = date(&s.first_air)?;
                 if first_air - Duration::days(lead + window) > tomorrow {
+                    continue;
+                }
+                if first_air < tomorrow - Duration::days(60) && !s.long_runner {
                     continue;
                 }
                 self.st.company_works.insert(s.id, c);
                 self.out.push(Change::CompanyWork { work_id: s.id, company_id: c, joined_on: cx.day.clone() });
                 let name = inp.cn_titles.get(&s.id).cloned().unwrap_or_else(|| s.title_ja.clone());
                 let co = self.st.companies[&c].title.clone();
-                self.push_news(
-                    &cx.ts,
-                    &cx.day,
-                    "sequel",
-                    Some(c),
-                    format!("《{name}》{} 月 {} 日开播", first_air.month(), first_air.day()),
-                    format!("《{co}》的新一季。热度计入公司营收和估值，不发行新股。"),
-                );
+                let (title, body) = if first_air >= tomorrow {
+                    (format!("《{name}》{} 月 {} 日开播", first_air.month(), first_air.day()), format!("《{co}》的新一季。热度计入公司营收和估值，不发行新股。"))
+                } else {
+                    (format!("《{name}》并入《{co}》"), "同一系列的作品。热度计入公司营收和估值，不发行新股。".to_string())
+                };
+                self.push_news(&cx.ts, &cx.day, "sequel", Some(c), title, body);
                 continue;
             }
             if s.popularity_end < cx.g().min_listing_popularity {
