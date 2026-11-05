@@ -115,34 +115,27 @@ uv run sim/report.py                     # -> sim/out/report.html
 
 规则和设计依据见 [`docs/game-design.md`](docs/game-design.md)。
 
-### 部署（在服务器上按顺序做，每一步都不能跳过）
+### 部署
+
+首次安装（在已经跑着采集器的服务器上）：
 
 ```bash
-cd ~/anistock
-git pull
+cd ~/anistock && git pull
+# 采集数据库要是最新的：从开发机拷贝 data/anistock.db 覆盖，或者在服务器上补跑（约 40 分钟）：
+#   uv run collect.py --season 2026-summer && uv run collect.py
+bash deploy/install.sh
+```
 
-# 1. 采集数据库要是最新的：夏季番回填、补充的 Bangumi 条目、海贼王新篇章都在里面。
-#    二选一：从开发机拷贝 data/anistock.db 过来覆盖；或者在服务器上补跑（约 40 分钟）：
-#    uv run collect.py --season 2026-summer && uv run collect.py
+`install.sh` 会依次：检查 uv 和 Node.js（20 以上）→ 检查采集数据库是否最新 → 在 `.env` 里生成 `ANISTOCK_SECRET` 和邀请码（已有就不动）→ 安装依赖、构建前端 → 重建市场序列 → 开服（`data/game.db` 已存在就跳过）→ 安装并启动 systemd 服务 → 打印访问地址和邀请码。重复运行是安全的。
 
-# 2. .env 里填上 ANISTOCK_SECRET（随机串）和 ANISTOCK_INVITE（社团邀请码），见 .env.example
+日后更新：`bash deploy/update.sh`（拉代码、装依赖、构建前端、重启；数据库迁移在启动时自动执行，执行前先备份）。
 
-# 3. 安装依赖、重建市场序列（只发约 10 次 Annict 请求）
-uv sync
-uv run sim/reconstruct.py airtimes
-uv run sim/reconstruct.py build
+没有 Node.js 的话（Ubuntu）：
 
-# 4. 构建前端（需要 Node 20+；npm 慢的话：npm config set registry https://registry.npmmirror.com）
-cd web && npm ci && npm run build && cd ..
-
-# 5. 开服：用 7 月以来的数据回放生成历史行情（会创建 data/game.db）
-uv run python -m server.seed
-
-# 6. 常驻运行（systemd 用户服务，端口 8080）
-cp deploy/anistock-server.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now anistock-server
-journalctl --user -u anistock-server -n 50 --no-pager
+```bash
+curl -fsSL https://fnm.vercel.app/install | bash   # 需要代理时先 export https_proxy=...
+fnm install 22 && fnm default 22
+npm config set registry https://registry.npmmirror.com   # npm 下载慢时
 ```
 
 浏览器打开 `http://服务器地址:8080`，用邀请码注册。
