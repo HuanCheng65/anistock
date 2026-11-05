@@ -476,6 +476,55 @@ query ($id: Int!, $after: String) {
 """
 
 
+ANNICT_BY_TITLE = """
+query ($titles: [String!]) {
+  searchWorks(titles: $titles, first: 10) {
+    nodes { %s }
+  }
+}
+""" % WORK_FIELDS
+
+DISCOVER_MIN_POPULARITY = 3000  # AniList list entries, the listing gate (game.min_listing_popularity)
+
+
+def discover_annict(http: "Http", store: Store) -> int:
+    """Annict works the season listing misses: long-runners (ONE PIECE, Conan...), ONAs and anything that
+    started in an older season. For every airing or upcoming AniList show with a MAL id that no tracked
+    Annict work carries, search Annict by title and keep a hit only when its MAL id matches. Works found
+    earlier are re-registered every day so they stay tracked. Returns the number of new works."""
+    by_mal = {int(m): i for i, m in store.db.execute(
+        "SELECT external_id, mal_id FROM works WHERE source='annict' AND mal_id IS NOT NULL")}
+    latest: dict[int, dict] = {}
+    for i, d in store.db.execute(
+            "SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day"):
+        latest[int(i)] = json.loads(d)
+    new = 0
+    for m in latest.values():
+        mal = m.get("idMal")
+        if not mal or m.get("status") not in ("RELEASING", "NOT_YET_RELEASED") \
+                or (m.get("popularity") or 0) < DISCOVER_MIN_POPULARITY:
+            continue
+        if int(mal) in by_mal:
+            store.register("annict", by_mal[int(mal)], None, mal)  # keep it tracked
+            continue
+        t = m.get("title") or {}
+        for title in dict.fromkeys(x for x in (t.get("native"), t.get("romaji")) if x):
+            try:
+                nodes = http.graphql(ANNICT, ANNICT_BY_TITLE, {"titles": [title]})["searchWorks"]["nodes"]
+            except Exception as e:  # one failed search must not stop the day's collection
+                log.warning("annict title search failed for %s: %r", title, e)
+                break
+            hit = next((w for w in nodes if w.get("malAnimeId") and int(w["malAnimeId"]) == int(mal)), None)
+            if hit:
+                store.register("annict", hit["annictId"], hit["title"], mal)
+                by_mal[int(mal)] = hit["annictId"]
+                new += 1
+                log.info("annict: found %s (%s) for AniList %s", hit["annictId"], hit["title"], m["id"])
+                break
+    store.commit()
+    return new
+
+
 def collect_annict(store: Store) -> str | None:
     token = os.environ.get("ANNICT_TOKEN", "").strip()
     if not token:
@@ -503,6 +552,8 @@ def collect_annict(store: Store) -> str | None:
         store.register("annict", w["annictId"], w["title"], w.get("malAnimeId"))
     store.commit()
 
+    discovered = discover_annict(http, store)
+
     extra = [int(x) for x in os.environ.get("ANNICT_EXTRA_IDS", "").replace(" ", "").split(",") if x]
     missing = sorted(({int(i) for i in store.tracked("annict")} | set(extra)) - set(found))
     for i in range(0, len(missing), 25):
@@ -524,7 +575,7 @@ def collect_annict(store: Store) -> str | None:
             after = conn["pageInfo"]["endCursor"]
         store.snapshot("annict", "work", wid, {**w, "episodes": eps})
         store.commit()
-    return f"works={len(found)} seasons={seasons}"
+    return f"works={len(found)} seasons={seasons} discovered={discovered}"
 
 
 # ---------------------------------------------------------------- main
