@@ -38,14 +38,21 @@ def _place(conn, **kw) -> None:
         pass
 
 
-def tick(conn, cfg, day: str, ts: str, rng: random.Random) -> None:
+def rules_of(cfg) -> ex.Rules:
+    g = cfg.game
+    return ex.Rules(vcm_threshold=g["vcm_threshold"], vcm_window_min=g["vcm_window_min"], vcm_cool_min=g["vcm_cool_min"])
+
+
+def tick(conn, cfg, day: str, ts: str, rng: random.Random, auction: bool = False) -> None:
+    """One round of NPC activity. During the opening auction they only rest limit orders."""
     g, npc = cfg.game, cfg.npc
     fees = ex.Fees(commission=g["commission"], stamp_duty=g["stamp_duty"])
+    rules = rules_of(cfg)
+    match = not auction
     companies = conn.execute("SELECT * FROM companies WHERE status='listed'").fetchall()
     float_frac = cfg.params["company"]["ipo_float"]
     for c in companies:
-        band = ex.price_band(c, day, g["price_limit"], g["ipo_free_days"], g.get("airing_free_days", 0))
-        lo, hi, free = band
+        lo, hi = ex.quote_band(c, ts, rules)
         mm = conn.execute("SELECT * FROM accounts WHERE kind='mm' AND company_id=?", (c["id"],)).fetchone()
         if mm is None or c["fair_value"] <= 0:
             continue
@@ -57,7 +64,8 @@ def tick(conn, cfg, day: str, ts: str, rng: random.Random) -> None:
         a = npc["mm_anchor_to_price"]
         ref = (1 - a) * fair + a * c["last_price"]
         inv = ex.available_shares(conn, mm["id"], c["id"])
-        target = c["shares"] * float_frac * 0.5
+        # neutral when it holds the whole public float (its starting inventory at launch)
+        target = c["shares"] * float_frac
         # inventory lean: selling out raises its quotes, piling up lowers them (price impact of big orders)
         skew = max(-0.5, min(0.5, npc["mm_inventory_skew"] * (inv - target) / max(1.0, target)))
         half = max(npc["mm_spread"] / 2 * ref, 1)
@@ -76,25 +84,29 @@ def tick(conn, cfg, day: str, ts: str, rng: random.Random) -> None:
             q = min(size, cash // max(1, fees.buy_reserve(bid, 1)))
             if q > 0 and bid >= lo:
                 _place(conn, account_id=mm["id"], company_id=c["id"], side="buy", kind="limit", qty=q, price=bid,
-                       day=day, ts=ts, fees=fees, band=band)
+                       day=day, ts=ts, fees=fees, rules=rules, match=match)
         q = min(size, ex.available_shares(conn, mm["id"], c["id"]))
         if q > 0 and ask <= hi:
             _place(conn, account_id=mm["id"], company_id=c["id"], side="sell", kind="limit", qty=q, price=ask,
-                   day=day, ts=ts, fees=fees, band=band)
+                   day=day, ts=ts, fees=fees, rules=rules, match=match)
 
-        # rights holders trim when the price runs far above value
+        # rights holders trim when the price runs far above value, faster the further it runs
         com = conn.execute("SELECT * FROM accounts WHERE kind='committee' AND company_id=?", (c["id"],)).fetchone()
         if com:
             _cancel_all(conn, com["id"], c["id"], ts)
             last = conn.execute("SELECT last_price FROM companies WHERE id=?", (c["id"],)).fetchone()[0]
-            if last > c["fair_value"] * npc["committee_sell_above"]:
+            ratio = last / c["fair_value"]
+            if ratio > npc["committee_sell_above"]:
+                pace = 1 if ratio < 1.6 else 3 if ratio < 2.0 else 10
                 q = min(ex.available_shares(conn, com["id"], c["id"]),
-                        max(1, round(c["shares"] * npc["committee_sell_frac"])))
+                        max(1, round(c["shares"] * npc["committee_sell_frac"] * pace)))
                 price = max(lo, min(hi, math.ceil(c["fair_value"] * npc["committee_sell_above"])))
                 if q > 0:
                     _place(conn, account_id=com["id"], company_id=c["id"], side="sell", kind="limit", qty=q,
-                           price=price, day=day, ts=ts, fees=fees, band=band)
+                           price=price, day=day, ts=ts, fees=fees, rules=rules, match=match)
 
+    if auction:
+        return
     # noise traders
     listed = [c for c in companies if not conn.execute(
         "SELECT 1 FROM orders o JOIN accounts a ON a.id=o.account_id WHERE o.company_id=? AND o.status='open' AND a.kind='company'",
@@ -105,7 +117,6 @@ def tick(conn, cfg, day: str, ts: str, rng: random.Random) -> None:
         if rng.random() > npc["noise_trade_prob"]:
             continue
         c = rng.choice(listed)
-        band = ex.price_band(c, day, g["price_limit"], g["ipo_free_days"], g.get("airing_free_days", 0))
         held = ex.available_shares(conn, n["id"], c["id"])
         side = "sell" if held > 0 and rng.random() < 0.5 else "buy"
         last = conn.execute("SELECT last_price FROM companies WHERE id=?", (c["id"],)).fetchone()[0]
@@ -117,4 +128,4 @@ def tick(conn, cfg, day: str, ts: str, rng: random.Random) -> None:
         if qty <= 0:
             continue
         _place(conn, account_id=n["id"], company_id=c["id"], side=side, kind="market", qty=qty, price=None,
-               day=day, ts=ts, fees=fees, band=band)
+               day=day, ts=ts, fees=fees, rules=rules)

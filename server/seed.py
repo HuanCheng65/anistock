@@ -19,7 +19,7 @@ from engine import economy as E
 from . import db as gdb
 from . import exchange as ex
 from .config import ROOT, Clock, load
-from .daily import create_company
+from .daily import create_company, revalue_all
 
 sys.path.insert(0, str(ROOT / "sim"))
 import simulate as SIM  # noqa: E402
@@ -100,9 +100,22 @@ def main() -> None:
             conn.execute("""INSERT INTO company_days(company_id, day, revenue, rev_us, rev_cn, rev_jp, aired)
                             VALUES (?,?,?,?,?,?,?)""", (sid, r["d"], round(r["rev"] * 100), *rm, r["aired"]))
         n += 1
+    # opening reference price: the game's own valuation, so the first day's limits are centred where the
+    # market makers will quote (the replay's price path lags its values and used a different rate)
+    revalue_all(conn, cfg, day, by_id, markets, aud, p["central_bank"]["r_neutral"])
+    # the replay's price path is a stand-in: scale each stock's whole replay (and its IPO price) so it
+    # ends exactly at the opening price; shape and returns are unchanged, and the chart has no gap
+    for c in conn.execute("SELECT id, fair_value, last_price FROM companies WHERE status='listed'").fetchall():
+        k = c["fair_value"] / max(1, c["last_price"])
+        conn.execute("""UPDATE candles SET open=MAX(1, ROUND(open*?)), high=MAX(1, ROUND(high*?)), low=MAX(1, ROUND(low*?)),
+                        close=MAX(1, ROUND(close*?)) WHERE company_id=? AND source='replay'""", (k, k, k, k, c["id"]))
+        conn.execute("UPDATE companies SET ipo_price=MAX(1, ROUND(ipo_price*?)) WHERE id=?", (k, c["id"]))
+        conn.execute("UPDATE lots SET cost=MAX(1, ROUND(cost*?)) WHERE company_id=?", (k, c["id"]))
+    conn.execute("UPDATE companies SET prev_close = fair_value, last_price = fair_value WHERE status='listed'")
     conn.execute("INSERT INTO news(ts, day, kind, title, body) VALUES (?,?, 'system', ?, ?)",
                  (ts, day, "AniStock 开市",
-                  f"{n} 支番剧股票开始交易。开市前的走势由 7 月以来的真实热度数据回放生成。"))
+                  f"{n} 支番剧股票开始交易。开市前的走势由 7 月以来的真实热度数据回放生成；"
+                  "开市参考价按开市时的经营数据定价，回放走势已按比例接到这个价格上。"))
     gdb.check_invariants(conn)
     conn.execute("COMMIT")
     print(f"seeded {n} companies, last replay day {day}, policy rate {p['central_bank']['r_neutral']:.2%}")

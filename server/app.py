@@ -57,13 +57,37 @@ def fees() -> ex.Fees:
     return ex.Fees(commission=cfg.game["commission"], stamp_duty=cfg.game["stamp_duty"])
 
 
-def band_for(c) -> tuple[int, int, bool]:
+RULES = npc.rules_of(cfg)
+
+
+def phase() -> str:
+    """auction (集合竞价, orders rest) | continuous | closed."""
+    if ALWAYS_OPEN:
+        return "continuous"
+    t = clock.now().strftime("%H:%M")
     g = cfg.game
-    return ex.price_band(c, clock.today(), g["price_limit"], g["ipo_free_days"], g.get("airing_free_days", 0))
+    if g["auction_start"] <= t < g["trading_open"]:
+        return "auction"
+    if g["trading_open"] <= t < g["trading_close"]:
+        return "continuous"
+    return "closed"
 
 
 def trading_open() -> bool:
-    return ALWAYS_OPEN or clock.trading(cfg.game)
+    return phase() != "closed"
+
+
+def ensure_opening_auction(c) -> None:
+    """Once a day, when continuous trading starts: clear every stock's opening auction and set the
+    day's anchor price for the volatility control. Caller holds LOCK and an open transaction."""
+    today = clock.today()
+    if gdb.get_state(c, "auction_day") == today:
+        return
+    for co in c.execute("SELECT * FROM companies WHERE status='listed'").fetchall():
+        price = ex.run_auction(c, co["id"], day=today, ts=clock.ts(), fees=fees())
+        c.execute("UPDATE companies SET open_ref=?, vcm_until=NULL, vcm_count=0 WHERE id=?",
+                  (price or co["prev_close"], co["id"]))
+    gdb.set_state(c, "auction_day", today)
 
 
 def yuan(cents: int | None) -> float | None:
@@ -138,13 +162,16 @@ async def npc_loop() -> None:
     rng = random.Random()
     while True:
         await asyncio.sleep(cfg.npc["tick_seconds"])
-        if not trading_open():
+        ph = phase()
+        if ph == "closed":
             continue
         async with LOCK:
             try:
                 c = db()
                 c.execute("BEGIN IMMEDIATE")
-                npc.tick(c, cfg, clock.today(), clock.ts(), rng)
+                if ph == "continuous":
+                    ensure_opening_auction(c)
+                npc.tick(c, cfg, clock.today(), clock.ts(), rng, auction=(ph == "auction"))
                 c.execute("COMMIT")
             except Exception:
                 log.exception("npc tick failed")
@@ -322,11 +349,12 @@ async def status():
     c = db()
     rate = float(gdb.get_state(c, "rate"))
     return {
-        "now": clock.ts(), "day": clock.today(), "trading": trading_open(),
-        "open": cfg.game["trading_open"], "close": cfg.game["trading_close"],
+        "now": clock.ts(), "day": clock.today(), "trading": trading_open(), "phase": phase(),
+        "auction_start": cfg.game["auction_start"], "open": cfg.game["trading_open"], "close": cfg.game["trading_close"],
         "last_closed": gdb.get_state(c, "last_closed"), "launched_on": gdb.get_state(c, "launched_on"),
         "rate": rate, "deposit_rate": max(0.0, rate - cfg.params["central_bank"]["deposit_spread"]),
-        "rules": {"price_limit": cfg.game["price_limit"], "ipo_free_days": cfg.game["ipo_free_days"],
+        "rules": {"vcm_threshold": cfg.game["vcm_threshold"], "vcm_window_min": cfg.game["vcm_window_min"],
+                  "vcm_cool_min": cfg.game["vcm_cool_min"],
                   "commission": cfg.game["commission"], "stamp_duty": cfg.game["stamp_duty"],
                   "dividend_tax": cfg.game["dividend_tax"], "initial_cash": cfg.game["initial_cash"]},
     }
@@ -369,7 +397,8 @@ async def market():
             "aired": aired["aired"] if aired else 0, "episodes": co["episodes"], "long_runner": bool(co["long_runner"]),
             "first_air": co["first_air"], "listed_on": co["listed_on"],
             "ipo_left": ipo_open["left"] if ipo_open else 0, "ipo_price": yuan(co["ipo_price"]),
-            "new": (date.fromisoformat(today) - date.fromisoformat(co["listed_on"])).days < cfg.game["ipo_free_days"],
+            "new": (date.fromisoformat(today) - date.fromisoformat(co["listed_on"])).days < 5,
+            "cooling": ex.cooling(co, clock.ts()) is not None,
             "spark": [yuan(x) for x in spark],
         })
     return {"stocks": rows}
@@ -417,8 +446,13 @@ async def stock(company_id: int, player=Depends(optional_player)):
     t = c.execute("SELECT MIN(price) lo, MAX(price) hi, SUM(qty) v, SUM(qty*price) tv FROM trades WHERE company_id=? AND day=?",
                   (company_id, today)).fetchone()
     first = c.execute("SELECT price FROM trades WHERE company_id=? AND day=? ORDER BY id LIMIT 1", (company_id, today)).fetchone()
-    lo, hi, free = band_for(co)
+    now_ts = clock.ts()
+    band = ex.cooling(co, now_ts)
     book = ex.book(c, company_id)
+    auction = None
+    if phase() == "auction":
+        ap, av = ex.auction_price(c, company_id, co["prev_close"])
+        auction = {"price": yuan(ap), "volume": av}
     trades = [{"price": yuan(r["price"]), "qty": r["qty"], "ts": r["ts"]} for r in c.execute(
         "SELECT price, qty, ts FROM trades WHERE company_id=? ORDER BY id DESC LIMIT 30", (company_id,))]
     weeks = []
@@ -439,8 +473,11 @@ async def stock(company_id: int, player=Depends(optional_player)):
         "ipo_price": yuan(co["ipo_price"]), "ipo_left": ipo_open["left"] if ipo_open else 0,
         "quote": {"price": yuan(co["last_price"]), "prev_close": yuan(co["prev_close"]),
                   "open": yuan(first["price"]) if first else None, "high": yuan(t["hi"]), "low": yuan(t["lo"]),
-                  "volume": t["v"] or 0, "turnover": yuan(t["tv"] or 0),
-                  "limit_low": yuan(lo), "limit_high": yuan(hi), "no_limit": free},
+                  "volume": t["v"] or 0, "turnover": yuan(t["tv"] or 0), "open_ref": yuan(co["open_ref"])},
+        "vcm": {"active": band is not None, "until": co["vcm_until"] if band else None,
+                "low": yuan(band[0]) if band else None, "high": yuan(band[1]) if band else None,
+                "count": co["vcm_count"]},
+        "auction": auction,
         "book": {"bids": [{**b, "price": yuan(b["price"])} for b in book["bids"]],
                  "asks": [{**a, "price": yuan(a["price"])} for a in book["asks"]]},
         "trades": trades, "weeks": weeks,
@@ -505,8 +542,10 @@ def order_json(r) -> dict:
 
 @app.post("/api/orders")
 async def place(body: OrderIn, player=Depends(current_player)):
-    if not trading_open():
-        raise HTTPException(400, f"现在不是交易时间（每天 {cfg.game['trading_open']}–{cfg.game['trading_close']}）")
+    ph = phase()
+    if ph == "closed":
+        raise HTTPException(400, f"现在休市（集合竞价 {cfg.game['auction_start']}，连续交易 "
+                                 f"{cfg.game['trading_open']}–{cfg.game['trading_close']}）")
     price = to_cents(body.price) if body.kind == "limit" else None
     async with LOCK:
         c = db()
@@ -515,8 +554,11 @@ async def place(body: OrderIn, player=Depends(current_player)):
             raise HTTPException(404, "没有这支股票")
         c.execute("BEGIN IMMEDIATE")
         try:
+            if ph == "continuous":
+                ensure_opening_auction(c)
             res = ex.place_order(c, account_id=player["id"], company_id=body.company_id, side=body.side, kind=body.kind,
-                                 qty=body.qty, price=price, day=clock.today(), ts=clock.ts(), fees=fees(), band=band_for(co))
+                                 qty=body.qty, price=price, day=clock.today(), ts=clock.ts(), fees=fees(), rules=RULES,
+                                 match=(ph == "continuous"))
             c.execute("COMMIT")
         except Exception:
             c.execute("ROLLBACK")

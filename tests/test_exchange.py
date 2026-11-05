@@ -7,6 +7,7 @@ from server import exchange as ex
 
 DAY, TS = "2026-11-05", "2026-11-05T10:00:00+08:00"
 FEES = ex.Fees()
+RULES = ex.Rules()
 
 
 @pytest.fixture
@@ -37,14 +38,9 @@ def seed_rest(conn):
     ex.add_shares(conn, holder, 1, 1000 - held, 500, "2026-09-10")
 
 
-def band(conn):
-    c = conn.execute("SELECT * FROM companies WHERE id=1").fetchone()
-    return ex.price_band(c, DAY, 0.10, 5)
-
-
-def order(conn, acct, side, qty, price=None, kind="limit"):
+def order(conn, acct, side, qty, price=None, kind="limit", ts=TS, match=True):
     return ex.place_order(conn, account_id=acct, company_id=1, side=side, kind=kind, qty=qty, price=price,
-                          day=DAY, ts=TS, fees=FEES, band=band(conn))
+                          day=DAY, ts=ts, fees=FEES, rules=RULES, match=match)
 
 
 def test_limit_orders_cross_at_resting_price(conn):
@@ -101,20 +97,20 @@ def test_market_buy_sweeps_and_cancels_rest(conn):
     seed_rest(conn)
     order(conn, b, "sell", 5, 500)
     order(conn, b, "sell", 5, 530)
-    with pytest.raises(ex.OrderError, match="涨跌幅"):
-        order(conn, b, "sell", 5, 560)    # above the +10% cap of 5.50
+    order(conn, b, "sell", 5, 560)        # 12% above the reference: the volatility control stops here
     r = order(conn, a, "buy", 20, kind="market")
     assert r["filled"] == 10 and r["status"] == "cancelled"
+    c = conn.execute("SELECT * FROM companies WHERE id=1").fetchone()
+    assert ex.cooling(c, TS) == (450, 550) and c["vcm_count"] == 1
     gdb.check_invariants(conn)
 
 
-def test_rejects_outside_limit_and_overspend(conn):
+def test_rejects_absurd_price_and_overspend(conn):
     a = player(conn, "a", cash=1_000)
     b = player(conn, "b", shares=10)
     seed_rest(conn)
-    # listed 2026-09-10, so the 5 free days are long over: ±10% around 5.00
-    with pytest.raises(ex.OrderError, match="涨跌幅"):
-        order(conn, a, "buy", 1, 551)
+    with pytest.raises(ex.OrderError, match="离谱"):
+        order(conn, a, "buy", 1, 500 * 20 + 1)
     with pytest.raises(ex.OrderError, match="资金"):
         order(conn, a, "buy", 10, 500)
     with pytest.raises(ex.OrderError, match="股数"):
@@ -124,10 +120,46 @@ def test_rejects_outside_limit_and_overspend(conn):
         order(conn, b, "sell", 1, 500)
 
 
-def test_no_limit_in_first_days_after_listing(conn):
-    conn.execute("UPDATE companies SET listed_on='2026-11-03' WHERE id=1")
-    lo, hi, free = band(conn)
-    assert free and hi >= 500 * 2
+def test_vcm_cools_then_anchors_on_the_open(conn):
+    a = player(conn, "a", cash=1_000_000)
+    b = player(conn, "b", shares=200)
+    seed_rest(conn)
+    order(conn, b, "sell", 10, 540)
+    order(conn, b, "sell", 10, 600)
+    r = order(conn, a, "buy", 20, 650)            # 5.40 fills, 6.00 is +20% from 5.00: cooling starts
+    assert r["filled"] == 10
+    during = "2026-11-05T10:03:00+08:00"
+    assert order(conn, a, "buy", 5, 650, ts=during)["filled"] == 0      # 6.00 is outside 4.50-5.50
+    after = "2026-11-05T10:06:00+08:00"
+    # second trigger anchors on the day's open (5.00) at ±20%: 6.00 is exactly +20%, allowed
+    assert order(conn, a, "buy", 10, 650, ts=after)["filled"] == 10
+    order(conn, b, "sell", 10, 610)
+    assert order(conn, a, "buy", 10, 650, ts=after)["filled"] == 0      # 6.10 > +20%: cools again
+    c = conn.execute("SELECT * FROM companies WHERE id=1").fetchone()
+    assert c["vcm_count"] == 2 and ex.cooling(c, after) == (400, 600)
+    gdb.check_invariants(conn)
+
+
+def test_opening_auction_clears_at_one_price(conn):
+    a = player(conn, "a", cash=1_000_000)
+    c_ = player(conn, "c", cash=1_000_000)
+    b = player(conn, "b", shares=100)
+    d = player(conn, "d", shares=100)
+    seed_rest(conn)
+    order(conn, a, "buy", 30, 520, match=False)
+    order(conn, c_, "buy", 20, 500, match=False)
+    order(conn, b, "sell", 25, 490, match=False)
+    order(conn, d, "sell", 30, 510, match=False)
+    assert conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0] == 0     # nothing matches while collecting
+    price, vol = ex.auction_price(conn, 1, 500)
+    assert (price, vol) == (510, 30)      # 5.10: demand 30, supply 55 -> 30; 5.00 gives 25 only
+    assert ex.run_auction(conn, 1, day=DAY, ts=TS, fees=FEES) == 510
+    prices = {r[0] for r in conn.execute("SELECT price FROM trades")}
+    assert prices == {510}
+    assert sum(r[0] for r in conn.execute("SELECT qty FROM trades")) == 30
+    with pytest.raises(ex.OrderError, match="集合竞价"):
+        order(conn, a, "buy", 1, kind="market", match=False)
+    gdb.check_invariants(conn)
 
 
 def test_fifo_lots(conn):

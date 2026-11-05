@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from . import db as gdb
 
@@ -94,30 +95,81 @@ def available_shares(conn, account_id: int, company_id: int) -> int:
     return r[0] if r else 0
 
 
-# ---------------------------------------------------------------- price limits
+# ---------------------------------------------------------------- volatility control (no daily limit)
 
-def price_band(company: sqlite3.Row, day: str, limit: float, ipo_free_days: int,
-               airing_free_days: int = 0) -> tuple[int, int, bool]:
-    """(lowest, highest, unlimited) allowed price today. New listings trade without limits for their
-    first `ipo_free_days` trading days (A-share registration rule); a wide sanity band still applies."""
-    from datetime import date
-    d = date.fromisoformat(day)
-    listed = date.fromisoformat(company["listed_on"])
-    first_air = date.fromisoformat(company["first_air"])
-    ref = company["prev_close"]
-    free = (d - listed).days < ipo_free_days or 0 <= (d - first_air).days < airing_free_days
-    if free:
-        return 1, max(ref * 20, 100), True
-    lo = max(1, math.ceil(ref * (1 - limit) - 1e-9))
-    hi = math.floor(ref * (1 + limit) + 1e-9)
-    return lo, max(hi, lo), False
+@dataclass
+class Rules:
+    """Hong Kong-style volatility control mechanism (市场波动调节机制) instead of daily price limits.
+
+    The first time today a trade would print more than `vcm_threshold` away from the stock's last
+    price `vcm_window_min` minutes ago, it does not execute; the stock cools off for `vcm_cool_min`
+    minutes and may only trade inside reference ± threshold. After that the anchor is today's opening
+    price and the threshold widens by one step per trigger (±20%, ±30%...), so the brake keeps working
+    across the day without being a hard limit.
+    """
+    vcm_threshold: float = 0.10
+    vcm_window_min: int = 5
+    vcm_cool_min: int = 5
+    sanity_mult: int = 20          # a limit price may not exceed 20x the previous close
+
+
+def _dt(ts: str) -> datetime:
+    return datetime.fromisoformat(ts)
+
+
+def cooling(company, ts: str) -> tuple[int, int] | None:
+    """The cooling-off band if the stock is cooling off at `ts`."""
+    if company["vcm_until"] and ts < company["vcm_until"]:
+        return company["vcm_low"], company["vcm_high"]
+    return None
+
+
+def sanity_band(company, rules: Rules) -> tuple[int, int]:
+    return 1, max(company["prev_close"] * rules.sanity_mult, 100)
+
+
+def quote_band(company, ts: str, rules: Rules) -> tuple[int, int]:
+    """Prices that can trade right now: the cooling band, else the sanity band."""
+    return cooling(company, ts) or sanity_band(company, rules)
+
+
+def _vcm_reference(conn, company, day: str, ts: str, rules: Rules) -> tuple[int, float]:
+    anchor = company["open_ref"] or company["prev_close"]
+    if company["vcm_count"] == 0:
+        before = (_dt(ts) - timedelta(minutes=rules.vcm_window_min)).isoformat(timespec="seconds")
+        r = conn.execute("""SELECT price FROM trades WHERE company_id=? AND day=? AND ts <= ?
+                            ORDER BY id DESC LIMIT 1""", (company["id"], day, before)).fetchone()
+        return (r["price"] if r else anchor), rules.vcm_threshold
+    return anchor, rules.vcm_threshold * (company["vcm_count"] + 1)
+
+
+def allow_fill(conn, company_id: int, tp: int, *, day: str, ts: str, rules: Rules) -> bool:
+    """May a trade print at `tp` now? Starts a cooling-off period when it may not."""
+    c = conn.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
+    band = cooling(c, ts)
+    if band:
+        return band[0] <= tp <= band[1]
+    ref, thr = _vcm_reference(conn, c, day, ts, rules)
+    if ref <= 0 or abs(tp / ref - 1) <= thr + 1e-12:
+        return True
+    lo = max(1, math.ceil(ref * (1 - thr) - 1e-9))
+    hi = math.floor(ref * (1 + thr) + 1e-9)
+    until = (_dt(ts) + timedelta(minutes=rules.vcm_cool_min)).isoformat(timespec="seconds")
+    conn.execute("UPDATE companies SET vcm_until=?, vcm_low=?, vcm_high=?, vcm_count=vcm_count+1 WHERE id=?",
+                 (until, lo, hi, company_id))
+    conn.execute("INSERT INTO news(ts, day, kind, company_id, title, body) VALUES (?,?, 'vcm', ?, ?, ?)",
+                 (ts, day, company_id, f"《{c['title']}》触发冷静期",
+                  f"成交价将偏离参考价 {ref / 100:.2f} 超过 {thr:.0%}，{rules.vcm_cool_min} 分钟内只能在 "
+                  f"{lo / 100:.2f} – {hi / 100:.2f} 之间成交。"))
+    return lo <= tp <= hi
 
 
 # ---------------------------------------------------------------- orders
 
 def place_order(conn, *, account_id: int, company_id: int, side: str, kind: str, qty: int,
-                price: int | None, day: str, ts: str, fees: Fees, band: tuple[int, int, bool]) -> dict:
-    """Validate, freeze, match. Returns {"order_id", "status", "filled", "avg_price"}."""
+                price: int | None, day: str, ts: str, fees: Fees, rules: Rules, match: bool = True) -> dict:
+    """Validate, freeze, match. Returns {"order_id", "status", "filled", "avg_price"}.
+    With match=False (the opening auction) a limit order only rests on the book."""
     if side not in ("buy", "sell"):
         raise OrderError("买卖方向不对")
     if kind not in ("limit", "market"):
@@ -127,13 +179,15 @@ def place_order(conn, *, account_id: int, company_id: int, side: str, kind: str,
     company = conn.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
     if company is None or company["status"] != "listed":
         raise OrderError("这支股票不存在或已退市")
-    lo, hi, _ = band
+    lo, hi = sanity_band(company, rules)
     if kind == "limit":
         if price is None or price <= 0:
             raise OrderError("限价单需要价格")
-        if price < lo or price > hi:
-            raise OrderError(f"价格超出今日涨跌幅范围（{lo / 100:.2f} – {hi / 100:.2f}）")
+        if price > hi:
+            raise OrderError(f"价格太离谱了：不能超过昨收的 {rules.sanity_mult} 倍（{hi / 100:.2f}）")
     else:
+        if not match:
+            raise OrderError("集合竞价阶段只接受限价单")
         price = None
 
     # freeze
@@ -154,7 +208,7 @@ def place_order(conn, *, account_id: int, company_id: int, side: str, kind: str,
                           VALUES (?,?,?,?,?,?,?, 'open', ?, ?)""",
                        (account_id, company_id, side, kind, price, qty, frozen, ts, ts))
     order_id = cur.lastrowid
-    filled, notional = _match(conn, order_id, day=day, ts=ts, fees=fees, band=band)
+    filled, notional = _match(conn, order_id, day=day, ts=ts, fees=fees, rules=rules) if match else (0, 0)
 
     order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
     if order["filled"] == order["qty"]:
@@ -189,10 +243,12 @@ def _close(conn, order, status: str, ts: str) -> None:
     conn.execute("UPDATE orders SET status=?, frozen=0, updated_at=? WHERE id=?", (status, ts, order["id"]))
 
 
-def _match(conn, order_id: int, *, day: str, ts: str, fees: Fees, band: tuple[int, int, bool]) -> tuple[int, int]:
-    """Match an incoming order against the book. Returns (shares filled, notional)."""
+def _match(conn, order_id: int, *, day: str, ts: str, fees: Fees, rules: Rules) -> tuple[int, int]:
+    """Match an incoming order against the book. Returns (shares filled, notional). Stops at the first
+    price the volatility control will not let print (the book is sorted, so later prices are worse)."""
     o = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
-    lo, hi, _ = band
+    company = conn.execute("SELECT * FROM companies WHERE id=?", (o["company_id"],)).fetchone()
+    lo, hi = sanity_band(company, rules)
     if o["side"] == "buy":
         limit = o["price"] if o["kind"] == "limit" else hi
         resting = conn.execute("""SELECT * FROM orders WHERE company_id=? AND status='open' AND side='sell'
@@ -215,6 +271,8 @@ def _match(conn, order_id: int, *, day: str, ts: str, fees: Fees, band: tuple[in
         if r["status"] != "open":
             continue
         tp = r["price"]
+        if not allow_fill(conn, o["company_id"], tp, day=day, ts=ts, rules=rules):
+            break
         q = min(remaining, r["qty"] - r["filled"])
         if o["side"] == "buy" and o["kind"] == "market":
             # pay as you go: never spend more than is free right now
@@ -274,3 +332,57 @@ def book(conn, company_id: int, depth: int = 5) -> dict:
                                 ORDER BY price {order} LIMIT ?""", (company_id, s, depth)).fetchall()
         return [{"price": r["price"], "qty": r["qty"], "orders": r["n"]} for r in rows]
     return {"bids": side("buy", "DESC"), "asks": side("sell", "ASC")}
+
+
+# ---------------------------------------------------------------- opening auction (集合竞价)
+
+def auction_price(conn, company_id: int, ref: int) -> tuple[int | None, int]:
+    """Equilibrium price of the resting limit orders: most volume, then least imbalance, then closest
+    to the reference (previous close). Returns (price, volume); (None, 0) if nothing crosses."""
+    buys = conn.execute("""SELECT price, SUM(qty-filled) q FROM orders WHERE company_id=? AND status='open'
+                           AND side='buy' AND kind='limit' GROUP BY price""", (company_id,)).fetchall()
+    sells = conn.execute("""SELECT price, SUM(qty-filled) q FROM orders WHERE company_id=? AND status='open'
+                            AND side='sell' AND kind='limit' GROUP BY price""", (company_id,)).fetchall()
+    if not buys or not sells:
+        return None, 0
+    best = None
+    for p in sorted({r["price"] for r in buys} | {r["price"] for r in sells}):
+        demand = sum(r["q"] for r in buys if r["price"] >= p)
+        supply = sum(r["q"] for r in sells if r["price"] <= p)
+        vol = min(demand, supply)
+        if vol <= 0:
+            continue
+        key = (vol, -abs(demand - supply), -abs(p - ref))
+        if best is None or key > best[0]:
+            best = (key, p, vol)
+    return (best[1], best[2]) if best else (None, 0)
+
+
+def run_auction(conn, company_id: int, *, day: str, ts: str, fees: Fees) -> int | None:
+    """Clear the opening auction at one price. Returns the opening price, or None if nothing crossed."""
+    c = conn.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
+    p, vol = auction_price(conn, company_id, c["prev_close"])
+    if p is None:
+        return None
+    buys = conn.execute("""SELECT id FROM orders WHERE company_id=? AND status='open' AND side='buy' AND kind='limit'
+                           AND price >= ? ORDER BY price DESC, id ASC""", (company_id, p)).fetchall()
+    sells = conn.execute("""SELECT id FROM orders WHERE company_id=? AND status='open' AND side='sell' AND kind='limit'
+                            AND price <= ? ORDER BY price ASC, id ASC""", (company_id, p)).fetchall()
+    left = vol
+    for b in buys:
+        if left <= 0:
+            break
+        for s_ in sells:
+            if left <= 0:
+                break
+            buy = conn.execute("SELECT * FROM orders WHERE id=?", (b["id"],)).fetchone()
+            sell = conn.execute("SELECT * FROM orders WHERE id=?", (s_["id"],)).fetchone()
+            if buy["status"] != "open":
+                break
+            if sell["status"] != "open" or sell["account_id"] == buy["account_id"]:
+                continue
+            q = min(buy["qty"] - buy["filled"], sell["qty"] - sell["filled"], left)
+            if q > 0:
+                _fill(conn, buy, sell, q, p, day=day, ts=ts, fees=fees)
+                left -= q
+    return p if left < vol else None

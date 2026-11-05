@@ -17,12 +17,14 @@ base_params = "sim/params_recommended.toml"
 [game]
 timezone = "Asia/Shanghai"
 initial_cash = 100000          # 币 per new player
+auction_start = "08:45"        # opening auction (集合竞价): orders collect, one price at trading_open
 trading_open = "09:00"
 trading_close = "23:00"
 daily_step_at = "06:30"        # after the collector (06:00)
-price_limit = 0.10
-ipo_free_days = 5
-airing_free_days = 0           # club decision: no limit in the premiere week (off)
+# no daily price limit; Hong Kong-style volatility control instead (see server/exchange.py Rules)
+vcm_threshold = 0.10           # first trigger: a trade >10% away from the price 5 minutes ago
+vcm_window_min = 5
+vcm_cool_min = 5               # cooling-off length; later triggers anchor on the day's open at ±20%, ±30%...
 commission = 0.00025
 stamp_duty = 0.0005
 dividend_tax = [[7, 0.20], [91, 0.10], [100000, 0.0]]   # [max holding days, rate]

@@ -231,6 +231,28 @@ def run_day(conn, cfg: Config, day: str, ts: str, inputs=None) -> dict:
     return summary
 
 
+def revalue_all(conn, cfg: Config, day: str, shows: dict, markets, aud, rate: float) -> int:
+    """Value every listed company with the game's own method (used at launch). Returns how many were valued."""
+    p, rv = cfg.params, cfg.params["revenue"]
+    d = date.fromisoformat(day)
+    a_ref = float(gdb.get_state(conn, "a_ref"))
+    companies = [dict(r) for r in conn.execute("SELECT * FROM companies WHERE status='listed'").fetchall()]
+    listed_shows = [shows[c["id"]] for c in companies if c["id"] in shows]
+    tot_us = sum(E.market_att(s, d, rv, markets)["us"] for s in listed_shows)
+    demand_week = rv["demand_base_week"] * ((tot_us / a_ref) ** rv["demand_elasticity"] if tot_us > 0 else 0)
+    n = 0
+    for c in companies:
+        s = shows.get(c["id"])
+        if s is None:
+            continue
+        book = conn.execute("SELECT cash FROM accounts WHERE kind='company' AND company_id=?", (c["id"],)).fetchone()["cash"]
+        pre = expected_share(s, d, listed_shows, p, markets, aud)
+        conn.execute("UPDATE companies SET fair_value=? WHERE id=?",
+                     (fair_value(conn, cfg, s, d, c, book, rate, demand_week, pre), c["id"]))
+        n += 1
+    return n
+
+
 def holding_tax_rate(cfg: Config, acquired_on: str, day: str) -> float:
     days = (date.fromisoformat(day) - date.fromisoformat(acquired_on)).days
     for max_days, r in cfg.game["dividend_tax"]:
@@ -352,7 +374,8 @@ def close_candle(conn, c, day: str) -> None:
         v = 0
     conn.execute("""INSERT OR REPLACE INTO candles(company_id, day, open, high, low, close, volume, source)
                     VALUES (?,?,?,?,?,?,?, 'live')""", (c["id"], day, o, h, lo, cl, v))
-    conn.execute("UPDATE companies SET prev_close=?, last_price=? WHERE id=?", (cl, cl, c["id"]))
+    conn.execute("""UPDATE companies SET prev_close=?, last_price=?, open_ref=?, vcm_until=NULL, vcm_low=NULL,
+                    vcm_high=NULL, vcm_count=0 WHERE id=?""", (cl, cl, cl, c["id"]))
 
 
 _CN: dict = {}
@@ -425,7 +448,7 @@ def create_company(conn, cfg: Config, s, listed_on: str, day: str, ts: str, list
                         VALUES (?,?, 'sell', 'limit', ?, ?, 'open', ?, ?)""", (company_acct, s.id, ipo_price, float_qty, ts, ts))
         news(conn, day, ts, "ipo", f"新股上市：《{title}》（{code}）",
              f"{listed_on} 上市，发行价 {ipo_price / 100:.2f} 币，公开发行 {float_qty:,} 股，先到先得。"
-             f"上市后 {cfg.game['ipo_free_days']} 个交易日不设涨跌幅限制。首播日 {s.first_air.isoformat()}。", s.id)
+             f"首播日 {s.first_air.isoformat()}。", s.id)
     else:
         ex.add_shares(conn, mm, s.id, float_qty, ipo_price, listed_on)
     return s.id

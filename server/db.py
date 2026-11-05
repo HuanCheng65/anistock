@@ -44,7 +44,12 @@ CREATE TABLE IF NOT EXISTS companies (
     status        TEXT NOT NULL,          -- listed | delisted
     shares        INTEGER NOT NULL,
     ipo_price     INTEGER NOT NULL,
-    prev_close    INTEGER NOT NULL,       -- reference for the daily price limit
+    prev_close    INTEGER NOT NULL,       -- yesterday's close (daily change, auction tie-break)
+    open_ref      INTEGER,                -- today's opening price (auction or prev_close): the VCM's daily anchor
+    vcm_until     TEXT,                   -- cooling-off period ends at this timestamp
+    vcm_low       INTEGER,
+    vcm_high      INTEGER,
+    vcm_count     INTEGER NOT NULL DEFAULT 0,  -- cooling-off periods triggered today
     last_price    INTEGER NOT NULL,
     fair_value    INTEGER NOT NULL DEFAULT 0,  -- engine valuation; hidden from players
     profit_week   INTEGER NOT NULL DEFAULT 0,  -- after-tax profit accrued since the last dividend
