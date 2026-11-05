@@ -7,6 +7,8 @@ base_params = "sim/params_recommended.toml"
 [overrides]
 # sizing (docs/game-design.md, "规模"): median share ~5 币, public float ~0.7x of 40 players' cash
 "revenue.demand_base_week" = 2500000
+# absolute revenue (docs/v2-series.md §6) once the platform size averages two seasons of the collector's history
+"revenue.platform_min_days" = 182
 "company.shares" = 10000
 "company.ipo_float" = 0.25
 "company.founder_share" = 0.75

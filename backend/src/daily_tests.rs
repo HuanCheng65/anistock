@@ -371,3 +371,63 @@ fn penny_stocks_are_warned_then_delisted() {
     e.penny_rule(&mut cx, &[1]).unwrap();
     assert_eq!(e.st.penny_days[&1], 0);
 }
+
+/// Two listed shows and the day's inputs with a platform size averaging `days` days.
+fn platform_case(days: i64) -> (Engine, Inputs) {
+    let (mut e, _sink) = Engine::in_memory(Fees::default(), Rules::default());
+    for k in ["world", "cb", "gov"] {
+        e.create_account(k, k, None, None, None, TS);
+    }
+    for id in [1, 2] {
+        let mut c = company(id, "listed", 10000, "2026-10-01", "2026-09-10");
+        c.episodes = Some(12);
+        e.insert_company(c);
+        for k in ["company", "committee"] {
+            e.create_account(k, k, None, None, Some(id), TS);
+        }
+        let committee = e.account_of("committee", id).unwrap();
+        e.add_shares(committee, id, 10000, 500, "2026-09-10");
+    }
+    for (k, v) in [("rate", "0.03"), ("a_ref", "100000.0"), ("last_closed", "2026-11-07")] {
+        e.set_state(k, v);
+    }
+    let show = |id: i64, us: f64, cn: f64, jp: f64| {
+        serde_json::json!({"id": id, "title_ja": "x", "title_en": null, "studio": null, "first_air": "2026-10-01",
+            "episodes": 12, "episodes_known": true, "long_runner": false, "popularity_end": 9000, "aired": 6,
+            "has_real_data": true, "att": {"us": us, "cn": cn, "jp": jp}, "expected": {"us": us, "cn": cn, "jp": jp}})
+    };
+    let inp = Inputs::parse(
+        &serde_json::to_string(&serde_json::json!({
+            "day": DAY, "cn_titles": {}, "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": days,
+            "shows": [show(1, 3000.0, 30.0, 40.0), show(2, 1200.0, 5.0, 25.0)]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    (e, inp)
+}
+
+#[test]
+fn the_switch_to_absolute_revenue_keeps_the_days_total() {
+    // docs/v2-series.md §6: on the first day the platform size averages enough history, the scale is set so that
+    // the day's total revenue is what the relative rule gives
+    let cfg = cfg();
+    let (mut a, inp_short) = platform_case(30);
+    let (mut b, inp_long) = platform_case(200);
+    let ra = match a.run_day(&cfg, DAY, TS, &inp_short).unwrap() {
+        CloseOutcome::Closed(s) => s.injected,
+        _ => panic!(),
+    };
+    let rb = match b.run_day(&cfg, DAY, TS, &inp_long).unwrap() {
+        CloseOutcome::Closed(s) => s.injected,
+        _ => panic!(),
+    };
+    assert!(a.platform_rule().is_none());
+    let (pl, scale) = b.platform_rule().expect("switched");
+    assert_eq!(pl, [90000.0, 400.0, 1500.0]);
+    assert!(scale > 0.0);
+    assert!((ra - rb).abs() <= 2, "relative {ra} vs absolute {rb} (cents, per-company rounding)");
+    // the shares differ: absolute revenue is not renormalised to the listed shows
+    let rev = |e: &Engine, id: i64| e.st.company_days.get(&(id, DAY.to_string())).unwrap().revenue;
+    assert_ne!(rev(&a, 1), rev(&b, 1));
+}

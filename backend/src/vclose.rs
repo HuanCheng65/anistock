@@ -206,6 +206,13 @@ impl Engine {
         std::array::from_fn(|i| std::array::from_fn(|j| c[i][j] + b[i] * b[j] * v))
     }
 
+    /// The absolute revenue rule in force (docs/v2-series.md §6): the platform sizes of the last close and the
+    /// scale set at the switch (state `platform_rule`: "us,cn,jp,scale"); None while the relative rule applies.
+    pub fn platform_rule(&self) -> F::PlatformRule {
+        let v: Vec<f64> = self.state("platform_rule")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
+        (v.len() == 4).then(|| ([v[0], v[1], v[2]], v[3]))
+    }
+
     /// The show's long-tail prior from its score and format (`vfilter::tail_mult`).
     fn tail_mult_of(fp: &FilterParams, s: &ShowInputs) -> f64 {
         F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"))
@@ -555,7 +562,7 @@ impl Engine {
         let (sched, _, long) = self.shape(c, p);
         let mult = self.st.jstate.get(&c.id).map_or(1.0, |j| j.tail_mult);
         let tails = Self::tail_ends(fp, &sched, long, today, mult);
-        let v = F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, c.long_runner != 0, &tails);
+        let v = F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, c.long_runner != 0, &tails, self.platform_rule());
         ((v * 100.0).round_ties_even() as i64).max(1)
     }
 
@@ -743,7 +750,7 @@ impl Engine {
         Self::fill_preair(&mut own[0], today, first, (us_now > 0.0).then_some(us_now));
         // (the new show is not in today's totals yet: it joins them)
         let tails = Self::tail_ends(fp, &sched, long, today, mult);
-        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails);
+        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails, self.platform_rule());
         let used: Vec<f64> = (0..3).filter(|m| src[*m]).map(|m| fp.p0[m]).collect();
         let sd = if used.is_empty() { 0.0 } else { (used.iter().sum::<f64>() / used.len() as f64).sqrt() };
         let discount = 1.0 - (-fp.ipo_risk * sd).exp();

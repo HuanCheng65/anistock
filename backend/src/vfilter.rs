@@ -553,6 +553,15 @@ pub fn tail_beyond(tl: &Tail, mult: f64, t_last: i64, last: f64, disc: f64) -> f
 /// path's last day (Python `value_from_paths` `tails`).
 pub type TailEnd<'a> = Option<(&'a Tail, f64, i64)>;
 
+/// Absolute revenue (docs/v2-series.md §6; Python `absolute_parts`): each market's revenue per day of a show with
+/// attention `own`, base/7 × scale × w_m × own_m / platform_m (0 for a market without a platform size).
+pub fn absolute_parts(own: &M3, platform: &M3, scale: f64, weights: &M3, p: &Params) -> M3 {
+    std::array::from_fn(|m| if platform[m] > 0.0 { p.demand_base_week / 7.0 * scale * weights[m] * own[m] / platform[m] } else { 0.0 })
+}
+
+/// The absolute revenue rule's inputs: each market's platform size and the scale set at the switch.
+pub type PlatformRule = Option<(M3, f64)>;
+
 /// Per-share value (yuan) from the attention paths (Python `value_from_paths`).
 #[allow(clippy::too_many_arguments)]
 pub fn value_from_paths(
@@ -566,6 +575,7 @@ pub fn value_from_paths(
     rate: f64,
     long_runner: bool,
     tails: &[TailEnd; 3],
+    platform: PlatformRule,
 ) -> f64 {
     let disc = discount_day(rate, p);
     // all after-tax profit reaches the shareholders (dividends, or retained cash in the book value)
@@ -577,10 +587,15 @@ pub fn value_from_paths(
     for j in 0..h {
         f *= disc;
         let o = [own[0][j], own[1][j], own[2][j]];
-        let tt = [totals[0][j], totals[1][j], totals[2][j]];
-        let (share, _) = blended_share(&o, &tt, weights);
-        let dd = demand_day(tt[0], a_ref, p);
-        last = dd * share * keep / shares as f64;
+        if let Some((pl, sc)) = &platform {
+            let parts = absolute_parts(&o, pl, *sc, weights, p);
+            last = (parts[0] + parts[1] + parts[2]) * keep / shares as f64;
+        } else {
+            let tt = [totals[0][j], totals[1][j], totals[2][j]];
+            let (share, _) = blended_share(&o, &tt, weights);
+            let dd = demand_day(tt[0], a_ref, p);
+            last = dd * share * keep / shares as f64;
+        }
         pv += last * f;
     }
     if long_runner && h > 0 {
@@ -603,10 +618,20 @@ pub fn value_from_paths(
         let dd = demand_day(tt[0], a_ref, p);
         for m in 0..3 {
             let Some((tl, mult, t_last)) = tails[m] else { continue };
-            if tt[m] <= 0.0 {
-                continue;
-            }
-            let per = dd * (weights[m] / wsum) / tt[m] * keep / shares as f64;
+            let per = match &platform {
+                Some((pl, sc)) => {
+                    if pl[m] <= 0.0 {
+                        continue;
+                    }
+                    p.demand_base_week / 7.0 * sc * weights[m] / pl[m] * keep / shares as f64
+                }
+                None => {
+                    if tt[m] <= 0.0 {
+                        continue;
+                    }
+                    dd * (weights[m] / wsum) / tt[m] * keep / shares as f64
+                }
+            };
             pv += f * per * tail_beyond(tl, mult, t_last, own[m][h - 1], disc);
         }
     }
@@ -653,8 +678,8 @@ mod tests {
             own1[m].iter().zip(&own2[m]).map(|(a, b)| a + b + 1000.0 * (m as f64 + 1.0)).collect()
         });
         let w = p.market_weights;
-        let a = value_from_paths(&own1, &tot, &w, 110925.85, &p, 10000, 1234567, 0.0325, false, &[None, None, None]);
-        let b = value_from_paths(&own2, &tot, &w, 110925.85, &p, 10000, 555, 0.03, true, &[None, None, None]);
+        let a = value_from_paths(&own1, &tot, &w, 110925.85, &p, 10000, 1234567, 0.0325, false, &[None, None, None], None);
+        let b = value_from_paths(&own2, &tot, &w, 110925.85, &p, 10000, 555, 0.03, true, &[None, None, None], None);
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
@@ -681,13 +706,16 @@ mod tests {
         let own4: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s4, s4[0], false, 400, mult));
         let tot4: [Vec<f64>; 3] = std::array::from_fn(|m| own4[m].iter().map(|x| x + 500.0 * (m as f64 + 1.0)).collect());
         let tails: [TailEnd; 3] = std::array::from_fn(|m| fp.tail[m].as_ref().map(|tl| (tl, mult, today + 400 - fin4 - 7)));
-        let c4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails);
-        let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None]);
+        let c4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, None);
+        let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None], None);
         assert!((own4[0][0] / 469.2214252449581 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
         assert!((own4[1][399] / 2.974024532655546 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
         assert!((c4 / 119.40088036710972 - 1.0).abs() < 1e-13 && (c0 / 54.12183885587719 - 1.0).abs() < 1e-13, "{c4} {c0}");
         assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.3572582370850549) <= 2);
         assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
+        // absolute revenue (phase 1 step 2)
+        let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83)));
+        assert!((d4 / 46.771366386861715 - 1.0).abs() < 1e-13, "{d4}");
         // the joint filter (v0.3.2)
         let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
         let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];

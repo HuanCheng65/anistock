@@ -14,6 +14,11 @@ File format (JSON, one object):
     cn_titles     {anilist_id: name}  Chinese title for every matched show (not only those in `shows`): a manual
                   `title_cn` in sim/matches.json wins, else Bangumi's name_cn. The close renames any company
                   whose id is here (refresh_titles); a new company is named cn_titles[id], else title_ja.
+    platform      {"us","cn","jp"}  each market's platform size (docs/v2-series.md §6): the mean, over the trailing
+                  year's days with data, of the day's total attention of every tracked work airing (an episode in
+                  the last 14 days; listed or not; adult titles and promos aside) (phase 1)
+    platform_days the number of days `platform` averages (up to 365; the close switches to absolute revenue once
+                  it reaches revenue.platform_min_days) (phase 1)
     shows         [ ... ]  every show of the model's universe that is airing or lists within
                   ipo_subscription_days + 1 days of D, IN MODEL ORDER (new IPOs are created, and their stock
                   codes numbered, in this order). Each entry:
@@ -96,6 +101,40 @@ def air_dates(s: E.Show, day: date) -> list[str]:
     return out
 
 
+PLATFORM_DAYS = 365   # the platform size is the mean over the trailing year (four quarters)
+
+
+def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tuple[dict[str, float], int]:
+    """Each market's platform size on `day` (docs/v2-series.md §6): the mean over the trailing year (the days
+    before `day` that have data, up to 365) of the day's total attention of every tracked work airing that day,
+    listed or not (airing: an episode in the last 14 days, so the finale's week counts; adult titles and promos
+    aside). Returns ({market: size}, the number of days averaged)."""
+    rv = p["revenue"]
+    lo = day - timedelta(days=PLATFORM_DAYS)
+    tot: dict[date, dict[str, float]] = {}
+    first = min((s.days[0] for s in shows if s.days), default=day)
+    for s in shows:
+        if s.adult or s.promo or not s.days:
+            continue
+        d = max(lo, s.days[0])
+        while d < day:
+            i = (d - s.days[0]).days
+            if i >= len(s.days):
+                break
+            back = s.aired[i - 14] if i >= 14 else 0
+            if s.aired[i] > back:
+                a = E.market_att(s, d, rv, markets)
+                t = tot.setdefault(d, {m: 0.0 for m in E.MARKETS})
+                for m in E.MARKETS:
+                    t[m] += a[m]
+            d += timedelta(days=1)
+    days = [d for d in sorted(tot) if d >= max(lo, first)]
+    n = len(days)
+    if not n:
+        return {m: 0.0 for m in E.MARKETS}, 0
+    return {m: sum(tot[d][m] for d in days) / n for m in E.MARKETS}, n
+
+
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
           window_start: date, aud_dated: dict | None = None, sources: dict | None = None) -> dict:
     """The inputs dict for `day` from already-loaded model objects (no I/O)."""
@@ -129,10 +168,13 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "format": s.fmt,
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
+    plat, n = platform_size(shows, markets, day, p)
     return {
         "day": day.isoformat(),
         "window_start": window_start.isoformat(),
         "cn_titles": {str(k): v for k, v in cn_titles.items()},
+        "platform": plat,
+        "platform_days": n,
         "shows": out,
     }
 

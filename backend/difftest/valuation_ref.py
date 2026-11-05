@@ -51,3 +51,6 @@ print("own4[us][0]", repr(own4["us"][0]), "own4[cn][399]", repr(own4["cn"][399])
 print("c", repr(c), "c0", repr(c0))
 print("pff_cn", repr(V.post_finale_factor(fp, p, "cn", today - 100, today, mult)))
 print("tail_var", repr(V.tail_var(V.tail_of(fp, "us"), 250)))
+# absolute revenue (phase 1 step 2): platform sizes and the switch scale
+plat = ({"us": 105000.0, "cn": 450.0, "jp": 1460.0}, 0.83)
+print("d", repr(V.value_from_paths(own4, tot4, w, 110925.85, p, 10000, 4321, 0.03, False, tails, plat)))

@@ -414,12 +414,24 @@ def discount_day(rate: float, p: dict) -> float:
     return (1 / (1 + rw)) ** (1 / 7.0)
 
 
+def absolute_parts(own: dict, platform: dict, scale: float, weights: dict, rv: dict) -> dict:
+    """Absolute revenue (docs/v2-series.md §6): each market's revenue per day of a show with attention `own`,
+    base/7 × scale × w_m × own_m / platform_m. The platform size is each market's trailing-year total attention of
+    the airing works (engine/daily_inputs.py `platform_size`); `scale` was set once, at the switch, so that the day's
+    total revenue was unchanged. No renormalisation: a market a show is not mapped to earns nothing."""
+    return {m: rv["demand_base_week"] / 7 * scale * weights[m] * own[m] / platform[m] if platform[m] > 0 else 0.0
+            for m in MARKETS}
+
+
 def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: dict, shares: int,
-                     book_cents: int, rate: float, long_runner: bool, tails: dict | None = None) -> float:
+                     book_cents: int, rate: float, long_runner: bool, tails: dict | None = None,
+                     platform: tuple | None = None) -> float:
     """Per-share value (yuan): expected dividends from the attention paths, discounted, plus cash per share.
     own/totals: market -> expected attention per future day (the same length). tails: market -> (tail parameters,
     the show's tail prior, days after the finale's week on the path's last day) for a path that ends in the long
-    tail: its revenue beyond the horizon, at the last day's revenue per unit of attention, in closed form."""
+    tail: its revenue beyond the horizon, in closed form. platform: (platform sizes, scale) under the absolute
+    revenue rule (the platform expected to stay at today's size; totals unused), else the relative rule (a share of
+    the demand index, at the last day's revenue per unit of attention beyond the horizon)."""
     rv, co = p["revenue"], p["company"]
     disc = discount_day(rate, p)
     # all after-tax profit reaches the shareholders: the paid-out part as dividends, the retained part as the
@@ -433,27 +445,39 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
     for j in range(h):
         f *= disc
         o = {m: own[m][j] for m in MARKETS}
-        tt = {m: totals[m][j] for m in MARKETS}
-        share, _ = blended_share(o, tt, weights)
-        dd = demand_day(tt["us"], a_ref, rv)
-        last = dd * share * keep / shares
+        if platform is not None:
+            parts = absolute_parts(o, platform[0], platform[1], weights, rv)
+            last = (parts["us"] + parts["cn"] + parts["jp"]) * keep / shares
+        else:
+            tt = {m: totals[m][j] for m in MARKETS}
+            share, _ = blended_share(o, tt, weights)
+            dd = demand_day(tt["us"], a_ref, rv)
+            last = dd * share * keep / shares
         pv += last * f
     if long_runner and h > 0:
         g = p["valuation"]["long_runner_decay"] ** (1 / 7.0) * disc
         pv += last * f * g / (1 - g)
     elif tails and h > 0:
-        # beyond the horizon: each market's revenue per unit of attention stays at the last day's (the market
-        # totals and demand are not forecast that far), the attention follows the long tail
-        tt = {m: totals[m][h - 1] for m in MARKETS}
-        live = [m for m in MARKETS if tt[m] > 0]
-        wsum = sum(weights[m] for m in live) or 1.0
-        dd = demand_day(tt["us"], a_ref, rv)
+        # beyond the horizon: the attention follows the long tail, each market's revenue per unit of attention
+        # as on the last day
+        if platform is None:
+            tt = {m: totals[m][h - 1] for m in MARKETS}
+            live = [m for m in MARKETS if tt[m] > 0]
+            wsum = sum(weights[m] for m in live) or 1.0
+            dd = demand_day(tt["us"], a_ref, rv)
         for m in MARKETS:
             x = tails.get(m)
-            if x is None or m not in live:
+            if x is None:
                 continue
+            if platform is not None:
+                if platform[0][m] <= 0:
+                    continue
+                per = rv["demand_base_week"] / 7 * platform[1] * weights[m] / platform[0][m] * keep / shares
+            else:
+                if m not in live:
+                    continue
+                per = dd * (weights[m] / wsum) / tt[m] * keep / shares
             tl, mult, t_last = x
-            per = dd * (weights[m] / wsum) / tt[m] * keep / shares
             pv += f * per * tail_beyond(tl, mult, t_last, own[m][h - 1], disc)
     return pv + book_cents / 100 / shares
 

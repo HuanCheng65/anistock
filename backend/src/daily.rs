@@ -269,6 +269,8 @@ impl Engine {
         }
         let tot_us = totals[0];
         let demand_day = V::demand_day(tot_us, a_ref, &p);
+        // the absolute revenue rule (docs/v2-series.md §6), once the platform size averages enough history
+        let abs = if cx.cfg.economy_v1 { None } else { self.platform_switch(cx, &p, &totals, demand_day) };
         if let Ok(path) = std::env::var("SIM_FORECAST") {
             // the realised side (sim/forecast_check.py): totals, demand, each listed show's attention and revenue
             use std::io::Write;
@@ -284,9 +286,16 @@ impl Engine {
         }
         for c in cx.companies.clone() {
             let Some(s) = cx.inp.show(c.id) else { continue };
-            let (share, parts) = V::blended_share(&s.att.m3(), &totals, &p.market_weights);
-            let rev = pround(demand_day * share * 100.0);
-            let split: Vec<i64> = parts.iter().map(|x| pround(demand_day * x * 100.0)).collect();
+            let (rev, split): (i64, Vec<i64>) = match &abs {
+                Some((pl, sc)) => {
+                    let parts = crate::vfilter::absolute_parts(&s.att.m3(), pl, *sc, &p.market_weights, &p);
+                    (pround((parts[0] + parts[1] + parts[2]) * 100.0), parts.iter().map(|x| pround(x * 100.0)).collect())
+                }
+                None => {
+                    let (share, parts) = V::blended_share(&s.att.m3(), &totals, &p.market_weights);
+                    (pround(demand_day * share * 100.0), parts.iter().map(|x| pround(demand_day * x * 100.0)).collect())
+                }
+            };
             let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
             let cid = Some(c.id);
             self.do_transfer(cx.world, acct, rev, "revenue", &day, &ts, cid, None);
@@ -533,6 +542,36 @@ impl Engine {
         self.snapshot_players(&day, (cx.cfg.game.initial_cash * 100.0).round_ties_even() as i64);
         self.check_invariants()?;
         Ok(rate)
+    }
+
+    /// The absolute revenue rule for this close (docs/v2-series.md §6): each market's platform size from the
+    /// inputs, once it averages at least `revenue.platform_min_days` days, and the scale set on the first such day
+    /// so that the day's total revenue is unchanged (state `platform_rule`: "us,cn,jp,scale"). Inputs without a
+    /// platform size keep the last one. None: the relative rule.
+    fn platform_switch(&mut self, cx: &Ctx, p: &Params, totals: &V::M3, demand_day: f64) -> Option<(V::M3, f64)> {
+        let prev = self.platform_rule();
+        let Some(pl) = cx.inp.platform.as_ref().map(|x| x.m3()) else { return prev };
+        if cx.inp.platform_days < p.platform_min_days || pl.iter().any(|x| *x <= 0.0) {
+            return prev;
+        }
+        let scale = match prev {
+            Some((_, sc)) => sc,
+            None => {
+                let (mut old, mut new) = (0.0, 0.0);
+                for c in &cx.companies {
+                    let Some(s) = cx.inp.show(c.id) else { continue };
+                    old += demand_day * V::blended_share(&s.att.m3(), totals, &p.market_weights).0;
+                    let parts = crate::vfilter::absolute_parts(&s.att.m3(), &pl, 1.0, &p.market_weights, p);
+                    new += parts[0] + parts[1] + parts[2];
+                }
+                if new <= 0.0 {
+                    return None;
+                }
+                old / new
+            }
+        };
+        self.do_set_state("platform_rule", &format!("{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(scale)));
+        Some((pl, scale))
     }
 
     /// Per-share value in cents from the company's own revenue history (v1 `daily.fair_value`).

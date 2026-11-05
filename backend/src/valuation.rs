@@ -25,6 +25,8 @@ pub struct Params {
     // revenue
     pub demand_base_week: f64,
     pub demand_elasticity: f64,
+    /// the absolute revenue rule starts once the platform size averages this many days (docs/v2-series.md §6)
+    pub platform_min_days: i64,
     // valuation
     pub equity_premium: f64,
     pub post_finale_profile: Vec<f64>,
@@ -90,6 +92,7 @@ impl Params {
             production_fee_ratio: num(cfg, "company.production_fee_ratio")?,
             demand_base_week: num(cfg, "revenue.demand_base_week")?,
             demand_elasticity: num(cfg, "revenue.demand_elasticity")?,
+            platform_min_days: int(cfg, "revenue.platform_min_days").unwrap_or(182),
             equity_premium: num(cfg, "valuation.equity_premium")?,
             post_finale_profile: profile,
             post_finale_tail_decay: num(cfg, "valuation.post_finale_tail_decay")?,

@@ -89,6 +89,11 @@ struct RawInputs {
     window_start: Option<String>,
     cn_titles: BTreeMap<String, String>,
     shows: Vec<ShowInputs>,
+    /// phase 1: each market's platform size (docs/v2-series.md §6) and the number of days it averages
+    #[serde(default)]
+    platform: Option<Markets>,
+    #[serde(default)]
+    platform_days: Option<i64>,
 }
 
 /// Parsed inputs for one day. `shows` keeps the file's (model) order.
@@ -99,6 +104,11 @@ pub struct Inputs {
     pub shows: Vec<ShowInputs>,
     pub index: HashMap<i64, usize>,
     pub cn_titles: BTreeMap<i64, String>,
+    /// each market's platform size: the trailing-year mean of the day's total attention of every tracked work
+    /// airing (listed or not); None in inputs written before phase 1
+    pub platform: Option<Markets>,
+    /// the number of days `platform` averages (up to 365; fewer while the collector's history is short)
+    pub platform_days: i64,
 }
 
 impl ShowInputs {
@@ -133,7 +143,15 @@ impl Inputs {
         for (k, v) in raw.cn_titles {
             cn_titles.insert(k.parse::<i64>().map_err(|e| format!("cn_titles key {k}: {e}"))?, v);
         }
-        Ok(Inputs { day: raw.day, window_start: raw.window_start, shows, index, cn_titles })
+        Ok(Inputs {
+            day: raw.day,
+            window_start: raw.window_start,
+            shows,
+            index,
+            cn_titles,
+            platform: raw.platform,
+            platform_days: raw.platform_days.unwrap_or(0),
+        })
     }
 
     pub fn read(path: &Path) -> Result<Inputs, String> {
