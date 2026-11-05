@@ -7,6 +7,10 @@ use crate::engine::{Engine, NewOrder};
 use crate::exchange::cooling;
 use crate::market::{day_of, local, ts_of};
 
+/// 融资融券 bots (docs/v2-margin.md §9)
+#[path = "margin_bots.rs"]
+pub mod margin;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BotKind {
     /// buy every listed stock equally on day one, hold (the baseline)
@@ -53,10 +57,16 @@ pub enum BotKind {
     /// public popularity with a delay?
     HoldHottest,
     BadPrice,
+    /// 融资融券: buy every stock equally with own cash, then keep all the available margin in financed buys
+    LeverHold,
+    /// 融资融券: short the five stocks priced furthest over their public value, cover at the value
+    ShortRich,
+    /// 融资融券: short the highest expected dividend yields on Sunday evening, cover on Monday
+    ShortDividend,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 19] {
+    pub fn all() -> [BotKind; 22] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -77,6 +87,9 @@ impl BotKind {
             BotKind::SpoofScare,
             BotKind::BadPrice,
             BotKind::HoldHottest,
+            BotKind::LeverHold,
+            BotKind::ShortRich,
+            BotKind::ShortDividend,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -100,6 +113,9 @@ impl BotKind {
             BotKind::SpoofScare => "spoof_scare",
             BotKind::BadPrice => "bad_price",
             BotKind::HoldHottest => "hold_hottest",
+            BotKind::LeverHold => "lever_hold",
+            BotKind::ShortRich => "short_rich",
+            BotKind::ShortDividend => "short_dividend",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -128,6 +144,8 @@ pub struct Bot {
     pub trades_placed: u64,
     /// the fan bots' foresight: (company, day) -> the hidden value at that day's open, cents
     pub foresight: Option<std::sync::Arc<std::collections::HashMap<(i64, String), (i64, i64)>>>,
+    /// drawdown, liabilities, margin calls (sampled by the 融资融券 bots)
+    pub mstats: margin::MStats,
 }
 
 fn place(e: &mut Engine, acct: i64, c: i64, side: &str, kind: &str, qty: i64, price: Option<i64>, t: i64) -> bool {
@@ -168,7 +186,7 @@ fn affordable(e: &Engine, budget: i64, price: i64) -> i64 {
 
 impl Bot {
     pub fn new(kind: BotKind, account: i64, start_cash: i64) -> Bot {
-        Bot { kind, account, start_cash, bought_initial: false, target: None, state: 0, since: 0, sold: Vec::new(), trades_placed: 0, foresight: None }
+        Bot { kind, account, start_cash, bought_initial: false, target: None, state: 0, since: 0, sold: Vec::new(), trades_placed: 0, foresight: None, mstats: Default::default() }
     }
 
     /// Wealth at last prices, cents.
@@ -181,7 +199,11 @@ impl Bot {
         let (_, s) = local(t);
         let acct = self.account;
         let ts = ts_of(t);
+        if s % 1800 == 0 {
+            self.mstats.sample(e, acct);
+        }
         match self.kind {
+            BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
             BotKind::AirCalendar | BotKind::AirEarly | BotKind::ExDividend if self.bought_initial => {
                 let (d, _) = local(t);
                 let today = crate::vclose::day_no(&day_of(t)).unwrap_or(0);

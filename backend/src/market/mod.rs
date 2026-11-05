@@ -13,6 +13,7 @@ pub mod config;
 pub mod events;
 pub mod rng;
 pub mod runtime;
+mod short;
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
@@ -874,6 +875,9 @@ impl Market {
             return;
         }
         let held = engine.available_shares(a.account, c);
+        if self.value_short(engine, i, c, t, m, b) {
+            return; // 融资融券 (short.rs)
+        }
         if m > 0.0 {
             let wealth = self.wealth(engine, a.account) as f64;
             let room = self.cfg.max_position_frac * wealth - held as f64 * p;

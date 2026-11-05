@@ -468,6 +468,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             "return": w as f64 / b.start_cash as f64 - 1.0, "orders": b.trades_placed,
             "transfers": watched.0, "dividends": watched.1,
             "return_ex_transfers": (w - watched.0) as f64 / b.start_cash as f64 - 1.0,
+            "margin": b.mstats,
         })
     });
     let actions: u64 = m.stats.actions.values().sum::<u64>();

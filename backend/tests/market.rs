@@ -124,20 +124,23 @@ fn same_seed_same_market() {
 
 #[test]
 fn actions_arrive_at_the_configured_rates() {
-    let (_, m) = one_day(3);
+    // a Poisson count over one day: averaged over four seeds (one seed is a ~5% draw either way, and any
+    // change in NPC behaviour moves the shared random stream)
     let cfgm = small(3);
     // ∫ intraday curve over 08:45-23:00, in hours
     let c = cfgm.curve;
     let area = 0.25 * c[0] + 3.0 * c[1] + 1.5 * c[2] + 4.5 * c[3] + 2.0 * c[4] + 3.0 * c[5];
+    let runs: Vec<Market> = (1..=4).map(|seed| one_day(seed).1).collect();
     for (kind, n, rate) in [
         ("Value", cfgm.n_value, cfgm.rate_value),
         ("Retail", cfgm.n_retail, cfgm.rate_retail),
         ("Trend", cfgm.n_trend, cfgm.rate_trend),
     ] {
-        let expected = n as f64 * rate * area;
-        let got = *m.stats.actions.get(kind).unwrap_or(&0) as f64;
+        let expected = n as f64 * rate * area * runs.len() as f64;
+        let got: f64 = runs.iter().map(|m| *m.stats.actions.get(kind).unwrap_or(&0) as f64).sum();
         assert!((got / expected - 1.0).abs() < 0.1, "{kind}: {got} actions, expected {expected:.0}");
     }
+    let m = &runs[0];
     // the curve is respected: nothing in the closed hours 04:00-08:45 (the night session is tests/night.rs)
     assert_eq!(m.curve(8 * 3600), 0.0);
     assert_eq!(m.curve(4 * 3600), 0.0);
