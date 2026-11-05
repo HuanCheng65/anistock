@@ -20,6 +20,8 @@ pub enum Refusal {
     NotPoor(i64),
     ThisSeason,
     MarketClosed,
+    /// still owes for margin trading (融资融券) other than a default's shortfall
+    Margin,
     /// the engine's state is inconsistent (lots do not cover a holding): nothing was changed
     Broken(String),
 }
@@ -35,6 +37,7 @@ impl Refusal {
             }
             Refusal::ThisSeason => "本季已经重整过一次".into(),
             Refusal::MarketClosed => "休市时不能申请".into(),
+            Refusal::Margin => "先了结融资融券负债".into(),
             Refusal::Broken(why) => why.clone(),
         }
     }
@@ -80,12 +83,9 @@ pub fn linked_return(factor: f64, base_cents: i64, total_cents: i64) -> f64 {
 }
 
 impl Engine {
-    /// Cash (frozen included) plus holdings at the last price, cents.
+    /// Net assets: cash (frozen included) plus holdings at the last price, minus margin liabilities, cents.
     pub fn total_assets(&self, account_id: i64) -> i64 {
-        let cash = self.account(account_id).map_or(0, |a| a.cash);
-        let stock: i64 =
-            self.holdings_of(account_id).map(|h| h.qty * self.company(h.company_id).map_or(0, |c| c.last_price)).sum();
-        cash + stock
+        self.net_assets(account_id)
     }
 
     /// A player's chain-linked return state, if they have ever restructured.
@@ -105,7 +105,9 @@ impl Engine {
     ) -> Result<Restructure, Refusal> {
         let world = self.special("world").ok_or_else(|| Refusal::Broken("no world account".into()))?;
         let assets_before = self.total_assets(account_id);
-        let last_day = self.player_return(account_id).map(|p| p.last_day.clone());
+        // a default (穿仓) may restructure at once, whatever the season; open margin debts must be settled first
+        let defaulted = self.margin_restructure_check(account_id).map_err(|()| Refusal::Margin)?;
+        let last_day = if defaulted { None } else { self.player_return(account_id).map(|p| p.last_day.clone()) };
         check(assets_before, initial_cents, threshold, last_day.as_deref(), day)?;
         let holdings: Vec<(i64, i64)> = self.holdings_of(account_id).map(|h| (h.company_id, h.qty)).collect();
         for &(cid, qty) in &holdings {
@@ -144,7 +146,9 @@ impl Engine {
             sold += qty * price;
         }
 
-        // 3. cash up to the starting amount
+        // 3. the default's shortfall is written off (the world account bears it), then cash up to the
+        //    starting amount
+        self.margin_write_off(account_id);
         let cash = self.account(account_id).map_or(0, |a| a.cash);
         let injected = (initial_cents - cash).max(0);
         self.do_transfer(world, account_id, injected, "restructure", day, ts, None, None);
@@ -155,7 +159,8 @@ impl Engine {
             prev.map_or((1.0, initial_cents, 0), |p| (p.return_factor, p.segment_base, p.restructures));
         let pr = PlayerReturn {
             account_id,
-            return_factor: factor * (assets_before as f64 / base as f64),
+            // negative net assets (a default) count as zero: the segment lost everything
+            return_factor: factor * (assets_before.max(0) as f64 / base as f64),
             segment_base: initial_cents,
             restructures: count + 1,
             last_day: day.to_string(),

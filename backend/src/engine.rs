@@ -121,6 +121,8 @@ pub(crate) struct State {
     pub jstate: HashMap<i64, crate::vclose::JState>,
     /// players who have restructured: their chain-linked return (crate::restructure)
     pub player_returns: BTreeMap<i64, PlayerReturn>,
+    /// 融资融券: credit accounts, debts, short positions, credit order tags (crate::margin)
+    pub margin: crate::margin::MarginState,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -131,6 +133,8 @@ pub(crate) struct State {
 pub struct Engine {
     pub fees: Fees,
     pub rules: Rules,
+    /// `[margin]` of game.toml (crate::margin)
+    pub margin: crate::margin::MarginRules,
     pub(crate) st: State,
 
     pub(crate) out: Vec<Change>,
@@ -167,6 +171,7 @@ impl Engine {
         let mut e = Engine {
             fees,
             rules,
+            margin: crate::margin::MarginRules::default(),
             st: State::from_snapshot_parts(&s),
             out: Vec::new(),
             dirty_accounts: BTreeSet::new(),
@@ -385,7 +390,7 @@ impl Engine {
                 return Err(format!("negative or over-frozen balance: account {} {} {}", a.id, a.cash, a.cash_frozen));
             }
         }
-        Ok(())
+        self.margin_invariants()
     }
 
     // ------------------------------------------------------------ change tracking
@@ -848,8 +853,9 @@ impl Engine {
         }
     }
 
-    fn do_place_order(&mut self, req: &NewOrder) -> Result<Placed, OrderError> {
+    pub(crate) fn do_place_order(&mut self, req: &NewOrder) -> Result<Placed, OrderError> {
         let side = Side::parse(req.side).ok_or_else(|| OrderError::new("买卖方向不对"))?;
+        self.margin_plain_check(req.account_id, req.company_id, side)?;
         let kind = Kind::parse(req.kind).ok_or_else(|| OrderError::new("委托类型不对"))?;
         let qty = req.qty;
         if qty <= 0 {
@@ -924,6 +930,7 @@ impl Engine {
         self.st.orders.insert(id, o);
         self.st.by_account.entry(req.account_id).or_default().insert(id);
         self.dirty_orders.insert(id);
+        self.margin_tag(id);
 
         let (filled, notional) = if req.match_ { self.do_match(id, req.day, req.ts) } else { (0, 0) };
 
@@ -992,6 +999,7 @@ impl Engine {
     /// still in memory (v1 closes a filled order a second time in `place_order`).
     pub(crate) fn close(&mut self, id: i64, status: OrderStatus, ts: &str) {
         let o = self.st.orders[&id].clone();
+        let before = o.clone();
         if o.side == Side::Buy && o.frozen > 0 {
             self.add_cash(o.account_id, 0, -o.frozen);
         }
@@ -1021,6 +1029,7 @@ impl Engine {
         o.frozen = 0;
         o.updated_at = ts.to_string();
         self.dirty_orders.insert(id);
+        self.margin_on_close(&before, ts);
     }
 
     /// Next resting order after `cursor` on the side opposite to `side`, if its price still crosses `limit`.
@@ -1158,6 +1167,7 @@ impl Engine {
         self.do_remove_shares(sell.account_id, company_id, q, q)
             .unwrap_or_else(|e| panic!("settlement of trade {trade_id}: {e}"));
         self.do_add_shares(buy.account_id, company_id, q, tp, day);
+        self.margin_on_fill(buy_id, sell_id, q, tp, notional - c_sell - stamp, day, ts);
 
         for id in [buy_id, sell_id] {
             let o = self.st.orders.get_mut(&id).unwrap();
@@ -1266,6 +1276,7 @@ impl State {
             penny_days: s.penny_days.clone(),
             jstate: s.jstate.clone(),
             player_returns: s.player_returns.clone(),
+            margin: s.margin.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,
             last_ledger_id: s.max_ledger_id,

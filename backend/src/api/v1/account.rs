@@ -36,6 +36,7 @@ fn restructure_reason(r: &crate::restructure::Refusal) -> (&'static str, String)
         NotPoor(c) => ("not_poor", format!("总资产低于 {} 币才能申请重整", error::coins(*c).trim_end_matches(".00"))),
         ThisSeason => ("this_season", "本季已经重整过一次".into()),
         MarketClosed => ("market_closed", "连续交易时段才能申请重整".into()),
+        Margin => ("margin_debt", "先了结融资融券负债才能申请重整".into()),
         Broken(_) => ("broken", "暂时无法申请重整".into()),
     }
 }

@@ -126,6 +126,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     };
     let tap = TapSink::default();
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
+    e.margin = cfg.margin.clone();
     let params = Params::from_config(cfg)?;
     let last_closed = e.state("last_closed").ok_or("world has no last_closed")?.to_string();
 
