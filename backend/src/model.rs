@@ -286,7 +286,7 @@ pub struct PlayerDay {
     pub day: String,
     pub cash: i64,
     pub stock_value: i64,
-    /// cents owed for margin trading (V8)
+    /// cents owed for margin trading (V7)
     pub liabilities: i64,
     pub return_index: f64,
     pub restructured: bool,

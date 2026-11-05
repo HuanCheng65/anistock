@@ -239,7 +239,7 @@ fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     Ok(conn.query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [name], |_| Ok(())).optional()?.is_some())
 }
 
-/// Load the margin tables (empty if the database predates migration V8, e.g. an old simulation world).
+/// Load the margin tables (empty if the database predates migration V7, e.g. an old simulation world).
 pub fn load(conn: &Connection) -> rusqlite::Result<MarginState> {
     let mut s = MarginState::default();
     if !table_exists(conn, "credit_accounts")? {

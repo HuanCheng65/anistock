@@ -1146,7 +1146,7 @@ CREATE TABLE player_days (
 - **写入**：日结的最后一步（价格、分红、利息、转移支付都已入账之后），每个玩家一行，和日结同一个事务。日结补跑时按 `last_closed` 幂等。
 - **回填**：迁移时从开服日起逐日重放每个玩家的成交和流水，用当天的收盘价（`candles`）计算持仓市值，写出历史各行；最后一天的结果必须等于当前账户状态，否则回填中止并只保留从迁移当天开始的快照（日志说明原因）。重整开始之前（V4 之前）的历史没有断点，`return_index = 总资产 / 初始资金`。
 - 新注册的玩家从注册当天的日结开始有记录。
-- V8 增加 `liabilities` 列（日结时的融资融券负债）；`AssetDay.liabilities`，`total_assets = cash + stock_value − liabilities`。
+- V7 增加 `liabilities` 列（日结时的融资融券负债）；`AssetDay.liabilities`，`total_assets = cash + stock_value − liabilities`。
 
 #### 4.5.11 融资融券
 
