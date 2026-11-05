@@ -65,14 +65,24 @@ export const LEDGER_REASON: Record<string, string> = {
   transfer: '财政补贴',
   grant: '初始资金',
   delisting: '退市返还',
+  ipo: '新股缴款',
+  ipo_refund: '认购退款',
 }
 
 export const NEWS_KIND: Record<string, string> = {
-  ipo: '新股',
+  ipo: '新股认购',
   premiere: '开播',
   finale: '完结',
   dividend: '分红',
   rate: '央行',
   delisting: '退市',
+  vcm: '冷静期',
+  allotment: '配售结果',
   system: '公告',
 }
+
+export function hhmm(ts: string | null | undefined): string {
+  return ts ? ts.slice(11, 16) : '–'
+}
+
+export const PHASE_LABEL: Record<string, string> = { auction: '集合竞价', continuous: '交易中', closed: '休市' }

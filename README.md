@@ -151,6 +151,7 @@ journalctl --user -u anistock-server -n 50 --no-pager
 - 交易时间 09:00–23:00，可在 `server/game.toml` 里改
 - 更新代码后：`git pull && uv sync && (cd web && npm ci && npm run build) && systemctl --user restart anistock-server`
 - 重新开服（**会删除所有玩家**）：`uv run python -m server.seed --force`
+- 目前没有数据库迁移：如果某次更新改了游戏数据库的表结构（提交说明里会写），旧的 `data/game.db` 用不了，需要重新开服。开服后真正有人玩了，再加迁移脚本
 
 ### 每季开始时（手动）
 

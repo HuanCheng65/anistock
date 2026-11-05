@@ -7,6 +7,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'market', component: () => import('./views/MarketView.vue'), meta: { tab: 'market', title: '行情' } },
     { path: '/stock/:id', name: 'stock', component: () => import('./views/StockView.vue'), meta: { tab: 'market', title: '个股' } },
+    { path: '/ipo', name: 'ipo', component: () => import('./views/IpoView.vue'), meta: { tab: 'market', title: '新股认购' } },
     { path: '/me', name: 'me', component: () => import('./views/PortfolioView.vue'), meta: { tab: 'me', title: '我的', auth: true } },
     { path: '/rank', name: 'rank', component: () => import('./views/LeaderboardView.vue'), meta: { tab: 'rank', title: '排行' } },
     { path: '/news', name: 'news', component: () => import('./views/NewsView.vue'), meta: { tab: 'news', title: '新闻' } },

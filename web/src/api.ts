@@ -76,6 +76,8 @@ export interface Status {
   now: string
   day: string
   trading: boolean
+  phase: 'auction' | 'continuous' | 'closed'
+  auction_start: string
   open: string
   close: string
   last_closed: string
@@ -83,8 +85,9 @@ export interface Status {
   rate: number
   deposit_rate: number
   rules: {
-    price_limit: number
-    ipo_free_days: number
+    vcm_threshold: number
+    vcm_window_min: number
+    vcm_cool_min: number
     commission: number
     stamp_duty: number
     dividend_tax: [number, number][]
@@ -96,6 +99,7 @@ export interface MarketStock {
   id: number
   code: string
   title: string
+  title_ja?: string | null
   title_en: string | null
   price: number
   prev_close: number
@@ -112,7 +116,8 @@ export interface MarketStock {
   listed_on: string
   ipo_left: number
   ipo_price: number
-  new: boolean
+  new?: boolean
+  cooling?: boolean
   spark: number[]
 }
 
@@ -178,16 +183,17 @@ export interface StockDetail {
   id: number
   code: string
   title: string
+  title_ja?: string | null
   title_en: string | null
   studio: string | null
-  status: string
+  status: 'listed' | 'delisted' | 'subscribing' | string
   episodes: number | null
   long_runner: boolean
   first_air: string
   listed_on: string
   shares: number
   ipo_price: number
-  ipo_left: number
+  ipo_left?: number
   quote: {
     price: number
     prev_close: number
@@ -196,10 +202,11 @@ export interface StockDetail {
     low: number | null
     volume: number
     turnover: number
-    limit_low: number
-    limit_high: number
-    no_limit: boolean
+    open_ref: number | null
   }
+  vcm?: { active: boolean; until: string | null; low: number | null; high: number | null; count: number }
+  auction?: { price: number | null; volume: number } | null
+  ipo?: Ipo | null
   book: { bids: BookLevel[]; asks: BookLevel[] }
   trades: { price: number; qty: number; ts: string }[]
   weeks: WeekRow[]
@@ -267,4 +274,23 @@ export interface MacroDay {
   injected: number
   exported: number
   taxes: number
+}
+
+export interface Ipo {
+  id: number
+  code: string
+  title: string
+  title_ja?: string | null
+  ipo_price: number
+  sub_start: string
+  sub_end: string
+  listed_on: string
+  first_air: string
+  float_qty: number
+  base_public_qty: number
+  applied_qty: number
+  applicants: number
+  status: 'open' | 'allotted'
+  my: { qty: number; allotted: number | null } | null
+  result: { oversubscribed: number; public_qty: number; ratio: number } | null
 }

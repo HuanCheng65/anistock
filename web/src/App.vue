@@ -2,6 +2,7 @@
 import { computed, onMounted, onBeforeUnmount } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { useSession } from './stores/session'
+import { PHASE_LABEL } from './format'
 
 const route = useRoute()
 const session = useSession()
@@ -31,8 +32,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <span class="word">AniStock</span>
       </RouterLink>
       <div class="state" v-if="session.status">
-        <span class="dot" :class="session.status.trading ? 'open' : 'closed'"></span>
-        <span>{{ session.status.trading ? '交易中' : '休市' }}</span>
+        <span class="dot" :class="session.status.phase ?? (session.status.trading ? 'continuous' : 'closed')"></span>
+        <span>{{ PHASE_LABEL[session.status.phase] ?? (session.status.trading ? '交易中' : '休市') }}</span>
         <span class="sep">·</span>
         <span>利率 <span class="num">{{ (session.status.rate * 100).toFixed(2) }}%</span></span>
       </div>
@@ -77,7 +78,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
 .state { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
 .sep { color: var(--rule-strong); }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-.dot.open { background: var(--up); box-shadow: 0 0 0 3px var(--up-bg); }
+.dot.continuous { background: var(--up); box-shadow: 0 0 0 3px var(--up-bg); }
+.dot.auction { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-bg); }
 .login-link { font-size: 14px; font-weight: 500; }
 .who { font-size: 13px; color: var(--ink-2); max-width: 7em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
