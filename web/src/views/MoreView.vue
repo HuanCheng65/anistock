@@ -25,7 +25,7 @@ async function logout() {
       </template>
       <RouterLink v-else to="/login"><b>登录 / 注册</b><span class="small muted">注册需要社团邀请码</span></RouterLink>
     </section>
-    <p class="small muted foot">AniStock 是社团内部的模拟游戏，游戏币不能充值、不能兑换任何真实财物。番剧数据来自 AniList、Bangumi、Annict 的公开统计。</p>
+    <p class="small muted foot">安易是社团内部的模拟游戏，游戏币不能充值、不能兑换任何真实财物。番剧数据来自 AniList、Bangumi、Annict 的公开统计。</p>
   </main>
 </template>
 

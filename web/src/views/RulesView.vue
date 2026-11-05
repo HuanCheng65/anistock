@@ -24,7 +24,7 @@ const taxText = computed(() => {
   <main class="page doc">
     <header>
       <span class="label">规则</span>
-      <h1>AniStock 完整规则</h1>
+      <h1>完整规则</h1>
       <p class="muted small">交易规则参考港股、美股；为了好上手做过的简化，标了“简化”。</p>
     </header>
 

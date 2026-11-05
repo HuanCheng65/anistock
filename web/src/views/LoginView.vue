@@ -37,7 +37,7 @@ async function submit() {
   <main class="page login">
     <section class="intro">
       <BrandMark :size="44" />
-      <h1>AniStock 番剧交易所</h1>
+      <h1>AniEx 安易</h1>
       <p class="muted">每部新番都是一家上市公司。真实观众的热度就是它的营收，营收每周按持股分红。看好哪部番，就买它的股票。</p>
     </section>
 

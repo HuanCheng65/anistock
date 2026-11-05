@@ -28,9 +28,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
 <template>
   <header class="topbar">
     <div class="topbar-inner">
-      <RouterLink to="/" class="brand" aria-label="AniStock 首页">
+      <RouterLink to="/" class="brand" aria-label="安易首页">
         <BrandMark :size="26" />
-        <span class="word">AniStock</span>
+        <span class="word">AniEx</span><span class="word-cn">安易</span>
       </RouterLink>
       <div class="state" v-if="session.status">
         <span class="dot" :class="session.status.phase ?? (session.status.trading ? 'continuous' : 'closed')"></span>
@@ -71,6 +71,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 }
 .brand { display: flex; align-items: center; gap: 8px; color: var(--ink); }
 .word { font-weight: 700; letter-spacing: 0.02em; font-size: 16px; }
+.word-cn { font-size: 13px; color: var(--ink-2); }
 .state { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
 .sep { color: var(--rule-strong); }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }

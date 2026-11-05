@@ -1,4 +1,4 @@
-# AniStock 前端
+# 安易 AniEx 前端
 
 Vue 3 + Vite + TypeScript，vue-router、Pinia，图表用 lightweight-charts 4.1.3（打包进产物，不依赖 CDN）。
 

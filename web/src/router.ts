@@ -33,7 +33,7 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  document.title = `${(to.meta.title as string) ?? ''} · AniStock`
+  document.title = `${(to.meta.title as string) ?? ''} · 安易`
 })
 
 export default router

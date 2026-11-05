@@ -115,7 +115,7 @@ def main() -> None:
         conn.execute("UPDATE lots SET cost=MAX(1, ROUND(cost*?)) WHERE company_id=?", (k, c["id"]))
     conn.execute("UPDATE companies SET prev_close = fair_value, last_price = fair_value WHERE status='listed'")
     conn.execute("INSERT INTO news(ts, day, kind, title, body) VALUES (?,?, 'system', ?, ?)",
-                 (ts, day, "AniStock 开市",
+                 (ts, day, "安易开市",
                   f"{n} 支番剧股票开始交易。开市前的走势由 7 月以来的真实热度数据回放生成；"
                   "开市参考价按开市时的经营数据定价，回放走势已按比例接到这个价格上。"))
     gdb.check_invariants(conn)
