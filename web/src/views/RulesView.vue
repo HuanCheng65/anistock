@@ -1,24 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import BackButton from '../components/BackButton.vue'
+import { taxBrackets } from '../format'
 import { useSession } from '../stores/session'
 
 const session = useSession()
 const r = computed(() => session.status?.rules)
 const st = computed(() => session.status)
 const p = (v: number | undefined, d = 2) => (v == null ? '–' : (v * 100).toFixed(d) + '%')
-const taxText = computed(() => {
-  const t = r.value?.dividend_tax
-  if (!t) return '持有不满 1 周 20%，1 周到 1 季 10%，超过 1 季免税'
-  const parts: string[] = []
-  let prev = 0
-  for (const [days, rate] of t) {
-    const span = days >= 100000 ? `超过 ${prev} 天` : prev === 0 ? `不满 ${days} 天` : `${prev}–${days} 天`
-    parts.push(`${span} ${(rate * 100).toFixed(0)}%`)
-    prev = days
-  }
-  return parts.join('，')
-})
+const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${x.k} ${x.v}`).join('，'))
 </script>
 
 <template>

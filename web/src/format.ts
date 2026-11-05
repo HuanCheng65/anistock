@@ -181,3 +181,20 @@ export function episodeText(aired: number, total: number | null, longRunner: boo
   if (longRunner || total == null) return `第 ${aired} 集`
   return `${Math.min(aired, total)} / ${total}`
 }
+
+/** Dividend-tax brackets from the server's [[maxDays, rate], …] (max days inclusive, FIFO lot age) as labelled rows. */
+export const DEFAULT_DIVIDEND_TAX: [number, number][] = [[0, 0.2], [27, 0.1], [100000, 0]]
+export function taxBrackets(t: [number, number][] = DEFAULT_DIVIDEND_TAX): { k: string; v: string }[] {
+  const span = (d: number) => (d >= 7 && d % 7 === 0 ? `${d / 7} 周` : `${d} 天`)
+  let prev = -1
+  return t.map(([days, rate]) => {
+    const start = prev + 1
+    prev = days
+    let k: string
+    if (days >= 100000) k = `持有满 ${span(start)}`
+    else if (start === 0 && days === 0) k = '当天买入'
+    else if (start === 0) k = `持有不满 ${span(days + 1)}`
+    else k = `持有 ${span(start)}到不满 ${span(days + 1)}`
+    return { k, v: `${Math.round(rate * 100)}%` }
+  })
+}

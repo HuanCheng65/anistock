@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ApiError, type PlaceResult } from '../api'
 import Cover from '../components/Cover.vue'
 import { usePoll } from '../composables/usePoll'
-import { dir, money, pct, qty } from '../format'
+import { dir, money, pct, qty, taxBrackets } from '../format'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
 import { useSession } from '../stores/session'
@@ -30,16 +30,7 @@ const picks = computed(() =>
 )
 const chosen = computed(() => market.byId.get(pickId.value ?? -1) ?? picks.value[0] ?? null)
 const buyQty = computed(() => (chosen.value ? Math.floor(10000 / chosen.value.price) : 0))
-const tax = computed(() => {
-  const t = session.status?.rules.dividend_tax ?? [[7, 0.2], [91, 0.1], [100000, 0]]
-  const span = (d: number) => (d % 7 === 0 ? `${d / 7} 周` : `${d} 天`)
-  const label = (d: number) => (d === 7 ? '7 天' : span(d))
-  return t.map(([days, rate], i) => {
-    const prev = i ? t[i - 1][0] : 0
-    const k = i === 0 ? `持有 ${label(days)}以内` : days >= 100000 ? `持有 ${label(prev)}以上` : `持有 ${label(prev)}到 ${label(days)}`
-    return { k, v: Math.round(rate * 100) + '%' }
-  })
-})
+const tax = computed(() => taxBrackets(session.status?.rules.dividend_tax))
 const trading = computed(() => session.status?.phase === 'continuous')
 const note = computed(() => {
   if (step.value === 0) return chosen.value ? `《${chosen.value.title}》 现价 ${money(chosen.value.price)}` : ''
