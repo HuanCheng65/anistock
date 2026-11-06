@@ -209,17 +209,25 @@ pub async fn handler(
     };
     let account = if bot.is_some() { None } else { super::session_account(&st, &headers) };
     let exp = account.and_then(|_| cookie_exp(&headers));
-    let ip = super::client_ip(Some(peer), &headers);
+    let ip = super::ratelimit::ip_key(&super::client_ip(Some(peer), &headers));
     let over = {
         let mut m = per_ip().lock().unwrap();
+        let total: usize = m.values().sum();
         let n = m.entry(ip.clone()).or_default();
-        if *n >= st.v1.limits.ws_per_ip {
+        if *n >= st.v1.limits.ws_per_ip || total >= st.v1.limits.ws_total {
             true
         } else {
             *n += 1;
             false
         }
     };
+    // `or_default` above may have left a zero entry for a refused connection
+    if over {
+        let mut m = per_ip().lock().unwrap();
+        if m.get(&ip) == Some(&0) {
+            m.remove(&ip);
+        }
+    }
     let up = ws.read_buffer_size(READ_BUF).write_buffer_size(0).max_message_size(MAX_IN).max_frame_size(MAX_IN);
     if over {
         return up

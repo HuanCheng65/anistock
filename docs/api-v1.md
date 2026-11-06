@@ -64,7 +64,8 @@
 | | `GET /api/v1/me/ledger` | 玩家 / 机器人代表 | `/api/ledger` |
 | | `POST /api/v1/me/restructure` | 玩家 | `POST /api/me/restructure`（开发中） |
 | 排行 | `GET /api/v1/leaderboard?period=all\|week\|season` | 无 | `/api/leaderboard` |
-| 认证 | `POST /api/v1/auth/register` | 无 | `/api/register` |
+| 认证 | `GET /api/v1/auth/challenge?purpose=register\|login` | 无 | 新 |
+| | `POST /api/v1/auth/register` | 无 | `/api/register` |
 | | `POST /api/v1/auth/login` | 无 | `/api/login` |
 | | `POST /api/v1/auth/logout` | 无 | `/api/logout` |
 | 绑定 | `POST /api/v1/me/bind-codes` | 玩家（仅网页） | 新 |
@@ -257,6 +258,10 @@
 | 422 | `ipo_not_open` | 不在认购期（认购时间是 2026-11-06 至 2026-11-09） | `sub_start`、`sub_end` |
 | 422 | `ipo_closed` | 认购已截止，无法撤回 | — |
 | 422 | `bad_invite` | 邀请码不正确，可以向社团管理员索取 | — |
+| 403 | `registration_closed` | 暂未开放注册 | — |
+| 422 | `pow_required` | 需要先完成验证，重新提交即可 | — |
+| 422 | `pow_invalid` | 验证已失效，重新提交即可 | — |
+| 503 | `busy` | 当前登录的人较多，稍后重试 | `retry_after`（秒） |
 | 422 | `restructure_not_eligible` | 总资产低于 10,000 币才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
 | 409 | `credit_open` | 信用账户已经开通 | — |
 | 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 币才能开通 / 穿仓后需要先申请重整 | — |
@@ -327,11 +332,14 @@ ETag 主要是给机器人和轮询的客户端省流量；网页连上 WebSocke
 | 机器人令牌（按令牌，代表的所有玩家合计） | **30 次/秒**（桶容量 60） | `bot_rps`、`bot_burst` |
 | 未登录（按 IP） | 10 次/秒（桶容量 20） | `anon_rps`、`anon_burst` |
 | 登录 / 注册（按 IP） | 10 次/分 | `auth_per_min` |
+| 注册（按 IP，另外计数） | 20 次/天 | `register_per_ip_day` |
 | 绑定码兑换（按 QQ 号） | 5 次/小时 | `bind_per_hour` |
 
 - 下单、撤单不另设限额，算在玩家的 10 次/秒里（引擎吞吐远高于这个数）。
 - 响应头采用 IETF 草案 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`；超限返回 429 `rate_limited` 和 `Retry-After`。
-- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 8，`ws_per_ip`）和每条连接的订阅数（§5.2）。
+- 按 IP 计数时，IPv6 地址按所在的 /64 合并（一个用户通常有整个 /64，可以随意换地址）；IPv4 映射地址按 IPv4 计。
+- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 32，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 2000，`ws_total`）和每条连接的订阅数（§5.2）。
+- 密码哈希（scrypt，每次约 50 ms）同时最多算 `hash_concurrency` 个（默认 2）。登录、注册最多等 5 秒，等不到返回 503 `busy`，撮合和推送不受影响。
 
 ### 2.13 其他
 
@@ -384,21 +392,36 @@ X-Act-As: qq:123456789
 
 ### 3.4 认证接口
 
+#### `GET /api/v1/auth/challenge?purpose=register|login`
+
+注册模式和工作量证明的题目（设计见 `docs/v2-account.md` §3.2）。不缓存。
+
+```json
+{"registration": "open",
+ "challenge": {"algorithm": "PBKDF2-SHA-256", "purpose": "register", "salt": "9f2c…", "cost": 5000, "max": 1000,
+               "target": "3a7e…", "expires": 1793000000, "signature": "c41b…"}}
+```
+- `registration`：`open` 开放注册；`invite` 需要邀请码；`closed` 暂停注册。由 `game.toml` 的 `[account] registration` 或环境变量 `ANISTOCK_REGISTRATION` 决定。
+- `challenge`：不需要验证时为 `null`（注册已关闭；登录且不在高压状态）。
+- 解法：找 `[0, max)` 里的整数 `n`，使 PBKDF2-SHA-256(password = `n` 的十进制字符串, salt = `salt` 的 UTF-8 字节, iterations = `cost`, 输出 32 字节) 的十六进制等于 `target`。提交 `{"challenge": <原样>, "number": n}`。
+- 每道题只能提交一次（答错也算），有效期 `expires_secs`（默认 5 分钟）。
+- 注册一直需要验证；登录只在全站每分钟的登录和注册请求超过 `surge_per_min` 时需要（之后持续 `cooldown_secs`），这段时间注册的 `max` 也乘以 `surge_factor`。参数在 `[api.pow]`。
+
 #### `POST /api/v1/auth/register`
 
 ```json
-{"username": "alice", "password": "secret123", "invite": "CLUB2026"}
+{"username": "alice", "password": "secret123", "invite": "CLUB2026", "pow": {"challenge": {…}, "number": 417}}
 ```
-- `username`：去掉首尾空白后 2–20 个字符；`password`：至少 6 位；`invite`：开放注册前必填。
+- `username`：去掉首尾空白后 2–20 个字符；`password`：至少 6 位；`invite`：邀请注册模式下必填；`pow`：题目不为 `null` 时必填。
 - 201，设置 cookie，返回 `Me`（§4.5.1）。
-- 错误：`invalid_request`、`bad_invite`、`username_taken`、`rate_limited`。
+- 错误：`invalid_request`、`registration_closed`、`bad_invite`、`pow_required`、`pow_invalid`、`username_taken`、`busy`、`rate_limited`。
 
 #### `POST /api/v1/auth/login`
 
 ```json
-{"username": "alice", "password": "secret123"}
+{"username": "alice", "password": "secret123", "pow": null}
 ```
-200，设置 cookie，返回 `Me`。错误：`invalid_request`、`bad_credentials`、`rate_limited`。
+200，设置 cookie，返回 `Me`。错误：`invalid_request`、`pow_required`、`pow_invalid`、`bad_credentials`、`busy`、`rate_limited`。收到 `pow_required` 或 `pow_invalid` 时，重新取题再提交。
 
 #### `POST /api/v1/auth/logout`
 

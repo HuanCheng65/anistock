@@ -30,6 +30,12 @@ fn root() -> std::path::PathBuf {
 }
 
 fn app(at: &str, always_open: bool) -> App {
+    app_env(at, always_open, &[])
+}
+
+/// `app` with extra environment variables for `Config::load_from`.
+fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) -> App {
+    let extra: Vec<(&'static str, &'static str)> = extra.to_vec();
     let mut fx = Fx::new();
     let pw = anistock::auth::hash_pw_with_salt("secret1", &[7u8; 16]);
     let alice = fx.e.create_account("player", "alice", Some("alice"), Some(&pw), None, TS);
@@ -48,7 +54,7 @@ fn app(at: &str, always_open: bool) -> App {
         "ANISTOCK_GAME_DB" => Some(db2.display().to_string()),
         "ANISTOCK_DB" => Some(coll.display().to_string()),
         "ANISTOCK_INVITE" => Some("club".into()),
-        _ => None,
+        k => extra.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()),
     })
     .unwrap();
     cfg.always_open = always_open;
@@ -61,6 +67,10 @@ fn app(at: &str, always_open: bool) -> App {
     v1s.limits.anon = (1e9, 1e9);
     v1s.limits.player = (1e9, 1e9);
     v1s.limits.auth = (1e9, 1e9);
+    v1s.limits.register = (1e9, 1e9);
+    // a cheap proof of work: the tests run unoptimised
+    v1s.pow.cfg.cost = 2;
+    v1s.pow.cfg.register_max = 20;
     let st = Arc::new(AppState {
         actor,
         cfg: cfg.clone(),
@@ -304,14 +314,68 @@ async fn orders_and_their_errors() {
     err(&a.req("POST", "/api/v1/me/restructure", Some(json!({"confirm": true})), &h).await, 422, "restructure_not_eligible");
 }
 
+/// A fresh register challenge with its answer, as the request's `pow`.
+async fn solved(a: &App) -> Value {
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    let c: anistock::api::v1::pow::PowChallenge = serde_json::from_value(r.json["challenge"].clone()).unwrap();
+    let n = anistock::api::v1::pow::solve(&c).unwrap();
+    json!({"challenge": c, "number": n})
+}
+
+#[tokio::test]
+async fn registration_modes() {
+    let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_REGISTRATION", "open")]);
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    assert_eq!(r.json["registration"], "open");
+    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "pow": solved(&a).await})), &[]).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+
+    let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_REGISTRATION", "closed")]);
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    assert_eq!(r.json["registration"], "closed");
+    assert_eq!(r.json["challenge"], Value::Null);
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "invite": "club"})), &[]).await, 403, "registration_closed");
+    // login is unaffected
+    assert!(!a.login().await.is_empty());
+}
+
+#[tokio::test]
+async fn static_assets_are_immutable() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+    std::fs::write(dir.path().join("assets/app-abc123.js"), "x").unwrap();
+    std::fs::write(dir.path().join("index.html"), "<html></html>").unwrap();
+    let r = anistock::api::spa::asset(dir.path(), "app-abc123.js", &axum::http::Method::GET, &Default::default()).await;
+    assert_eq!(r.headers().get("cache-control").unwrap(), "public, max-age=31536000, immutable");
+    let r = anistock::api::spa::catch_all(dir.path(), "/stocks/1").await;
+    assert_eq!(r.headers().get("cache-control").unwrap(), "no-cache");
+}
+
 #[tokio::test]
 async fn auth_bindings_and_routing_errors() {
     let a = app("2026-11-05T10:00:00+08:00", true);
     err(&a.get("/api/v1/me", None).await, 401, "unauthenticated");
     err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "nope!!"})), &[]).await, 401, "bad_credentials");
     err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "x"})), &[]).await, 422, "bad_invite");
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "alice", "password": "secret1", "invite": "club"})), &[]).await, 409, "username_taken");
-    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club"})), &[]).await;
+    // registration needs a proof of work; login does not (no surge)
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("GET", "/api/v1/auth/challenge", 200), &r.json, "challenge");
+    assert_eq!(r.json["registration"], "invite");
+    assert_eq!(r.headers.get("cache-control").unwrap(), "no-store");
+    let r = a.get("/api/v1/auth/challenge?purpose=login", None).await;
+    assert_eq!(r.json["challenge"], Value::Null);
+    err(&a.get("/api/v1/auth/challenge?purpose=x", None).await, 400, "invalid_request");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club"})), &[]).await, 422, "pow_required");
+    let pow = solved(&a).await;
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "alice", "password": "secret1", "invite": "club", "pow": pow})), &[]).await, 409, "username_taken");
+    // that challenge is spent
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": pow})), &[]).await, 422, "pow_invalid");
+    let mut wrong = solved(&a).await;
+    wrong["number"] = json!((wrong["number"].as_u64().unwrap() + 1) % wrong["challenge"]["max"].as_u64().unwrap());
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": wrong})), &[]).await, 422, "pow_invalid");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": 3})), &[]).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": solved(&a).await})), &[]).await;
     assert_eq!(r.status, 201, "{}", r.json);
     a.validate(&a.schema("POST", "/api/v1/auth/register", 201), &r.json, "register");
     err(&a.get("/api/v1/nope", None).await, 404, "not_found");

@@ -26,7 +26,7 @@ use super::{account, bind, corporate, credit, market, search, stocks, works};
         account::me, account::portfolio, account::asset_history, account::orders, account::order_one, account::place,
         account::cancel, account::my_trades, account::ledger, account::restructure,
         account::leaderboard, credit::credit, credit::open, credit::repay, credit::stock_margin,
-        account::register, account::login, account::logout,
+        account::challenge, account::register, account::login, account::logout,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
     ),
     components(schemas(

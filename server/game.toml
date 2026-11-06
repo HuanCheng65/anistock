@@ -147,9 +147,28 @@ bot_rps = 30
 bot_burst = 60
 anon_rps = 10
 anon_burst = 20
-auth_per_min = 10             # login / register per IP
+auth_per_min = 10             # login / register per IP (an IPv6 address counts by its /64)
+register_per_ip_day = 20      # registrations per IP per day, on top of auth_per_min (generous: campus NAT)
 bind_per_hour = 5             # bind-code redemptions per QQ number
-ws_per_ip = 8                 # concurrent WebSocket connections per IP
+ws_per_ip = 32                # concurrent WebSocket connections per IP (campus NAT shares one address)
+ws_total = 2000               # concurrent WebSocket connections, site-wide
+hash_concurrency = 2          # password hashes (scrypt, ~50 ms each) at a time; a login waits up to 5 s for a slot
+
+[api.pow]
+# proof of work for register / login (docs/v2-account.md §3.2): the browser finds n in [0, max) with
+# PBKDF2-SHA-256(n, salt, cost) = target. register_max = 0 turns it off.
+cost = 5000
+register_max = 1000           # about 1-2 s on a mid-range phone (measure before launch)
+login_max = 1000              # login needs a proof only while surging
+surge_per_min = 60            # register + login attempts per minute, site-wide, that start a surge
+surge_factor = 4              # register's max multiplier while surging
+cooldown_secs = 600           # a surge lasts this long after the last minute over the threshold
+expires_secs = 300            # a challenge is valid this long
+
+[account]
+# who may register (docs/v2-account.md §3.1): open, invite (needs ANISTOCK_INVITE), closed.
+# ANISTOCK_REGISTRATION in .env overrides this.
+registration = "invite"
 
 [api.events]
 # bot events (docs/api-v1.md §5.3.7): big_move thresholds

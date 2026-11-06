@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod market;
 pub mod openapi;
+pub mod pow;
 pub mod ratelimit;
 pub mod search;
 pub mod stocks;
@@ -59,6 +60,10 @@ pub struct V1State {
     /// `Idempotency-Key`: (account, key) -> (when, status, body)
     pub idem: Mutex<HashMap<(i64, String), (std::time::Instant, u16, Vec<u8>)>>,
     pub events: events::EventRules,
+    /// register / login proof of work (docs/v2-account.md §3.2)
+    pub pow: pow::Pow,
+    /// password hashes computed at the same time (`limits.hash_concurrency`)
+    pub hashing: tokio::sync::Semaphore,
 }
 
 impl V1State {
@@ -71,6 +76,8 @@ impl V1State {
             side: Mutex::new(None),
             idem: Mutex::new(HashMap::new()),
             events: events::EventRules::from_config(cfg),
+            pow: pow::Pow::new(pow::PowConfig::from_config(cfg)),
+            hashing: tokio::sync::Semaphore::new(ratelimit::Limits::from_config(cfg).hash_concurrency),
         }
     }
 }
@@ -260,17 +267,25 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
     let mut resp = match resolve(&st, req.headers()).await {
         Err(e) => e.into_response(),
         Ok(caller) => {
+            let ip_key = ratelimit::ip_key(&ip);
             let key = match &caller {
                 Caller::Player { id } => ratelimit::Key::Player(*id),
                 Caller::Bot { name } | Caller::BotAs { name, .. } => ratelimit::Key::Bot(name.clone()),
-                Caller::Anon => ratelimit::Key::Anon(ip.clone()),
+                Caller::Anon => ratelimit::Key::Anon(ip_key.clone()),
             };
-            let auth_path = method == Method::POST && (path.ends_with("/auth/login") || path.ends_with("/auth/register"));
+            let register = method == Method::POST && path.ends_with("/auth/register");
+            let auth_path = register || (method == Method::POST && path.ends_with("/auth/login"));
+            if auth_path {
+                st.v1.pow.note_attempt();
+            }
             let verdict = {
                 let mut l = st.v1.limiter.lock().unwrap();
                 let mut v = l.take(&st.v1.limits, key);
                 if v.allowed && auth_path {
-                    v = l.take(&st.v1.limits, ratelimit::Key::Auth(ip.clone()));
+                    v = l.take(&st.v1.limits, ratelimit::Key::Auth(ip_key.clone()));
+                }
+                if v.allowed && register {
+                    v = l.take(&st.v1.limits, ratelimit::Key::Register(ip_key.clone()));
                 }
                 v
             };
@@ -564,6 +579,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/credit/repay", post(credit::repay))
         .route("/stocks/{id}/margin", get(credit::stock_margin))
         .route("/leaderboard", get(account::leaderboard))
+        .route("/auth/challenge", get(account::challenge))
         .route("/auth/register", post(account::register))
         .route("/auth/login", post(account::login))
         .route("/auth/logout", post(account::logout))
@@ -591,6 +607,7 @@ fn method_fallback(path: &str) -> Response {
         ["", "me", "orders"] => "GET, POST",
         ["", "me", "orders", _] => "GET, DELETE",
         ["", "ipos", _, "subscription"] | ["", "stocks", _, "rights", "subscription"] => "PUT, DELETE",
+        ["", "auth", "challenge"] => "GET",
         ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
         _ => "GET",

@@ -136,6 +136,20 @@ pub fn bad_invite() -> E {
 pub fn bind_code_invalid() -> E {
     E::new(422, "bind_code_invalid", "绑定码不正确或已过期")
 }
+pub fn registration_closed() -> E {
+    E::new(403, "registration_closed", "暂未开放注册")
+}
+pub fn pow_required() -> E {
+    E::new(422, "pow_required", "需要先完成验证，重新提交即可")
+}
+pub fn pow_invalid() -> E {
+    E::new(422, "pow_invalid", "验证已失效，重新提交即可")
+}
+pub fn busy() -> E {
+    let mut e = E::new(503, "busy", "当前登录的人较多，稍后重试").details(json!({"retry_after": 5}));
+    e.header = Some(("retry-after", "5".into()));
+    e
+}
 pub fn rate_limited(retry_after: u64) -> E {
     let mut e = E::new(429, "rate_limited", "操作太频繁，稍后重试").details(json!({"retry_after": retry_after}));
     e.header = Some(("retry-after", retry_after.to_string()));
@@ -164,6 +178,7 @@ pub fn label(field: &str) -> &'static str {
         "username" => "用户名",
         "password" => "密码",
         "invite" => "邀请码",
+        "pow" => "验证",
         "quantity" => "数量",
         "price" => "价格",
         "stock_id" | "id" => "股票",

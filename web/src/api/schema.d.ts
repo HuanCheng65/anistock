@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/auth/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 注册模式和验证题目 */
+        get: operations["challenge"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -779,6 +796,12 @@ export interface components {
             annict: null | components["schemas"]["AnnictAudience"];
             bangumi: null | components["schemas"]["BangumiAudience"];
         };
+        /** @description 注册模式和验证题目 */
+        AuthChallenge: {
+            challenge: null | components["schemas"]["PowChallenge"];
+            /** @description `open`：开放注册；`invite`：需要邀请码；`closed`：暂停注册 */
+            registration: string;
+        };
         BangumiAudience: {
             collection: null | components["schemas"]["BangumiCollection"];
             /** Format: int64 */
@@ -1212,6 +1235,7 @@ export interface components {
         };
         LoginRequest: {
             password: string;
+            pow?: null | components["schemas"]["PowSolution"];
             username: string;
         };
         MacroResponse: {
@@ -1445,6 +1469,38 @@ export interface components {
             stock: components["schemas"]["StockRef"];
             value: components["schemas"]["Money"];
         };
+        /** @description 验证题目：原样随 `pow.challenge` 交回 */
+        PowChallenge: {
+            /** @description 固定为 `PBKDF2-SHA-256` */
+            algorithm: string;
+            /**
+             * Format: int32
+             * @description PBKDF2 迭代次数
+             */
+            cost: number;
+            /**
+             * Format: int64
+             * @description 过期时间（Unix 秒）
+             */
+            expires: number;
+            /**
+             * Format: int64
+             * @description 答案在 `[0, max)` 之内
+             */
+            max: number;
+            /** @description `register` 或 `login` */
+            purpose: string;
+            salt: string;
+            signature: string;
+            /** @description PBKDF2-SHA-256(password = 答案的十进制字符串, salt = `salt` 的 UTF-8 字节, iterations = `cost`, 32 字节) 的十六进制 */
+            target: string;
+        };
+        /** @description 验证答案 */
+        PowSolution: {
+            challenge: components["schemas"]["PowChallenge"];
+            /** Format: int64 */
+            number: number;
+        };
         PublicTrade: {
             at: components["schemas"]["Timestamp"];
             /** Format: int64 */
@@ -1529,8 +1585,10 @@ export interface components {
             binding: components["schemas"]["Binding"];
         };
         RegisterRequest: {
+            /** @description 只在邀请注册模式下需要 */
             invite?: string | null;
             password: string;
+            pow?: null | components["schemas"]["PowSolution"];
             username: string;
         };
         RepayRequest: {
@@ -1971,6 +2029,36 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    challenge: {
+        parameters: {
+            query: {
+                /** @description register 或 login */
+                purpose: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthChallenge"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;

@@ -994,13 +994,27 @@ pub struct Leaderboard {
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
+    /// 只在邀请注册模式下需要
     pub invite: Option<String>,
+    /// `GET /auth/challenge?purpose=register` 返回题目时必填
+    pub pow: Option<super::pow::PowSolution>,
 }
 
 #[derive(Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    /// 登录请求过多时需要（`GET /auth/challenge?purpose=login` 返回题目时）
+    pub pow: Option<super::pow::PowSolution>,
+}
+
+/// 注册模式和验证题目
+#[derive(Serialize, ToSchema)]
+pub struct AuthChallenge {
+    /// `open`：开放注册；`invite`：需要邀请码；`closed`：暂停注册
+    pub registration: String,
+    /// 不需要验证时为 null
+    pub challenge: Option<super::pow::PowChallenge>,
 }
 
 #[derive(Deserialize, ToSchema)]

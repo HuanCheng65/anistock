@@ -227,6 +227,31 @@
         ],
         "type": "object"
       },
+      "AuthChallenge": {
+        "description": "注册模式和验证题目",
+        "properties": {
+          "challenge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PowChallenge",
+                "description": "不需要验证时为 null"
+              }
+            ]
+          },
+          "registration": {
+            "description": "`open`：开放注册；`invite`：需要邀请码；`closed`：暂停注册",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge",
+          "registration"
+        ],
+        "type": "object"
+      },
       "BangumiAudience": {
         "properties": {
           "collection": {
@@ -1680,6 +1705,17 @@
           "password": {
             "type": "string"
           },
+          "pow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PowSolution",
+                "description": "登录请求过多时需要（`GET /auth/challenge?purpose=login` 返回题目时）"
+              }
+            ]
+          },
           "username": {
             "type": "string"
           }
@@ -2572,6 +2608,75 @@
         ],
         "type": "object"
       },
+      "PowChallenge": {
+        "description": "验证题目：原样随 `pow.challenge` 交回",
+        "properties": {
+          "algorithm": {
+            "description": "固定为 `PBKDF2-SHA-256`",
+            "type": "string"
+          },
+          "cost": {
+            "description": "PBKDF2 迭代次数",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expires": {
+            "description": "过期时间（Unix 秒）",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max": {
+            "description": "答案在 `[0, max)` 之内",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "purpose": {
+            "description": "`register` 或 `login`",
+            "type": "string"
+          },
+          "salt": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "target": {
+            "description": "PBKDF2-SHA-256(password = 答案的十进制字符串, salt = `salt` 的 UTF-8 字节, iterations = `cost`, 32 字节) 的十六进制",
+            "type": "string"
+          }
+        },
+        "required": [
+          "algorithm",
+          "cost",
+          "expires",
+          "max",
+          "purpose",
+          "salt",
+          "signature",
+          "target"
+        ],
+        "type": "object"
+      },
+      "PowSolution": {
+        "description": "验证答案",
+        "properties": {
+          "challenge": {
+            "$ref": "#/components/schemas/PowChallenge"
+          },
+          "number": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "challenge",
+          "number"
+        ],
+        "type": "object"
+      },
       "PublicTrade": {
         "properties": {
           "at": {
@@ -2902,6 +3007,7 @@
       "RegisterRequest": {
         "properties": {
           "invite": {
+            "description": "只在邀请注册模式下需要",
             "type": [
               "string",
               "null"
@@ -2909,6 +3015,17 @@
           },
           "password": {
             "type": "string"
+          },
+          "pow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PowSolution",
+                "description": "`GET /auth/challenge?purpose=register` 返回题目时必填"
+              }
+            ]
           },
           "username": {
             "type": "string"
@@ -4539,6 +4656,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/challenge": {
+      "get": {
+        "operationId": "challenge",
+        "parameters": [
+          {
+            "description": "register 或 login",
+            "in": "query",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthChallenge"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "注册模式和验证题目",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "operationId": "login",

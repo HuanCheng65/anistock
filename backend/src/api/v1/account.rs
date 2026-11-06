@@ -993,18 +993,69 @@ fn with_cookie(mut r: Response, cookie: &str) -> Response {
     r
 }
 
+/// The `pow` of a register / login body, checked against `purpose`: required when a challenge would be
+/// issued now (or one was sent anyway).
+fn check_pow(st: &AppState, b: &serde_json::Map<String, serde_json::Value>, purpose: &str) -> R<()> {
+    let sol = match b.get("pow") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            serde_json::from_value::<super::pow::PowSolution>(v.clone())
+                .map_err(|_| error::invalid(vec![error::wrong_type("pow")]))?,
+        ),
+    };
+    let Some(sol) = sol else {
+        return if st.v1.pow.max_for(purpose) > 0 { Err(error::pow_required()) } else { Ok(()) };
+    };
+    st.v1.pow.verify(&st.secret, purpose, &sol, st.unix_now() as i64).map_err(|_| error::pow_invalid())
+}
+
+/// A password hash on a blocking thread, at most `hash_concurrency` at a time; waits up to 5 s for a slot.
+async fn hashing<T: Send + 'static>(st: &AppState, f: impl FnOnce() -> T + Send + 'static) -> R<T> {
+    let permit = tokio::time::timeout(std::time::Duration::from_secs(5), st.v1.hashing.acquire())
+        .await
+        .map_err(|_| error::busy())?
+        .map_err(error::internal)?;
+    let out = tokio::task::spawn_blocking(f).await.map_err(error::internal)?;
+    drop(permit);
+    Ok(out)
+}
+
+/// 注册模式和验证题目
+#[utoipa::path(get, path = "/api/v1/auth/challenge", tag = "auth",
+    params(("purpose" = String, Query, description = "register 或 login")),
+    responses((status = 200, body = AuthChallenge), (status = "default", body = ErrorBody)))]
+pub async fn challenge(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> R<Json<AuthChallenge>> {
+    let q = Q::parse(q.as_deref());
+    let purpose = q.get("purpose").unwrap_or("").to_string();
+    if purpose != "register" && purpose != "login" {
+        return Err(error::invalid(vec![error::not_allowed("purpose")]));
+    }
+    let registration = st.cfg.registration;
+    let challenge = if purpose == "register" && registration == crate::config::Registration::Closed {
+        None
+    } else {
+        st.v1.pow.issue(&st.secret, &purpose, st.unix_now() as i64)
+    };
+    Ok(Json(AuthChallenge { registration: registration.as_str().into(), challenge }))
+}
+
 /// 注册
 #[utoipa::path(post, path = "/api/v1/auth/register", tag = "auth",
     request_body = RegisterRequest,
     responses((status = 201, body = Me), (status = "default", body = ErrorBody)))]
 pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> R<Response> {
+    use crate::config::Registration;
     let b = json_body(&headers, &body)?;
+    if st.cfg.registration == Registration::Closed {
+        return Err(error::registration_closed());
+    }
     let (name, password) = credentials(&b)?;
     let invite = body_str(&b, "invite")?;
-    if invite.as_deref().map(str::trim) != Some(st.cfg.invite_code.as_str()) {
+    if st.cfg.registration == Registration::Invite && invite.as_deref().map(str::trim) != Some(st.cfg.invite_code.as_str()) {
         return Err(error::bad_invite());
     }
-    let pw_hash = tokio::task::spawn_blocking(move || auth::hash_pw(&password)).await.map_err(error::internal)?;
+    check_pow(&st, &b, "register")?;
+    let pw_hash = hashing(&st, move || auth::hash_pw(&password)).await?;
     let (d, t) = (st.clock.today(), st.clock.ts());
     let grant = initial_cents(&st.cfg);
     let id = engine(&st, move |ctx| -> R<i64> {
@@ -1031,6 +1082,7 @@ pub async fn login(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     let b = json_body(&headers, &body)?;
     let username = need(body_str(&b, "username")?, "username")?.trim().to_string();
     let password = need(body_str(&b, "password")?, "password")?;
+    check_pow(&st, &b, "login")?;
     let row: Option<(i64, Option<String>)> = read(&st, move |c| {
         c.query_row("SELECT id, pw_hash FROM accounts WHERE username=? AND kind='player'", [&username], |r| {
             Ok((r.get(0)?, r.get(1)?))
@@ -1040,10 +1092,7 @@ pub async fn login(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     })
     .await?;
     let Some((id, stored)) = row else { return Err(error::bad_credentials()) };
-    let ok = tokio::task::spawn_blocking(move || auth::check_pw(&password, stored.as_deref()))
-        .await
-        .map_err(error::internal)?
-        .unwrap_or(false);
+    let ok = hashing(&st, move || auth::check_pw(&password, stored.as_deref())).await?.unwrap_or(false);
     if !ok {
         return Err(error::bad_credentials());
     }
