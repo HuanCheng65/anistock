@@ -832,14 +832,16 @@ def fit_stage1(shows, curve_us, keep=lambda sid, prem: True):
     return out
 
 
-def close_days(x, cal, partial=None):
+def close_days(x, cal, partial=None, drift_heat=None):
     """One show through the close's observation logic, day by day (backend/src/vclose.rs valuation_step, in season:
     from the premiere to a week after the finale; shows premiering inside the data, with a point-in-time prior). The
     joint state `base` takes the complete us episode weeks and the new cn/jp values; with `partial` (the
     `partial_us` fit) the days so far of an episode week are observed on top of it (`post`), replaced every day.
     Returns (complete weeks, days): a week is {ys, seg, heat, premiere, finale, mu, s0, drift} (its 7 daily log values
     when aligned on an air day, the base's predictive mean and variance of its observation); a day is
-    (day, n, base mean, post mean, partial observation or None, base predictive variance)."""
+    (day, n, base mean, post mean, partial observation or None, base predictive variance). `drift_heat` (default the
+    file's `drift_heat`): the heat class is set from the us level DRIFT_WEEKS[0] weeks after the premiere and adds its
+    drift offset from then on (engine/valuation.py `heat_class`/`for_class`); each week carries "cls" and "h4"."""
     ad = air_days(x)
     if not ad or x["long_runner"] or x["aired"][0] > 0:
         return [], []
@@ -850,6 +852,8 @@ def close_days(x, cal, partial=None):
         return [], []
     lp = math.log(x["prior_us"][pre_i])
     dr = [tuple(cal["drift_by_week"][m]) for m in MARKETS]
+    hp = {"drift_heat": drift_heat if drift_heat is not None else cal.get("drift_heat"), "drift_by_week": cal["drift_by_week"]}
+    cls, h4, h4_day = None, None, None
     q = [cal["q"][m] for m in MARKETS]
     r = [cal["r"][m] for m in MARKETS]
     op = [cal["outlier_p"][m] for m in MARKETS]
@@ -872,6 +876,11 @@ def close_days(x, cal, partial=None):
             cum = [d_cum(dr[k], prem, day, d) / (d - day) for k in range(3)]
             mean, cov = V.kf_predict_joint(mean, cov, d - day, cum, q)
         day = d
+        if h4 is None and d - prem >= 7 * V.DRIFT_WEEKS[0]:
+            h4, h4_day = mean[0], d
+            if hp["drift_heat"]:
+                cls = V.heat_class(hp, mean[0])
+                dr[0] = tuple(V.for_class(hp, cls)["drift_by_week"]["us"])
         a_ = V.last_air_before(ad, d)
         k = None if a_ is None else d - a_
         in_fin = fin is not None and fin <= d < fin + 7
@@ -880,7 +889,7 @@ def close_days(x, cal, partial=None):
             covers = fin is not None and d - len(ys) <= fin + 6 and d - 1 >= fin
             xr = bvar[0] if covers else 0.0
             y = V.week_observation(sum(ys) / len(ys), len(ys), drift_us)
-            weeks.append({"ys": list(ys), "seg": seg, "heat": heat, "premiere": prem_wk, "finale": covers,
+            weeks.append({"ys": list(ys), "seg": seg, "heat": heat, "premiere": prem_wk, "finale": covers, "cls": cls, "h4": h4, "h4_day": h4_day,
                           "mu": mean[0], "s0": cov[0][0] + r[0] + xr, "y": y, "drift": drift_us, "day": d})
             mean, cov, _, _ = V.kf_update_joint_robust(mean, cov, 0, y, r[0] + xr, op[0], orr[0], CLIP)
             ys, seg, heat, prem_wk = [], None, None, False
@@ -1080,6 +1089,145 @@ def fit_partial_week(shows, cal, lines=None):
     return pu
 
 
+def heat_loglik(shows, cal, dh, keep=lambda sid: True):
+    """Gaussian log-likelihood of the complete us episode weeks observed after the heat class is set (the close's
+    own day-by-day filter with the partial week), given the drift-by-heat table `dh` (False: none)."""
+    ll, n = 0.0, 0
+    for sid, x in shows.items():
+        if not keep(sid):
+            continue
+        weeks, _ = close_days(x, cal, cal.get("partial_us"), dh)
+        for w in weeks:
+            if w["h4"] is None or w["day"] - 7 < w["h4_day"]:
+                continue
+            e = w["y"] - w["mu"]
+            ll += -0.5 * (math.log(2 * math.pi * w["s0"]) + e * e / w["s0"])
+            n += 1
+    return ll, n
+
+
+def history_heat_drift(db_path: Path):
+    """The us in-season drift by heat tercile on the AniList history (sim/history_backfill.py DB, 2018-2025): us
+    attention = 2 * daily list adds + trending, weekly means from the premiere; heat = mean log attention in weeks 1-3,
+    ranked into terciles within the premiere's season (quarter); finished JP TV/ONA series of 10-28 episodes. Weekly log
+    changes from week DRIFT_WEEKS[0] to four weeks before the finale's week (the run-in to the finale rises for
+    every show and is not a heat effect). Per season, each tercile's mean minus the season's mean of the three; across
+    seasons the mean and its season-clustered se; and the same on even and odd years. Returns per-day offsets."""
+    import sqlite3
+    from collections import defaultdict
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    trend = defaultdict(dict)
+    for mid, day, tr, pop in db.execute("SELECT media_id, day, trending, popularity FROM trends"):
+        trend[mid][date.fromisoformat(day)] = (tr or 0, pop or 0)
+
+    def fd(d):
+        return date(d["year"], d["month"], d["day"]) if d and d.get("year") and d.get("month") and d.get("day") else None
+
+    def week_att(mid, a):
+        t = trend[mid]
+        rows = [(a + timedelta(days=k), t.get(a + timedelta(days=k))) for k in range(8)]
+        rows = [(d, r) for d, r in rows if r is not None]
+        if len(rows) < 6:
+            return None
+        wk = [r for d, r in rows if d < a + timedelta(days=7)]
+        tr = sum(r[0] for r in wk) / max(1, len(wk))
+        adds = max(0.0, (rows[-1][1][1] - rows[0][1][1]) / max(1, (rows[-1][0] - rows[0][0]).days))
+        x = 2 * adds + tr
+        return x if x > 0 else None
+    seasons = defaultdict(list)
+    for mid, raw in db.execute("SELECT id, data FROM media WHERE in_scope=1"):
+        m = json.loads(raw)
+        s_, e_ = fd(m.get("startDate")), fd(m.get("endDate"))
+        if not s_ or not e_ or m.get("status") != "FINISHED" or m.get("format") not in ("TV", "ONA"):
+            continue
+        if m.get("countryOfOrigin") != "JP" or not m.get("episodes") or not (10 <= m["episodes"] <= 28) or not (2018 <= s_.year <= 2025):
+            continue
+        nw = (e_ - s_).days // 7
+        att = [week_att(mid, s_ + timedelta(days=7 * w)) for w in range(nw + 1)]
+        if nw < 9 or any(a is None for a in att[1:4]):
+            continue
+        d = [math.log(att[w + 1] / att[w]) for w in range(V.DRIFT_WEEKS[0], nw - 3) if att[w] and att[w + 1]]
+        if d:
+            seasons[(s_.year, (s_.month - 1) // 3)].append((sum(math.log(a) for a in att[1:4]) / 3, d))
+    rel = {}
+    for k, xs in seasons.items():
+        if len(xs) < 9:
+            continue
+        xs.sort(key=lambda z: z[0])
+        means = []
+        for t in range(3):
+            v = [u for i, (_, d) in enumerate(xs) if 3 * i // len(xs) == t for u in d]
+            means.append(sum(v) / len(v))
+        mu = sum(means) / 3
+        rel[k] = [m_ - mu for m_ in means]
+
+    def summ(keys):
+        out = []
+        for t in range(3):
+            v = [rel[k][t] for k in keys]
+            mu = sum(v) / len(v)
+            se = (sum((x - mu) ** 2 for x in v) / (len(v) - 1)) ** .5 / len(v) ** .5
+            out.append((mu, se))
+        return out
+    allk = sorted(rel)
+    res = {"seasons": len(allk), "weekly_rel": summ(allk),
+           "weekly_rel_even_years": summ([k for k in allk if k[0] % 2 == 0]),
+           "weekly_rel_odd_years": summ([k for k in allk if k[0] % 2 == 1])}
+    res["offset"] = [round(mu / 7, 6) for mu, _ in res["weekly_rel"]]
+    return res
+
+
+def fit_drift_heat(shows, cal, history=None):
+    """v0.6.1 (docs/v2-valuation.md §3.10): the us in-season drift by heat class. A show's class is the tercile of
+    its us log level estimate DRIFT_WEEKS[0] weeks after the premiere (known then; fixed after); from then on its us
+    drift is the common one plus its class's offset. Cuts: the terciles over the shows; offsets: maximum likelihood
+    of the complete us weeks observed after that point, the rest fixed. Validated on held-out shows (fit even ids,
+    score odd, and back) and across the two seasons."""
+    h4 = {}
+    for sid, x in shows.items():
+        weeks, _ = close_days(x, cal, cal.get("partial_us"), False)
+        hs = [w["h4"] for w in weeks if w["h4"] is not None]
+        if hs:
+            h4[sid] = hs[0]
+    hs = sorted(h4.values())
+    cuts = [round(hs[len(hs) // 3], 6), round(hs[2 * len(hs) // 3], 6)]
+
+    def fit(keep):
+        f = lambda o: -heat_loglik(shows, cal, {"cuts": cuts, "offset": list(o)}, keep)[0]
+        best, _ = nelder_mead(f, [0.0, 0.0, 0.0], [0.002, 0.002, 0.002], iters=200)
+        return [round(v, 6) for v in best]
+    off = fit(lambda sid: True)
+    ll0, n = heat_loglik(shows, cal, False)
+    ll1, _ = heat_loglik(shows, cal, {"cuts": cuts, "offset": off})
+    fitinfo = {"calibration_ml_offset": off, "loglik_in_sample": [round(ll0, 3), round(ll1, 3)], "weeks": n}
+    # the offsets used: from the history (32 seasons) when given; the two calibration seasons alone cannot tell
+    # them apart from zero (held-out log-likelihood below)
+    res = {"cuts": cuts, "offset": off, "shows": len(h4)}
+    if history:
+        hh = history_heat_drift(history)
+        res["offset"] = hh["offset"]
+        fitinfo["history"] = hh
+        for lab, k in (("all", lambda sid: True), ("even", lambda sid: sid % 2 == 0), ("odd", lambda sid: sid % 2 == 1)):
+            fitinfo[f"history_offset_loglik_{lab}"] = [round(heat_loglik(shows, cal, False, k)[0], 3),
+                                                      round(heat_loglik(shows, cal, res, k)[0], 3)]
+    for tr, te in ((0, 1), (1, 0)):
+        o = fit(lambda sid, tr=tr: sid % 2 == tr)
+        a = heat_loglik(shows, cal, False, lambda sid, te=te: sid % 2 == te)[0]
+        b = heat_loglik(shows, cal, {"cuts": cuts, "offset": o}, lambda sid, te=te: sid % 2 == te)[0]
+        fitinfo[f"held_out_fit{tr}_test{te}"] = {"offset": o, "loglik": [round(a, 3), round(b, 3)]}
+    split = date(2026, 9, 15).toordinal()
+    prem = {sid: air_days(x)[0] for sid, x in shows.items() if air_days(x)}
+    for lab, tr, te in (("summer_to_autumn", lambda p_: p_ < split, lambda p_: p_ >= split),
+                        ("autumn_to_summer", lambda p_: p_ >= split, lambda p_: p_ < split)):
+        o = fit(lambda sid, tr=tr: sid in prem and tr(prem[sid]))
+        kt = lambda sid, te=te: sid in prem and te(prem[sid])
+        a = heat_loglik(shows, cal, False, kt)[0]
+        b = heat_loglik(shows, cal, {"cuts": cuts, "offset": o}, kt)[0]
+        fitinfo[lab] = {"offset": o, "loglik": [round(a, 3), round(b, 3)]}
+    res["fit"] = fitinfo
+    return res
+
+
 def fit_outlier(shows, cal, m):
     """Market m's outlier component by maximum likelihood of its own filter (a profile fit: drift, q and r fixed at
     the calibration `cal`). The weekly cn/jp series and the us week average have occasional one-episode spikes
@@ -1268,6 +1416,9 @@ def main():
     ap.add_argument("--partial-only", action="store_true",
                     help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
                          "write that key back")
+    ap.add_argument("--heat-only", action="store_true",
+                    help="fit only the us drift by heat class (`drift_heat`) with the rest of --out fixed, and write that "
+                         "key back (then refit --partial-only)")
     ap.add_argument("--prior-only", action="store_true",
                     help="refit only the joint prior (bias, p0, the pairwise correlations, cn/jp elasticities) with each "
                          "market's dynamics fixed from --out, and write those keys back (then refit --partial-only)")
@@ -1281,6 +1432,13 @@ def main():
             r = fit_outlier(shows, cal, m)
             cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
             print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.heat_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        BUMP.update(cal["finale_bump"])
+        cal["drift_heat"] = fit_drift_heat(shows, cal, a.history)
+        print(json.dumps(cal["drift_heat"], indent=1))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.prior_only:

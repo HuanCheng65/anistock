@@ -33,6 +33,15 @@ struct PerMarketVec {
     jp: Vec<f64>,
 }
 
+/// v0.6.1 (docs/v2-valuation.md §3.10): a show's heat class is the tercile (`cuts`) of its us log level estimate
+/// `DRIFT_WEEKS[0]` weeks after the premiere; from then on its us drift is the fitted one plus its class's `offset`
+/// per day (big shows fade more slowly in season).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DriftHeat {
+    pub cuts: [f64; 2],
+    pub offset: [f64; 3],
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SeasonListing {
     pub from_day: i64,
@@ -67,6 +76,9 @@ struct RawParams {
     /// v0.6.1: the pairwise correlations [us-cn, us-jp, cn-jp] (absent: `rho` for all three)
     #[serde(default)]
     prior_corr: Option<Vec<f64>>,
+    /// v0.6.1: the us in-season drift by heat class (absent: one drift for every show)
+    #[serde(default)]
+    drift_heat: Option<DriftHeat>,
     /// v0.3.2: "us" = cn/jp priors derive from the us pre-air estimate (prior_bias per market converts it)
     #[serde(default)]
     prior: Option<String>,
@@ -183,6 +195,8 @@ pub struct FilterParams {
     pub rho: f64,
     /// the correlations of the markets' prior log levels, [us-cn, us-jp, cn-jp] (v0.6.1 `prior_corr`, else `rho`)
     pub prior_corr: M3,
+    /// the us in-season drift by heat class (v0.6.1 `drift_heat`)
+    pub drift_heat: Option<DriftHeat>,
     /// cn/jp priors from the us pre-air estimate (v0.3.2 fit), else from each market's own estimate
     pub prior_from_us: bool,
     /// the pre-air estimate's expected log growth (and its variance) until it freezes, by days left
@@ -306,6 +320,26 @@ impl FilterParams {
         }
     }
 
+    /// A show's heat class from its us log level estimate (Python `heat_class`); None without the table.
+    pub fn heat_class(&self, level: f64) -> Option<i64> {
+        self.drift_heat.as_ref().map(|h| (level >= h.cuts[0]) as i64 + (level >= h.cuts[1]) as i64)
+    }
+
+    /// The parameters a show of heat class `cls` is valued with: its class's offset on the us drift from week
+    /// `DRIFT_WEEKS[0]` on (Python `for_class`); borrowed when there is nothing to add.
+    pub fn for_class(&self, cls: Option<i64>) -> std::borrow::Cow<'_, FilterParams> {
+        match (cls, &self.drift_heat) {
+            (Some(c), Some(h)) if h.offset[c as usize] != 0.0 && self.drift_by_week[0].len() >= 3 => {
+                let o = h.offset[c as usize];
+                let mut f = self.clone();
+                f.drift_by_week[0][1] = self.drift_by_week[0][1] + o;
+                f.drift_by_week[0][2] = self.drift_by_week[0][2] + o;
+                std::borrow::Cow::Owned(f)
+            }
+            _ => std::borrow::Cow::Borrowed(self),
+        }
+    }
+
     /// The total log drift from day `t0` to `t1` for a show premiering on `premiere` (Python `cum_drift`).
     pub fn cum_drift(&self, m: usize, t0: i64, t1: i64, premiere: i64) -> f64 {
         (t0..t1).map(|t| self.drift_at(m, (t - premiere).div_euclid(7))).sum()
@@ -341,6 +375,7 @@ impl FilterParams {
             sequel_cost: 0.0,
             hiatus_lag: 290,
             rho: r.rho.unwrap_or(0.0),
+            drift_heat: r.drift_heat,
             prior_corr: match r.prior_corr.as_deref() {
                 Some(&[a, b, c]) => [a, b, c],
                 Some(v) => return Err(format!("valuation filter prior_corr: 3 values expected, got {}", v.len())),
@@ -1079,6 +1114,12 @@ mod tests {
         let v1 = [0.05, 0.2, 0.03];
         let own1: [Vec<f64>; 3] =
             std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s1, today - 20, false, 120, 1.0));
+        // the us drift by heat class (v0.6.1)
+        assert_eq!([fp.heat_class(6.0), fp.heat_class(7.0), fp.heat_class(8.0)], [Some(0), Some(1), Some(2)]);
+        assert_eq!(fp.for_class(Some(2)).drift_by_week[0], vec![-0.019118, -0.0055119999999999995, 0.001039]);
+        assert!(matches!(fp.for_class(None), std::borrow::Cow::Borrowed(_)));
+        let hp = att_path(&fp.for_class(Some(2)), &p, 0, 8.1, 0.05, today, &s1, today - 30, false, 60, 1.0)[59];
+        assert!((hp.to_bits() as i64 - 4513.620059177454f64.to_bits() as i64).abs() <= 2, "heat class path {hp}");
         let m2 = [8.0, 3.5, 2.5];
         let own2: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m2[m], 0.01, today, &s2, today - 900, true, 120, 1.0));
         let tot: [Vec<f64>; 3] = std::array::from_fn(|m| {
@@ -1100,9 +1141,9 @@ mod tests {
         let wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9];
         let segs = [partial_segment(&fp, 6.0, false), partial_segment(&fp, 7.0, false), partial_segment(&fp, 9.0, false), partial_segment(&fp, 9.0, true)];
         assert_eq!(segs, [Some(1), Some(2), Some(3), Some(0)]);
-        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0958627956, 0.234109889)));
-        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.724157589000001, 0.016792259)));
-        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.497311277, 0.000403347)));
+        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0958627956, 0.233272885)));
+        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.724157589000001, 0.016732223)));
+        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.497311277, 0.000400462)));
         assert_eq!(partial_observation(&fp, 1, &wk, -0.0065), Some((7.437, 0.0)));
         assert_eq!(partial_observation(&fp, 1, &wk[..1], 0.0), None);
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));

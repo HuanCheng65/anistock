@@ -85,3 +85,6 @@ print("po0_3", repr(V.partial_observation(fp, 0, wk[:3], -0.019)), "po2_3", repr
 print("po3_6", repr(V.partial_observation(fp, 3, wk[:6], 0.0)), "po1_7", repr(V.partial_observation(fp, 1, wk, -0.0065)), "po_1", V.partial_observation(fp, 1, wk[:1], 0.0))
 # the pairwise prior correlations (v0.6.1): [us-cn, us-jp, cn-jp]; a common rho is the same three
 print("prior_cov_pw", repr(V.prior_cov([0.385, 0.923, 0.322], [0.3185, 0.3983, 0.8146])), V.prior_cov([0.35, 1.08, 0.86], [0.48] * 3) == c)
+# the us drift by heat class (v0.6.1): classes, and a class's path (its offset from week 4 on)
+print("hc", V.heat_class(fp, 6.0), V.heat_class(fp, 7.0), V.heat_class(fp, 8.0), repr(V.for_class(fp, 2)["drift_by_week"]["us"]), V.for_class(fp, None) is fp)
+print("hc_path", repr(V.att_path(V.for_class(fp, 2), p, "us", 8.1, 0.05, today, s1, today - 30, False, 60)[59]))

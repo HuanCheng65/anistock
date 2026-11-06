@@ -274,6 +274,29 @@ def drift_at(fp: dict, m: str, w: int) -> float:
     return seg[0] if w < DRIFT_WEEKS[0] else (seg[1] if w < DRIFT_WEEKS[1] else seg[2])
 
 
+def heat_class(fp: dict, level: float) -> int | None:
+    """v0.6.1: a show's heat class from its us log level estimate DRIFT_WEEKS[0] weeks after the premiere (the
+    terciles `drift_heat.cuts`); None without the table. Fixed once set (docs/v2-valuation.md §3.10)."""
+    dh = fp.get("drift_heat")
+    if not dh:
+        return None
+    return int(level >= dh["cuts"][0]) + int(level >= dh["cuts"][1])
+
+
+def for_class(fp: dict, cls: int | None) -> dict:
+    """The parameters a show of heat class `cls` is valued with: the us drift from week DRIFT_WEEKS[0] on plus its
+    class's offset (big shows fade more slowly in season). The same dict when there is nothing to add."""
+    dh = fp.get("drift_heat")
+    if cls is None or not dh or not dh["offset"][cls] or not fp.get("drift_by_week", {}).get("us"):
+        return fp
+    o = dh["offset"][cls]
+    seg = fp["drift_by_week"]["us"]
+    out = dict(fp)
+    out["drift_by_week"] = dict(fp["drift_by_week"])
+    out["drift_by_week"]["us"] = [seg[0], seg[1] + o, seg[2] + o]
+    return out
+
+
 def cum_drift(fp: dict, m: str, t0: int, t1: int, premiere: int) -> float:
     """The level's total log drift from day t0 to day t1 (t1 >= t0) for a show premiering on `premiere`."""
     return sum(drift_at(fp, m, (t - premiere) // 7) for t in range(t0, t1))

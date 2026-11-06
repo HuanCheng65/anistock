@@ -48,6 +48,10 @@ pub struct JState {
     /// observes them on top of it and starts from it again the next day, until the complete week replaces them
     #[serde(default)]
     pub base: Option<(M3, Cov)>,
+    /// the show's heat class (`FilterParams::heat_class`), set at the first close `DRIFT_WEEKS[0]` weeks after the
+    /// premiere from the us level then, fixed after (v0.6.1)
+    #[serde(default)]
+    pub heat_class: Option<i64>,
     pub day: String,
     /// the post-finale factor on `day` (1 before the finale's week): the levels above are pre-finale
     /// equivalents, the show draws level × post now
@@ -194,6 +198,7 @@ impl JState {
             wk: Vec::new(),
             wk_seg: None,
             base: None,
+            heat_class: None,
             day: day.to_string(),
             post: [1.0; 3],
             next: None,
@@ -451,7 +456,7 @@ impl Engine {
         Some(std::array::from_fn(|m| {
             if js.active[m] {
                 let paid = js.sequel.as_ref().is_some_and(|q| js.sequel_paid == Some(q.0));
-                F::sequel_extra_paid(fp, m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known, js.watched, paid)
+                F::sequel_extra_paid(&fp.for_class(js.heat_class), m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known, js.watched, paid)
             } else {
                 0.0
             }
@@ -646,6 +651,8 @@ impl Engine {
                 // each market's drift over the days since the state, by weeks since the premiere (per day)
                 let prem = day_no(&s.first_air).unwrap_or(today);
                 let from = day_no(&st.day).unwrap_or(today);
+                let fpc = fp.for_class(st.heat_class);
+                let fp = fpc.as_ref();
                 let drift: M3 = std::array::from_fn(|m| {
                     if after_finale {
                         0.0
@@ -677,6 +684,13 @@ impl Engine {
         st.seq_z = seq_z;
         st.seq_zs = seq_zs;
         st.sequel = sequel;
+        // the heat class, once, from the us level (after the day's drift, before its observations) DRIFT_WEEKS[0]
+        // weeks after the premiere (docs/v2-valuation.md §3.10)
+        if st.heat_class.is_none() && !s.long_runner && since_premiere >= 7 * F::DRIFT_WEEKS[0] {
+            st.heat_class = fp.heat_class(st.mean[0]);
+        }
+        let fpc = fp.for_class(st.heat_class);
+        let fp = fpc.as_ref();
         // the observations of the day, us first
         let mut ys: Vec<(usize, f64)> = Vec::new();
         let drift_us = if after_finale {
@@ -805,7 +819,7 @@ impl Engine {
             let (sched, first_air, long) = self.shape(c, p);
             let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
                 if js.active[m] {
-                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
+                    F::att_path(&fp.for_class(js.heat_class), p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
                 } else {
                     vec![0.0; h]
                 }
@@ -817,7 +831,7 @@ impl Engine {
                 let (sched, first_air, long) = self.work_shape(c, w, p);
                 let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
                     if js.active[m] {
-                        F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
+                        F::att_path(&fp.for_class(js.heat_class), p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
                     } else {
                         vec![0.0; h]
                     }
@@ -1042,7 +1056,7 @@ impl Engine {
         let (sched, first_air, long) = self.shape(c, p);
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {
             if js.active[m] {
-                F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, fp.horizon_days, js.tail_mult)
+                F::att_path(&fp.for_class(js.heat_class), p, m, js.mean[m], js.var(m), today, &sched, first_air, long, fp.horizon_days, js.tail_mult)
             } else {
                 vec![0.0; fp.horizon_days]
             }
@@ -1063,7 +1077,7 @@ impl Engine {
             let (sched, first_air, long) = self.work_shape(c, w, p);
             let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
                 if js.active[m] {
-                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
+                    F::att_path(&fp.for_class(js.heat_class), p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
                 } else {
                     vec![0.0; h]
                 }
