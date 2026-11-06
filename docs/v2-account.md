@@ -253,7 +253,7 @@ v1.0 公开前的准备（`docs/roadmap.md`「公开前：开放注册、去掉�
 | nginx 访问日志保存不少于 6 个月（检查 logrotate） | 待做 |
 | 压测：按预期峰值跑 `bench/loadgen`，重点看 WebSocket 推送和日结 | 待做 |
 | 全站文案「币」改为「星辉」，更新术语表 | 待做 |
-| 联系邮箱 | 待定（`@huanchengfly.top`，Cloudflare 邮件转发） |
+| 联系邮箱 | aniex@huanchengfly.top（Cloudflare 邮件转发，待配置） |
 | 静态文件永久缓存（`/assets/*` 加 `immutable`，`index.html` 加 `no-cache`） | 已实现 |
 | Cloudflare 后台打开 HTTP/3 | 待做 |
 
@@ -330,7 +330,7 @@ v1.0 公开前的准备（`docs/roadmap.md`「公开前：开放注册、去掉�
 > 本协议适用中华人民共和国法律。发生争议的，双方协商解决；协商不成的，任何一方可以向运营者所在地有管辖权的人民法院提起诉讼。
 >
 > **十、联系方式**
-> 邮箱：[待填]
+> 邮箱：aniex@huanchengfly.top
 
 ## 附录 B：隐私政策
 
@@ -378,7 +378,7 @@ v1.0 公开前的准备（`docs/roadmap.md`「公开前：开放注册、去掉�
 > 运营者可以修改本政策，修改后发布公告。修改内容较大时，你下次登录时需要重新确认。
 >
 > **八、联系方式**
-> 邮箱：[待填]
+> 邮箱：aniex@huanchengfly.top
 
 ## 附录 C：风险揭示书
 

@@ -284,8 +284,10 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
                 if v.allowed && auth_path {
                     v = l.take(&st.v1.limits, ratelimit::Key::Auth(ip_key.clone()));
                 }
+                // the daily registration quota is spent only by a registration that succeeds (below):
+                // failed attempts from a shared campus address must not lock everyone else out
                 if v.allowed && register {
-                    v = l.take(&st.v1.limits, ratelimit::Key::Register(ip_key.clone()));
+                    v = l.peek(&st.v1.limits, ratelimit::Key::Register(ip_key.clone()));
                 }
                 v
             };
@@ -297,6 +299,9 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
                 req.extensions_mut().insert(caller);
                 req.extensions_mut().insert(ClientIp(ip.clone()));
                 let mut r = next.run(req).await;
+                if register && r.status() == StatusCode::CREATED {
+                    st.v1.limiter.lock().unwrap().take(&st.v1.limits, ratelimit::Key::Register(ip_key.clone()));
+                }
                 verdict.headers(r.headers_mut());
                 r
             }

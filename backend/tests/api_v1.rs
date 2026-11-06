@@ -358,6 +358,19 @@ async fn login_needs_pow_during_a_surge() {
 }
 
 #[tokio::test]
+async fn only_successful_registrations_use_the_daily_quota() {
+    let mut a = app("2026-11-05T10:00:00+08:00", true);
+    Arc::get_mut(&mut a.st).unwrap().v1.limits.register = (1.0 / 86400.0, 1.0);
+    let reg = |name: &str, pow: Value| Some(json!({"username": name, "password": "secret1", "invite": "club", "pow": pow}));
+    for _ in 0..3 {
+        err(&a.req("POST", "/api/v1/auth/register", reg("alice", solved(&a).await), &[]).await, 409, "username_taken");
+    }
+    let r = a.req("POST", "/api/v1/auth/register", reg("bob", solved(&a).await), &[]).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    err(&a.req("POST", "/api/v1/auth/register", reg("carol", solved(&a).await), &[]).await, 429, "rate_limited");
+}
+
+#[tokio::test]
 async fn static_assets_are_immutable() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("assets")).unwrap();

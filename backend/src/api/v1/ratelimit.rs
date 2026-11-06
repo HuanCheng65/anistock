@@ -100,6 +100,15 @@ impl Verdict {
 
 impl Limiter {
     pub fn take(&mut self, limits: &Limits, key: Key) -> Verdict {
+        self.step(limits, key, true)
+    }
+
+    /// Like `take`, without spending a token (a check now, `take` later if the request succeeds).
+    pub fn peek(&mut self, limits: &Limits, key: Key) -> Verdict {
+        self.step(limits, key, false)
+    }
+
+    fn step(&mut self, limits: &Limits, key: Key, spend: bool) -> Verdict {
         let (rate, burst) = match &key {
             Key::Player(_) => limits.player,
             Key::Bot(_) => limits.bot,
@@ -119,7 +128,7 @@ impl Limiter {
         b.0 = (b.0 + elapsed * rate).min(burst);
         b.1 = now;
         let allowed = b.0 >= 1.0;
-        if allowed {
+        if allowed && spend {
             b.0 -= 1.0;
         }
         let missing = (1.0 - b.0).max(0.0);
@@ -152,6 +161,28 @@ mod tests {
         assert!(!v.allowed);
         assert!(v.reset >= 1);
         assert!(lim.take(&l, Key::Player(2)).allowed);
+    }
+
+    #[test]
+    fn peek_spends_nothing() {
+        let l = Limits {
+            player: (0.0, 2.0),
+            bot: (1.0, 1.0),
+            anon: (1.0, 1.0),
+            auth: (1.0, 1.0),
+            register: (1.0, 1.0),
+            bind: (1.0, 1.0),
+            ws_per_ip: 8,
+            ws_total: 100,
+            hash_concurrency: 2,
+        };
+        let mut lim = Limiter::default();
+        for _ in 0..5 {
+            assert!(lim.peek(&l, Key::Player(1)).allowed);
+        }
+        assert!(lim.take(&l, Key::Player(1)).allowed);
+        assert!(lim.take(&l, Key::Player(1)).allowed);
+        assert!(!lim.peek(&l, Key::Player(1)).allowed);
     }
 
     #[test]
