@@ -255,8 +255,11 @@ def main() -> None:
     days = [args.day] if args.day else pending_days()
     for d in days:
         compute(d)
+    if not days:
+        print("nothing new to compute (every day with next-day snapshots is done; values are frozen)")
     if args.report:
-        for d in days or ([args.day] if args.day else []):
+        latest = sqlite3.connect(OUT).execute("SELECT MAX(day) FROM heat_index").fetchone()[0] if OUT.exists() else None
+        for d in days or ([latest] if latest else []):
             report(d)
 
 
