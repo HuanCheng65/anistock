@@ -444,3 +444,49 @@ fn a_streak_of_same_sign_revisions_turns_under_reaction_into_over_reaction() {
     }
     assert_eq!(m.streak(1000), 1);
 }
+
+// ---------------------------------------------------------------- sentiment layer, batch 2
+
+#[test]
+fn a_run_in_a_hot_stock_starts_a_seeded_bubble_that_survives_a_restart() {
+    let cfg = cfg();
+    let mut mc = small(9);
+    mc.bubble_prob = 1.0;
+    let mut e = world();
+    let close = |d: i64| at_local(DAY, 6, 30) + d * 86_400;
+    // six flat closes, then +30% on the last: the run (5 closes) crosses 25% once
+    let base: Vec<i64> = e.companies().map(|c| c.last_price).collect();
+    let ids: Vec<i64> = e.companies().map(|c| c.id).collect();
+    // no inputs: heat falls back to its default (under the average), so any heat qualifies here
+    let mut mc_hot = mc.clone();
+    mc_hot.bubble_heat = 0.0;
+    let mut m = Market::new(mc_hot.clone(), &cfg);
+    m.refresh_universe(&e, at_local(DAY, 8, 0));
+    for d in 0..7 {
+        if d == 6 {
+            let id = ids[2];
+            let mut co = e.company(id).unwrap().clone();
+            co.last_price = base[2] * 13 / 10;
+            e.insert_company(co);
+        }
+        m.note_closes(&mut e, close(d));
+    }
+    let bubbles: Vec<_> = m.events.iter().filter(|x| x.kind == "bubble").cloned().collect();
+    assert_eq!(bubbles.len(), 1, "{bubbles:?}");
+    assert_eq!(bubbles[0].company_id, ids[2]);
+    let (s, burst, end) = m.bubble_draws(&bubbles[0]);
+    assert!(s > 0.0 && burst > close(6) && end > burst && end - close(6) < 8 * 86_400);
+    assert_eq!(m.bubble(ids[2], close(6) + 60).map(|b| b.0), Some(true));
+    assert_eq!(m.bubble(ids[2], burst + 1).map(|b| b.0), Some(false));
+    assert_eq!(m.bubble(ids[2], end + 1), None);
+    // a restarted market reads the closes back from the state table and the bubble from the event log
+    let mut m2 = Market::new(mc_hot, &cfg);
+    m2.events.push(bubbles[0].clone());
+    assert_eq!(m2.bubble_draws(&bubbles[0]), (s, burst, end));
+    m2.note_closes(&mut e, close(7));
+    assert!(m2.events.iter().filter(|x| x.kind == "bubble").count() == 1, "no second trigger while the run continues");
+    // off: nothing
+    let mut off = Market::new(small(9), &cfg);
+    off.note_closes(&mut e, close(8));
+    assert!(off.bubble(ids[2], close(6) + 60).is_none());
+}

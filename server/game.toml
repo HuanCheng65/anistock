@@ -105,6 +105,9 @@ mm_cash = 50000.0
 mm_rate = 20.0
 mm_base_spread = 0.006
 mm_vol_mult = 2.0
+mm_vol_roll = true             # volatility net of bid-ask bounce (Roll 1984): from trade prices the market maker's
+                               # own spread fed back into its volatility estimate (5-min sd 1.5% in the hottest stocks,
+                               # half-spread 1.4%), docs/v2-npc-market.md §13
 mm_quote_frac = 0.005
 mm_quote_min = 1500.0          # a quote unit is at least 1,500 币 (level k quotes k units)
 mm_levels = 5
@@ -127,6 +130,14 @@ sentiment_strength = 0.15      # market sentiment (Baker–Wurgler), daily AR(1)
 attention = 0.25               # attention buying (Barber–Odean): retail buy share 62% at a mean-strength episode
 attention_rank_n = 6           # 上热榜 = the market page's top-6 gainers / losers lists
 reaction = true                # under/over-reaction (Barberis–Shleifer–Vishny) of the news agents to revisions
+# Sentiment layer batch 2 (docs/v2-sentiment.md §7)
+bubble_prob = 0.5              # positive-feedback bubbles (De Long et al.): a run (5-close return >= 25%, about two sd of
+                               # a 5-session return at the replay's 5% daily sd) in a stock at least average heat becomes a
+                               # bubble half the time (Greenwood–Shleifer–You 2019: 21 of 40 100% run-ups crashed);
+                               # strength log-normal mean 1, constant-hazard burst (mean life 1-5 days, at most 7)
+disposition_ratio = 1.0        # disposition effect OFF (code kept; 1.5 = Odean 1998 PGR 0.148 / PLR 0.098). On, it
+                               # breaks the bounded-deviation criterion for cold stocks in hot-sentiment seasons:
+                               # docs/v2-sentiment.md §7.3
 
 [api.rate_limit]
 # API v1 token buckets (docs/api-v1.md §2.12): requests per second and burst per subject

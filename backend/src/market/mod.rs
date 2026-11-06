@@ -95,6 +95,10 @@ struct MmState {
     account: i64,
     /// EWMA of squared log price changes per second
     var_rate: f64,
+    /// bounce-free volatility (`mm_vol_roll`): EWMAs of the squared change, of the product of consecutive
+    /// changes and of the interval, and the last change
+    roll: [f64; 3],
+    last_r: f64,
     last_p: f64,
     last_t: i64,
     /// inventory at the last requote, and an EWMA of the net shares it bought (+) or sold (-) since, in
@@ -109,6 +113,9 @@ struct MmState {
     human_depth: f64,
     /// last price at the previous requote
     last_quote_p: f64,
+    /// the last requote's half-spread (share of the centre) and its parts: base, volatility term, the
+    /// toxicity and information-window multipliers (reports)
+    last_half: [f64; 4],
 }
 
 /// Counters for reports.
@@ -122,6 +129,8 @@ pub struct MarketStats {
     pub rebalance_shares: i64,
     pub flashes: u64,
     pub events: u64,
+    /// retail agents' decisions on a holding at a paper gain: looked at, sold; at a paper loss: looked at, sold
+    pub retail_realise: [u64; 4],
     /// most NPC orders in one minute, and the distribution of per-minute counts
     pub peak_orders_per_min: u64,
     pub minutes_with_orders: u64,
@@ -168,6 +177,12 @@ pub struct Market {
     ranked: HashSet<(i64, i64)>,
     next_rank_check: i64,
     reactions: HashMap<(i64, i64), (f64, f64)>,
+    /// sentiment layer batch 2: each stock's recent daily closes (bubble triggers; kept in the state table)
+    closes: HashMap<i64, VecDeque<i64>>,
+    /// share of the retail agents' holdings at a paper gain (disposition effect; refreshed at each close)
+    gain_share: Option<f64>,
+    /// run starts at the last close: (company, close time, became a bubble) (reports)
+    pub run_starts: Vec<(i64, i64, bool)>,
     /// events the market created itself (revisions, attention), for the caller to log (restart safety)
     pub fresh: Vec<Event>,
     rng: Rng,
@@ -208,6 +223,9 @@ impl Market {
             ranked: HashSet::new(),
             next_rank_check: 0,
             reactions: HashMap::new(),
+            closes: HashMap::new(),
+            gain_share: None,
+            run_starts: Vec::new(),
             fresh: Vec::new(),
             stats: MarketStats::default(),
             now: 0,
@@ -338,7 +356,20 @@ impl Market {
         if self.air.get(&c).is_some_and(|ts| ts.iter().any(|&at| t >= at - 3600 && t <= at + after)) {
             return true;
         }
-        self.events.iter().any(|e| e.company_id == c && e.kind != "attention" && t >= e.at && t - e.at <= 7200)
+        self.events
+            .iter()
+            .any(|e| e.company_id == c && e.kind != "attention" && e.kind != "bubble" && t >= e.at && t - e.at <= 7200)
+    }
+
+    /// The market maker's last quote in `c`: its half-spread parts [base, volatility term, toxicity multiplier,
+    /// information-window multiplier] (reports).
+    pub fn mm_quote_parts(&self, c: i64) -> Option<[f64; 4]> {
+        self.mms.get(&c).map(|m| m.last_half)
+    }
+
+    /// Is `t` in an information window for `c` (reports)?
+    pub fn in_info_window(&self, c: i64, t: i64) -> bool {
+        self.info_window(c, t)
     }
 
     /// Adaptive liquidity: the retail and trend agents' activity in `c`, ×`adapt_rate_max` when no human
@@ -566,6 +597,129 @@ impl Market {
             prev = Some((e.at, e.change));
         }
         k
+    }
+
+    // ------------------------------------------------------------ sentiment layer, batch 2
+
+    /// After a close: record each listed stock's close and start the bubbles (De Long et al. positive
+    /// feedback). A run starts when a stock at least `bubble_heat` hot has risen `bubble_run` or more over the
+    /// last `bubble_run_days` closes and had not at the close before; it becomes a bubble with probability
+    /// `bubble_prob` (a hash of seed, secret, stock and time, like every draw of the layer). A bubble is an
+    /// event (logged, so it survives a restart); the closes are kept in the state table.
+    pub fn note_closes(&mut self, engine: &mut Engine, t: i64) {
+        if self.cfg.disposition_ratio != 1.0 {
+            self.refresh_gain_share(engine);
+        }
+        if self.cfg.bubble_prob <= 0.0 {
+            return;
+        }
+        let n = self.cfg.bubble_run_days.max(1);
+        if self.closes.is_empty() {
+            // after a restart: the closes kept in the state table
+            for part in engine.state("npc_closes").unwrap_or("").split(';').filter(|p| !p.is_empty()) {
+                if let Some((c, ps)) = part.split_once(':') {
+                    if let Ok(c) = c.parse::<i64>() {
+                        self.closes.insert(c, ps.split(',').filter_map(|x| x.parse().ok()).collect());
+                    }
+                }
+            }
+        }
+        let listed: Vec<(i64, i64)> =
+            engine.companies().filter(|c| c.status == "listed" && c.last_price > 0).map(|c| (c.id, c.last_price)).collect();
+        let live: HashSet<i64> = listed.iter().map(|x| x.0).collect();
+        self.closes.retain(|c, _| live.contains(c));
+        let mut started = Vec::new();
+        for (c, p) in listed {
+            let h = self.closes.entry(c).or_default();
+            h.push_back(p);
+            while h.len() > n + 2 {
+                h.pop_front();
+            }
+            let k = h.len();
+            if k < n + 1 {
+                continue;
+            }
+            let run = |end: usize| (h[end] as f64 / h[end - n].max(1) as f64) - 1.0;
+            let now = run(k - 1);
+            let before = if k >= n + 2 { run(k - 2) } else { 0.0 };
+            if now >= self.cfg.bubble_run && before < self.cfg.bubble_run && self.heat(c) >= self.cfg.bubble_heat {
+                started.push(c);
+            }
+        }
+        let mut state = String::new();
+        let mut ids: Vec<&i64> = self.closes.keys().collect();
+        ids.sort();
+        for c in ids {
+            let v: Vec<String> = self.closes[c].iter().map(|x| x.to_string()).collect();
+            state.push_str(&format!("{c}:{};", v.join(",")));
+        }
+        engine.set_state("npc_closes", &state);
+        self.run_starts.clear();
+        for c in started {
+            // one bubble at a time per stock
+            if self.events.iter().any(|e| e.kind == "bubble" && e.company_id == c && self.bubble_phase(e, t).is_some()) {
+                continue;
+            }
+            let hit = unit(hash(&[self.cfg.seed, 0xb0bb1e, self.salt, c as u64, t as u64, 0])) < self.cfg.bubble_prob;
+            self.run_starts.push((c, t, hit));
+            if !hit {
+                continue;
+            }
+            let ev = Event {
+                company_id: c,
+                kind: "bubble".into(),
+                direction: 0,
+                magnitude: 0.0,
+                credibility: Credibility::Media,
+                source: "trend".into(),
+                at: t,
+                nature: Nature::Sentiment,
+                half_life_h: 0.0,
+                title: String::new(),
+                change: 0.0,
+            };
+            self.stats.events += 1;
+            self.fresh.push(ev.clone());
+            self.events.push(ev);
+        }
+    }
+
+    /// The draws of the bubble started by event `e`: strength s (log-normal, mean 1), when it bursts (constant
+    /// hazard: an exponential life whose mean is drawn from `bubble_life_days`, at most `bubble_max_days`) and
+    /// how long the chasers dump after the burst.
+    pub fn bubble_draws(&self, e: &Event) -> (f64, i64, i64) {
+        let key = |j: u64| [self.cfg.seed, 0xb0bb1e, self.salt, e.company_id as u64, e.at as u64, j];
+        let sg = self.cfg.bubble_sigma;
+        let s = (sg * normal(&key(1)) - sg * sg / 2.0).exp();
+        let mean_life = log_uniform(self.cfg.bubble_life_days, unit(hash(&key(2))));
+        let crash_h = log_uniform(self.cfg.bubble_crash_h, unit(hash(&key(4))));
+        // the whole episode stays within the 8 days of events kept (`prune_events`)
+        let life = (-mean_life * (1.0 - unit(hash(&key(3)))).ln()).min(self.cfg.bubble_max_days).min(7.9 - crash_h / 24.0);
+        let burst = e.at + (life * 86_400.0) as i64;
+        (s, burst, burst + (crash_h * 3600.0) as i64)
+    }
+
+    /// Phase of bubble event `e` at `t`: Some((true, s)) inflating, Some((false, s)) after the burst, None over.
+    fn bubble_phase(&self, e: &Event, t: i64) -> Option<(bool, f64)> {
+        if t < e.at {
+            return None;
+        }
+        let (s, burst, end) = self.bubble_draws(e);
+        if t < burst {
+            Some((true, s))
+        } else if t < end {
+            Some((false, s))
+        } else {
+            None
+        }
+    }
+
+    /// The bubble in stock `c` at `t`, if any: (inflating?, strength).
+    pub fn bubble(&self, c: i64, t: i64) -> Option<(bool, f64)> {
+        if self.cfg.bubble_prob <= 0.0 {
+            return None;
+        }
+        self.events.iter().filter(|e| e.kind == "bubble" && e.company_id == c).find_map(|e| self.bubble_phase(e, t))
     }
 
     // ------------------------------------------------------------ beliefs
@@ -838,6 +992,8 @@ impl Market {
                     self.mms.insert(c, MmState {
                         account: acct,
                         var_rate: 0.0,
+                        roll: [0.0; 3],
+                        last_r: 0.0,
                         last_p: p,
                         last_t: now,
                         last_inv: None,
@@ -846,6 +1002,7 @@ impl Market {
                         human_rate: 0.0,
                         human_depth: 0.0,
                         last_quote_p: 0.0,
+                        last_half: [0.0; 4],
                     });
                     let first = now + self.rng.exp(self.cfg.mm_rate / 3600.0) as i64;
                     self.schedule.push(Reverse((first, Actor::Mm(c))));
@@ -1082,10 +1239,15 @@ impl Market {
 
     fn choose_stock(&mut self, i: usize, t: i64, engine: &Engine) -> Option<i64> {
         let watch = self.agents[i].watch.clone();
+        let chaser = matches!(self.agents[i].kind, AgentKind::Trend | AgentKind::Retail);
         let w: Vec<f64> = watch
             .iter()
             .map(|&c| match engine.company(c) {
-                Some(co) if co.status == "listed" => self.heat(c).powf(self.cfg.heat_alpha) * self.activity(c, t),
+                Some(co) if co.status == "listed" => {
+                    // a bubble draws the chasers (trend and retail agents) into the stock: turnover (1 + s) times
+                    let b = if chaser { self.bubble(c, t).map_or(1.0, |(_, s)| 1.0 + s) } else { 1.0 };
+                    self.heat(c).powf(self.cfg.heat_alpha) * self.activity(c, t) * b
+                }
                 _ => 0.0,
             })
             .collect();
@@ -1172,7 +1334,20 @@ impl Market {
         // market sentiment is risk appetite: in a hot market a smaller rise is enough to chase it, positions
         // are larger, and a fall must be larger before they sell (cold: the reverse)
         let ss = self.sentiment_tilt(c, t);
-        let (thr_buy, thr_sell) = (a.threshold * (-ss).exp(), a.threshold * ss.exp());
+        let (mut thr_buy, mut thr_sell) = (a.threshold * (-ss).exp(), a.threshold * ss.exp());
+        // a bubble: while it inflates, a smaller rise is enough to chase and dips are held through; after the
+        // burst, the reverse (they dump)
+        match self.bubble(c, t) {
+            Some((true, s)) => {
+                thr_buy /= 1.0 + s;
+                thr_sell *= 1.0 + s;
+            }
+            Some((false, s)) => {
+                thr_buy *= 1.0 + s;
+                thr_sell /= 1.0 + s;
+            }
+            None => {}
+        }
         if r > thr_buy {
             let wealth = self.wealth(engine, a.account) as f64;
             let room = self.cfg.max_position_frac * wealth - held as f64 * now_p as f64;
@@ -1262,8 +1437,17 @@ impl Market {
         // attention (a stock in the news is bought, not sold: buying means choosing among all stocks, selling
         // only among one's own) and market sentiment (risk appetite) tilt the buy/sell split and the size
         let ss = self.sentiment_tilt(c, t);
-        let tilt = self.cfg.attention * self.attention(c, t) + ss;
-        let sell = held > 0 && self.rng.f64() < 0.5 * (1.0 - tilt.tanh());
+        // a bubble: buy odds (1 + s) times while it inflates, sell odds (1 + s) times after the burst
+        let bt = self.bubble(c, t).map_or(0.0, |(up, s)| if up { 0.5 } else { -0.5 } * (1.0 + s).ln());
+        let tilt = self.cfg.attention * self.attention(c, t) + ss + bt;
+        let (disp, gain) = if held > 0 { self.disposition(engine, a.account, c, p) } else { (1.0, 0) };
+        let sell = held > 0 && self.rng.f64() < 0.5 * (1.0 - tilt.tanh()) * disp;
+        if gain != 0 {
+            // realisation counts (Odean's PGR / PLR): holdings at a gain / loss looked at, and sold
+            let k = if gain > 0 { 0 } else { 2 };
+            self.stats.retail_realise[k] += 1;
+            self.stats.retail_realise[k + 1] += sell as u64;
+        }
         let market = !Self::phase_auction(t) && self.rng.f64() < self.cfg.retail_market_prob;
         let limit = Self::clamp_price(engine, &rules, c, p * (1.0 + self.cfg.retail_price_sd * self.rng.normal()), t);
         if sell {
@@ -1298,6 +1482,58 @@ impl Market {
         }
     }
 
+    /// Disposition effect (Shefrin–Statman): the factor on a retail agent's chance of selling its holding of
+    /// `c` at price `p`: 2r / (1 + r) with a paper gain against its own average cost, 2 / (1 + r) with a paper
+    /// loss (r = `disposition_ratio`: Odean's PGR / PLR), so gains are realised r times as readily as losses
+    /// and an even book sells as often as without the effect.
+    fn disposition(&mut self, engine: &Engine, acct: i64, c: i64, p: f64) -> (f64, i8) {
+        let gain = match Self::paper_gain(engine, acct, c, p) {
+            Some(g) if g > 0.0 => 1,
+            Some(g) if g < 0.0 => -1,
+            _ => return (1.0, 0),
+        };
+        let r = self.cfg.disposition_ratio;
+        if r == 1.0 {
+            return (1.0, gain);
+        }
+        let w = match self.gain_share {
+            Some(w) => w,
+            None => self.refresh_gain_share(engine),
+        };
+        // gains are sold r times as readily as losses, and the retail agents' sales in total stay the same: the
+        // effect decides which holdings they sell, not how much (Odean 1998)
+        let loss = 1.0 / (w * r + (1.0 - w));
+        (if gain > 0 { r * loss } else { loss }, gain)
+    }
+
+    /// ln(price / average cost) of an agent's holding of `c` (None without lots).
+    fn paper_gain(engine: &Engine, acct: i64, c: i64, p: f64) -> Option<f64> {
+        let (q, v) = engine.lots_of(acct, c).iter().fold((0i64, 0f64), |(q, v), l| (q + l.qty, v + l.qty as f64 * l.cost as f64));
+        (q > 0 && v > 0.0 && p > 0.0).then(|| (p * q as f64 / v).ln())
+    }
+
+    /// The share of the retail agents' holdings (positions) showing a paper gain at the last prices; kept until
+    /// the next close.
+    fn refresh_gain_share(&mut self, engine: &Engine) -> f64 {
+        let (mut up, mut n) = (0u64, 0u64);
+        for a in self.agents.iter().filter(|a| a.kind == AgentKind::Retail) {
+            for h in engine.holdings_of(a.account).filter(|h| h.qty > 0) {
+                let p = engine.company(h.company_id).map_or(0, |c| c.last_price) as f64;
+                match Self::paper_gain(engine, a.account, h.company_id, p) {
+                    Some(g) if g > 0.0 => {
+                        up += 1;
+                        n += 1
+                    }
+                    Some(g) if g < 0.0 => n += 1,
+                    _ => {}
+                }
+            }
+        }
+        let w = if n == 0 { 0.5 } else { up as f64 / n as f64 };
+        self.gain_share = Some(w);
+        w
+    }
+
     // ------------------------------------------------------------ market maker and committee
 
     fn act_mm(&mut self, engine: &mut Engine, c: i64, t: i64) {
@@ -1315,9 +1551,21 @@ impl Market {
         let r = (p / st.last_p.max(1.0)).ln();
         let decay = 0.5f64.powf(dt / (self.cfg.mm_vol_half_life_min * 60.0));
         st.var_rate = decay * st.var_rate + (1.0 - decay) * (r * r / dt);
+        // Roll (1984): trade prices bounce between bid and ask, which adds 2 s^2 to the variance of each change
+        // and -s^2 to the covariance of consecutive changes; var + 2 cov is the variance of the efficient
+        // price, so its own spread does not feed back into its volatility estimate
+        st.roll[0] = decay * st.roll[0] + (1.0 - decay) * r * r;
+        st.roll[1] = decay * st.roll[1] + (1.0 - decay) * r * st.last_r;
+        st.roll[2] = decay * st.roll[2] + (1.0 - decay) * dt;
+        st.last_r = r;
         st.last_p = p;
         st.last_t = t;
-        let sigma5 = (st.var_rate * 300.0).sqrt();
+        let var_rate = if self.cfg.mm_vol_roll {
+            (st.roll[0] + 2.0 * st.roll[1]).max(0.0) / st.roll[2].max(1.0)
+        } else {
+            st.var_rate
+        };
+        let sigma5 = (var_rate * 300.0).sqrt();
         let p_prev = st.last_quote_p;
         st.last_quote_p = p;
 
@@ -1357,6 +1605,14 @@ impl Market {
             * (1.0 + self.cfg.mm_toxicity_mult * toxicity)
             * info;
         let half = half.max(1.0);
+        if let Some(st) = self.mms.get_mut(&c) {
+            st.last_half = [
+                self.cfg.mm_base_spread / 2.0,
+                self.cfg.mm_vol_mult * sigma5,
+                1.0 + self.cfg.mm_toxicity_mult * toxicity,
+                info,
+            ];
+        }
         let (lo, hi) = quote_band(&co, &ts, &rules);
         // quote unit: a share of the company, at least `mm_quote_min` 币 (the designated market maker's
         // minimum quote size)
@@ -1772,6 +2028,12 @@ impl Market {
             if let Some(m) = self.mms.get_mut(&c) {
                 m.last_p *= f;
                 m.last_quote_p *= f;
+            }
+            // the closes behind the bubble trigger (a split is not a fall; note_closes runs after this)
+            if let Some(h) = self.closes.get_mut(&c) {
+                for x in h.iter_mut() {
+                    *x = ((*x as f64) * f).round() as i64;
+                }
             }
         }
         self.adj_seen = Some(seen);

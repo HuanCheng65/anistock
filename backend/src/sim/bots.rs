@@ -10,6 +10,9 @@ use crate::market::{day_of, local, ts_of};
 /// 融资融券 bots (docs/v2-margin.md §9)
 #[path = "margin_bots.rs"]
 pub mod margin;
+/// sentiment layer batch 2 bots (docs/v2-sentiment.md §7)
+#[path = "sentiment_bots.rs"]
+mod sentiment;
 
 /// corporate action bots (docs/v2-corporate.md §6)
 #[path = "corporate_bots.rs"]
@@ -98,10 +101,17 @@ pub enum BotKind {
     SplitBuy,
     /// buy after each delay notice, sell a day later
     DelayFade,
+    /// sentiment batch 2: buy a hot stock the morning its run starts (the public bubble trigger), sell 3 / 1
+    /// days later
+    BubbleRider,
+    BubbleRider1,
+    /// sentiment batch 2: weekly, hold the hot stocks furthest under their 20-session average close (where
+    /// retail holders sit on paper losses)
+    DispositionFade,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 36] {
+    pub fn all() -> [BotKind; 39] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -139,6 +149,9 @@ impl BotKind {
             BotKind::RightsSell,
             BotKind::SplitBuy,
             BotKind::DelayFade,
+            BotKind::BubbleRider,
+            BotKind::BubbleRider1,
+            BotKind::DispositionFade,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -179,6 +192,9 @@ impl BotKind {
             BotKind::RightsSell => "rights_sell",
             BotKind::SplitBuy => "split_buy",
             BotKind::DelayFade => "delay_fade",
+            BotKind::BubbleRider => "bubble_rider",
+            BotKind::BubbleRider1 => "bubble_rider_1",
+            BotKind::DispositionFade => "disposition_fade",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -360,6 +376,7 @@ impl Bot {
         match self.kind {
             BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
             BotKind::BuybackFollow | BotKind::RightsSell | BotKind::SplitBuy | BotKind::DelayFade => self.corp_minute(e, t, ctx),
+            BotKind::BubbleRider | BotKind::BubbleRider1 | BotKind::DispositionFade => sentiment::on_minute(self, e, t, heat),
             BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
                 if !self.exits.is_empty() {
                     self.run_exits(e, t);
