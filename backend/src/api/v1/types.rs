@@ -932,6 +932,41 @@ pub struct QuizReview {
     pub explanation: String,
 }
 
+/// 修改密码
+#[derive(Deserialize, ToSchema)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// 用验证码重设密码
+#[derive(Deserialize, ToSchema)]
+pub struct ResetPasswordRequest {
+    pub username: String,
+    /// 机器人发送的 8 位验证码，大小写和连字符不限
+    pub code: String,
+    pub new_password: String,
+}
+
+/// 机器人为私聊它的 QQ 申请找回密码的验证码
+#[derive(Deserialize, ToSchema)]
+pub struct BotResetRequest {
+    /// `qq`
+    pub platform: String,
+    /// 私聊消息里发送者的 openid
+    pub external_id: String,
+}
+
+/// 找回密码的验证码（10 分钟有效，只能用一次）
+#[derive(Serialize, ToSchema)]
+pub struct ResetCode {
+    /// `K7Q3-9MZD`
+    pub code: String,
+    pub expires_at: Timestamp,
+    /// 绑定的账号
+    pub account: UserRef,
+}
+
 /// 注销账号
 #[derive(Deserialize, ToSchema)]
 pub struct CloseAccountRequest {

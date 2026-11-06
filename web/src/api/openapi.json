@@ -604,6 +604,24 @@
         ],
         "type": "object"
       },
+      "BotResetRequest": {
+        "description": "机器人为私聊它的 QQ 申请找回密码的验证码",
+        "properties": {
+          "external_id": {
+            "description": "私聊消息里发送者的 openid",
+            "type": "string"
+          },
+          "platform": {
+            "description": "`qq`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "external_id"
+        ],
+        "type": "object"
+      },
       "Breadth": {
         "properties": {
           "down": {
@@ -717,6 +735,22 @@
           "adjust",
           "ex_days",
           "items"
+        ],
+        "type": "object"
+      },
+      "ChangePasswordRequest": {
+        "description": "修改密码",
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "new_password"
         ],
         "type": "object"
       },
@@ -3427,6 +3461,49 @@
         ],
         "type": "object"
       },
+      "ResetCode": {
+        "description": "找回密码的验证码（10 分钟有效，只能用一次）",
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/UserRef",
+            "description": "绑定的账号"
+          },
+          "code": {
+            "description": "`K7Q3-9MZD`",
+            "type": "string"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "account",
+          "code",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "ResetPasswordRequest": {
+        "description": "用验证码重设密码",
+        "properties": {
+          "code": {
+            "description": "机器人发送的 8 位验证码，大小写和连字符不限",
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "code",
+          "new_password"
+        ],
+        "type": "object"
+      },
       "RestructureRequest": {
         "properties": {
           "confirm": {
@@ -5229,6 +5306,47 @@
         ]
       }
     },
+    "/api/v1/auth/password-reset": {
+      "post": {
+        "operationId": "reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "用验证码重设密码（忘记密码）",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/register": {
       "post": {
         "operationId": "register",
@@ -5360,6 +5478,47 @@
           }
         ],
         "summary": "机器人解除绑定（群里 /解绑）",
+        "tags": [
+          "bot"
+        ]
+      }
+    },
+    "/api/v1/bot/password-resets": {
+      "post": {
+        "operationId": "bot_issue",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetCode"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "为绑定的账号生成找回密码的验证码（机器人）",
         "tags": [
           "bot"
         ]
@@ -6529,6 +6688,47 @@
           }
         },
         "summary": "一笔委托",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/password": {
+      "post": {
+        "operationId": "change",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "修改密码",
         "tags": [
           "account"
         ]

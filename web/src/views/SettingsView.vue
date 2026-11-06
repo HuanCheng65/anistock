@@ -17,6 +17,28 @@ const account = useAccount()
 const router = useRouter()
 const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]
 const docs = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书'], ['margin_disclosure', '融资融券风险揭示书']] as const
+// ---- 修改密码: the new cookie comes back with the answer; other devices sign in again
+const changing = ref(false)
+const curPw = ref('')
+const newPw = ref('')
+const pwMsg = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
+async function changePassword() {
+  if (newPw.value.length < 6) return (pwMsg.value = { kind: 'error', text: '新密码至少 6 位' })
+  busy.value = true
+  pwMsg.value = null
+  try {
+    session.me = await call(api.POST('/api/v1/me/password', { body: { current_password: curPw.value, new_password: newPw.value } }))
+    changing.value = false
+    curPw.value = ''
+    newPw.value = ''
+    pwMsg.value = { kind: 'ok', text: '已修改密码，其他设备需要重新登录' }
+  } catch (e) {
+    pwMsg.value = { kind: 'error', text: errorText(e) }
+  } finally {
+    busy.value = false
+  }
+}
+
 // ---- 注销账号 (docs/v2-account.md §9): the password, then the account is gone for good
 const closing = ref(false)
 const closePw = ref('')
@@ -134,7 +156,7 @@ async function unbind(id: number) {
         </div>
       </template>
       <template v-else>
-        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里向机器人发送“/绑定 绑定码”。</p>
+        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里私聊机器人，发送“/绑定 绑定码”。完成后也可以通过机器人找回密码。</p>
         <div v-if="code" class="code">
           <span class="num big">{{ code.code }}</span>
           <span class="muted">{{ hm(code.expires_at) }} 前有效</span>
@@ -166,6 +188,16 @@ async function unbind(id: number) {
         <span>{{ session.me.username }}</span>
         <button type="button" class="btn ghost small" @click="logout">退出登录</button>
       </div>
+      <button v-if="!changing" type="button" class="linkbtn pw" @click="changing = true; pwMsg = null">修改密码</button>
+      <form v-else class="confirm" @submit.prevent="changePassword">
+        <input v-model="curPw" class="input" type="password" autocomplete="current-password" placeholder="当前密码" />
+        <input v-model="newPw" class="input" type="password" autocomplete="new-password" placeholder="新密码，至少 6 位" />
+        <div class="acts">
+          <button type="submit" class="btn small" :disabled="busy || !curPw || !newPw">修改密码</button>
+          <button type="button" class="btn small ghost" :disabled="busy" @click="changing = false; curPw = ''; newPw = ''; pwMsg = null">取消</button>
+        </div>
+      </form>
+      <p v-if="pwMsg" class="msg" :class="pwMsg.kind === 'error' ? 'error' : 'ok'" role="status">{{ pwMsg.text }}</p>
       <button v-if="!closing" type="button" class="linkbtn close" @click="closing = true">注销账号</button>
       <form v-else ref="closeForm" class="confirm" role="group" aria-labelledby="close-title" @submit.prevent="closeAccount">
         <h3 id="close-title">注销账号？</h3>
@@ -202,7 +234,8 @@ async function unbind(id: number) {
 .switch[aria-checked="true"] span { transform: translateX(18px); background: var(--ground); }
 @media (prefers-reduced-motion: reduce) { .switch, .switch span { transition: none; } }
 .docs { margin-top: -6px; }
-.close { margin-top: 14px; color: var(--muted); }
+.pw { display: block; margin-top: 14px; color: var(--ink-2); }
+.close { display: block; margin-top: 14px; color: var(--muted); }
 .confirm .input { height: 40px; font-size: 15px; margin-top: 4px; }
 .docrow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--hair-2); font-size: 15px; }
 .docrow:last-child { border-bottom: 0; }

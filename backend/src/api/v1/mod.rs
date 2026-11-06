@@ -17,6 +17,7 @@ pub mod events;
 pub mod market;
 pub mod openapi;
 pub mod assess;
+pub mod password;
 pub mod pow;
 pub mod ratelimit;
 pub mod search;
@@ -65,6 +66,8 @@ pub struct V1State {
     pub pow: pow::Pow,
     /// password hashes computed at the same time (`limits.hash_concurrency`)
     pub hashing: tokio::sync::Semaphore,
+    /// account -> last password change (Unix seconds), loaded on first use (password.rs)
+    pub pw_changed: std::sync::RwLock<Option<HashMap<i64, i64>>>,
 }
 
 impl V1State {
@@ -79,6 +82,7 @@ impl V1State {
             events: events::EventRules::from_config(cfg),
             pow: pow::Pow::new(pow::PowConfig::from_config(cfg)),
             hashing: tokio::sync::Semaphore::new(ratelimit::Limits::from_config(cfg).hash_concurrency),
+            pw_changed: std::sync::RwLock::new(None),
         }
     }
 }
@@ -154,7 +158,8 @@ pub fn session_account(st: &AppState, headers: &HeaderMap) -> Option<i64> {
         .iter()
         .find_map(|v| crate::auth::cookie_value(&[&String::from_utf8_lossy(v.as_bytes())], "session"));
     match read_session(&st.secret, token.as_deref(), st.unix_now()) {
-        Session::Player(a) if a > 0 => Some(a),
+        // a cookie from before the last password change no longer counts
+        Session::Player(a) if a > 0 && !password::issued_before_change(st, a, token.as_deref().unwrap_or("")) => Some(a),
         _ => None,
     }
 }
@@ -275,7 +280,8 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
                 Caller::Anon => ratelimit::Key::Anon(ip_key.clone()),
             };
             let register = method == Method::POST && path.ends_with("/auth/register");
-            let auth_path = register || (method == Method::POST && path.ends_with("/auth/login"));
+            let auth_path = register
+                || (method == Method::POST && (path.ends_with("/auth/login") || path.ends_with("/auth/password-reset")));
             if auth_path {
                 st.v1.pow.note_attempt();
             }
@@ -592,6 +598,9 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/auth/register", post(account::register))
         .route("/auth/login", post(account::login))
         .route("/auth/logout", post(account::logout))
+        .route("/auth/password-reset", post(password::reset))
+        .route("/me/password", post(password::change))
+        .route("/bot/password-resets", post(password::bot_issue))
         .route("/me/bind-codes", post(bind::create_code))
         .route("/me/bindings", get(bind::list))
         .route("/me/bindings/{id}", delete(bind::remove))
@@ -618,7 +627,7 @@ fn method_fallback(path: &str) -> Response {
         ["", "ipos", _, "subscription"] | ["", "stocks", _, "rights", "subscription"] => "PUT, DELETE",
         ["", "auth", "challenge"] => "GET",
         ["", "me"] => "GET, DELETE",
-        ["", "me", "assessments", _] => "POST",
+        ["", "me", "assessments", _] | ["", "me", "password"] | ["", "bot", "password-resets"] => "POST",
         ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "agreements"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
         _ => "GET",

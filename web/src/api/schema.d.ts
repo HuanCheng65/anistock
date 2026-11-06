@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 用验证码重设密码（忘记密码） */
+        post: operations["reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/register": {
         parameters: {
             query?: never;
@@ -118,6 +135,23 @@ export interface paths {
         post?: never;
         /** 机器人解除绑定（群里 /解绑） */
         delete: operations["bot_remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bot/password-resets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 为绑定的账号生成找回密码的验证码（机器人） */
+        post: operations["bot_issue"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -480,6 +514,23 @@ export interface paths {
         post?: never;
         /** 撤单 */
         delete: operations["cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 修改密码 */
+        post: operations["change"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -949,6 +1000,13 @@ export interface components {
             bids: components["schemas"]["BookLevel"][];
             trading_day: components["schemas"]["TradingDay"];
         };
+        /** @description 机器人为私聊它的 QQ 申请找回密码的验证码 */
+        BotResetRequest: {
+            /** @description 私聊消息里发送者的 openid */
+            external_id: string;
+            /** @description `qq` */
+            platform: string;
+        };
         Breadth: {
             /** Format: int64 */
             down: number;
@@ -984,6 +1042,11 @@ export interface components {
             /** @description 区间内的除权日（拆股、配股生效的第一个交易日） */
             ex_days: components["schemas"]["ExDay"][];
             items: components["schemas"]["Candle"][];
+        };
+        /** @description 修改密码 */
+        ChangePasswordRequest: {
+            current_password: string;
+            new_password: string;
         };
         ClawbackBand: {
             /** Format: double */
@@ -1765,6 +1828,21 @@ export interface components {
             credit: components["schemas"]["CreditAccount"];
             paid: components["schemas"]["Money"];
         };
+        /** @description 找回密码的验证码（10 分钟有效，只能用一次） */
+        ResetCode: {
+            /** @description 绑定的账号 */
+            account: components["schemas"]["UserRef"];
+            /** @description `K7Q3-9MZD` */
+            code: string;
+            expires_at: components["schemas"]["Timestamp"];
+        };
+        /** @description 用验证码重设密码 */
+        ResetPasswordRequest: {
+            /** @description 机器人发送的 8 位验证码，大小写和连字符不限 */
+            code: string;
+            new_password: string;
+            username: string;
+        };
         RestructureRequest: {
             /** @description 必须为 true */
             confirm: boolean;
@@ -2335,6 +2413,37 @@ export interface operations {
             };
         };
     };
+    reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     register: {
         parameters: {
             query?: never;
@@ -2417,6 +2526,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    bot_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotResetRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetCode"];
+                };
             };
             default: {
                 headers: {
@@ -3221,6 +3361,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderEnvelope"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    change: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
                 };
             };
             default: {

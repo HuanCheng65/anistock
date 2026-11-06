@@ -526,6 +526,66 @@ async fn closing_an_account() {
 }
 
 #[tokio::test]
+async fn changing_and_resetting_a_password() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    a.login().await;
+    // a session from a minute ago (the test clock stands still)
+    let id: i64 = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap().query_row("SELECT id FROM accounts WHERE username='alice'", [], |r| r.get(0)).unwrap();
+    let old = format!("session={}", anistock::auth::make_session(&a.st.secret, id, a.st.unix_now() - 60.0));
+    let h = [("cookie", old.as_str())];
+    let change = |cur: &str, new: &str| Some(json!({"current_password": cur, "new_password": new}));
+    let r = a.req("POST", "/api/v1/me/password", change("wrong!!", "newpass1"), &h).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "当前密码不正确");
+    err(&a.req("POST", "/api/v1/me/password", change("secret1", "123"), &h).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/password", change("secret1", "newpass1"), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    let fresh = r.headers.get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    // the cookie from before the change no longer works; the new one does
+    err(&a.get("/api/v1/me", Some(&old)).await, 401, "unauthenticated");
+    assert_eq!(a.get("/api/v1/me", Some(&fresh)).await.status, 200);
+    err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "secret1"})), &[]).await, 401, "bad_credentials");
+
+    // forgotten: the bot asks for a code for the QQ bound to alice
+    let bot = [("authorization", &*format!("Bearer {BOT}"))];
+    let openid = "E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6";
+    let r = a.req("POST", "/api/v1/bot/password-resets", Some(json!({"platform": "qq", "external_id": openid})), &bot).await;
+    err(&r, 403, "not_bound");
+    rusqlite::Connection::open(&a.st.cfg.game_db)
+        .unwrap()
+        .execute("INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', ?, 'read:account', ?)", rusqlite::params![id, openid, TS])
+        .unwrap();
+    let r = a.req("POST", "/api/v1/bot/password-resets", Some(json!({"platform": "qq", "external_id": openid})), &bot).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/bot/password-resets", 201), &r.json, "reset code");
+    assert_eq!(r.json["account"]["username"], "alice");
+    let code = r.json["code"].as_str().unwrap().to_string();
+    let reset = |code: &str| Some(json!({"username": "alice", "code": code, "new_password": "third333"}));
+    err(&a.req("POST", "/api/v1/auth/password-reset", reset("AAAA-AAAA"), &[]).await, 422, "reset_code_invalid");
+    let r = a.req("POST", "/api/v1/auth/password-reset", reset(&code.to_lowercase()), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    // signed in, the code is spent
+    err(&a.req("POST", "/api/v1/auth/password-reset", reset(&code), &[]).await, 422, "reset_code_invalid");
+    let r = a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "third333"})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+}
+
+#[tokio::test]
+async fn reset_codes_take_five_wrong_tries() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let mut c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    let id: i64 = c.query_row("SELECT id FROM accounts WHERE username='alice'", [], |r| r.get(0)).unwrap();
+    let now = a.st.clock.now();
+    let (code, _) = anistock::api::v1::password::issue_code(&mut c, id, "operator", &now).unwrap();
+    let reset = |code: &str| Some(json!({"username": "alice", "code": code, "new_password": "third333"}));
+    for _ in 0..5 {
+        err(&a.req("POST", "/api/v1/auth/password-reset", reset("ZZZZZZZZ"), &[]).await, 422, "reset_code_invalid");
+    }
+    // the right code, too late
+    err(&a.req("POST", "/api/v1/auth/password-reset", reset(&code), &[]).await, 422, "reset_code_invalid");
+}
+
+#[tokio::test]
 async fn static_assets_are_immutable() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("assets")).unwrap();

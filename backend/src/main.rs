@@ -13,6 +13,9 @@
 //!                                   timestamp, e.g. 2026-11-05T10:00:00+08:00
 //!   ANISTOCK_NO_RATE_LIMIT=1        development only: no API rate limits
 //!
+//! `anistock reset-code <username>` issues a password reset code for a player who cannot use the QQ
+//! bot (no binding): check who is asking first. The code is valid 10 minutes.
+//!
 //! `anistock surveillance [days]` prints the wash-trade report (对倒监控, src/surveil.rs) for the last
 //! `days` trading days (default 7) and exits; it only reads the game database.
 //!
@@ -64,9 +67,26 @@ fn surveillance(cfg: &Config, days: i64) {
     }
 }
 
+/// `anistock reset-code <username>`
+fn reset_code(cfg: &Config, username: &str) {
+    let mut c = store::connect(&cfg.game_db).unwrap_or_else(|e| fail(format!("{}: {e}", cfg.game_db.display()), 1));
+    let id: i64 = c
+        .query_row("SELECT id FROM accounts WHERE username=? AND kind='player'", [username], |r| r.get(0))
+        .unwrap_or_else(|_| fail(format!("no player named {username:?}"), 1));
+    let now = chrono::Utc::now().with_timezone(&cfg.tz);
+    let (code, expires) = anistock::api::v1::password::issue_code(&mut c, id, "operator", &now)
+        .unwrap_or_else(|e| fail(format!("reset code: {e}"), 1));
+    println!("{username}: {code} (valid until {expires}); enter it at 忘记密码 on the login page");
+}
+
 fn main() {
     let mut cfg = Config::load().unwrap_or_else(|e| fail(format!("config: {e}"), 2));
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("reset-code") {
+        let Some(name) = args.get(2) else { fail("usage: anistock reset-code <username>", 2) };
+        reset_code(&cfg, name);
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("surveillance") {
         let days = args.get(2).map_or(7, |d| d.parse().unwrap_or_else(|_| fail("usage: anistock surveillance [days]", 2)));
         surveillance(&cfg, days);

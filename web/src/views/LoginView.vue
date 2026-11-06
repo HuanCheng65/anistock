@@ -123,6 +123,7 @@ async function submit() {
       </label>
       <p v-if="closed" class="msg">暂未开放注册</p>
       <p v-if="error" class="msg error" role="alert">{{ error }}</p>
+      <RouterLink v-if="!reg" to="/forgot" class="forgotlink">忘记密码</RouterLink>
       <button class="btn block" :disabled="busy || closed">{{ busy ? (reg ? '注册中…' : '登录中…') : reg ? '注册' : '登录' }}</button>
     </form>
 
@@ -142,6 +143,7 @@ async function submit() {
 .form { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; }
 .form .btn { height: 48px; font-size: 16px; margin-top: 4px; }
 .foot { margin: auto 0 28px; padding-top: 28px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.forgotlink { align-self: flex-end; margin-top: -6px; font-size: 13px; color: var(--ink-2); }
 .agree { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
 .agree input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }
 .agree a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }

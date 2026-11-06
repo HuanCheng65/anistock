@@ -16,7 +16,7 @@ use super::{body_str, json_body, json_body_opt, need, read, Caller};
 use crate::api::AppState;
 
 /// Crockford base32 without I L O U.
-const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+pub const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_MINUTES: i64 = 10;
 
 /// Run one write on the side connection (opened on first use).
@@ -32,6 +32,15 @@ pub fn with_side<T>(st: &AppState, f: impl FnOnce(&mut Connection) -> R<T>) -> R
         *g = Some(c);
     }
     f(g.as_mut().unwrap())
+}
+
+/// A QQ identity from the official bot: its openid (letters, digits, `_`, `-`; up to 64 characters).
+/// A plain QQ number also passes (the bot of v1 sent those).
+pub fn check_external(external: &str) -> R<()> {
+    if external.is_empty() || external.len() > 64 || !external.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return Err(error::invalid(vec![error::bad_format("external_id")]));
+    }
+    Ok(())
 }
 
 /// `K7Q39MZD` -> `K7Q3-9MZD`
@@ -180,9 +189,7 @@ pub async fn redeem(
     if platform != "qq" {
         return Err(error::invalid(vec![error::not_allowed("platform")]));
     }
-    if external.is_empty() || external.len() > 20 || !external.chars().all(|c| c.is_ascii_digit()) {
-        return Err(error::invalid(vec![error::bad_format("external_id")]));
-    }
+    check_external(&external)?;
     {
         let mut l = st.v1.limiter.lock().unwrap();
         let v = l.take(&st.v1.limits, super::ratelimit::Key::Bind(format!("{platform}:{external}")));

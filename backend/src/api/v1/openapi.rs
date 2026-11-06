@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, assess, bind, corporate, credit, market, search, stocks, works};
+use super::{account, assess, bind, password, corporate, credit, market, search, stocks, works};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -26,7 +26,7 @@ use super::{account, assess, bind, corporate, credit, market, search, stocks, wo
         account::me, account::portfolio, account::asset_history, account::orders, account::order_one, account::place,
         account::cancel, account::my_trades, account::ledger, account::restructure,
         account::leaderboard, account::sign, account::close, assess::questions, assess::submit, credit::credit, credit::open, credit::repay, credit::stock_margin,
-        account::challenge, account::register, account::login, account::logout,
+        account::challenge, account::register, account::login, account::logout, password::reset, password::change, password::bot_issue,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
     ),
     components(schemas(
@@ -44,7 +44,7 @@ pub struct ApiDoc;
 /// Request bodies: optional fields stay optional.
 const REQUESTS: &[&str] = &[
     "PlaceOrderRequest", "SubscriptionRequest", "RestructureRequest", "RegisterRequest", "LoginRequest",
-    "BindCodeRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
+    "BindCodeRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
 ];
 
 fn require_all(v: &mut Value) {

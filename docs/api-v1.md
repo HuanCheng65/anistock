@@ -266,6 +266,7 @@
 | 403 | `agreement_required` | 签署风险揭示书后才能交易 | — |
 | 403 | `verification_required` | 完成身份验证后才能认购新股 | — |
 | 422 | `assessment_limit` | 每天最多测评 3 次，明天再试 | — |
+| 422 | `reset_code_invalid` | 验证码不正确或已过期，重新获取后再试 | — |
 | 422 | `close_not_allowed` | 还清融资融券负债后才能注销 | — |
 | 422 | `ipo_quota_exceeded` | 认购金额超过认购额度 1,234.00 星辉（前 5 个交易日的日均持仓市值） | `quota`、`max_quantity` |
 | 409 | `document_outdated` | 文件已更新，刷新页面后重新阅读 | — |
@@ -470,8 +471,8 @@ X-Act-As: qq:123456789
 网页（已登录）                 服务器                          群里 / Koishi
 POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
           ◄── {code:"K7Q3-9MZD", expires_at}
-玩家在群里发 “/绑定 K7Q39MZD” ─────────────────────────────►  机器人收到
-                                ◄── POST /bot/bindings {code, platform:"qq", external_id:"123456789"}
+玩家私聊机器人 “/绑定 K7Q39MZD” ───────────────────────────►  机器人收到
+                                ◄── POST /bot/bindings {code, platform:"qq", external_id:"<openid>"}
                                校验码 → 写绑定，作废码
                                 ──► 201 {binding, account:{id, username}}
                                                                回复“已绑定 alice”
@@ -479,6 +480,7 @@ POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
 
 - 码由网页生成，这样“谁的账号”由登录会话证明，“谁的 QQ”由可信的机器人证明，两边都不需要在群里暴露密码。
 - 码：8 个字符，Crockford Base32（去掉易混的 I L O U），显示时中间加连字符，兑换时忽略连字符和大小写；一次性；10 分钟过期；同一账号同时只有一个有效码（再生成会作废旧码）。
+- **只在私聊中兑换（已决定）**：绑定码在群里发出会被别人抢先兑换；绑定的 QQ 又是找回密码的凭据，所以绑定、解绑、找回密码都只在私聊中处理（`docs/qq-bot.md`）。`external_id` 是官方机器人私聊事件里发送者的 openid（字母、数字、`_`、`-`，最长 64 位）。
 - **一对一（已决定）**：一个账号只能绑一个 QQ 号，一个 QQ 号只能绑一个账号。换绑须先解绑（网页上解绑，或者在群里 `/解绑`），再生成新码。
 
 #### `POST /api/v1/me/bind-codes`（仅网页 cookie）
@@ -519,7 +521,14 @@ POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
 
 #### `DELETE /api/v1/bot/bindings/{platform}/{external_id}`（机器人令牌）
 
-群里 `/解绑`。204。错误：`binding_not_found`。
+私聊 `/解绑`。204。错误：`binding_not_found`。
+
+#### 修改和找回密码
+
+- `POST /api/v1/me/password`（玩家）：`{"current_password", "new_password"}`。200，返回 `Me`，换发 cookie。错误：`invalid_request`（`current_password` 不正确、新密码不足 6 位）。
+- `POST /api/v1/bot/password-resets`（机器人令牌）：`{"platform": "qq", "external_id": "<openid>"}`。201，`{"code": "K7Q3-9MZD", "expires_at", "account": {"id", "username"}}`。错误：`not_bound`、`rate_limited`（同一 QQ 每小时 5 次）。
+- `POST /api/v1/auth/password-reset`（无需登录）：`{"username", "code", "new_password"}`。200，返回 `Me`，设置 cookie。错误：422 `reset_code_invalid`（验证码不正确、过期、用过或输错 5 次）。按 IP 计入登录限额。
+- 改密码或重设后，签发时间早于这次修改的 cookie 不再有效（`docs/v2-account.md` §13）。
 
 **需要的新表**（迁移 V5，示意）：
 

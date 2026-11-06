@@ -209,7 +209,7 @@ pub async fn sign(
     load_me(&st, id).await.map(Json)
 }
 
-async fn load_me(st: &Arc<AppState>, id: i64) -> R<Me> {
+pub(super) async fn load_me(st: &Arc<AppState>, id: i64) -> R<Me> {
     let st2 = st.clone();
     read(st, move |c| me_of(&st2, c, id)).await
 }
@@ -1109,7 +1109,7 @@ fn credentials(b: &serde_json::Map<String, serde_json::Value>) -> R<(String, Str
     Ok((name, password))
 }
 
-fn with_cookie(mut r: Response, cookie: &str) -> Response {
+pub(super) fn with_cookie(mut r: Response, cookie: &str) -> Response {
     if let Ok(v) = HeaderValue::from_str(cookie) {
         r.headers_mut().insert("set-cookie", v);
     }
@@ -1133,7 +1133,7 @@ fn check_pow(st: &AppState, b: &serde_json::Map<String, serde_json::Value>, purp
 }
 
 /// A password hash on a blocking thread, at most `hash_concurrency` at a time; waits up to 5 s for a slot.
-async fn hashing<T: Send + 'static>(st: &AppState, f: impl FnOnce() -> T + Send + 'static) -> R<T> {
+pub(super) async fn hashing<T: Send + 'static>(st: &AppState, f: impl FnOnce() -> T + Send + 'static) -> R<T> {
     let permit = tokio::time::timeout(std::time::Duration::from_secs(5), st.v1.hashing.acquire())
         .await
         .map_err(|_| error::busy())?
