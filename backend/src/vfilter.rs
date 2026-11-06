@@ -64,6 +64,9 @@ struct RawParams {
     /// v0.3.2: the common correlation of the three markets' prior log levels (0: independent markets)
     #[serde(default)]
     rho: Option<f64>,
+    /// v0.6.1: the pairwise correlations [us-cn, us-jp, cn-jp] (absent: `rho` for all three)
+    #[serde(default)]
+    prior_corr: Option<Vec<f64>>,
     /// v0.3.2: "us" = cn/jp priors derive from the us pre-air estimate (prior_bias per market converts it)
     #[serde(default)]
     prior: Option<String>,
@@ -176,8 +179,10 @@ pub struct FilterParams {
     pub horizon_days: usize,
     pub flash_min_expected: f64,
     pub ipo_risk: f64,
-    /// common correlation of the markets' prior log levels
+    /// common correlation of the markets' prior log levels (v0.3.2; kept for the record)
     pub rho: f64,
+    /// the correlations of the markets' prior log levels, [us-cn, us-jp, cn-jp] (v0.6.1 `prior_corr`, else `rho`)
+    pub prior_corr: M3,
     /// cn/jp priors from the us pre-air estimate (v0.3.2 fit), else from each market's own estimate
     pub prior_from_us: bool,
     /// the pre-air estimate's expected log growth (and its variance) until it freezes, by days left
@@ -336,6 +341,11 @@ impl FilterParams {
             sequel_cost: 0.0,
             hiatus_lag: 290,
             rho: r.rho.unwrap_or(0.0),
+            prior_corr: match r.prior_corr.as_deref() {
+                Some(&[a, b, c]) => [a, b, c],
+                Some(v) => return Err(format!("valuation filter prior_corr: 3 values expected, got {}", v.len())),
+                None => [r.rho.unwrap_or(0.0); 3],
+            },
             prior_from_us: r.prior.as_deref() == Some("us"),
             preair_growth: r.preair_growth,
             season_listing: r.season_listing,
@@ -401,11 +411,11 @@ pub const DRIFT_WEEKS: [i64; 2] = [4, 8];
 /// The joint filter's 3×3 covariance (us, cn, jp).
 pub type Cov = [[f64; 3]; 3];
 
-/// Prior covariance of the three markets' log levels: variances p0, one common correlation rho (Python
-/// `prior_cov`).
-pub fn prior_cov(p0: &M3, rho: f64) -> Cov {
+/// Prior covariance of the three markets' log levels: variances p0, correlations [us-cn, us-jp, cn-jp] (Python
+/// `prior_cov`; a common rho is [rho; 3]).
+pub fn prior_cov(p0: &M3, corr: &M3) -> Cov {
     let sd = [p0[0].sqrt(), p0[1].sqrt(), p0[2].sqrt()];
-    std::array::from_fn(|i| std::array::from_fn(|j| if i == j { p0[i] } else { rho * sd[i] * sd[j] }))
+    std::array::from_fn(|i| std::array::from_fn(|j| if i == j { p0[i] } else { corr[i + j - 1] * sd[i] * sd[j] }))
 }
 
 /// Each market's level drifts on its own (Python `kf_predict_joint`).
@@ -1038,7 +1048,7 @@ mod tests {
         let fp = FilterParams::load(&cfg).unwrap();
         assert!(fp.outlier_p[1] > 0.0, "cn outlier component fitted");
         let run = |pi: f64| {
-            let (mut mean, mut cov) = ([8.0, 73f64.ln(), 4.7], prior_cov(&[0.02, 0.02, 0.02], fp.rho));
+            let (mut mean, mut cov) = ([8.0, 73f64.ln(), 4.7], prior_cov(&[0.02, 0.02, 0.02], &fp.prior_corr));
             let mut path = Vec::new();
             for y in [73f64, 73.0, 256.0, 78.0] {
                 let (m2, c2) = kf_predict_joint(&mean, &cov, 7, &[0.0; 3], &fp.q);
@@ -1090,9 +1100,9 @@ mod tests {
         let wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9];
         let segs = [partial_segment(&fp, 6.0, false), partial_segment(&fp, 7.0, false), partial_segment(&fp, 9.0, false), partial_segment(&fp, 9.0, true)];
         assert_eq!(segs, [Some(1), Some(2), Some(3), Some(0)]);
-        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0958627956, 0.231230597)));
-        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.724444698599999, 0.016586442)));
-        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.497311277, 0.000402115)));
+        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0958627956, 0.234109889)));
+        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.724157589000001, 0.016792259)));
+        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.497311277, 0.000403347)));
         assert_eq!(partial_observation(&fp, 1, &wk, -0.0065), Some((7.437, 0.0)));
         assert_eq!(partial_observation(&fp, 1, &wk[..1], 0.0), None);
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
@@ -1159,7 +1169,7 @@ mod tests {
             assert!(close(opt, e4 * 0.8), "{opt} {e4}");
         }
         // the joint filter (v0.3.2)
-        let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
+        let c = prior_cov(&[0.35, 1.08, 0.86], &[0.48; 3]);
         let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];
         for (i, w) in want_c.iter().enumerate() {
             assert!(ulps(c[i / 3][i % 3], *w) <= 2, "prior_cov {i}");
@@ -1184,5 +1194,11 @@ mod tests {
         assert!(ulps(cr[1][1], 0.027776909866191524) <= 2 && ulps(cr[0][2], 0.14499161367249325) <= 2, "{cr:?}");
         assert!(ulps(llr, -3.84792943485109) <= 2 && ulps(svr, 1.1534801002462083) <= 2, "{llr} {svr}");
         assert_eq!(kf_update_joint_robust(&m, &c2, 1, -1.5, 0.0235, 0.0, 0.2537, 4.0), kf_update_joint(&m, &c2, 1, -1.5, 0.0235, 4.0));
+        // the pairwise prior correlations (v0.6.1): [us-cn, us-jp, cn-jp]
+        let pw = prior_cov(&[0.385, 0.923, 0.322], &[0.3185, 0.3983, 0.8146]);
+        let want_pw = [0.385, 0.18986313688746956, 0.14023893565376203, 0.18986313688746956, 0.923, 0.44409224783929746, 0.14023893565376203, 0.44409224783929746, 0.322];
+        for (i, w) in want_pw.iter().enumerate() {
+            assert_eq!(pw[i / 3][i % 3], *w, "prior_cov pairwise {i}");
+        }
     }
 }

@@ -410,7 +410,7 @@ impl Engine {
     fn prior_cov_at(fp: &FilterParams, s: &ShowInputs, today: i64) -> Cov {
         let k = day_no(&s.first_air).map_or(0, |f| f - 1 - today);
         let (_, v) = fp.growth(k);
-        let c = F::prior_cov(&fp.p0, fp.rho);
+        let c = F::prior_cov(&fp.p0, &fp.prior_corr);
         let b = fp.prior_beta;
         std::array::from_fn(|i| std::array::from_fn(|j| c[i][j] + b[i] * b[j] * v))
     }
@@ -634,7 +634,7 @@ impl Engine {
                 // (the markets' usual relation: log level_m = bias_m + beta_m × log us estimate)
                 let lp = (y - fp.prior_bias[m0]) / fp.prior_beta[m0].max(1e-6);
                 let mean = std::array::from_fn(|m| fp.prior_bias[m] + fp.prior_beta[m] * lp);
-                fresh(mean, F::prior_cov(&fp.p0, fp.rho))
+                fresh(mean, F::prior_cov(&fp.p0, &fp.prior_corr))
             }
             (Some(mut st), _) => {
                 // without yesterday's days so far of the us week: today's are observed again below

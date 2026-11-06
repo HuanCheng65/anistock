@@ -83,3 +83,5 @@ wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9]
 print("pseg", V.partial_segment(fp, 6.0, False), V.partial_segment(fp, 7.0, False), V.partial_segment(fp, 9.0, False), V.partial_segment(fp, 9.0, True))
 print("po0_3", repr(V.partial_observation(fp, 0, wk[:3], -0.019)), "po2_3", repr(V.partial_observation(fp, 2, wk[:3], -0.0065)))
 print("po3_6", repr(V.partial_observation(fp, 3, wk[:6], 0.0)), "po1_7", repr(V.partial_observation(fp, 1, wk, -0.0065)), "po_1", V.partial_observation(fp, 1, wk[:1], 0.0))
+# the pairwise prior correlations (v0.6.1): [us-cn, us-jp, cn-jp]; a common rho is the same three
+print("prior_cov_pw", repr(V.prior_cov([0.385, 0.923, 0.322], [0.3185, 0.3983, 0.8146])), V.prior_cov([0.35, 1.08, 0.86], [0.48] * 3) == c)

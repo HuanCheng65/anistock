@@ -738,20 +738,38 @@ def joint_data(shows, curve_us, keep=lambda sid, prem: True):
 
 def joint_P(stage1, x):
     # the log level of market m at the premiere ~ b_m + beta_m log(us pre-air estimate): beta_us = 1; cn and jp
-    # get their own elasticity (a show that is big on AniList is relatively smaller in China and Japan)
+    # get their own elasticity (a show that is big on AniList is relatively smaller in China and Japan).
+    # x[6] the (us-cn, or common) correlation; with x[9], x[10] the us-jp and cn-jp ones (v0.6.1 pairwise)
+    rho = [math.tanh(x[6]), math.tanh(x[9]), math.tanh(x[10])] if len(x) > 10 else math.tanh(x[6])
     return {"drift": [stage1[m][0] for m in MARKETS], "q": [stage1[m][1] for m in MARKETS],
             "r": [stage1[m][2] for m in MARKETS], "b": list(x[0:3]), "p0": [math.exp(v) for v in x[3:6]],
-            "rho": math.tanh(x[6]), "beta": [x[9] if len(x) > 9 else 1.0, x[7], x[8]]}
+            "rho": rho, "beta": [1.0, x[7], x[8]]}
 
 
-def fit_joint(data, stage1):
+def corr_pd(rho) -> bool:
+    """The 3x3 correlation matrix of `rho` (common or pairwise) is positive definite."""
+    a, b, c = rho if isinstance(rho, list) else (rho, rho, rho)
+    return max(abs(a), abs(b), abs(c)) < 1.0 and 1.0 + 2.0 * a * b * c - a * a - b * b - c * c > 1e-9
+
+
+def fit_joint(data, stage1, pairwise=True):
+    """Bias, p0, correlations and the cn/jp elasticities by maximum likelihood of the joint filter (the dynamics
+    fixed from stage 1). `pairwise`: three correlations (v0.6.1), else one common rho (v0.3.2)."""
     # (beta_us stays 1: fitting it with the dynamics fixed gave 0.95, held out 0.98, log-likelihood +0.3 — no evidence
-    # that the us pre-air estimate overstates big shows; a 10th parameter x[9] would free it)
+    # that the us pre-air estimate overstates big shows)
     x0 = [stage1[m][4] for m in MARKETS] + [math.log(stage1[m][3]) for m in MARKETS] + [math.atanh(0.5), 1.0, 1.0]
     steps = [0.3, 0.3, 0.3, 0.5, 0.5, 0.5, 0.5, 0.2, 0.2]
-    best, nll = nelder_mead(lambda x: -sum(joint_filter(p, o, d, joint_P(stage1, x))[0] for p, o, d in data),
-                            x0, steps, iters=2000)
-    return joint_P(stage1, best), -nll
+    if pairwise:
+        x0 += [math.atanh(0.5), math.atanh(0.5)]
+        steps += [0.5, 0.5]
+
+    def nll(x):
+        P = joint_P(stage1, x)
+        if not corr_pd(P["rho"]):
+            return 1e18
+        return -sum(joint_filter(p, o, d, P)[0] for p, o, d in data)
+    best, v = nelder_mead(nll, x0, steps, iters=3000 if pairwise else 2000)
+    return joint_P(stage1, best), -v
 
 
 def level_unbiased_bias(data, P):
@@ -841,7 +859,7 @@ def close_days(x, cal, partial=None):
     cu = cal["curve_us"]
     fp = {"partial_us": partial} if partial else {}
     mean = [cal["prior_bias"][m] + cal["prior_beta"][m] * lp for m in MARKETS]
-    cov = V.prior_cov([cal["p0"][m] for m in MARKETS], cal["rho"])
+    cov = V.prior_cov([cal["p0"][m] for m in MARKETS], V.prior_corr(cal))
     fin = finale_day(x)
     day = prem
     ys, seg, heat, prem_wk = [], None, None, False
@@ -1173,6 +1191,68 @@ def fit_flash(path: Path):
     return curve, noise, len([1 for f in frac[0]])
 
 
+def stage1_from(cal):
+    """Stage 1 (each market's dynamics) as fitted into a parameter file: (drift by week, q, r, p0, bias, 0, r_out)."""
+    return {m: (tuple(cal["drift_by_week"][m]), cal["q"][m], cal["r"][m], cal["p0"][m], cal["prior_bias_mle"][m]
+                if "prior_bias_mle" in cal else cal["prior_bias"][m], 0.0, cal["outlier_r"][m]) for m in MARKETS}
+
+
+def joint_loglik(data, P):
+    return sum(joint_filter(p, o, d, P)[0] for p, o, d in data)
+
+
+def fit_prior_only(shows, cal):
+    """v0.6.1: the joint prior with three pairwise correlations instead of one common rho, the dynamics fixed.
+    Compared with the common-rho fit in sample, on held-out shows (fit on even ids, scored on odd, and back) and
+    on the cross-season split; the chosen prior's keys are written into `cal`."""
+    cu = cal["curve_us"]
+    st1 = stage1_from(cal)
+    data = joint_data(shows, cu)
+    out = {}
+    for name, pw in (("common", False), ("pairwise", True)):
+        P, ll = fit_joint(data, st1, pw)
+        P["b_mle"] = list(P["b"])
+        P["b"] = level_unbiased_bias(data, P)
+        ho = {}
+        for tr, te in ((0, 1), (1, 0)):
+            keep_tr = lambda sid, prem, tr=tr: sid % 2 == tr
+            keep_te = lambda sid, prem, te=te: sid % 2 == te
+            Pt, _ = fit_joint(joint_data(shows, cu, keep_tr), st1, pw)
+            Pt["b"] = level_unbiased_bias(joint_data(shows, cu, keep_tr), Pt)
+            dte = joint_data(shows, cu, keep_te)
+            ho[f"fit{tr}_test{te}"] = {"loglik": round(joint_loglik(dte, Pt), 3), "shows": len(dte),
+                                       "coverage80": {m: (round(c[0], 4) if c[0] is not None else None, c[1])
+                                                      for m, c in joint_coverage(dte, Pt).items()},
+                                       "rho": Pt["rho"]}
+        split = date(2026, 9, 15).toordinal()
+        cs = {}
+        for lab, tr, te in (("summer_to_autumn", lambda s_, p_: p_ < split, lambda s_, p_: p_ >= split),
+                            ("autumn_to_summer", lambda s_, p_: p_ >= split, lambda s_, p_: p_ < split)):
+            Pt, _ = fit_joint(joint_data(shows, cu, tr), st1, pw)
+            Pt["b"] = level_unbiased_bias(joint_data(shows, cu, tr), Pt)
+            dte = joint_data(shows, cu, te)
+            cs[lab] = {"loglik": round(joint_loglik(dte, Pt), 3), "shows": len(dte), "rho": Pt["rho"],
+                       "coverage80": {m: (round(c[0], 4) if c[0] is not None else None, c[1])
+                                      for m, c in joint_coverage(dte, Pt).items()}}
+        out[name] = {"P": P, "loglik": ll, "loglik_unbiased_bias": joint_loglik(data, P), "held_out": ho,
+                     "cross_season": cs,
+                     "coverage80_in_sample": {m: c[0] for m, c in joint_coverage(data, P).items()}}
+        print(name, json.dumps({k: v for k, v in out[name].items() if k != "P"}, default=str))
+        print("  rho", P["rho"], "p0", P["p0"], "b", P["b"], "beta", P["beta"])
+    P = out["pairwise"]["P"]
+    for k, m in enumerate(MARKETS):
+        cal["p0"][m], cal["prior_bias"][m] = round(P["p0"][k], 6), round(P["b"][k], 6)
+        cal.setdefault("prior_bias_mle", {})[m] = round(P["b_mle"][k], 6)
+        cal["prior_beta"][m] = round(P["beta"][k], 6)
+    cal["prior_corr"] = [round(v, 6) for v in P["rho"]]
+    cal["rho"] = round(out["common"]["P"]["rho"], 6)
+    cal["fit"]["joint_prior_v061"] = {
+        name: {"loglik": round(o["loglik"], 3), "rho": o["P"]["rho"], "held_out": o["held_out"],
+               "cross_season": o["cross_season"], "coverage80_in_sample": o["coverage80_in_sample"]}
+        for name, o in out.items()}
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", type=Path)
@@ -1188,6 +1268,9 @@ def main():
     ap.add_argument("--partial-only", action="store_true",
                     help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
                          "write that key back")
+    ap.add_argument("--prior-only", action="store_true",
+                    help="refit only the joint prior (bias, p0, the pairwise correlations, cn/jp elasticities) with each "
+                         "market's dynamics fixed from --out, and write those keys back (then refit --partial-only)")
     a = ap.parse_args()
     global GAUSSIAN, CLIP
     GAUSSIAN, CLIP = a.gaussian, a.clip
@@ -1198,6 +1281,12 @@ def main():
             r = fit_outlier(shows, cal, m)
             cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
             print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.prior_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        BUMP.update(cal["finale_bump"])
+        fit_prior_only(shows, cal)
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.partial_only:

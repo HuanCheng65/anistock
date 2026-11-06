@@ -199,11 +199,21 @@ def kf_update(mean: float, var: float, y: float, r: float, clip: float) -> tuple
 # ---- the joint filter (v0.3.2): one state per show, the log levels of the three markets
 
 
-def prior_cov(p0: list[float], rho: float) -> list[list[float]]:
-    """Prior covariance of the three markets' log levels: variances p0, one common correlation rho (a show
-    that beats its pre-air estimate in one market tends to beat it in the others)."""
+def prior_cov(p0: list[float], rho) -> list[list[float]]:
+    """Prior covariance of the three markets' log levels: variances p0, and the correlations (a show that beats
+    its pre-air estimate in one market tends to beat it in the others). `rho` is one common correlation, or
+    (v0.6.1) the three pairwise ones [us-cn, us-jp, cn-jp]: the two Asian markets move together far more than
+    either moves with AniList (docs/v2-valuation.md §3.9)."""
     sd = [v ** 0.5 for v in p0]
-    return [[p0[i] if i == j else rho * sd[i] * sd[j] for j in range(3)] for i in range(3)]
+    c = list(rho) if isinstance(rho, (list, tuple)) else [rho, rho, rho]
+    pair = lambda i, j: c[i + j - 1]   # (0,1) -> 0, (0,2) -> 1, (1,2) -> 2
+    return [[p0[i] if i == j else pair(i, j) * sd[i] * sd[j] for j in range(3)] for i in range(3)]
+
+
+def prior_corr(fp: dict):
+    """The filter parameters' prior correlations: the pairwise `prior_corr` (v0.6.1), else the common `rho`."""
+    pc = fp.get("prior_corr")
+    return list(pc) if pc else fp.get("rho", 0.0)
 
 
 def kf_predict_joint(mean: list[float], cov: list[list[float]], days: int, drift: list[float],
