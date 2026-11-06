@@ -22,12 +22,17 @@ function status(w: Work): string {
   if (w.status === 'halted') return '暂停播出'
   if (w.status === 'upcoming') {
     if (!w.first_air) return '未开播'
-    const [, m, d] = w.first_air.split('-').map(Number)
-    return `${m} 月 ${d} 日开播`
+    const [y, m, d] = w.first_air.split('-').map(Number)
+    const year = props.today && String(y) !== props.today.slice(0, 4) ? `${y} 年 ` : ''
+    return `${year}${m} 月 ${d} 日开播`
   }
   if (w.status === 'finished') return `已完结 · 共 ${w.episodes_aired} 集`
   if (w.is_long_runner) return `第 ${w.episodes_aired} 集`
   return w.episodes ? `${w.episodes_aired} / ${w.episodes}` : `第 ${w.episodes_aired} 集`
+}
+/** a cell's date: 今天 or MM-dd (the year is in the label and, for a next-year premiere, the status line) */
+function cellDay(day: string): string {
+  return day === props.today ? '今天' : day.slice(5)
 }
 /** the first episode still to air */
 function nextEp(w: Work): number | null {
@@ -72,7 +77,7 @@ const audience = computed(() => {
     <div class="sched">
       <template v-if="works">
         <section v-for="w in list" :key="w.id" class="work" :aria-label="many ? w.title : '播出排期'">
-          <header v-if="many || w.status !== 'airing' || w.is_long_runner" class="wh">
+          <header v-if="many || w.status !== 'airing'" class="wh">
             <h3 v-if="many" class="h3 clamp1">{{ w.title }}</h3>
             <span class="st" :class="{ quiet: !many }">{{ status(w) }}</span>
           </header>
@@ -81,7 +86,7 @@ const audience = computed(() => {
                 :class="{ aired: e.aired, next: e.episode === nextEp(w), delayed: e.delayed, undated: !e.date }">
               <span class="sr-only">{{ epLabel(e) }}</span>
               <span class="n num" aria-hidden="true">{{ e.episode }}</span>
-              <span class="d num" aria-hidden="true">{{ e.date ? shortDay(e.date, today) : '待定' }}</span>
+              <span class="d num" aria-hidden="true">{{ e.date ? cellDay(e.date) : '待定' }}</span>
               <span v-if="e.delayed" class="dl" aria-hidden="true">延期</span>
             </li>
           </ol>
