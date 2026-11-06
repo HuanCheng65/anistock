@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "AgreementRequest": {
+        "description": "同意或签署一份文件",
+        "properties": {
+          "doc": {
+            "description": "`terms`、`privacy` 或 `disclosure`",
+            "type": "string"
+          },
+          "signature": {
+            "description": "风险揭示书：输入自己的用户名作为签名；其他文件不需要",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "description": "必须是当前版本",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc",
+          "version"
+        ],
+        "type": "object"
+      },
       "Airing": {
         "properties": {
           "airs_at": {
@@ -1992,6 +2018,10 @@
           "cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "开户时间"
+          },
           "credit_status": {
             "description": "信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null",
             "type": [
@@ -2020,6 +2050,13 @@
             "$ref": "#/components/schemas/Money",
             "description": "融资融券负债"
           },
+          "pending_documents": {
+            "description": "还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户",
+            "items": {
+              "$ref": "#/components/schemas/PendingDocument"
+            },
+            "type": "array"
+          },
           "restructure": {
             "$ref": "#/components/schemas/RestructureState"
           },
@@ -2045,6 +2082,7 @@
         "required": [
           "available_cash",
           "cash",
+          "created_at",
           "credit_status",
           "deposit_rate",
           "dividends",
@@ -2052,6 +2090,7 @@
           "id",
           "initial_cash",
           "liabilities",
+          "pending_documents",
           "restructure",
           "stock_value",
           "total_assets",
@@ -2421,6 +2460,24 @@
           "sell"
         ],
         "type": "string"
+      },
+      "PendingDocument": {
+        "description": "一份待同意或签署的文件",
+        "properties": {
+          "doc": {
+            "description": "`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc",
+          "version"
+        ],
+        "type": "object"
       },
       "Phase": {
         "description": "市场阶段（封闭）",
@@ -3006,6 +3063,13 @@
       },
       "RegisterRequest": {
         "properties": {
+          "agree": {
+            "description": "同意《用户协议》和《隐私政策》，必须为 true",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "invite": {
             "description": "只在邀请注册模式下需要",
             "type": [
@@ -5372,6 +5436,47 @@
           }
         },
         "summary": "我的账户",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/agreements": {
+      "post": {
+        "operationId": "sign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgreementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "同意或签署文件",
         "tags": [
           "account"
         ]

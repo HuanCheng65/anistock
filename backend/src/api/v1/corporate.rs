@@ -91,6 +91,7 @@ pub async fn subscribe(
     body: Bytes,
 ) -> R<Json<RightsOffer>> {
     let me = caller.player()?;
+    super::account::require_signed(&st, me).await?;
     let id = super::path_id(&raw, "id")?;
     let b = json_body(&headers, &body)?;
     let qty = need(body_int(&b, "quantity")?, "quantity")?;

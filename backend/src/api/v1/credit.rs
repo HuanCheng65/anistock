@@ -257,6 +257,7 @@ pub async fn open(
     body: Bytes,
 ) -> R<Json<CreditEnvelope>> {
     let id = caller.player()?;
+    super::account::require_signed(&st, id).await?;
     let _ = json_body_opt(&headers, &body)?;
     let (initial, day, t) = (initial_cents(&st.cfg), st.clock.today(), st.clock.ts());
     let credit = engine(&st, move |ctx| -> R<CreditAccount> {

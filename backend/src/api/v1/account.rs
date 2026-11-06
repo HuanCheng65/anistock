@@ -66,13 +66,14 @@ pub fn stock_value(c: &Connection, id: i64) -> R<i64> {
 
 /// The `Me` of an account; `unauthenticated` when it is not a player.
 pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
-    let row: Option<(String, i64, i64)> = c
-        .query_row("SELECT username, cash, cash_frozen FROM accounts WHERE id=? AND kind='player'", [id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    let row: Option<(String, i64, i64, String)> = c
+        .query_row("SELECT username, cash, cash_frozen, created_at FROM accounts WHERE id=? AND kind='player'", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })
         .optional()
         .map_err(sql)?;
-    let (username, cash, frozen) = row.ok_or_else(error::unauthenticated)?;
+    let (username, cash, frozen, created_at) = row.ok_or_else(error::unauthenticated)?;
+    let pending_documents = pending_documents(&st.cfg, c, id)?;
     let stock = stock_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
     let total = cash + stock - liab;
@@ -115,7 +116,72 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         deposit_rate: r6(deposit_rate(&st.cfg, rate)),
         restructure: RestructureState { count, eligible: eligible.is_ok(), reason, message },
         credit_status,
+        created_at: ts(created_at),
+        pending_documents,
     })
+}
+
+/// The current documents `id` has not accepted yet.
+pub fn pending_documents(cfg: &crate::config::Config, c: &Connection, id: i64) -> R<Vec<PendingDocument>> {
+    let mut q = c.prepare_cached("SELECT 1 FROM account_agreements WHERE account_id=? AND doc=? AND version=?").map_err(sql)?;
+    let mut out = Vec::new();
+    for (doc, version) in &cfg.documents {
+        if !q.exists(rusqlite::params![id, doc, version]).map_err(sql)? {
+            out.push(PendingDocument { doc: doc.clone(), version: *version });
+        }
+    }
+    Ok(out)
+}
+
+/// Orders, subscriptions and opening credit need every current document accepted (docs/v2-account.md §8).
+pub async fn require_signed(st: &Arc<AppState>, id: i64) -> R<()> {
+    let st2 = st.clone();
+    let pending = read(st, move |c| pending_documents(&st2.cfg, c, id)).await?;
+    if pending.is_empty() { Ok(()) } else { Err(error::agreement_required()) }
+}
+
+fn record_agreement(st: &AppState, id: i64, doc: &str, version: i64, signature: Option<&str>) -> R<()> {
+    super::bind::side_exec(
+        st,
+        "INSERT OR IGNORE INTO account_agreements(account_id, doc, version, signed_at, signature) VALUES (?,?,?,?,?)",
+        rusqlite::params![id, doc, version, st.clock.ts(), signature],
+    )?;
+    Ok(())
+}
+
+/// 同意或签署文件
+#[utoipa::path(post, path = "/api/v1/me/agreements", tag = "account",
+    request_body = AgreementRequest,
+    responses((status = 200, body = Me), (status = "default", body = ErrorBody)))]
+pub async fn sign(
+    State(st): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Json<Me>> {
+    let id = caller.player()?;
+    let b = json_body(&headers, &body)?;
+    let doc = need(body_str(&b, "doc")?, "doc")?;
+    let version = need(body_int(&b, "version")?, "version")?;
+    let signature = body_str(&b, "signature")?;
+    let Some((_, current)) = st.cfg.documents.iter().find(|(d, _)| *d == doc) else {
+        return Err(error::invalid(vec![error::not_allowed("doc")]));
+    };
+    if version != *current {
+        return Err(E::new(409, "document_outdated", "文件已更新，刷新页面后重新阅读"));
+    }
+    let me = load_me(&st, id).await?;
+    let signature = if doc == "disclosure" {
+        let typed = signature.as_deref().map(str::trim).unwrap_or("");
+        if typed != me.username {
+            return Err(error::invalid(vec![error::field("signature", "mismatch", "签名需与用户名一致")]));
+        }
+        Some(typed.to_string())
+    } else {
+        None
+    };
+    record_agreement(&st, id, &doc, version, signature.as_deref())?;
+    load_me(&st, id).await.map(Json)
 }
 
 async fn load_me(st: &Arc<AppState>, id: i64) -> R<Me> {
@@ -394,6 +460,7 @@ pub async fn place(
     body: Bytes,
 ) -> R<Response> {
     let me = caller.player()?;
+    require_signed(&st, me).await?;
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::to_string);
     let Some(k) = key else { return place_new(&st, me, &headers, &body).await.map(super::created) };
     if k.is_empty() || k.len() > 64 {
@@ -808,6 +875,7 @@ pub async fn subscribe(
     body: Bytes,
 ) -> R<Json<SubscriptionResponse>> {
     let me = caller.player()?;
+    require_signed(&st, me).await?;
     let id = super::path_id(&raw, "id")?;
     let b = json_body(&headers, &body)?;
     let qty = need(body_int(&b, "quantity")?, "quantity")?;
@@ -1050,6 +1118,9 @@ pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body:
         return Err(error::registration_closed());
     }
     let (name, password) = credentials(&b)?;
+    if b.get("agree") != Some(&serde_json::Value::Bool(true)) {
+        return Err(error::invalid(vec![error::field("agree", "required", "需要同意《用户协议》和《隐私政策》")]));
+    }
     let invite = body_str(&b, "invite")?;
     if st.cfg.registration == Registration::Invite && invite.as_deref().map(str::trim) != Some(st.cfg.invite_code.as_str()) {
         return Err(error::bad_invite());
@@ -1069,6 +1140,9 @@ pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body:
         Ok(id)
     })
     .await??;
+    for (doc, version) in st.cfg.documents.iter().filter(|(d, _)| d != "disclosure") {
+        record_agreement(&st, id, doc, *version, None)?;
+    }
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(super::created(me), &auth::session_cookie(&token)))

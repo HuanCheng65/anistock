@@ -25,7 +25,7 @@ use super::{account, bind, corporate, credit, market, search, stocks, works};
         works::works, corporate::actions, corporate::rights, corporate::subscribe, corporate::unsubscribe,
         account::me, account::portfolio, account::asset_history, account::orders, account::order_one, account::place,
         account::cancel, account::my_trades, account::ledger, account::restructure,
-        account::leaderboard, credit::credit, credit::open, credit::repay, credit::stock_margin,
+        account::leaderboard, account::sign, credit::credit, credit::open, credit::repay, credit::stock_margin,
         account::challenge, account::register, account::login, account::logout,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
     ),
@@ -44,7 +44,7 @@ pub struct ApiDoc;
 /// Request bodies: optional fields stay optional.
 const REQUESTS: &[&str] = &[
     "PlaceOrderRequest", "SubscriptionRequest", "RestructureRequest", "RegisterRequest", "LoginRequest",
-    "BindCodeRequest", "RedeemRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
+    "BindCodeRequest", "RedeemRequest", "AgreementRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
 ];
 
 fn require_all(v: &mut Value) {

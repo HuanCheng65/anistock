@@ -136,6 +136,9 @@ pub fn bad_invite() -> E {
 pub fn bind_code_invalid() -> E {
     E::new(422, "bind_code_invalid", "绑定码不正确或已过期")
 }
+pub fn agreement_required() -> E {
+    E::new(403, "agreement_required", "签署风险揭示书后才能交易")
+}
 pub fn registration_closed() -> E {
     E::new(403, "registration_closed", "暂未开放注册")
 }
@@ -179,6 +182,9 @@ pub fn label(field: &str) -> &'static str {
         "password" => "密码",
         "invite" => "邀请码",
         "pow" => "验证",
+        "doc" => "文件",
+        "version" => "版本",
+        "signature" => "签名",
         "quantity" => "数量",
         "price" => "价格",
         "stock_id" | "id" => "股票",

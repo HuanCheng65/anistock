@@ -839,6 +839,29 @@ pub struct Me {
     pub restructure: RestructureState,
     /// 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null
     pub credit_status: Option<String>,
+    /// 开户时间
+    pub created_at: Timestamp,
+    /// 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户
+    pub pending_documents: Vec<PendingDocument>,
+}
+
+/// 一份待同意或签署的文件
+#[derive(Serialize, ToSchema, Clone)]
+pub struct PendingDocument {
+    /// `terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书
+    pub doc: String,
+    pub version: i64,
+}
+
+/// 同意或签署一份文件
+#[derive(Deserialize, ToSchema)]
+pub struct AgreementRequest {
+    /// `terms`、`privacy` 或 `disclosure`
+    pub doc: String,
+    /// 必须是当前版本
+    pub version: i64,
+    /// 风险揭示书：输入自己的用户名作为签名；其他文件不需要
+    pub signature: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -998,6 +1021,8 @@ pub struct RegisterRequest {
     pub invite: Option<String>,
     /// `GET /auth/challenge?purpose=register` 返回题目时必填
     pub pow: Option<super::pow::PowSolution>,
+    /// 同意《用户协议》和《隐私政策》，必须为 true
+    pub agree: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]

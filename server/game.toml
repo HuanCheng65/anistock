@@ -170,6 +170,13 @@ expires_secs = 300            # a challenge is valid this long
 # ANISTOCK_REGISTRATION in .env overrides this.
 registration = "invite"
 
+[account.documents]
+# current versions of 用户协议, 隐私政策, 风险揭示书 (texts: web/src/legal/). Raise one after a material change:
+# every player then accepts it again (signs, for the disclosure) before the next order.
+terms = 1
+privacy = 1
+disclosure = 1
+
 [api.events]
 # bot events (docs/api-v1.md §5.3.7): big_move thresholds
 big_move_daily = 0.10         # |change vs prev close| crosses each multiple of this

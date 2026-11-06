@@ -58,6 +58,13 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
     })
     .unwrap();
     cfg.always_open = always_open;
+    // alice has accepted every current document
+    {
+        let c = rusqlite::Connection::open(&db).unwrap();
+        for (doc, v) in &cfg.documents {
+            c.execute("INSERT INTO account_agreements VALUES (?,?,?,?,?)", rusqlite::params![alice, doc, v, TS, "alice"]).unwrap();
+        }
+    }
     let cfg = Arc::new(cfg);
     let clock = Clock::fixed(cfg.tz, at).with_rollover(&cfg.game.day_rollover);
     let Fx { dir, e } = fx;
@@ -331,7 +338,7 @@ async fn registration_modes() {
     let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_REGISTRATION", "open")]);
     let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
     assert_eq!(r.json["registration"], "open");
-    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "pow": solved(&a).await})), &[]).await;
+    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "agree": true, "pow": solved(&a).await})), &[]).await;
     assert_eq!(r.status, 201, "{}", r.json);
 
     let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_REGISTRATION", "closed")]);
@@ -361,13 +368,45 @@ async fn login_needs_pow_during_a_surge() {
 async fn only_successful_registrations_use_the_daily_quota() {
     let mut a = app("2026-11-05T10:00:00+08:00", true);
     Arc::get_mut(&mut a.st).unwrap().v1.limits.register = (1.0 / 86400.0, 1.0);
-    let reg = |name: &str, pow: Value| Some(json!({"username": name, "password": "secret1", "invite": "club", "pow": pow}));
+    let reg = |name: &str, pow: Value| Some(json!({"username": name, "password": "secret1", "invite": "club", "agree": true, "pow": pow}));
     for _ in 0..3 {
         err(&a.req("POST", "/api/v1/auth/register", reg("alice", solved(&a).await), &[]).await, 409, "username_taken");
     }
     let r = a.req("POST", "/api/v1/auth/register", reg("bob", solved(&a).await), &[]).await;
     assert_eq!(r.status, 201, "{}", r.json);
     err(&a.req("POST", "/api/v1/auth/register", reg("carol", solved(&a).await), &[]).await, 429, "rate_limited");
+}
+
+#[tokio::test]
+async fn agreements_gate_trading() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let body = |agree: Value| Some(json!({"username": "dan", "password": "secret1", "invite": "club", "agree": agree, "pow": Value::Null}));
+    let r = a.req("POST", "/api/v1/auth/register", body(Value::Null), &[]).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["details"]["fields"][0]["field"], "agree");
+    let r = a
+        .req("POST", "/api/v1/auth/register", Some(json!({"username": "dan", "password": "secret1", "invite": "club", "agree": true, "pow": solved(&a).await})), &[])
+        .await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    // terms and privacy accepted at registration; the disclosure is still to sign
+    assert_eq!(r.json["pending_documents"], json!([{"doc": "disclosure", "version": 1}]));
+    let ck = r.headers.get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    let h = [("cookie", ck.as_str())];
+    let order = json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 500, "quantity": 1});
+    err(&a.req("POST", "/api/v1/me/orders", Some(order.clone()), &h).await, 403, "agreement_required");
+    err(&a.req("POST", "/api/v1/me/credit", None, &h).await, 403, "agreement_required");
+    let sign = |sig: &str, v: i64| Some(json!({"doc": "disclosure", "version": v, "signature": sig}));
+    let r = a.req("POST", "/api/v1/me/agreements", sign("alice", 1), &h).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "签名需与用户名一致");
+    err(&a.req("POST", "/api/v1/me/agreements", sign("dan", 2), &h).await, 409, "document_outdated");
+    err(&a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "nope", "version": 1})), &h).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/agreements", sign(" dan ", 1), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/agreements", 200), &r.json, "sign");
+    assert_eq!(r.json["pending_documents"], json!([]));
+    let r = a.req("POST", "/api/v1/me/orders", Some(order), &h).await;
+    assert_eq!(r.status, 201, "{}", r.json);
 }
 
 #[tokio::test]
@@ -387,7 +426,7 @@ async fn auth_bindings_and_routing_errors() {
     let a = app("2026-11-05T10:00:00+08:00", true);
     err(&a.get("/api/v1/me", None).await, 401, "unauthenticated");
     err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "nope!!"})), &[]).await, 401, "bad_credentials");
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "x"})), &[]).await, 422, "bad_invite");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "x", "agree": true})), &[]).await, 422, "bad_invite");
     // registration needs a proof of work; login does not (no surge)
     let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
     assert_eq!(r.status, 200, "{}", r.json);
@@ -397,16 +436,16 @@ async fn auth_bindings_and_routing_errors() {
     let r = a.get("/api/v1/auth/challenge?purpose=login", None).await;
     assert_eq!(r.json["challenge"], Value::Null);
     err(&a.get("/api/v1/auth/challenge?purpose=x", None).await, 400, "invalid_request");
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club"})), &[]).await, 422, "pow_required");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true})), &[]).await, 422, "pow_required");
     let pow = solved(&a).await;
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "alice", "password": "secret1", "invite": "club", "pow": pow})), &[]).await, 409, "username_taken");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "alice", "password": "secret1", "invite": "club", "agree": true, "pow": pow})), &[]).await, 409, "username_taken");
     // that challenge is spent
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": pow})), &[]).await, 422, "pow_invalid");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": pow})), &[]).await, 422, "pow_invalid");
     let mut wrong = solved(&a).await;
     wrong["number"] = json!((wrong["number"].as_u64().unwrap() + 1) % wrong["challenge"]["max"].as_u64().unwrap());
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": wrong})), &[]).await, 422, "pow_invalid");
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": 3})), &[]).await, 400, "invalid_request");
-    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "pow": solved(&a).await})), &[]).await;
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": wrong})), &[]).await, 422, "pow_invalid");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": 3})), &[]).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": solved(&a).await})), &[]).await;
     assert_eq!(r.status, 201, "{}", r.json);
     a.validate(&a.schema("POST", "/api/v1/auth/register", 201), &r.json, "register");
     err(&a.get("/api/v1/nope", None).await, 404, "not_found");

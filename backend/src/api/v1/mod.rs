@@ -580,6 +580,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/trades", get(account::my_trades))
         .route("/me/ledger", get(account::ledger))
         .route("/me/restructure", post(account::restructure))
+        .route("/me/agreements", post(account::sign))
         .route("/me/credit", get(credit::credit).post(credit::open))
         .route("/me/credit/repay", post(credit::repay))
         .route("/stocks/{id}/margin", get(credit::stock_margin))
@@ -613,7 +614,7 @@ fn method_fallback(path: &str) -> Response {
         ["", "me", "orders", _] => "GET, DELETE",
         ["", "ipos", _, "subscription"] | ["", "stocks", _, "rights", "subscription"] => "PUT, DELETE",
         ["", "auth", "challenge"] => "GET",
-        ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
+        ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "agreements"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
         _ => "GET",
     };

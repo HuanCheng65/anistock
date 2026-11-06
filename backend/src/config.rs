@@ -105,6 +105,8 @@ pub struct Config {
     pub invite_code: String,
     /// who may register (`[account] registration`, else env `ANISTOCK_REGISTRATION`): open, invite, closed
     pub registration: Registration,
+    /// current versions of the documents a player accepts (`[account.documents]`)
+    pub documents: Vec<(String, i64)>,
     pub always_open: bool,
     pub no_loops: bool,
     /// v1 economy rules (raw 7-day revenue, stepwise episode valuation, transfers to players only, no penny
@@ -220,6 +222,11 @@ impl Config {
             .map(|s| Registration::parse(s.trim()).ok_or_else(|| ConfigError(format!("registration: unknown mode {s:?} (open, invite, closed)"))))
             .transpose()?
             .unwrap_or(Registration::Invite);
+        let docs_raw = raw.get("account").and_then(|a| a.get("documents")).and_then(|v| v.as_table());
+        let documents = crate::config::DOCUMENTS
+            .iter()
+            .map(|d| (d.to_string(), docs_raw.and_then(|t| t.get(*d)).and_then(|v| v.as_integer()).unwrap_or(1)))
+            .collect();
         let path_env = |k: &str, default: PathBuf| env(k).map(PathBuf::from).unwrap_or(default);
         Ok(Config {
             root: root.to_path_buf(),
@@ -234,6 +241,7 @@ impl Config {
             secret: if secret.is_empty() { b"dev-only-secret-change-me".to_vec() } else { secret.into_bytes() },
             invite_code: if invite.is_empty() { "anistock".into() } else { invite },
             registration,
+            documents,
             always_open: env("ANISTOCK_ALWAYS_OPEN").as_deref() == Some("1"),
             no_loops: env("ANISTOCK_NO_LOOPS").as_deref() == Some("1"),
             // development/difftest only: the v1 economy rules (see `economy_v1`)
@@ -282,6 +290,10 @@ impl Config {
         Some(v)
     }
 }
+
+/// The documents a player accepts before trading, in the order they are shown (docs/v2-account.md §7):
+/// 用户协议, 隐私政策 (at registration), 风险揭示书 (signed in the account-opening flow).
+pub const DOCUMENTS: [&str; 3] = ["terms", "privacy", "disclosure"];
 
 /// Who may register (docs/v2-account.md §3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

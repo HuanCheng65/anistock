@@ -277,6 +277,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/agreements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 同意或签署文件 */
+        post: operations["sign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/asset-history": {
         parameters: {
             query?: never;
@@ -744,6 +761,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 同意或签署一份文件 */
+        AgreementRequest: {
+            /** @description `terms`、`privacy` 或 `disclosure` */
+            doc: string;
+            /** @description 风险揭示书：输入自己的用户名作为签名；其他文件不需要 */
+            signature?: string | null;
+            /**
+             * Format: int64
+             * @description 必须是当前版本
+             */
+            version: number;
+        };
         Airing: {
             airs_at: components["schemas"]["Timestamp"];
             /** Format: int64 */
@@ -1289,6 +1318,8 @@ export interface components {
         Me: {
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
+            /** @description 开户时间 */
+            created_at: components["schemas"]["Timestamp"];
             /** @description 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null */
             credit_status: string | null;
             /** Format: double */
@@ -1300,6 +1331,8 @@ export interface components {
             initial_cash: components["schemas"]["Money"];
             /** @description 融资融券负债 */
             liabilities: components["schemas"]["Money"];
+            /** @description 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户 */
+            pending_documents: components["schemas"]["PendingDocument"][];
             restructure: components["schemas"]["RestructureState"];
             stock_value: components["schemas"]["Money"];
             /** @description 净资产：现金 + 持仓市值 − 负债 */
@@ -1417,6 +1450,13 @@ export interface components {
          * @enum {string}
          */
         OrderSide: "buy" | "sell";
+        /** @description 一份待同意或签署的文件 */
+        PendingDocument: {
+            /** @description `terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书 */
+            doc: string;
+            /** Format: int64 */
+            version: number;
+        };
         /**
          * @description 市场阶段（封闭）
          * @enum {string}
@@ -1585,6 +1625,8 @@ export interface components {
             binding: components["schemas"]["Binding"];
         };
         RegisterRequest: {
+            /** @description 同意《用户协议》和《隐私政策》，必须为 true */
+            agree?: boolean | null;
             /** @description 只在邀请注册模式下需要 */
             invite?: string | null;
             password: string;
@@ -2524,6 +2566,37 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    sign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementRequest"];
+            };
+        };
         responses: {
             200: {
                 headers: {
