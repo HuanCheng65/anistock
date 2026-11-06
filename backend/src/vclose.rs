@@ -89,7 +89,14 @@ impl WorkMeta {
         let Some(n) = episodes else { return Vec::new() };
         let Some(&last) = aired.last() else { return Vec::new() };
         let left = (n - aired.len() as i64).max(0) as usize;
-        let mut out: Vec<i64> = self.schedule.iter().copied().filter(|d| *d > last).take(left).collect();
+        // episode k is the schedule's k-th date (matched by count, not by date: the two sources date late-night
+        // broadcasts a day apart and a double premiere is one day for two episodes), never before the day after
+        // the previous one
+        let mut out: Vec<i64> = Vec::with_capacity(left);
+        for d in self.schedule.iter().skip(aired.len()).take(left) {
+            let prev = out.last().copied().unwrap_or(last);
+            out.push((*d).max(prev + 1));
+        }
         while out.len() < left {
             let prev = out.last().copied().unwrap_or(last);
             out.push(prev + 7);
@@ -120,6 +127,11 @@ impl WorkMeta {
         out.sort_unstable();
         if long || out.is_empty() {
             return out;
+        }
+        // (experiment switch: the phase-1 weekly extrapolation)
+        static WEEKLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *WEEKLY.get_or_init(|| std::env::var("ANISTOCK_WEEKLY_SCHEDULE").is_ok()) {
+            return F::schedule(&out, episodes, long);
         }
         let up = self.upcoming(&out, episodes);
         out.extend(up);
