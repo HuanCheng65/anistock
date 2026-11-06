@@ -226,3 +226,34 @@ Against the acceptance (level ratio within ±0.15 of 1 at 6/12/24 months):
   other fifths): they are selected on a strong tail. A level-unbiased fit per fifth (ratio of sums instead of log
   means) chased these few large tails and made every fifth worse out of sample (overall 0.83–0.90), so it was not
   kept. The game lists only shows with ≥ 3,000 entries at listing, so this fifth is mostly outside the market.
+
+## us episode week, day by day (v0.6.1, `--partial-only`)
+
+The days so far of a us episode week are observed every day from the second day as the GLS estimate of the
+complete week's average (engine/valuation.py `partial_observation`, docs/v2-valuation.md §3.8). Fitted on the
+complete aligned episode weeks of the standard inputs (not the finale's), through the close's own day-by-day filter
+(`close_days`): d_j = ybar_j - ybar_7, j = 1..6, mean and covariance per segment, the variance scaled per n by
+maximum likelihood out of fold (fit on even AniList ids, score the complete week's observation on odd, and back):
+1.62, 1.38, 1.47, 1.34, 1.34 for n = 2..6.
+
+| segment | weeks | mean of d_1..d_6 | variance of the GLS estimate, n = 1..6 (scaled) |
+|---|---|---|---|
+| premiere week | 95 | −0.114 −0.310 −0.194 −0.070 −0.027 −0.015 | 0.764 0.507 0.231 0.051 0.019 0.008 |
+| later, us level < 6.61 | 235 | +0.463 +0.180 +0.087 +0.040 +0.016 +0.005 | 0.668 0.033 0.014 0.008 0.0025 0.0008 |
+| later, 6.61–7.74 | 236 | +0.188 +0.082 +0.040 +0.023 +0.011 +0.005 | 0.556 0.078 0.017 0.010 0.0017 0.0004 |
+| later, ≥ 7.74 | 236 | +0.297 +0.093 +0.022 +0.005 +0.001 +0.001 | 0.495 0.027 0.010 0.004 0.0013 0.0004 |
+
+(n = 1, the air day alone, is not observed: `min_days` 2.) The premiere segment's mean differs between the summer
+and autumn premieres on day 1 and days 3–4 (summer −0.33 / −0.15, autumn −0.10 / −0.01 for d_3 / d_4; day 2 −0.31
+in both); its variance is correspondingly large.
+
+Held out (fit on even ids, tested on odd), 80% coverage of the complete week's observation given the base and the
+first n days: n = 0 (the base alone) 89.9%, n = 2..6 85.5%, 79.0%, 79.0%, 77.4%, 84.3% (unscaled: 78.3%, 72.8%,
+70.8%, 71.8%, 79.0%); mean log predictive density 0.03 → 0.42, 0.77, 1.10, 1.65, 2.31. In sample 88.3% → 90.0%,
+86.2%, 88.9%, 85.9%, 88.7%.
+
+Forecast check (held out): the slope of the next 7 days' revision of the us level (less the drift) on the days-so-far
+surprise (partial observation − base mean) is 0.626 (se 0.008) without the partial observation and 0.035 (0.010) with
+it; after a surprise above +25% the revision is +54% without, +8.2% with (196 days), below −12.5% −20% / −2.9% (494).
+For reference, the base filter's own revision over the 7 days after a complete-week observation has slope 0.044 on
+that observation's innovation.
