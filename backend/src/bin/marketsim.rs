@@ -88,6 +88,7 @@ fn main() {
         probe: 0,
         grow,
         allow_old_inputs,
+        history: false,
     };
     let bots: Vec<BotKind> = match bots_arg.as_str() {
         "none" => vec![],

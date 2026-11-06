@@ -65,7 +65,9 @@ def simulate(shows: list[Show], start: date, end: date, p: dict, markets: dict, 
     def total_attention(d):
         return sum(attention(s, d, rv) for s in shows if s.list_day <= d)
 
-    a_ref = sum(total_attention(start + timedelta(days=k)) for k in range(7)) / 7 or 1.0
+    # (a replay shorter than a week, the start world of server/tools/rebuild_replay.py: the days it has)
+    n_ref = min(7, (end - start).days + 1)
+    a_ref = sum(total_attention(start + timedelta(days=k)) for k in range(n_ref)) / n_ref or 1.0
 
     out_days, macro, stocks = [], [], {s.id: [] for s in shows}
     tax_week = 0.0
