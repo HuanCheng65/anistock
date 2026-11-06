@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 融资融券 on 我的: a quiet entry with an in-page confirmation while credit is not open; once open, the
-// maintenance ratio, what is owed per stock, and direct repayment.
+// 融资融券 on 我的: a quiet entry while credit is not open, the opening steps and confirmation in a dialog;
+// once open, the maintenance ratio, what is owed per stock, and direct repayment.
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { errorText, type Me } from '../api'
 import { money, qty, share, toCents } from '../format'
 import { useCredit } from '../stores/credit'
+import Modal from './Modal.vue'
 import { markEditing } from '../version'
 
 const props = defineProps<{ me: Me }>()
@@ -19,7 +20,7 @@ const done = ref('')
 
 onMounted(() => credit.refresh().catch(() => {}))
 watch(() => props.me.credit_status, () => credit.refresh().catch(() => {}))
-watch([opening, repaying], ([a, b]) => markEditing('credit', a || b))
+watch(repaying, (v) => markEditing('credit-repay', v))
 
 const c = computed(() => credit.account)
 const rate = (v: number) => share(v, 2)
@@ -75,12 +76,11 @@ async function repay() {
 <template>
   <section v-if="c" class="cr gutter">
     <template v-if="!c.opened">
-      <button v-if="!opening" type="button" class="entry" @click="opening = true">
+      <button type="button" class="entry" @click="opening = true">
         <span>融资融券</span>
         <span class="hint">{{ c.can_open ? '未开通' : c.open_message }}</span>
       </button>
-      <div v-else class="confirm" role="group" aria-labelledby="cr-title">
-        <h2 id="cr-title">开通融资融券？</h2>
+      <Modal :open="opening" title="开通融资融券？" edit-key="credit" :busy="busy" @close="opening = false; error = ''">
         <p>现金和全部持仓作为担保物。</p>
         <p>融资利率 {{ rate(c.financing_rate) }}，融券费率 {{ rate(c.lending_rate) }}，按日计息。</p>
         <p>维持担保比例低于 {{ share(c.call_ratio) }} 需追加担保物，低于 {{ share(c.liquidate_ratio) }} 强制平仓。</p>
@@ -96,11 +96,11 @@ async function repay() {
         </ol>
         <p v-if="error" class="msg error" role="alert">{{ error }}</p>
         <p v-else-if="!c.can_open && c.open_message" class="wait">{{ c.open_message }}</p>
-        <div class="acts">
-          <button type="button" class="btn small" :disabled="busy || !c.can_open || !ready" @click="open">{{ busy ? '处理中' : '开通' }}</button>
-          <button type="button" class="btn small ghost" :disabled="busy" @click="opening = false; error = ''">取消</button>
-        </div>
-      </div>
+        <template #actions>
+          <button type="button" class="btn" :disabled="busy || !c.can_open || !ready" @click="open">{{ busy ? '处理中' : '开通' }}</button>
+          <button type="button" class="btn ghost" :disabled="busy" @click="opening = false; error = ''">取消</button>
+        </template>
+      </Modal>
     </template>
 
     <template v-else>
@@ -142,14 +142,9 @@ async function repay() {
 .cr { border-bottom: 1px solid var(--hair-2); padding-bottom: 12px; }
 .entry { display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 12px 0 0; border: 0; background: none; color: var(--ink-2); font-size: 14px; text-align: left; }
 .hint { margin-left: auto; font-size: 12px; color: var(--muted); text-align: right; }
-.confirm { padding: 14px 0 0; display: flex; flex-direction: column; gap: 6px; }
-.confirm h2, .head { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: var(--ink); }
-.head { padding-top: 14px; }
-.confirm p { margin: 0; font-size: 13px; line-height: 1.6; }
-.confirm p:not(.msg) { color: var(--ink-2); }
-.confirm .wait { color: var(--muted); }
-.acts { display: flex; gap: 8px; margin-top: 8px; }
-.steps { margin: 6px 0 0; border-top: 1px solid var(--hair-2); }
+.head { margin: 0 0 4px; padding-top: 14px; font-size: 15px; font-weight: 700; color: var(--ink); }
+.wait { color: var(--muted); }
+.steps { list-style: none; padding: 0; margin: 8px 0 0; border-top: 1px solid var(--hair-2); }
 .step { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--hair-2); font-size: 13px; color: var(--ink); }
 .tick { width: 14px; height: 14px; flex: none; border: 1px solid var(--base-line); transition: background-color 0.2s ease, border-color 0.2s ease; }
 .step.ok .tick { background: var(--ink); border-color: var(--ink); box-shadow: inset 0 0 0 3px var(--ground); }

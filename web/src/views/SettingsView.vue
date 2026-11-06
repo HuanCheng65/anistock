@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, call, errorText, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
+import Modal from '../components/Modal.vue'
 import { hm } from '../format'
 import { KYC_UNLOCKS } from '../kyc'
 import { useAccount } from '../stores/account'
 import { useCredit } from '../stores/credit'
 import { usePrefs, type Theme } from '../stores/prefs'
 import { useSession } from '../stores/session'
-import { markEditing } from '../version'
 
 const prefs = usePrefs()
 const session = useSession()
@@ -45,14 +45,6 @@ async function changePassword() {
 const closing = ref(false)
 const closePw = ref('')
 const closeErr = ref('')
-const closeForm = ref<HTMLElement | null>(null)
-watch(closing, async (v) => {
-  markEditing('close', v)
-  if (v) {
-    await nextTick()
-    closeForm.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }
-})
 async function closeAccount() {
   busy.value = true
   closeErr.value = ''
@@ -81,8 +73,6 @@ const code = ref<BindCode | null>(null)
 const busy = ref(false)
 const msg = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
 const confirmId = ref<number | null>(null)
-watch(confirmId, (v) => markEditing('unbind', v != null))
-onBeforeUnmount(() => markEditing('unbind', false))
 const binding = computed(() => (account.bindings ?? []).find((b) => b.platform === 'qq') ?? null)
 if (session.me) account.refreshBindings().catch(() => {})
 // the code expires after 10 minutes; drop it then
@@ -146,16 +136,15 @@ async function unbind(id: number) {
       <template v-if="binding">
         <div class="acct">
           <span>已通过 QQ 完成</span>
-          <button v-if="confirmId !== binding.id" type="button" class="btn ghost small" @click="confirmId = binding.id">解除绑定</button>
+          <button type="button" class="btn ghost small" @click="confirmId = binding.id">解除绑定</button>
         </div>
-        <div v-if="confirmId === binding.id" class="confirm" role="group" aria-labelledby="unbind-title">
-          <h3 id="unbind-title">解除 QQ 绑定？</h3>
+        <Modal :open="confirmId === binding.id" title="解除 QQ 绑定？" edit-key="unbind" :busy="busy" @close="confirmId = null">
           <p>身份验证随之取消，不能领取财政补贴、认购新股、进入排行或开通融资融券，也不能通过机器人找回密码。</p>
-          <div class="acts">
-            <button type="button" class="btn small" :disabled="busy" @click="unbind(binding.id)">解除绑定</button>
-            <button type="button" class="btn small ghost" :disabled="busy" @click="confirmId = null">取消</button>
-          </div>
-        </div>
+          <template #actions>
+            <button type="button" class="btn" :disabled="busy" @click="unbind(binding.id)">解除绑定</button>
+            <button type="button" class="btn ghost" :disabled="busy" @click="confirmId = null">取消</button>
+          </template>
+        </Modal>
       </template>
       <template v-else>
         <p class="hint">买卖股票不需要身份验证。以下功能需要先完成：</p>
@@ -194,27 +183,31 @@ async function unbind(id: number) {
         <span>{{ session.me.username }}</span>
         <button type="button" class="btn ghost small" @click="logout">退出登录</button>
       </div>
-      <button v-if="!changing" type="button" class="linkbtn pw" @click="changing = true; pwMsg = null">修改密码</button>
-      <form v-else class="confirm" @submit.prevent="changePassword">
-        <input v-model="curPw" class="input" type="password" autocomplete="current-password" placeholder="当前密码" />
-        <input v-model="newPw" class="input" type="password" autocomplete="new-password" placeholder="新密码，至少 6 位" />
-        <div class="acts">
-          <button type="submit" class="btn small" :disabled="busy || !curPw || !newPw">修改密码</button>
-          <button type="button" class="btn small ghost" :disabled="busy" @click="changing = false; curPw = ''; newPw = ''; pwMsg = null">取消</button>
-        </div>
-      </form>
-      <p v-if="pwMsg" class="msg" :class="pwMsg.kind === 'error' ? 'error' : 'ok'" role="status">{{ pwMsg.text }}</p>
-      <button v-if="!closing" type="button" class="linkbtn close" @click="closing = true">注销账号</button>
-      <form v-else ref="closeForm" class="confirm" role="group" aria-labelledby="close-title" @submit.prevent="closeAccount">
-        <h3 id="close-title">注销账号？</h3>
-        <p>持仓按最新价转出，资金清零，个人信息删除。注销后账号无法恢复。</p>
-        <input v-model="closePw" class="input" type="password" autocomplete="current-password" placeholder="输入密码确认" />
-        <p v-if="closeErr" class="msg error" role="alert">{{ closeErr }}</p>
-        <div class="acts">
-          <button type="submit" class="btn small" :disabled="busy || !closePw">注销账号</button>
-          <button type="button" class="btn small ghost" :disabled="busy" @click="closing = false; closePw = ''; closeErr = ''">取消</button>
-        </div>
-      </form>
+      <button type="button" class="linkbtn pw" @click="changing = true; pwMsg = null">修改密码</button>
+      <p v-if="pwMsg?.kind === 'ok'" class="msg ok" role="status">{{ pwMsg.text }}</p>
+      <Modal :open="changing" title="修改密码" edit-key="password" :busy="busy" @close="changing = false; curPw = ''; newPw = ''; pwMsg = null">
+        <form id="pw-form" class="fields" @submit.prevent="changePassword">
+          <input autofocus v-model="curPw" class="input" type="password" autocomplete="current-password" placeholder="当前密码" />
+          <input v-model="newPw" class="input" type="password" autocomplete="new-password" placeholder="新密码，至少 6 位" />
+          <p v-if="pwMsg?.kind === 'error'" class="msg error" role="alert">{{ pwMsg.text }}</p>
+        </form>
+        <template #actions>
+          <button type="submit" form="pw-form" class="btn" :disabled="busy || !curPw || !newPw">修改密码</button>
+          <button type="button" class="btn ghost" :disabled="busy" @click="changing = false; curPw = ''; newPw = ''; pwMsg = null">取消</button>
+        </template>
+      </Modal>
+      <button type="button" class="linkbtn close" @click="closing = true">注销账号</button>
+      <Modal :open="closing" title="注销账号？" edit-key="close" :busy="busy" @close="closing = false; closePw = ''; closeErr = ''">
+        <form id="close-form" class="fields" @submit.prevent="closeAccount">
+          <p>持仓按最新价转出，资金清零，个人信息删除。注销后账号无法恢复。</p>
+          <input autofocus v-model="closePw" class="input" type="password" autocomplete="current-password" placeholder="输入密码确认" />
+          <p v-if="closeErr" class="msg error" role="alert">{{ closeErr }}</p>
+        </form>
+        <template #actions>
+          <button type="submit" form="close-form" class="btn danger" :disabled="busy || !closePw">注销账号</button>
+          <button type="button" class="btn ghost" :disabled="busy" @click="closing = false; closePw = ''; closeErr = ''">取消</button>
+        </template>
+      </Modal>
     </section>
     <p class="foot">星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。作品数据来自 AniList、Bangumi、Annict 的公开统计。</p>
   </main>
@@ -234,10 +227,8 @@ async function unbind(id: number) {
 .code { display: flex; align-items: baseline; gap: 12px; margin: 4px 0 12px; }
 .code .big { font-size: 28px; font-weight: 600; letter-spacing: 0.08em; }
 .code .muted { font-size: 12px; }
-.confirm { display: flex; flex-direction: column; gap: 6px; padding: 12px 0 0; }
-.confirm h3 { margin: 0; font-size: 15px; font-weight: 700; }
-.confirm p { margin: 0; font-size: 13px; color: var(--ink-2); }
-.acts { display: flex; gap: 8px; margin-top: 6px; }
+.fields { display: flex; flex-direction: column; gap: 8px; }
+.btn.danger { background: var(--danger); color: #fff; }
 .switch { position: relative; width: 44px; height: 26px; flex: none; padding: 0; border: 1px solid var(--base-line); background: var(--field-bg); transition: background-color 0.2s ease; }
 .switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: var(--muted); transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1), background-color 0.2s ease; }
 .switch[aria-checked="true"] { background: var(--ink); border-color: var(--ink); }
@@ -246,7 +237,7 @@ async function unbind(id: number) {
 .docs { margin-top: -6px; }
 .pw { display: block; margin-top: 14px; color: var(--ink-2); }
 .close { display: block; margin-top: 14px; color: var(--muted); }
-.confirm .input { height: 40px; font-size: 15px; margin-top: 4px; }
+.fields .input { height: 44px; font-size: 16px; }
 .docrow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--hair-2); font-size: 15px; }
 .docrow:last-child { border-bottom: 0; }
 .chev { color: var(--muted); }
