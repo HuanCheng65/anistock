@@ -3,6 +3,7 @@
 //! are compatible with every earlier release).
 //!
 //!     ANISTOCK_HOST=127.0.0.1 ANISTOCK_PORT=18620 anistock
+//!     anistock replay-history ...     (operator command: the pre-launch history, src/sim/history.rs)
 //!
 //! Environment (besides the ones in `config.rs`: ANISTOCK_SECRET, ANISTOCK_INVITE, ANISTOCK_DB,
 //! ANISTOCK_GAME_DB, ANISTOCK_ALWAYS_OPEN, ANISTOCK_NO_LOOPS, ANISTOCK_ROOT):
@@ -34,6 +35,12 @@ fn fail(msg: impl std::fmt::Display, code: i32) -> ! {
 }
 
 fn main() {
+    // operator command (docs/ops-rebuild-replay.md): run with the server stopped
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("replay-history") {
+        anistock::sim::history::cli(&args[1..]);
+        return;
+    }
     let mut cfg = Config::load().unwrap_or_else(|e| fail(format!("config: {e}"), 2));
     let host = env("ANISTOCK_HOST").unwrap_or_else(|| "127.0.0.1".into());
     let port: u16 = env("ANISTOCK_PORT").map_or(18620, |p| p.trim().parse().unwrap_or_else(|_| fail("ANISTOCK_PORT", 2)));

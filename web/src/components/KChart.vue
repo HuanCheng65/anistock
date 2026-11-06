@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // K-line (day / week / month) or intraday line, with per-episode air markers (dashed line + label) and
 // dividend markers (diamonds) drawn in an overlay that follows the chart's time scale.
-// Up = hollow red, down = solid green. Replay days (before the market opened) are drawn faded.
+// Up = hollow red, down = solid green. Replay days (before the market opened) are drawn faded, and a thin
+// rule marks where real trading starts. Volume sits on its own hidden overlay scale in the bottom fifth; the
+// price axis labels only the price range (no labels in the volume band).
 // Data arrive in cents; the chart's price scale is in 币 (cents / 100), the readout formats cents.
 import {
   createChart, CrosshairMode, LineStyle,
@@ -38,6 +40,11 @@ const marks = ref<{ x: number; label: string; key: string }[]>([])
 const divs = ref<{ x: number; key: string; ps: number }[]>([])
 const width = ref(0)
 const dot = ref<{ x: number; y: number; up: boolean | null } | null>(null)
+/** x of the boundary between the last replay bar and the first live bar, if both are on screen */
+const launchX = ref<number | null>(null)
+/** price-axis labels below this (币) are left blank: that band belongs to the volume bars */
+let axisFloor = -Infinity
+const fmtPrice = (p: number) => (p < axisFloor ? '' : p.toFixed(2))
 
 function hexA(hex: string, a: number) {
   const m = hex.replace('#', '')
@@ -131,12 +138,37 @@ function draw() {
       const col = hexA(up ? c.up : c.down, 0.45)
       return { ...base, color: up ? c.ground : col, borderColor: col, wickColor: col }
     }))
+    // a day without trades draws nothing (a zero bar would still leave a 1px tick on the baseline)
     vol.setData(bars.value.map((k) => ({
-      time: k.time as Time, value: k.volume, color: hexA(k.close >= k.open ? c.up : c.down, k.replay ? 0.18 : 0.35),
+      time: k.time as Time, value: k.volume,
+      color: k.volume ? hexA(k.close >= k.open ? c.up : c.down, k.replay ? 0.18 : 0.35) : 'transparent',
     })))
   }
   ch.timeScale().fitContent()
   place()
+  floor()
+}
+
+/** Lowest price on screen (币), so the axis does not label the volume band below it (0.00, negative prices). */
+function floor() {
+  const ch = chart.value
+  if (!ch) return
+  let lo = Infinity
+  if (props.period === 'intraday') {
+    for (const p of props.intraday ?? []) lo = Math.min(lo, yuan(p.price))
+    if (props.prevClose) lo = Math.min(lo, yuan(props.prevClose))
+  } else {
+    const r = ch.timeScale().getVisibleLogicalRange()
+    const bs = bars.value
+    const a = Math.max(0, Math.floor(r?.from ?? 0))
+    const b = Math.min(bs.length - 1, Math.ceil(r?.to ?? bs.length - 1))
+    for (let i = a; i <= b; i++) lo = Math.min(lo, yuan(bs[i].low))
+  }
+  // a tick a hair below the low still labels the bottom of the price range
+  const f = Number.isFinite(lo) ? lo - 0.005 : -Infinity
+  if (f === axisFloor) return
+  axisFloor = f
+  ch.applyOptions({ localization: { locale: 'zh-CN', priceFormatter: fmtPrice } })
 }
 
 /** A pushed trade changed the last minute or added one: extend the line in place (no full redraw). */
@@ -183,6 +215,7 @@ function place() {
   if (!ch || props.period === 'intraday') {
     marks.value = []
     divs.value = []
+    launchX.value = null
     return
   }
   const ts = ch.timeScale()
@@ -210,6 +243,13 @@ function place() {
     if (show) lastRight = px - lw / 2
   }
   marks.value = out
+  // launch: halfway between the last replay bar and the next (live) bar
+  const bs = bars.value
+  const k = bs.findIndex((b, i) => i > 0 && !b.replay && bs[i - 1].replay)
+  const xa = k > 0 ? ts.timeToCoordinate(bs[k - 1].time as Time) : null
+  const xb = k > 0 ? ts.timeToCoordinate(bs[k].time as Time) : null
+  const lx = xa != null && xb != null ? (Number(xa) + Number(xb)) / 2 : null
+  launchX.value = lx != null && lx >= 0 && lx <= w - 50 ? lx : null
   divs.value = (props.dividends ?? [])
     .map((d) => ({ x: x(d.trading_day), key: d.trading_day, ps: d.per_share }))
     .filter((d): d is { x: number; key: string; ps: number } => d.x != null && d.x >= 0 && d.x <= w - 50)
@@ -221,7 +261,7 @@ onMounted(() => {
   const ch = createChart(host.value, {
     autoSize: true,
     crosshair: { mode: CrosshairMode.Normal },
-    localization: { locale: 'zh-CN', priceFormatter: (p: number) => p.toFixed(2) },
+    localization: { locale: 'zh-CN', priceFormatter: fmtPrice },
     handleScroll: { vertTouchDrag: false },
     rightPriceScale: { scaleMargins: { top: 0.08, bottom: 0.24 } },
   })
@@ -229,10 +269,12 @@ onMounted(() => {
   candle = ch.addCandlestickSeries({ priceLineVisible: false, lastValueVisible: true, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } })
   line = ch.addLineSeries({ lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerRadius: 3 })
   vol = ch.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false })
-  ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+  // volume: its own overlay scale, pinned to the bottom fifth, no labels (the candles keep the top three quarters)
+  ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false })
   ch.timeScale().subscribeVisibleLogicalRangeChange(() => {
     place()
     placeDot()
+    floor()
   })
   ch.subscribeCrosshairMove((p) => {
     if (!p.time) return (hover.value = null)
@@ -279,9 +321,10 @@ onBeforeUnmount(() => {
       </template>
     </div>
     <div class="area">
-      <div ref="host" class="chart" role="img" :aria-label="period === 'intraday' ? '分时走势' : 'K 线，标出了各集播出日和分红日'"></div>
+      <div ref="host" class="chart" role="img" :aria-label="period === 'intraday' ? '分时走势' : 'K 线，标出了各集播出日、分红日和开市日'"></div>
       <span v-if="dot" class="ldot" :class="dot.up == null ? 'flat' : dot.up ? 'up' : 'down'" :style="{ left: dot.x + 'px', top: dot.y + 'px' }" aria-hidden="true"></span>
       <svg class="over" aria-hidden="true">
+        <line v-if="launchX != null" :x1="launchX" :x2="launchX" y1="0" y2="100%" class="launch" />
         <line v-for="m in marks" :key="m.key" :x1="m.x" :x2="m.x" y1="6" y2="100%" class="ep" />
       </svg>
     </div>
@@ -299,6 +342,7 @@ onBeforeUnmount(() => {
 .chart { width: 100%; height: 230px; }
 .wide .chart { height: 330px; }
 .over { position: absolute; left: 0; top: 0; width: 100%; height: calc(100% - 26px); pointer-events: none; overflow: visible; }
+.launch { stroke: var(--base-line); stroke-width: 1; }
 .ep { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.55; }
 .strip { position: relative; height: 32px; }
 .eplabel {

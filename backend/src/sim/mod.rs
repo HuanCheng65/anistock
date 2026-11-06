@@ -5,6 +5,7 @@
 
 pub mod bots;
 pub mod data;
+pub mod history;
 pub mod metrics;
 pub mod probe;
 pub mod report;
@@ -31,6 +32,22 @@ pub struct Tap {
     pub news: Vec<serde_json::Value>,
     pub vcm: Vec<(i64, String, i64)>,
     vcm_last: std::collections::HashMap<i64, String>,
+    /// `SimOptions::history`: keep the price and operating history the closes write
+    pub history: Option<History>,
+}
+
+/// What a replay writes into the game's history tables (`SimOptions::history`), as the database would hold it
+/// after the run: candles and company_days by (company, day), and every company's IPO price and status.
+#[derive(Default, Clone)]
+pub struct History {
+    pub candles: std::collections::BTreeMap<(i64, String), crate::model::Candle>,
+    pub days: std::collections::BTreeMap<(i64, String), crate::model::CompanyDay>,
+    /// company id -> (ipo_price, listed_on, status)
+    pub companies: std::collections::BTreeMap<i64, (i64, String, String)>,
+    /// company id -> factor applied to the start world's prices to put them on the model's value (see `run`)
+    pub start_scale: std::collections::BTreeMap<i64, f64>,
+    /// (company, day) -> the model's value after that day's close (the start day: the value it opened on)
+    pub values: std::collections::BTreeMap<(i64, String), i64>,
 }
 
 #[derive(Clone, Default)]
@@ -40,6 +57,37 @@ impl ChangeSink for TapSink {
     fn send(&mut self, changes: Vec<Change>) {
         let mut tap = self.0.lock().unwrap();
         for c in changes {
+            if let Some(h) = tap.history.as_mut() {
+                match &c {
+                    Change::CandleReplace(k) => {
+                        h.candles.insert((k.company_id, k.day.clone()), k.clone());
+                    }
+                    Change::CompanyDayReplace(d) => {
+                        h.days.insert((d.company_id, d.day.clone()), d.clone());
+                    }
+                    Change::CompanyDayInsertIgnore { company_id, day } => {
+                        h.days.entry((*company_id, day.clone())).or_insert_with(|| crate::model::CompanyDay {
+                            company_id: *company_id,
+                            day: day.clone(),
+                            revenue: 0,
+                            rev_us: 0,
+                            rev_cn: 0,
+                            rev_jp: 0,
+                            aired: 0,
+                            dividend_ps: 0,
+                        });
+                    }
+                    Change::CompanyDayDividend { company_id, day, dividend_ps } => {
+                        if let Some(d) = h.days.get_mut(&(*company_id, day.clone())) {
+                            d.dividend_ps = *dividend_ps;
+                        }
+                    }
+                    Change::CompanyInsert(co) | Change::CompanyUpdate(co) => {
+                        h.companies.insert(co.id, (co.ipo_price, co.listed_on.clone(), co.status.clone()));
+                    }
+                    _ => {}
+                }
+            }
             match c {
                 Change::TradeInsert(t) => tap.trades.push(metrics::TradeRec {
                     t: parse_ts(&t.ts),
@@ -215,6 +263,10 @@ pub struct SimOptions {
     /// the valuation alone: no intraday trading (no NPC orders, no bot); the daily closes still run, so the
     /// hidden values and dividends are the same as in a full replay (they depend on the inputs, not on trading)
     pub value_only: bool,
+    /// Rebuilding the pre-launch history (`replay_history`, docs/ops-rebuild-replay.md): no corporate actions (there
+    /// were none before the market opened), every listed company starts at the model's own value (like
+    /// server/seed.py's opening price), and the result keeps what the closes wrote (`SimResult::history`).
+    pub history: bool,
 }
 
 pub struct SimResult {
@@ -223,6 +275,7 @@ pub struct SimResult {
     pub metrics: serde_json::Value,
     pub bot: Option<serde_json::Value>,
     pub series: metrics::Series,
+    pub history: Option<History>,
 }
 
 /// Run one season.
@@ -234,9 +287,15 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         crate::store::load(&conn).map_err(|e| e.to_string())?
     };
     let tap = TapSink::default();
+    if opts.history {
+        tap.0.lock().unwrap().history = Some(History::default());
+    }
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
     e.margin = cfg.margin.clone();
     e.corporate = cfg.corporate.clone();
+    if opts.history {
+        e.corporate.enabled = false;
+    }
     let params = Params::from_config(cfg)?;
     let last_closed = e.state("last_closed").ok_or("world has no last_closed")?.to_string();
 
@@ -274,6 +333,26 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         hist.sort();
         let history: Vec<Inputs> = hist.iter().map(|d| load(d)).collect::<Result<_, _>>()?;
         e.valuation_bootstrap(cfg, &history, &ts_of(at_local(&days[0], 7, 0)))?;
+    }
+    if opts.history {
+        // the start world's prices come from the old replay: open at the model's value instead, so the path is the
+        // model's from the first day (prices converge on values slowly, a mispriced start would linger for weeks)
+        let ids: Vec<i64> = e.st.companies.values().filter(|c| c.status == "listed" && c.fair_value > 0).map(|c| c.id).collect();
+        let mut scale = std::collections::BTreeMap::new();
+        for id in ids {
+            let c = e.st.companies.get_mut(&id).unwrap();
+            scale.insert(id, c.fair_value as f64 / c.last_price.max(1) as f64);
+            c.last_price = c.fair_value;
+            c.prev_close = c.fair_value;
+            c.open_ref = Some(c.fair_value);
+            e.mark_company(id);
+        }
+        e.commit();
+        let values = e.companies().filter(|c| c.status == "listed").map(|c| ((c.id, last_closed.clone()), c.fair_value)).collect();
+        let mut tp = tap.0.lock().unwrap();
+        let h = tp.history.as_mut().unwrap();
+        h.start_scale = scale;
+        h.values = values;
     }
 
     // ---- the NPC market
@@ -485,6 +564,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             crate::daily::CloseOutcome::Skipped => return Err(format!("close {day} skipped")),
         }
         e.check_invariants().map_err(|err| format!("after {day}: {err}"))?;
+        if opts.history {
+            let v: Vec<((i64, String), i64)> = e.companies().filter(|c| c.status == "listed").map(|c| ((c.id, day.clone()), c.fair_value)).collect();
+            tap.0.lock().unwrap().history.as_mut().unwrap().values.extend(v);
+        }
         // company notices of the close (docs/v2-corporate.md), and the bot's price memory after splits / ex-rights
         {
             let tp = tap.0.lock().unwrap();
@@ -720,5 +803,6 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     if let Some(p) = &probe {
         metrics["probe"] = p.report();
     }
-    Ok(SimResult { events, metrics, bot: bot_json, series })
+    let history = tap.0.lock().unwrap().history.take();
+    Ok(SimResult { events, metrics, bot: bot_json, series, history })
 }

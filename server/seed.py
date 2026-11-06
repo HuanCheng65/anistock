@@ -1,6 +1,9 @@
 """Create a fresh game: replay the simulation up to yesterday so every stock opens with history.
 
-    uv run python -m server.seed [--force]
+    uv run python -m server.seed [--force] [--until DAY]
+
+--until DAY ends the replay on DAY instead of the collector's last full day: the start world of the
+pre-launch history rebuild (server/tools/rebuild_replay.py, docs/ops-rebuild-replay.md).
 
 Pre-launch candles and company revenue come from the simulation run with the game's own parameters
 (marked source='replay'). Each company then starts with the rights holders (制作委员会) owning 75%
@@ -29,6 +32,7 @@ import simulate as SIM  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="delete an existing game database first")
+    ap.add_argument("--until", type=date.fromisoformat, help="last replay day (default: the collector's last full day)")
     args = ap.parse_args()
     cfg = load()
     if cfg.game_db.exists():
@@ -42,9 +46,10 @@ def main() -> None:
 
     p = cfg.params
     start = date.fromisoformat(p["window"]["start"])
-    shows, end = E.load_shows(cfg.collector_db, p, start, None)
-    mpath = ROOT / "data" / "derived" / "markets.json"
-    markets = {int(k): v for k, v in json.loads(mpath.read_text(encoding="utf-8"))["series"].items()}
+    shows, end = E.load_shows(cfg.collector_db, p, start, args.until)
+    markets = DI.load_markets()      # data/derived/markets.json, or $ANISTOCK_DERIVED_DIR
+    if not markets:
+        sys.exit("markets.json missing: run sim/reconstruct.py build first")
     aud = E.load_audiences(cfg.collector_db)
     print(f"replaying {start}..{end} with {len(shows)} shows")
     res = SIM.simulate(shows, start, end, p, markets, aud)
@@ -54,8 +59,9 @@ def main() -> None:
 
     # the demand index reference: AniList attention of the first week, as the simulation computes it
     rv = p["revenue"]
+    n_ref = min(7, (end - start).days + 1)    # a replay shorter than a week (--until): the days it has
     a_ref = sum(sum(E.attention(s, start + timedelta(days=k), rv) for s in shows if s.list_day <= start + timedelta(days=k))
-                for k in range(7)) / 7 or 1.0
+                for k in range(n_ref)) / n_ref or 1.0
 
     gdb.init(cfg.game_db)
     conn = gdb.connect(cfg.game_db)

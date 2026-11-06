@@ -115,6 +115,7 @@ fn main() {
         allow_old_inputs,
         bot_start,
         value_only,
+        history: false,
     };
     let bots: Vec<BotKind> = match if value_only { "none" } else { bots_arg.as_str() } {
         "none" => vec![],
