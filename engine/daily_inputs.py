@@ -84,6 +84,7 @@ Not in the file, because they come from game state or config rather than the mod
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
 import sqlite3
@@ -110,8 +111,9 @@ def load_markets() -> dict[int, dict]:
     return {int(k): v for k, v in json.loads(mpath.read_text(encoding="utf-8"))["series"].items()}
 
 
-def air_dates(s: E.Show, day: date) -> list[str]:
-    """The day each episode aired so far (from the model's per-day episode count)."""
+def air_dates(s: E.Show, day: date, schedule: list[str] | None = None) -> list[str]:
+    """The day each episode aired so far (from the model's per-day episode count), plus the episodes of a release
+    of several at once (`batch_aired`) on the schedule's day."""
     out, prev = [], 0
     for d, a in zip(s.days, s.aired):
         if d > day:
@@ -119,7 +121,28 @@ def air_dates(s: E.Show, day: date) -> list[str]:
         if a > prev:
             out.extend([d.isoformat()] * (a - prev))
         prev = a
+    n, d = batch_aired(schedule or [], day, len(out))
+    if n > len(out):
+        out.extend([d] * (n - len(out)))
     return out
+
+
+def batch_aired(schedule: list[str], day: date, aired: int) -> tuple[int, str | None]:
+    """Episodes released several at once (a streaming service's whole season, a double or triple premiere): AniList
+    records only the first of them (no airing schedule), so the count stays at 1 and the show looks like it is
+    still airing for months. When the public schedule (Bangumi) dates two or more episodes on the same day, on or
+    before `day`, and the show has aired, every episode up to that release counts as aired from its date."""
+    if aired < 1:
+        return aired, None
+    full = sorted(d for d in schedule if len(d) == 10)     # exact dates only ("2027-04" is an announcement)
+    c = Counter(full)
+    out, at = aired, None
+    for i, d in enumerate(full):
+        if d > day.isoformat():
+            break
+        if c[d] >= 2 and i + 1 > out:
+            out, at = i + 1, d
+    return out, at
 
 
 SERIES_FORMATS = {"TV", "TV_SHORT", "ONA", "MOVIE"}
@@ -292,25 +315,36 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
 # A show still airing whose cn/jp series has had no data for this long counts as unmapped in that market
 # (no revenue there) instead of having it inferred from the us market: see `airing_sources`.
 STALE_DAYS = 28
+STALE_EPISODES = 2
 
 
-def airing_sources(s: E.Show, day: date, markets: dict, mapped: dict[str, bool]) -> dict[str, bool]:
+def airing_sources(s: E.Show, day: date, markets: dict, mapped: dict[str, bool], aired: int | None = None) -> dict[str, bool]:
     """The cn/jp `sources` flags on `day`, given the point-in-time mapping. A show still airing (a long-runner,
     or fewer episodes aired than announced), premiered at least STALE_DAYS ago, with no value in a market's
-    rebuilt series for the last STALE_DAYS days, is unmapped there: the rebuild reads Bangumi/Annict episode
-    pages, which for many long-runners stop updating (Chiikawa's end in May 2025), and a missing market is
-    otherwise filled from the us level through a relation fitted on new shows' first weeks, which priced some
-    long-runners several times over. A finished show keeps its source: after the finale a missing market is
-    the long tail's (docs/v2-series.md §4)."""
+    rebuilt series for the last STALE_DAYS days and at least STALE_EPISODES episodes aired since its last value,
+    is unmapped there: the rebuild reads Bangumi/Annict episode pages, which for many long-runners stop updating
+    (Chiikawa's end in May 2025), and a missing market is otherwise filled from the us level through a relation
+    fitted on new shows' first weeks, which priced some long-runners several times over. A break in the
+    broadcast is not a dead source (BLEACH's month without an episode in Oct 2026 switched its cn market off and
+    back on, a 3x fall and rise): with no new episode there is nothing to report; nor is a source that never
+    reported (a show matched late on Annict starts with the inferred level, then its data: switching it off in
+    between moved the value twice). A finished show keeps its source: after the finale a missing market is the
+    long tail's (docs/v2-series.md §4). `aired`: the episode count on `day` (default: AniList's)."""
     out = {m: bool(mapped.get(m)) for m in ("cn", "jp")}
     if (day - s.first_air).days < STALE_DAYS:
         return out
-    aired = E.at(s, s.aired, day, 0)
+    if aired is None:
+        aired = E.at(s, s.aired, day, 0)
     if not s.long_runner and s.episodes and aired >= s.episodes:
         return out
     rows = markets.get(s.id, {})
     for m in ("cn", "jp"):
-        if out[m] and not any(m in rows.get((day - timedelta(days=k)).isoformat(), {}) for k in range(STALE_DAYS)):
+        if not out[m] or any(m in rows.get((day - timedelta(days=k)).isoformat(), {}) for k in range(STALE_DAYS)):
+            continue
+        last = max((d for d, r in rows.items() if m in r and d <= day.isoformat()), default=None)
+        if last is None:    # nothing stopped: a new show whose data has not started is the inferred level's case
+            continue
+        if aired - E.at(s, s.aired, date.fromisoformat(last), 0) >= STALE_EPISODES:
             out[m] = False
     return out
 
@@ -333,6 +367,8 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
     out = []
     for s in shows:
         att = E.market_att(s, day, rv, markets)
+        sched = schedule_on(schedules, s.id, day)
+        aired = batch_aired(sched, day, E.at(s, s.aired, day, 0))[0]
         out.append({
             "id": s.id,
             "title_ja": s.title,
@@ -343,23 +379,23 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "episodes_known": s.episodes_known,
             "long_runner": s.long_runner,
             "popularity_end": s.popularity_end,
-            "aired": E.at(s, s.aired, day, 0),
+            "aired": aired,
             "has_real_data": E.has_real_data(s, day, val),
             "att": {m: att[m] for m in E.MARKETS},
             "preair": {m: v for m, v in E.preair_att(s, day, val, aud).items()},
             "prior": E.preair_pit(s, day, val, aud_dated),
             "observed": E.observed_markets(s, day, markets),
-            "sources": {"us": True, **airing_sources(s, day, markets, sources.get(s.id, {"cn": False, "jp": False}))},
+            "sources": {"us": True, **airing_sources(s, day, markets, sources.get(s.id, {"cn": False, "jp": False}), aired)},
             **({"adult": True} if s.adult else {}),
             **({"promo": True} if s.promo else {}),
-            "air_dates": air_dates(s, day),
+            "air_dates": air_dates(s, day, sched),
             "score": E.at(s, s.score, day, None),
             "format": s.fmt,
             "source": s.source,
             **series_facts(s.id, relations, day, lags),
             "top_pop": top_decile(shows, s),
             "popularity": E.at(s, s.popularity, day, None),
-            "schedule": schedule_on(schedules, s.id, day),
+            "schedule": sched,
             **airing_on(airing, s.id, day),
             "series": keys[s.id],
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},

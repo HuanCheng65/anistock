@@ -103,6 +103,20 @@ query ($ids: [Int!]) {
     nodes {
       annictId
       programs(orderBy: {field: STARTED_AT, direction: DESC}, first: 150) {
+        pageInfo { hasNextPage endCursor }
+        nodes { startedAt rebroadcast episode { annictId sortNumber } }
+      }
+    }
+  }
+}
+"""
+
+PROGRAMS_MORE_Q = """
+query ($id: Int!, $after: String) {
+  searchWorks(annictIds: [$id], first: 1) {
+    nodes {
+      programs(orderBy: {field: STARTED_AT, direction: DESC}, first: 150, after: $after) {
+        pageInfo { hasNextPage endCursor }
         nodes { startedAt rebroadcast episode { annictId sortNumber } }
       }
     }
@@ -122,8 +136,19 @@ def cmd_airtimes() -> None:
         for w in nodes:
             if not w:
                 continue
+            # every program, not the newest 150: an episode on several channels keeps only its later channels'
+            # dates in the newest page (Pokémon's September episodes dated to October's reruns elsewhere left
+            # a month with no jp data, 2026-11-07)
+            progs = list((w.get("programs") or {}).get("nodes") or [])
+            page = (w.get("programs") or {}).get("pageInfo") or {}
+            while page.get("hasNextPage"):
+                more = annict_gql(client, PROGRAMS_MORE_Q, {"id": w["annictId"], "after": page["endCursor"]},
+                                  partial_ok=True)["searchWorks"]["nodes"]
+                pr = (more[0] or {}).get("programs") or {} if more else {}
+                progs += pr.get("nodes") or []
+                page = pr.get("pageInfo") or {}
             first: dict[int, str] = {}
-            for p in ((w.get("programs") or {}).get("nodes") or []):
+            for p in progs:
                 if not p or p["rebroadcast"] or not p.get("episode"):
                     continue
                 eid = p["episode"]["annictId"]
@@ -317,6 +342,33 @@ def _fallback_airtimes(m: dict, fetched: dict[int, datetime]) -> dict[int, dict[
     return result
 
 
+def premieres(m: dict) -> dict[int, datetime]:
+    """AniList id -> the premiere (00:00 JST) the game uses: AniList's start date (day precision), else the first
+    main episode on Bangumi's list."""
+    jst = timezone(timedelta(hours=9))
+    out: dict[int, datetime] = {}
+    for k, media in latest("anilist", "media").items():
+        sd = media.get("startDate") or {}
+        if sd.get("year") and sd.get("month") and sd.get("day"):
+            out[k] = datetime(sd["year"], sd["month"], sd["day"], tzinfo=jst)
+    bg = latest("bgm", "episodes")
+    for k, r in m.items():
+        if int(k) in out:
+            continue
+        days = []
+        for e in (bg.get(r.get("bgm")) or {}).get("data") or []:
+            if e.get("type", 0) != 0:     # main episodes only (not specials, OPs, PVs)
+                continue
+            try:
+                days.append(date.fromisoformat(e.get("airdate") or ""))
+            except ValueError:
+                pass
+        if days:
+            d = min(days)
+            out[int(k)] = datetime(d.year, d.month, d.day, tzinfo=jst)
+    return out
+
+
 def episode_series(min_age: float = 3.0) -> dict[str, dict[int, list[tuple[datetime, float, float]]]]:
     """Per market: AniList id -> [(air time, matured count, age days)] for episodes at least min_age old."""
     cur = json.loads((CALIBRATION / "maturity.json").read_text(encoding="utf-8"))
@@ -328,6 +380,7 @@ def episode_series(min_age: float = 3.0) -> dict[str, dict[int, list[tuple[datet
     air = json.loads((DERIVED / "annict_airtimes.json").read_text(encoding="utf-8"))
     fetched = _fetched_at("annict", "work")
     fallback = _fallback_airtimes(m, fetched)
+    premiere = premieres(m)
     for wid, w in latest("annict", "work").items():
         if wid not in an_by_work:
             continue
@@ -340,6 +393,12 @@ def episode_series(min_age: float = 3.0) -> dict[str, dict[int, list[tuple[datet
             if not t:
                 continue
             at_ = datetime.fromisoformat(t.replace("Z", "+00:00"))
+            # an advance screening (先行放送, not flagged as a rebroadcast; up to two weeks before the premiere)
+            # is no air time: Chitose-kun's first episode had one a week before the premiere, and its records
+            # counted as jp data before the show aired
+            p0 = premiere.get(an_by_work[wid])
+            if p0 is not None and p0 - timedelta(days=14) <= at_ < p0:
+                at_ = p0
             age = (fetched[wid] - at_).total_seconds() / 86400
             if age < min_age:
                 continue

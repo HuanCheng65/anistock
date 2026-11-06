@@ -48,7 +48,7 @@ def value(seed_db: Path, name: str, s: dict) -> dict[int, int]:
     for suffix in ("", "-wal", "-shm"):
         Path(str(db) + suffix).unlink(missing_ok=True)
     shutil.copy(seed_db, db)
-    env = dict(os.environ, ANISTOCK_GAME_DB=str(db), ANISTOCK_ROOT=str(ROOT), ANISTOCK_NO_LOOPS="1",
+    env = dict(os.environ, ANISTOCK_GAME_DB=str(db), ANISTOCK_ROOT=os.environ.get("REPLICA_SERVER_ROOT", str(ROOT)), ANISTOCK_NO_LOOPS="1",
                ANISTOCK_INPUTS_DIR=str(Path(s["inputs"]).resolve()), ANISTOCK_PORT=str(random.randint(20000, 29999)),
                ANISTOCK_DB=os.environ.get("ANISTOCK_DB", str(ROOT / "data" / "anistock.db")))
     if s.get("filter"):
