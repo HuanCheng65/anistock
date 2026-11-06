@@ -64,6 +64,10 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
         for (doc, v) in &cfg.documents {
             c.execute("INSERT INTO account_agreements VALUES (?,?,?,?,?)", rusqlite::params![alice, doc, v, TS, "alice"]).unwrap();
         }
+        // and may open credit: C5, the knowledge test, the margin disclosure
+        c.execute("INSERT INTO account_agreements VALUES (?,'margin_disclosure',?,?,?)", rusqlite::params![alice, cfg.margin_disclosure, TS, "alice"]).unwrap();
+        c.execute("INSERT INTO risk_assessments(account_id, version, answers, score, level, taken_at, day) VALUES (?,1,'[]',32,5,?,?)", rusqlite::params![alice, TS, "2026-11-05"]).unwrap();
+        c.execute("INSERT INTO quiz_results(account_id, quiz, version, score, passed, taken_at, day) VALUES (?,'margin',1,10,1,?,?)", rusqlite::params![alice, TS, "2026-11-05"]).unwrap();
     }
     let cfg = Arc::new(cfg);
     let clock = Clock::fixed(cfg.tz, at).with_rollover(&cfg.game.day_rollover);
@@ -439,6 +443,86 @@ async fn verification_gates_transfers_ipo_and_leaderboard() {
     assert_eq!(me["eligibility"]["ipo"]["quota"], 0);
     assert!(me["eligibility"]["ipo"]["reason"].as_str().unwrap().starts_with("认购额度按前 5 个交易日的日均持仓市值计算"));
     a.validate(&a.schema("GET", "/api/v1/me", 200), &me, "me");
+}
+
+#[tokio::test]
+async fn assessments_and_opening_credit() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let r = a.get("/api/v1/assessments/risk", None).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("GET", "/api/v1/assessments/{kind}", 200), &r.json, "risk");
+    assert_eq!(r.json["questions"].as_array().unwrap().len(), 8);
+    let quiz = a.get("/api/v1/assessments/margin-quiz", None).await.json;
+    assert_eq!(quiz["pass_score"], 8);
+    err(&a.get("/api/v1/assessments/nope", None).await, 404, "not_found");
+
+    // a new player: everything to do before opening credit
+    let r = a
+        .req("POST", "/api/v1/auth/register", Some(json!({"username": "erin", "password": "secret1", "invite": "club", "agree": true, "pow": solved(&a).await})), &[])
+        .await;
+    assert_eq!(r.json["risk"], Value::Null);
+    assert_eq!(r.json["credit_steps"]["risk_ok"], false);
+    let ck = r.headers.get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    let h = [("cookie", ck.as_str())];
+    a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "disclosure", "version": 1, "signature": "erin"})), &h).await;
+
+    let r = a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [1, 1, 1, 1, 1, 1, 1, 1]})), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    assert_eq!(r.json["risk"]["level"], "C2");
+    assert_eq!(r.json["risk"]["name"], "稳健型");
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    err(&r, 422, "credit_not_eligible");
+    assert_eq!(r.json["message"], "风险测评为 C4 及以上才能开通");
+    a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await;
+    let r = a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await;
+    assert_eq!(r.json["risk"]["level"], "C5");
+    err(&a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await, 422, "assessment_limit");
+    err(&a.req("POST", "/api/v1/me/assessments/margin-quiz", Some(json!({"answers": [0, 0]})), &h).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/assessments/margin-quiz", Some(json!({"answers": vec![0; 10]})), &h).await;
+    assert_eq!(r.json["quiz"]["passed"], false);
+    assert_eq!(r.json["quiz"]["review"].as_array().unwrap().len(), 10);
+    let right = json!([1, 0, 1, 2, 1, 0, 2, 1, 1, 1]);
+    let r = a.req("POST", "/api/v1/me/assessments/margin-quiz", Some(json!({"answers": right})), &h).await;
+    assert_eq!(r.json["quiz"]["score"], 10);
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    assert_eq!(r.json["message"], "签署《融资融券风险揭示书》后才能开通");
+    a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "margin_disclosure", "version": 1, "signature": "erin"})), &h).await;
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["credit_steps"], json!({"risk_ok": true, "min_level": "C4", "quiz_passed": true, "disclosure_signed": true, "disclosure_version": 1}));
+    // the engine's own checks remain: registered today
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    err(&r, 422, "credit_not_eligible");
+    assert!(r.json["message"].as_str().unwrap().contains("14 天"), "{}", r.json);
+}
+
+#[tokio::test]
+async fn closing_an_account() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    let id = me["id"].as_i64().unwrap();
+    err(&a.req("DELETE", "/api/v1/me", Some(json!({"password": "secret1"})), &h).await, 400, "invalid_request");
+    let r = a.req("DELETE", "/api/v1/me", Some(json!({"password": "wrong!!", "confirm": true})), &h).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "密码不正确");
+    let r = a.req("DELETE", "/api/v1/me", Some(json!({"password": "secret1", "confirm": true})), &h).await;
+    assert_eq!(r.status.as_u16(), 204, "{}", r.json);
+    // the cookie no longer works, the name and password are gone, the books still balance
+    err(&a.get("/api/v1/me", Some(&ck)).await, 401, "unauthenticated");
+    err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "secret1"})), &[]).await, 401, "bad_credentials");
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    let (kind, name, user, cash): (String, String, Option<String>, i64) =
+        c.query_row("SELECT kind, name, username, cash FROM accounts WHERE id=?", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+    assert_eq!((kind.as_str(), user, cash), ("closed", None, 0));
+    assert_eq!(name, format!("已注销用户 #{id}"));
+    let left: i64 = c.query_row("SELECT COUNT(*) FROM holdings WHERE account_id=?", [id], |r| r.get(0)).unwrap();
+    assert_eq!(left, 0);
+    for t in ["account_agreements", "risk_assessments", "account_logins"] {
+        let n: i64 = c.query_row(&format!("SELECT COUNT(*) FROM {t} WHERE account_id=?"), [id], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "{t}");
+    }
+    a.st.actor.call(|ctx| ctx.engine.check_invariants()).await.unwrap().unwrap();
 }
 
 #[tokio::test]

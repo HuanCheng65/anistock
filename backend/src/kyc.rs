@@ -28,6 +28,12 @@ pub struct Rules {
     pub rank_min_days: i64,
     /// 排行榜: trades so far
     pub rank_min_trades: i64,
+    /// 融资融券: the lowest 风险测评 level (4 = C4 积极型)
+    pub credit_min_level: i64,
+    /// a 风险测评 counts this many days
+    pub assessment_valid_days: i64,
+    /// 风险测评 and knowledge tests a day (each)
+    pub assessment_per_day: i64,
 }
 
 impl Default for Rules {
@@ -40,6 +46,9 @@ impl Default for Rules {
             ipo_quota_ratio: 1.0,
             rank_min_days: 14,
             rank_min_trades: 10,
+            credit_min_level: 4,
+            assessment_valid_days: 90,
+            assessment_per_day: 3,
         }
     }
 }

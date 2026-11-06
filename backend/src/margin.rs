@@ -78,7 +78,7 @@ impl Default for MarginRules {
     fn default() -> MarginRules {
         MarginRules {
             enabled: true,
-            min_days: 7,
+            min_days: 14,
             min_assets: 0.5,
             listed_days: 5,
             haircut: 0.7,

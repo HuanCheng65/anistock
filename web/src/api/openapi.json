@@ -130,6 +130,105 @@
         ],
         "type": "object"
       },
+      "AnswersRequest": {
+        "description": "每题所选选项的序号（从 0 开始）",
+        "properties": {
+          "answers": {
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "type": "object"
+      },
+      "Assessment": {
+        "description": "一份测评的题目",
+        "properties": {
+          "kind": {
+            "description": "`risk` 或 `margin-quiz`",
+            "type": "string"
+          },
+          "pass_score": {
+            "description": "知识测试的及格题数；风险测评为 null",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/AssessmentQuestion"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "pass_score",
+          "questions",
+          "version"
+        ],
+        "type": "object"
+      },
+      "AssessmentQuestion": {
+        "properties": {
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "options",
+          "text"
+        ],
+        "type": "object"
+      },
+      "AssessmentResult": {
+        "properties": {
+          "quiz": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QuizResult",
+                "description": "知识测试的结果"
+              }
+            ]
+          },
+          "risk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RiskResult",
+                "description": "风险测评的结果"
+              }
+            ]
+          }
+        },
+        "required": [
+          "quiz",
+          "risk"
+        ],
+        "type": "object"
+      },
       "AssetDay": {
         "properties": {
           "cash": {
@@ -638,6 +737,23 @@
         ],
         "type": "object"
       },
+      "CloseAccountRequest": {
+        "description": "注销账号",
+        "properties": {
+          "confirm": {
+            "description": "必须为 true",
+            "type": "boolean"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password",
+          "confirm"
+        ],
+        "type": "object"
+      },
       "CorporateAction": {
         "description": "公司资本政策的一次行动：拆股、配股或回购",
         "properties": {
@@ -1013,6 +1129,38 @@
           "quantity",
           "stock",
           "value"
+        ],
+        "type": "object"
+      },
+      "CreditSteps": {
+        "description": "开通信用账户的前置步骤（注册天数、净资产在开通时检查）",
+        "properties": {
+          "disclosure_signed": {
+            "description": "签署了当前版本的《融资融券风险揭示书》",
+            "type": "boolean"
+          },
+          "disclosure_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min_level": {
+            "type": "string"
+          },
+          "quiz_passed": {
+            "description": "通过了融资融券知识测试",
+            "type": "boolean"
+          },
+          "risk_ok": {
+            "description": "风险测评有效且不低于 `min_level`",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disclosure_signed",
+          "disclosure_version",
+          "min_level",
+          "quiz_passed",
+          "risk_ok"
         ],
         "type": "object"
       },
@@ -2094,6 +2242,10 @@
               "null"
             ]
           },
+          "credit_steps": {
+            "$ref": "#/components/schemas/CreditSteps",
+            "description": "开通信用账户还需要的步骤"
+          },
           "deposit_rate": {
             "format": "double",
             "type": "number"
@@ -2129,6 +2281,17 @@
           "restructure": {
             "$ref": "#/components/schemas/RestructureState"
           },
+          "risk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RiskResult",
+                "description": "最近一次风险测评；没有测评过时为 null"
+              }
+            ]
+          },
           "stock_value": {
             "$ref": "#/components/schemas/Money"
           },
@@ -2157,6 +2320,7 @@
           "cash",
           "created_at",
           "credit_status",
+          "credit_steps",
           "deposit_rate",
           "dividends",
           "eligibility",
@@ -2166,6 +2330,7 @@
           "liabilities",
           "pending_documents",
           "restructure",
+          "risk",
           "stock_value",
           "total_assets",
           "total_return",
@@ -2864,6 +3029,61 @@
         ],
         "type": "object"
       },
+      "QuizResult": {
+        "properties": {
+          "pass_score": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "review": {
+            "items": {
+              "$ref": "#/components/schemas/QuizReview"
+            },
+            "type": "array"
+          },
+          "score": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pass_score",
+          "passed",
+          "review",
+          "score",
+          "total"
+        ],
+        "type": "object"
+      },
+      "QuizReview": {
+        "description": "一题的批改",
+        "properties": {
+          "answer": {
+            "description": "正确选项的序号",
+            "format": "int64",
+            "type": "integer"
+          },
+          "correct": {
+            "type": "boolean"
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer",
+          "correct",
+          "explanation"
+        ],
+        "type": "object"
+      },
       "Quote": {
         "description": "行情表的一行",
         "properties": {
@@ -3329,6 +3549,51 @@
         },
         "required": [
           "quantity"
+        ],
+        "type": "object"
+      },
+      "RiskResult": {
+        "description": "风险测评结果",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "level": {
+            "description": "`C1`..`C5`",
+            "type": "string"
+          },
+          "motto": {
+            "description": "结果卡上的一句话",
+            "type": "string"
+          },
+          "name": {
+            "description": "保守型、稳健型、平衡型、积极型、激进型",
+            "type": "string"
+          },
+          "score": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "taken_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "valid": {
+            "description": "是否仍在有效期内",
+            "type": "boolean"
+          },
+          "valid_until": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "description",
+          "level",
+          "motto",
+          "name",
+          "score",
+          "taken_at",
+          "valid",
+          "valid_until"
         ],
         "type": "object"
       },
@@ -4815,6 +5080,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/assessments/{kind}": {
+      "get": {
+        "operationId": "questions",
+        "parameters": [
+          {
+            "description": "risk（风险测评）或 margin-quiz（融资融券知识测试）",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Assessment"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "测评题目",
+        "tags": [
+          "account"
+        ]
+      }
+    },
     "/api/v1/auth/challenge": {
       "get": {
         "operationId": "challenge",
@@ -5506,6 +5813,38 @@
       }
     },
     "/api/v1/me": {
+      "delete": {
+        "operationId": "close",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "已注销"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "注销账号",
+        "tags": [
+          "account"
+        ]
+      },
       "get": {
         "operationId": "me",
         "responses": {
@@ -5572,6 +5911,58 @@
           }
         },
         "summary": "同意或签署文件",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/assessments/{kind}": {
+      "post": {
+        "operationId": "submit",
+        "parameters": [
+          {
+            "description": "risk 或 margin-quiz",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "提交风险测评或知识测试",
         "tags": [
           "account"
         ]

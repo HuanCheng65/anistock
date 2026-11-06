@@ -27,7 +27,9 @@ pub mod store;
 // HTTP layer
 pub mod actor;
 pub mod api;
+pub mod assessment;
 pub mod kyc;
+pub mod surveil;
 pub mod auth;
 pub mod live;
 pub mod loops;

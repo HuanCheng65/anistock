@@ -196,6 +196,7 @@ pub fn label(field: &str) -> &'static str {
         "q" => "搜索内容",
         "code" => "绑定码",
         "confirm" => "确认",
+        "answers" => "答案",
         "scopes" => "权限",
         "platform" => "平台",
         "external_id" => "QQ 号",

@@ -75,6 +75,8 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
     let (username, cash, frozen, created_at) = row.ok_or_else(error::unauthenticated)?;
     let pending_documents = pending_documents(&st.cfg, c, id)?;
     let (verification, eligibility) = eligibility_of(st, c, id, &created_at)?;
+    let risk = super::assess::risk_of(st, c, id)?;
+    let credit_steps = super::assess::credit_steps(st, c, id)?;
     let stock = stock_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
     let total = cash + stock - liab;
@@ -121,6 +123,8 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         pending_documents,
         verification,
         eligibility,
+        risk,
+        credit_steps,
     })
 }
 
@@ -183,14 +187,16 @@ pub async fn sign(
     let doc = need(body_str(&b, "doc")?, "doc")?;
     let version = need(body_int(&b, "version")?, "version")?;
     let signature = body_str(&b, "signature")?;
-    let Some((_, current)) = st.cfg.documents.iter().find(|(d, _)| *d == doc) else {
-        return Err(error::invalid(vec![error::not_allowed("doc")]));
+    let current = match st.cfg.documents.iter().find(|(d, _)| *d == doc) {
+        Some((_, v)) => *v,
+        None if doc == "margin_disclosure" => st.cfg.margin_disclosure,
+        None => return Err(error::invalid(vec![error::not_allowed("doc")])),
     };
-    if version != *current {
+    if version != current {
         return Err(E::new(409, "document_outdated", "文件已更新，刷新页面后重新阅读"));
     }
     let me = load_me(&st, id).await?;
-    let signature = if doc == "disclosure" {
+    let signature = if doc == "disclosure" || doc == "margin_disclosure" {
         let typed = signature.as_deref().map(str::trim).unwrap_or("");
         if typed != me.username {
             return Err(error::invalid(vec![error::field("signature", "mismatch", "签名需与用户名一致")]));
@@ -757,6 +763,7 @@ pub fn reason_label(reason: &str) -> String {
         "ipo" => "新股认购缴款",
         "ipo_refund" => "认购退款",
         "restructure" => "破产重整",
+        "account_closed" => "注销账号",
         "trade" => "成交",
         "margin_loan" => "融资借款",
         "margin_repay" => "融资还款",
@@ -1159,7 +1166,12 @@ pub async fn challenge(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -
 #[utoipa::path(post, path = "/api/v1/auth/register", tag = "auth",
     request_body = RegisterRequest,
     responses((status = 201, body = Me), (status = "default", body = ErrorBody)))]
-pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> R<Response> {
+pub async fn register(
+    State(st): State<Arc<AppState>>,
+    Extension(ip): Extension<super::ClientIp>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Response> {
     use crate::config::Registration;
     let b = json_body(&headers, &body)?;
     if st.cfg.registration == Registration::Closed {
@@ -1191,16 +1203,38 @@ pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body:
     for (doc, version) in st.cfg.documents.iter().filter(|(d, _)| d != "disclosure") {
         record_agreement(&st, id, doc, *version, None)?;
     }
+    record_login(&st, id, &ip.0);
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(super::created(me), &auth::session_cookie(&token)))
+}
+
+/// One sign-in (or registration) from `ip` (the limit key), kept 6 months: the wash-trade report reads
+/// it (crate::surveil), and the logs are kept as 网络安全法 §21 asks.
+fn record_login(st: &AppState, id: i64, ip: &str) {
+    let ip = super::ratelimit::ip_key(ip);
+    let cutoff = st.clock.now() - chrono::Duration::days(183);
+    let res = super::bind::with_side(st, |c| {
+        c.execute("INSERT INTO account_logins(account_id, ip, at) VALUES (?,?,?)", rusqlite::params![id, ip, st.clock.ts()])
+            .map_err(sql)?;
+        c.execute("DELETE FROM account_logins WHERE at < ?", [cutoff.format("%Y-%m-%dT%H:%M:%S").to_string()]).map_err(sql)?;
+        Ok(())
+    });
+    if let Err(e) = res {
+        eprintln!("account_logins: {}", e.message);
+    }
 }
 
 /// 登录
 #[utoipa::path(post, path = "/api/v1/auth/login", tag = "auth",
     request_body = LoginRequest,
     responses((status = 200, body = Me), (status = "default", body = ErrorBody)))]
-pub async fn login(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> R<Response> {
+pub async fn login(
+    State(st): State<Arc<AppState>>,
+    Extension(ip): Extension<super::ClientIp>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Response> {
     let b = json_body(&headers, &body)?;
     let username = need(body_str(&b, "username")?, "username")?.trim().to_string();
     let password = need(body_str(&b, "password")?, "password")?;
@@ -1218,9 +1252,58 @@ pub async fn login(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     if !ok {
         return Err(error::bad_credentials());
     }
+    record_login(&st, id, &ip.0);
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(Json(me).into_response(), &auth::session_cookie(&token)))
+}
+
+/// 注销账号
+#[utoipa::path(delete, path = "/api/v1/me", tag = "account",
+    request_body = CloseAccountRequest,
+    responses((status = 204, description = "已注销"), (status = "default", body = ErrorBody)))]
+pub async fn close(
+    State(st): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Response> {
+    let id = caller.player()?;
+    let b = json_body(&headers, &body)?;
+    let password = need(body_str(&b, "password")?, "password")?;
+    if b.get("confirm") != Some(&serde_json::Value::Bool(true)) {
+        return Err(error::invalid(vec![error::field("confirm", "not_allowed", "确认后才能注销")]));
+    }
+    let stored: Option<String> = read(&st, move |c| {
+        c.query_row("SELECT pw_hash FROM accounts WHERE id=?", [id], |r| r.get(0)).map_err(sql)
+    })
+    .await?;
+    let ok = hashing(&st, move || auth::check_pw(&password, stored.as_deref())).await?.unwrap_or(false);
+    if !ok {
+        return Err(error::invalid(vec![error::field("password", "mismatch", "密码不正确")]));
+    }
+    let (d, t) = (st.clock.today(), st.clock.ts());
+    engine(&st, move |ctx| -> R<()> {
+        let r = ctx.engine.close_player(id, &d, &t);
+        ctx.engine.flush().map_err(error::internal)?;
+        match r {
+            Ok(()) => Ok(()),
+            Err(crate::restructure::Refusal::Margin) => Err(E::new(422, "close_not_allowed", "还清融资融券负债后才能注销")),
+            Err(e) => Err(error::internal(format!("{e:?}"))),
+        }
+    })
+    .await??;
+    // personal data outside the game books (docs/v2-account.md §9); the ledger and trades stay, anonymous
+    super::bind::with_side(&st, |c| {
+        for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins"] {
+            c.execute(&format!("DELETE FROM {t} WHERE account_id=?"), [id]).map_err(sql)?;
+        }
+        Ok(())
+    })?;
+    if let Some(live) = &st.live {
+        let _ = live.send(crate::live::Ctl::Logout { account: id });
+    }
+    Ok(with_cookie(super::no_content(), &auth::delete_cookie(std::time::SystemTime::now())))
 }
 
 /// 退出登录

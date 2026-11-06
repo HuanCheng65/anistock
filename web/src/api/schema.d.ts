@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/assessments/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 测评题目 */
+        get: operations["questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/challenge": {
         parameters: {
             query?: never;
@@ -271,7 +288,8 @@ export interface paths {
         get: operations["me"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** 注销账号 */
+        delete: operations["close"];
         options?: never;
         head?: never;
         patch?: never;
@@ -288,6 +306,23 @@ export interface paths {
         put?: never;
         /** 同意或签署文件 */
         post: operations["sign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/assessments/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 提交风险测评或知识测试 */
+        post: operations["submit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -799,6 +834,31 @@ export interface components {
             /** Format: int64 */
             watchers: number | null;
         };
+        /** @description 每题所选选项的序号（从 0 开始） */
+        AnswersRequest: {
+            answers: number[];
+        };
+        /** @description 一份测评的题目 */
+        Assessment: {
+            /** @description `risk` 或 `margin-quiz` */
+            kind: string;
+            /**
+             * Format: int64
+             * @description 知识测试的及格题数；风险测评为 null
+             */
+            pass_score: number | null;
+            questions: components["schemas"]["AssessmentQuestion"][];
+            /** Format: int64 */
+            version: number;
+        };
+        AssessmentQuestion: {
+            options: string[];
+            text: string;
+        };
+        AssessmentResult: {
+            quiz: null | components["schemas"]["QuizResult"];
+            risk: null | components["schemas"]["RiskResult"];
+        };
         AssetDay: {
             cash: components["schemas"]["Money"];
             is_partial: boolean;
@@ -931,6 +991,12 @@ export interface components {
             /** Format: double */
             public_share: number;
         };
+        /** @description 注销账号 */
+        CloseAccountRequest: {
+            /** @description 必须为 true */
+            confirm: boolean;
+            password: string;
+        };
         /** @description 公司资本政策的一次行动：拆股、配股或回购 */
         CorporateAction: {
             /** @description 公告的交易日 */
@@ -1045,6 +1111,18 @@ export interface components {
             stock: components["schemas"]["StockRef"];
             /** @description 欠券市值（数量 × 最新价） */
             value: components["schemas"]["Money"];
+        };
+        /** @description 开通信用账户的前置步骤（注册天数、净资产在开通时检查） */
+        CreditSteps: {
+            /** @description 签署了当前版本的《融资融券风险揭示书》 */
+            disclosure_signed: boolean;
+            /** Format: int64 */
+            disclosure_version: number;
+            min_level: string;
+            /** @description 通过了融资融券知识测试 */
+            quiz_passed: boolean;
+            /** @description 风险测评有效且不低于 `min_level` */
+            risk_ok: boolean;
         };
         DividendPaid: {
             per_share: components["schemas"]["Money"];
@@ -1342,6 +1420,8 @@ export interface components {
             created_at: components["schemas"]["Timestamp"];
             /** @description 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null */
             credit_status: string | null;
+            /** @description 开通信用账户还需要的步骤 */
+            credit_steps: components["schemas"]["CreditSteps"];
             /** Format: double */
             deposit_rate: number;
             dividends: components["schemas"]["Money"];
@@ -1356,6 +1436,7 @@ export interface components {
             /** @description 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户 */
             pending_documents: components["schemas"]["PendingDocument"][];
             restructure: components["schemas"]["RestructureState"];
+            risk: null | components["schemas"]["RiskResult"];
             stock_value: components["schemas"]["Money"];
             /** @description 净资产：现金 + 持仓市值 − 负债 */
             total_assets: components["schemas"]["Money"];
@@ -1580,6 +1661,26 @@ export interface components {
             /** @description 继续翻页用的游标；没有更多时为 null */
             next_cursor: string | null;
         };
+        QuizResult: {
+            /** Format: int64 */
+            pass_score: number;
+            passed: boolean;
+            review: components["schemas"]["QuizReview"][];
+            /** Format: int64 */
+            score: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description 一题的批改 */
+        QuizReview: {
+            /**
+             * Format: int64
+             * @description 正确选项的序号
+             */
+            answer: number;
+            correct: boolean;
+            explanation: string;
+        };
         /** @description 行情表的一行 */
         Quote: {
             /**
@@ -1706,6 +1807,22 @@ export interface components {
         RightsRequest: {
             /** Format: int64 */
             quantity: number;
+        };
+        /** @description 风险测评结果 */
+        RiskResult: {
+            description: string;
+            /** @description `C1`..`C5` */
+            level: string;
+            /** @description 结果卡上的一句话 */
+            motto: string;
+            /** @description 保守型、稳健型、平衡型、积极型、激进型 */
+            name: string;
+            /** Format: int64 */
+            score: number;
+            taken_at: components["schemas"]["Timestamp"];
+            /** @description 是否仍在有效期内 */
+            valid: boolean;
+            valid_until: components["schemas"]["TradingDay"];
         };
         Rules: {
             dividend_tax: components["schemas"]["DividendTaxBand"][];
@@ -2101,6 +2218,36 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description risk（风险测评）或 margin-quiz（融资融券知识测试） */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     challenge: {
         parameters: {
             query: {
@@ -2615,6 +2762,36 @@ export interface operations {
             };
         };
     };
+    close: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description 已注销 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     sign: {
         parameters: {
             query?: never;
@@ -2634,6 +2811,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    submit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description risk 或 margin-quiz */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswersRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentResult"];
                 };
             };
             default: {

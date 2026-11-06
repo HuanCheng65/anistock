@@ -31,6 +31,8 @@ pub enum Change {
     CompanyWork { work_id: i64, company_id: i64, joined_on: String },
     /// `UPDATE accounts SET kind`
     AccountKind { id: i64, kind: String },
+    /// `UPDATE accounts SET name, username, pw_hash` (a closed account loses its identity)
+    AccountIdentity { id: i64, name: String, username: Option<String>, pw_hash: Option<String> },
     AccountBalance {
         id: i64,
         cash: i64,
@@ -150,6 +152,10 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
         }
         Change::AccountKind { id, kind } => {
             conn.prepare_cached("UPDATE accounts SET kind=? WHERE id=?")?.execute(params![kind, id])?;
+        }
+        Change::AccountIdentity { id, name, username, pw_hash } => {
+            conn.prepare_cached("UPDATE accounts SET name=?, username=?, pw_hash=? WHERE id=?")?
+                .execute(params![name, username, pw_hash, id])?;
         }
         Change::AccountBalance { id, cash, cash_frozen } => {
             conn.prepare_cached("UPDATE accounts SET cash=?, cash_frozen=? WHERE id=?")?.execute(params![

@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod market;
 pub mod openapi;
+pub mod assess;
 pub mod pow;
 pub mod ratelimit;
 pub mod search;
@@ -572,7 +573,9 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/ipos", get(stocks::ipos))
         .route("/ipos/{id}", get(stocks::ipo_one))
         .route("/ipos/{id}/subscription", put(account::subscribe).delete(account::unsubscribe))
-        .route("/me", get(account::me))
+        .route("/me", get(account::me).delete(account::close))
+        .route("/assessments/{kind}", get(assess::questions))
+        .route("/me/assessments/{kind}", post(assess::submit))
         .route("/me/portfolio", get(account::portfolio))
         .route("/me/asset-history", get(account::asset_history))
         .route("/me/orders", get(account::orders).post(account::place))
@@ -614,6 +617,8 @@ fn method_fallback(path: &str) -> Response {
         ["", "me", "orders", _] => "GET, DELETE",
         ["", "ipos", _, "subscription"] | ["", "stocks", _, "rights", "subscription"] => "PUT, DELETE",
         ["", "auth", "challenge"] => "GET",
+        ["", "me"] => "GET, DELETE",
+        ["", "me", "assessments", _] => "POST",
         ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "agreements"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
         _ => "GET",

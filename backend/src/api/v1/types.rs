@@ -847,6 +847,97 @@ pub struct Me {
     pub verification: Verification,
     /// 财政补贴、新股认购、排行榜的资格
     pub eligibility: EligibilityState,
+    /// 最近一次风险测评；没有测评过时为 null
+    pub risk: Option<RiskResult>,
+    /// 开通信用账户还需要的步骤
+    pub credit_steps: CreditSteps,
+}
+
+/// 风险测评结果
+#[derive(Serialize, ToSchema, Clone)]
+pub struct RiskResult {
+    /// `C1`..`C5`
+    pub level: String,
+    /// 保守型、稳健型、平衡型、积极型、激进型
+    pub name: String,
+    pub description: String,
+    /// 结果卡上的一句话
+    pub motto: String,
+    pub score: i64,
+    pub taken_at: Timestamp,
+    pub valid_until: TradingDay,
+    /// 是否仍在有效期内
+    pub valid: bool,
+}
+
+/// 开通信用账户的前置步骤（注册天数、净资产在开通时检查）
+#[derive(Serialize, ToSchema, Clone)]
+pub struct CreditSteps {
+    /// 风险测评有效且不低于 `min_level`
+    pub risk_ok: bool,
+    pub min_level: String,
+    /// 通过了融资融券知识测试
+    pub quiz_passed: bool,
+    /// 签署了当前版本的《融资融券风险揭示书》
+    pub disclosure_signed: bool,
+    pub disclosure_version: i64,
+}
+
+/// 一份测评的题目
+#[derive(Serialize, ToSchema)]
+pub struct Assessment {
+    /// `risk` 或 `margin-quiz`
+    pub kind: String,
+    pub version: i64,
+    /// 知识测试的及格题数；风险测评为 null
+    pub pass_score: Option<i64>,
+    pub questions: Vec<AssessmentQuestion>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AssessmentQuestion {
+    pub text: String,
+    pub options: Vec<String>,
+}
+
+/// 每题所选选项的序号（从 0 开始）
+#[derive(Deserialize, ToSchema)]
+pub struct AnswersRequest {
+    pub answers: Vec<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AssessmentResult {
+    /// 风险测评的结果
+    pub risk: Option<RiskResult>,
+    /// 知识测试的结果
+    pub quiz: Option<QuizResult>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct QuizResult {
+    pub score: i64,
+    pub total: i64,
+    pub pass_score: i64,
+    pub passed: bool,
+    pub review: Vec<QuizReview>,
+}
+
+/// 一题的批改
+#[derive(Serialize, ToSchema)]
+pub struct QuizReview {
+    pub correct: bool,
+    /// 正确选项的序号
+    pub answer: i64,
+    pub explanation: String,
+}
+
+/// 注销账号
+#[derive(Deserialize, ToSchema)]
+pub struct CloseAccountRequest {
+    pub password: String,
+    /// 必须为 true
+    pub confirm: bool,
 }
 
 /// 身份验证（docs/v2-account.md §2）

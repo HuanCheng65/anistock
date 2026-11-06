@@ -13,6 +13,9 @@
 //!                                   timestamp, e.g. 2026-11-05T10:00:00+08:00
 //!   ANISTOCK_NO_RATE_LIMIT=1        development only: no API rate limits
 //!
+//! `anistock surveillance [days]` prints the wash-trade report (对倒监控, src/surveil.rs) for the last
+//! `days` trading days (default 7) and exits; it only reads the game database.
+//!
 //! Threads: the tokio workers (HTTP), tokio's blocking pool (SQLite reads, scrypt), the engine thread
 //! (`actor`, with the push fan-out between jobs), the persistence thread. Behind the local reverse proxy
 //! the client address comes from X-Real-IP (else the last X-Forwarded-For entry), for the per-IP limits.
@@ -33,8 +36,42 @@ fn fail(msg: impl std::fmt::Display, code: i32) -> ! {
     std::process::exit(code)
 }
 
+/// `anistock surveillance [days]`: trades between accounts that signed in from the same address, at
+/// a price more than 5% off the day's VWAP or more than 20% of the stock's volume that day.
+fn surveillance(cfg: &Config, days: i64) {
+    let c = store::connect(&cfg.game_db).unwrap_or_else(|e| fail(format!("{}: {e}", cfg.game_db.display()), 1));
+    let today = chrono::Utc::now().with_timezone(&cfg.tz).date_naive();
+    let day = |n: i64| (today - chrono::Duration::days(n)).format("%Y-%m-%d").to_string();
+    let flags = anistock::surveil::report(&c, &day(days), &day(0), &day(30), 0.05, 0.2)
+        .unwrap_or_else(|e| fail(format!("report: {e}"), 1));
+    if flags.is_empty() {
+        println!("no flagged trades in the last {days} days");
+    }
+    for f in flags {
+        println!(
+            "{}  trade {}  stock {}  {} <- {}  {} x {:.2} (VWAP {:.2}, {:.0}% of the day's volume)  shared address {}",
+            f.day,
+            f.trade_id,
+            f.company_id,
+            f.buyer,
+            f.seller,
+            f.qty,
+            f.price as f64 / 100.0,
+            f.vwap / 100.0,
+            f.volume_share * 100.0,
+            f.ip
+        );
+    }
+}
+
 fn main() {
     let mut cfg = Config::load().unwrap_or_else(|e| fail(format!("config: {e}"), 2));
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("surveillance") {
+        let days = args.get(2).map_or(7, |d| d.parse().unwrap_or_else(|_| fail("usage: anistock surveillance [days]", 2)));
+        surveillance(&cfg, days);
+        return;
+    }
     let host = env("ANISTOCK_HOST").unwrap_or_else(|| "127.0.0.1".into());
     let port: u16 = env("ANISTOCK_PORT").map_or(18620, |p| p.trim().parse().unwrap_or_else(|_| fail("ANISTOCK_PORT", 2)));
     let workers: usize = env("ANISTOCK_WORKERS").map_or(2, |w| w.trim().parse().unwrap_or_else(|_| fail("ANISTOCK_WORKERS", 2)));

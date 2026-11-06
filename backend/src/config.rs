@@ -109,6 +109,8 @@ pub struct Config {
     pub documents: Vec<(String, i64)>,
     /// `[account.eligibility]`: what 身份验证 and activity unlock (crate::kyc)
     pub eligibility: crate::kyc::Rules,
+    /// current version of 融资融券风险揭示书 (signed before opening credit, not before trading)
+    pub margin_disclosure: i64,
     pub always_open: bool,
     pub no_loops: bool,
     /// v1 economy rules (raw 7-day revenue, stepwise episode valuation, transfers to players only, no penny
@@ -247,6 +249,7 @@ impl Config {
             registration,
             documents,
             eligibility,
+            margin_disclosure: docs_raw.and_then(|t| t.get("margin_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
             always_open: env("ANISTOCK_ALWAYS_OPEN").as_deref() == Some("1"),
             no_loops: env("ANISTOCK_NO_LOOPS").as_deref() == Some("1"),
             // development/difftest only: the v1 economy rules (see `economy_v1`)

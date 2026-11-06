@@ -179,6 +179,9 @@ ipo_mv_days = 5                # 新股认购: quota = mean holdings value over 
 ipo_quota_ratio = 1.0          #   × this (A-share 市值配售)
 rank_min_days = 14             # 排行榜: registered at least this many days
 rank_min_trades = 10           # 排行榜: trades so far
+credit_min_level = 4           # 融资融券: 风险测评 C4 积极型 or above (and the knowledge test, the margin disclosure)
+assessment_valid_days = 90     # a 风险测评 counts about a season
+assessment_per_day = 3         # 风险测评 / knowledge tests a day, each
 
 [account.documents]
 # current versions of 用户协议, 隐私政策, 风险揭示书 (texts: web/src/legal/). Raise one after a material change:
@@ -186,6 +189,7 @@ rank_min_trades = 10           # 排行榜: trades so far
 terms = 1
 privacy = 1
 disclosure = 1
+margin_disclosure = 1          # 融资融券风险揭示书: signed before opening credit
 
 [api.events]
 # bot events (docs/api-v1.md §5.3.7): big_move thresholds

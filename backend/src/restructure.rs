@@ -95,6 +95,57 @@ impl Engine {
 
     /// Restructure a player (see the module doc). `initial_cents` is `game.initial_cash` in cents, `day` the
     /// trading day. Fails without changing anything; trading hours are the caller's check.
+    /// 注销账号 (docs/v2-account.md §9): cancel orders and subscriptions, hand every holding to the world
+    /// account at the last price (as in a restructuring), write off a default's shortfall, pay all cash to
+    /// the world account, then the account becomes kind `closed` with no username or password. Ledger
+    /// and trades keep the account id, so the books still balance. Refused while margin debts are open.
+    pub fn close_player(&mut self, account_id: i64, day: &str, ts: &str) -> Result<(), Refusal> {
+        let world = self.special("world").ok_or_else(|| Refusal::Broken("no world account".into()))?;
+        if self.account(account_id).is_none_or(|a| a.kind != "player") {
+            return Err(Refusal::Broken(format!("account {account_id} is not a player")));
+        }
+        self.margin_restructure_check(account_id).map_err(|()| Refusal::Margin)?;
+        let orders: Vec<i64> = self.open_orders_of(account_id).iter().map(|o| o.id).collect();
+        for id in orders {
+            self.close(id, OrderStatus::Cancelled, ts);
+        }
+        let apps: Vec<i64> = self
+            .st
+            .ipo_apps
+            .values()
+            .filter(|a| a.account_id == account_id && a.allotted.is_none())
+            .map(|a| a.company_id)
+            .collect();
+        for cid in apps {
+            self.do_withdraw(cid, account_id);
+        }
+        self.rights_withdraw_all(account_id);
+        let holdings: Vec<(i64, i64)> = self.holdings_of(account_id).map(|h| (h.company_id, h.qty)).collect();
+        for (cid, qty) in holdings {
+            let price = self.company(cid).map_or(0, |c| c.last_price);
+            let frozen = self.holding(account_id, cid).map_or(0, |h| h.qty_frozen);
+            self.do_remove_shares(account_id, cid, qty, frozen).map_err(Refusal::Broken)?;
+            self.do_add_shares(world, cid, qty, price, day);
+            self.do_transfer(world, account_id, qty * price, "account_closed", day, ts, Some(cid), None);
+        }
+        self.margin_write_off(account_id);
+        let cash = self.account(account_id).map_or(0, |a| a.cash);
+        if cash > 0 {
+            self.do_transfer(account_id, world, cash, "account_closed", day, ts, None, None);
+        }
+        let name = format!("已注销用户 #{account_id}");
+        if let Some(a) = self.st.accounts.get_mut(&account_id) {
+            a.kind = "closed".into();
+            a.name = name.clone();
+            a.username = None;
+            a.pw_hash = None;
+        }
+        self.out.push(Change::AccountKind { id: account_id, kind: "closed".into() });
+        self.out.push(Change::AccountIdentity { id: account_id, name, username: None, pw_hash: None });
+        self.commit();
+        Ok(())
+    }
+
     pub fn restructure(
         &mut self,
         account_id: i64,

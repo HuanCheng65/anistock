@@ -258,6 +258,12 @@ pub async fn open(
 ) -> R<Json<CreditEnvelope>> {
     let id = caller.player()?;
     super::account::require_signed(&st, id).await?;
+    // 风险测评, the knowledge test and the margin disclosure (docs/v2-account.md §6)
+    let st2 = st.clone();
+    let steps = super::read(&st, move |c| super::assess::credit_steps(&st2, c, id)).await?;
+    if let Some(e) = super::assess::credit_refusal(&steps) {
+        return Err(e);
+    }
     let _ = json_body_opt(&headers, &body)?;
     let (initial, day, t) = (initial_cents(&st.cfg), st.clock.today(), st.clock.ts());
     let credit = engine(&st, move |ctx| -> R<CreditAccount> {
