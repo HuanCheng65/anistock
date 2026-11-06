@@ -366,7 +366,11 @@ def source_dates(db_path: Path) -> dict[int, dict[str, date | None]]:
     """AniList id -> {"cn", "jp"}: the first day the collector had data for the show's mapped Bangumi subject /
     Annict work (its `works` row or its first snapshot, whichever is earlier), None if it never did or the show
     is not mapped. An Annict work matched through its MAL id also needs the AniList media's MAL id (its first
-    snapshot), since the match is only possible from then on."""
+    snapshot), since the match is only possible from then on.
+
+    A show the collector already had on its first day counts from date.min: the collector cannot tell when
+    its source came online before it started (a collector database created mid-season would otherwise switch
+    every show's cn/jp off for the whole history before that day; the rebuilt series cover those days)."""
     matches = E.effective_matches(db_path)
     seen: dict[tuple[str, str], date] = {}
     if db_path.exists():
@@ -378,11 +382,19 @@ def source_dates(db_path: Path) -> dict[int, dict[str, date | None]]:
                 rows += db.execute("SELECT source, external_id, MIN(first_seen) FROM works GROUP BY 1, 2").fetchall()
             if "snapshots" in tables:
                 rows += db.execute("SELECT source, external_id, MIN(day) FROM snapshots GROUP BY 1, 2").fetchall()
+            days = [r[2] for r in rows if r[2]]
+            if "runs" in tables:
+                first_run = db.execute("SELECT MIN(started_at) FROM runs").fetchone()[0]
+                if first_run:
+                    days.append(first_run)
         finally:
             db.close()
+        born = min((date.fromisoformat(d[:10]) for d in days), default=None)
         for src, ext, d in rows:
             if d:
                 k, v = (src, str(ext)), date.fromisoformat(d[:10])
+                if born is not None and v <= born:
+                    v = date.min
                 seen[k] = min(seen.get(k, v), v)
     out = {}
     for aid, r in matches.items():
