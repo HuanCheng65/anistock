@@ -9,7 +9,7 @@ v0.6.6 修正第 2 条（`engine/daily_inputs.py`），并带上重开要用的�
 
 ## 时间
 
-整个过程约 15 分钟，期间游戏不可用。**04:00 之前做完**：下面的 `seed --until 2026-11-05` 让开市日是 11 月 6 日这个交易日，04:00 换日以后要改日期（见最后一节）。
+整个过程约 40 分钟（其中重算开市前走势约 20 分钟），期间游戏不可用。**04:00 之前做完**：下面的 `seed --until 2026-11-05` 让开市日是 11 月 6 日这个交易日，04:00 换日以后要改日期（见最后一节）。
 
 ## 步骤
 
@@ -69,7 +69,21 @@ uv run python -m server.tools.reanchor data/game.db data/golive.db
 rm -f data/golive.db*
 ```
 
-### 5. 开服，检查
+### 5. 用当前模型重算开市前走势
+
+`server.seed` 的开市前 K 线和营收来自 Python 的旧模拟器（开盘价总是贴着昨收，没有分红记录，营收规模和服务器不同）。用服务器自己的引擎重算一遍，约 20 分钟：
+
+```bash
+uv run python -m server.tools.rebuild_replay data/game.db --work /tmp/rebuild-replay
+rm -rf /tmp/rebuild-replay
+```
+
+- 必须在第 4 步之后：工具以最后一根回放 K 线的收盘价为锚点缩放新走势，这时它正好是对齐后的开盘价，开市处没有缺口。
+- 输出的表里每支股票“last close”的原值和新值相同；最后一行是 `rewrote the replay history of N stocks; untouched tables verified (...)`。
+- `kept as is` 的股票（新回放里开市前已退市或没有上市）保留原来的走势。
+- 写入前自动备份为 `data/game-before-rebuild-<时间>.db`；结果不对就用它恢复，再从这一步重来或跳过这一步。
+
+### 6. 开服，检查
 
 ```bash
 systemctl --user start anistock-server
@@ -84,6 +98,7 @@ print(len(r),'只  估值/现价 中位',round(s.median(r),2),' P10',round(r[len
 - 日志里有 `valuation: started the filter from the inputs history`，没有 `valuation bootstrap failed`。
 - 估值/现价的中位、P10、P90 都在 1 附近。偏离大就停服，回到第 3 步之前排查。
 - 用自己的账号登录：弹出“重新开服说明”，点“知道了”后不再出现；资金是 100,000，QQ 绑定还在。
+- 任意一支股票的日 K：开市前的走势和开市后接得上，开市处有一条细线。
 
 ## 回滚
 
