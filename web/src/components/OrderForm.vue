@@ -12,6 +12,7 @@ import { MODE_LABEL, useCredit } from '../stores/credit'
 import { useSession } from '../stores/session'
 import type { Book } from '../stores/stock'
 import { markEditing } from '../version'
+import Modal from './Modal.vue'
 
 const props = defineProps<{ stock: StockDetail; book: Book; pick: { price: number; n: number } | null; initialSide?: 'buy' | 'sell' }>()
 const emit = defineEmits<{ placed: [] }>()
@@ -203,21 +204,18 @@ const modeFact = computed<{ k: string; v: string } | null>(() => {
 })
 const submitText = computed(() => (creditMode.value ? MODE_LABEL[mode.value] : side.value === 'buy' ? '买入' : '卖出'))
 
-// 下单前确认 (settings): the first press asks, the second sends; any edit takes the question back
+// 下单前确认 (settings): the press opens a dialog with the order; its button sends
 const confirming = ref(false)
-watch([side, kind, price, qty, mode], () => (confirming.value = false))
-const confirmText = computed(() => {
-  const at = kind.value === 'limit' ? `以 ${money(px.value)} ` : '以市价'
-  return `${at}${submitText.value}《${props.stock.stock.title}》${fmtQty(n.value)} 股？`
-})
+const confirmTitle = computed(() => `${submitText.value}《${props.stock.stock.title}》？`)
 
-async function submit() {
+function submit() {
   if (busy.value || problem.value || !n.value) return
-  if (prefs.confirmOrders && !confirming.value) {
-    confirming.value = true
-    return
-  }
-  confirming.value = false
+  if (prefs.confirmOrders) confirming.value = true
+  else place()
+}
+
+async function place() {
+  if (busy.value || problem.value || !n.value) return
   busy.value = true
   msg.value = null
   try {
@@ -320,16 +318,21 @@ async function cancel(id: number) {
 
     <RouterLink v-if="!session.me" :to="{ name: 'login', query: { next: route.fullPath } }" class="tbtn buy cta">登录后交易</RouterLink>
     <template v-else>
-      <Transition name="ask">
-        <p v-if="confirming" id="order-ask" class="ask">{{ confirmText }}</p>
-      </Transition>
-      <div class="send" :class="{ two: confirming }">
-        <button type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || !n || phase === 'closed'"
-          :aria-describedby="confirming ? 'order-ask' : undefined">
-          {{ busy ? '提交中…' : submitText }}
-        </button>
-        <button v-if="confirming" type="button" class="tbtn plain cta" @click="confirming = false">取消</button>
-      </div>
+      <button type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || !n || phase === 'closed'">
+        {{ busy ? '提交中…' : submitText }}
+      </button>
+      <Modal :open="confirming" :title="confirmTitle" :edit-key="`${editKey}-confirm`" :busy="busy" @close="confirming = false">
+        <dl class="cf num">
+          <div><dt>价格</dt><dd>{{ kind === 'limit' ? money(px) : '市价' }}</dd></div>
+          <div><dt>数量</dt><dd>{{ fmtQty(n) }} 股</dd></div>
+          <div><dt>{{ side === 'buy' ? '预计花费' : '预计到账' }}</dt><dd>{{ money(total) }}</dd></div>
+        </dl>
+        <p v-if="kind === 'market'">市价委托按对手方价格成交，成交价可能偏离现价。</p>
+        <template #actions>
+          <button type="button" class="btn" :class="side === 'buy' ? 'cf-buy' : 'cf-sell'" :disabled="busy" @click="confirming = false; place()">{{ submitText }}</button>
+          <button type="button" class="btn ghost" :disabled="busy" @click="confirming = false">取消</button>
+        </template>
+      </Modal>
       <p v-if="phase === 'closed'" class="note">休市中。集合竞价 {{ sess.auction_start }}–{{ sess.open }}，连续交易 {{ sessionText(sess.open, sess.close) }}</p>
     </template>
     <p v-if="msg" class="note" :class="msg.kind === 'error' ? 'err' : 'ok'" role="status">
@@ -350,12 +353,12 @@ async function cancel(id: number) {
 
 <style scoped>
 .signlink { margin-left: 8px; color: var(--t-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
-.send { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.send.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
-.ask { font-size: 14px; line-height: 1.5; color: var(--t-ink); font-weight: 700; overflow-wrap: anywhere; }
-.ask-enter-active { transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.2, 0.7, 0.2, 1); }
-.ask-enter-from { opacity: 0; transform: translateY(4px); }
-@media (prefers-reduced-motion: reduce) { .ask-enter-from { transform: none; } }
+.cf { margin: 0 0 4px; border-top: 1px solid var(--hair-2); }
+.cf div { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--hair-2); }
+.cf dt { font-family: var(--font); font-size: 13px; color: var(--ink-2); }
+.cf dd { margin: 0; font-size: 15px; color: var(--ink); }
+.btn.cf-buy { background: var(--up); color: #fff; }
+.btn.cf-sell { background: var(--down); color: #fff; }
 .of { display: flex; flex-direction: column; gap: 10px; color: var(--t-ink); }
 .sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--t-field-border); }
 .sides button { height: 36px; border: 0; font-size: 14px; font-weight: 700; background: transparent; color: var(--t-ink-2); }
