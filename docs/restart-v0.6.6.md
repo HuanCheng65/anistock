@@ -55,7 +55,22 @@ uv run python -m server.tools.reset_assets data/game-old.db data/game.db
 - `announce` 先把新库迁移到当前版本，再写入公告。公告只弹给开户早于它的账号，所以要在 `reset_assets` 之前发：带过来的账号都保留原来的开户时间。
 - `reset_assets` 最后一行列出带过来的玩家数和各项记录数，玩家数应等于旧库里的玩家数（注销的不算）。
 
-### 4. 开盘价对齐估值
+### 4. 用当前模型重算开市前走势
+
+`server.seed` 的开市前 K 线和营收来自 Python 的旧模拟器（开盘价总是贴着昨收，没有分红记录，营收规模和服务器不同）。用服务器自己的引擎重算一遍，约 20 分钟：
+
+```bash
+uv run python -m server.tools.rebuild_replay data/game.db --work /tmp/rebuild-replay
+rm -rf /tmp/rebuild-replay
+```
+
+- 必须在第 5 步之前：估值从开市前每天的已播集数（`company_days.aired`）推出播出日，重算会改写这些行；第 5 步在重算之后的数据上取估值，开服时服务器算出的估值才和它相同。
+- 新走势先缩放到 seed 的收盘价，第 5 步再把整条回放 K 线和发行价按同一比例缩放到估值：两步都是按股票整体乘一个比例，形状不变，开市处没有缺口。
+- 输出的表里每支股票“last close”的原值和新值相同；最后一行是 `rewrote the replay history of N stocks; untouched tables verified (...)`。
+- `kept as is` 的股票（新回放里开市前已退市或没有上市）保留原来的走势。
+- 写入前自动备份为 `data/game-before-rebuild-<时间>.db`；结果不对就用它恢复，再从这一步重来或跳过这一步。
+
+### 5. 开盘价对齐估值
 
 ```bash
 cp data/game.db data/golive.db
@@ -68,20 +83,6 @@ ANISTOCK_GAME_DB=$PWD/data/golive.db ANISTOCK_PORT=18699 ANISTOCK_NO_LOOPS=1 bin
 uv run python -m server.tools.reanchor data/game.db data/golive.db
 rm -f data/golive.db*
 ```
-
-### 5. 用当前模型重算开市前走势
-
-`server.seed` 的开市前 K 线和营收来自 Python 的旧模拟器（开盘价总是贴着昨收，没有分红记录，营收规模和服务器不同）。用服务器自己的引擎重算一遍，约 20 分钟：
-
-```bash
-uv run python -m server.tools.rebuild_replay data/game.db --work /tmp/rebuild-replay
-rm -rf /tmp/rebuild-replay
-```
-
-- 必须在第 4 步之后：工具以最后一根回放 K 线的收盘价为锚点缩放新走势，这时它正好是对齐后的开盘价，开市处没有缺口。
-- 输出的表里每支股票“last close”的原值和新值相同；最后一行是 `rewrote the replay history of N stocks; untouched tables verified (...)`。
-- `kept as is` 的股票（新回放里开市前已退市或没有上市）保留原来的走势。
-- 写入前自动备份为 `data/game-before-rebuild-<时间>.db`；结果不对就用它恢复，再从这一步重来或跳过这一步。
 
 ### 6. 开服，检查
 
