@@ -89,6 +89,8 @@ def main() -> None:
         sid = int(sid)
         if not rows or sid not in by_id:
             continue
+        if inp.shows[sid].adult or inp.shows[sid].promo:
+            continue    # never listed (the daily close buys out any that is: backend/src/daily.rs step 0)
         last = rows[-1]
         ipo = round(rows[0]["pc"] * 100)
         create_company(conn, cfg, inp.shows[sid], rows[0]["d"], day, ts, inp, [], res["macro"][-1]["rate"], 0,
