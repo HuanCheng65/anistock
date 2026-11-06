@@ -1,8 +1,22 @@
 <script setup lang="ts">
 // The body of 用户协议 / 隐私政策 / 风险揭示书 (legal/documents.ts).
-import type { Block, LegalDoc } from '../legal/documents'
+import { computed } from 'vue'
+import { EMAIL, type Block, type LegalDoc, type Section } from '../legal/documents'
+import { useSession } from '../stores/session'
 
-defineProps<{ doc: LegalDoc }>()
+const props = defineProps<{ doc: LegalDoc }>()
+const session = useSession()
+// the operator's mailbox comes from the server; a paragraph naming it is left out while it is unset
+const email = computed(() => session.rules?.contact.email ?? null)
+const fill = (b: Block): Block | null => {
+  if (!('p' in b) || !b.p.includes(EMAIL)) return b
+  return email.value ? { p: b.p.replaceAll(EMAIL, email.value) } : null
+}
+const sections = computed(() =>
+  props.doc.sections
+    .map((s): Section => ({ ...s, blocks: s.blocks.map(fill).filter((b): b is Block => b !== null) }))
+    .filter((s) => s.blocks.length > 0),
+)
 const kind = (b: Block) => ('p' in b ? 'p' : 'ol' in b ? 'ol' : 'table')
 </script>
 
@@ -12,7 +26,7 @@ const kind = (b: Block) => ('p' in b ? 'p' : 'ol' in b ? 'ol' : 'table')
     <template v-for="(b, i) in doc.intro" :key="'i' + i">
       <p v-if="kind(b) === 'p'" class="para">{{ (b as { p: string }).p }}</p>
     </template>
-    <section v-for="s in doc.sections" :key="s.h">
+    <section v-for="s in sections" :key="s.h">
       <h3>{{ s.h }}</h3>
       <template v-for="(b, i) in s.blocks" :key="i">
         <p v-if="'p' in b" class="para">{{ b.p }}</p>

@@ -133,7 +133,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** 机器人解除绑定（群里 /解绑） */
+        /** 机器人解除绑定（群里 /安易 解绑） */
         delete: operations["bot_remove"];
         options?: never;
         head?: never;
@@ -1903,6 +1903,7 @@ export interface components {
             valid_until: components["schemas"]["TradingDay"];
         };
         Rules: {
+            contact: components["schemas"]["RulesContact"];
             dividend_tax: components["schemas"]["DividendTaxBand"][];
             fees: components["schemas"]["RulesFees"];
             initial_cash: components["schemas"]["Money"];
@@ -1915,6 +1916,11 @@ export interface components {
             session: components["schemas"]["RulesSession"];
             timezone: string;
             vcm: components["schemas"]["RulesVcm"];
+        };
+        /** @description 官方 QQ 机器人（加好友链接）和运营者邮箱；未配置时为 null */
+        RulesContact: {
+            email: string | null;
+            qq_bot: string | null;
         };
         RulesFees: {
             /** Format: double */

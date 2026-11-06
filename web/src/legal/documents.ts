@@ -23,7 +23,8 @@ export type LegalDoc = {
   declaration?: string
 }
 
-const CONTACT = 'aniex@huanchengfly.top'
+/** replaced with the operator's mailbox (`/api/v1/rules` contact.email); the paragraph is hidden when unset */
+export const EMAIL = '{email}'
 const UPDATED = '2026 年 11 月 6 日'
 
 const terms: LegalDoc = {
@@ -92,7 +93,7 @@ const terms: LegalDoc = {
       h: '九、法律适用与争议解决',
       blocks: [{ p: '本协议适用中华人民共和国法律。发生争议的，双方协商解决；协商不成的，任何一方可以向运营者所在地有管辖权的人民法院提起诉讼。' }],
     },
-    { h: '十、联系方式', blocks: [{ p: `邮箱：${CONTACT}` }] },
+    { h: '十、联系方式', blocks: [{ p: `邮箱：${EMAIL}` }] },
   ],
 }
 
@@ -155,7 +156,7 @@ const privacy: LegalDoc = {
       h: '七、政策修改',
       blocks: [{ p: '运营者可以修改本政策，修改后发布公告。修改内容较大时，你下次登录时需要重新确认。' }],
     },
-    { h: '八、联系方式', blocks: [{ p: `邮箱：${CONTACT}` }] },
+    { h: '八、联系方式', blocks: [{ p: `邮箱：${EMAIL}` }] },
   ],
 }
 

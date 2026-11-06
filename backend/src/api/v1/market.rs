@@ -191,6 +191,7 @@ pub fn rules_of(cfg: &Config) -> Rules {
             clawback: g.ipo_clawback.iter().map(|(o, s)| ClawbackBand { oversubscribed: *o, public_share: *s }).collect(),
         },
         order_quantity_max: ORDER_QTY_MAX,
+        contact: RulesContact { qq_bot: cfg.qq_bot_url.clone(), email: cfg.contact_email.clone() },
     }
 }
 

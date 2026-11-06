@@ -3,7 +3,7 @@
 //! `server/game.toml` names a base parameter file (`sim/params_recommended.toml`); its `[overrides]`
 //! table is applied on top by dotted path, exactly like v1, so the game and the simulation share one
 //! source of truth. Environment overrides: `ANISTOCK_DB`, `ANISTOCK_GAME_DB`, `ANISTOCK_SECRET`,
-//! `ANISTOCK_INVITE`, `ANISTOCK_ALWAYS_OPEN=1`, `ANISTOCK_NO_LOOPS=1`, plus `ANISTOCK_ROOT` (repository root;
+//! `ANISTOCK_INVITE`, `ANISTOCK_QQ_BOT_URL`, `ANISTOCK_CONTACT_EMAIL`, `ANISTOCK_ALWAYS_OPEN=1`, `ANISTOCK_NO_LOOPS=1`, plus `ANISTOCK_ROOT` (repository root;
 //! found automatically otherwise).
 
 use std::path::{Path, PathBuf};
@@ -105,6 +105,10 @@ pub struct Config {
     pub invite_code: String,
     /// who may register (`[account] registration`, else env `ANISTOCK_REGISTRATION`): open, invite, closed
     pub registration: Registration,
+    /// the official QQ bot's add-friend link (`ANISTOCK_QQ_BOT_URL`; 身份验证, 找回密码) and the operator's
+    /// mailbox (`ANISTOCK_CONTACT_EMAIL`): shown in the web app (`/api/v1/rules`), hidden when unset
+    pub qq_bot_url: Option<String>,
+    pub contact_email: Option<String>,
     /// current versions of the documents a player accepts (`[account.documents]`)
     pub documents: Vec<(String, i64)>,
     /// `[account.eligibility]`: what 身份验证 and activity unlock (crate::kyc)
@@ -247,6 +251,8 @@ impl Config {
             secret: if secret.is_empty() { b"dev-only-secret-change-me".to_vec() } else { secret.into_bytes() },
             invite_code: if invite.is_empty() { "anistock".into() } else { invite },
             registration,
+            qq_bot_url: env("ANISTOCK_QQ_BOT_URL").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            contact_email: env("ANISTOCK_CONTACT_EMAIL").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
             documents,
             eligibility,
             margin_disclosure: docs_raw.and_then(|t| t.get("margin_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),

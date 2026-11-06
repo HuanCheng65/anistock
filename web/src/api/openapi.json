@@ -3676,6 +3676,9 @@
       },
       "Rules": {
         "properties": {
+          "contact": {
+            "$ref": "#/components/schemas/RulesContact"
+          },
           "dividend_tax": {
             "items": {
               "$ref": "#/components/schemas/DividendTaxBand"
@@ -3713,6 +3716,7 @@
           }
         },
         "required": [
+          "contact",
           "dividend_tax",
           "fees",
           "initial_cash",
@@ -3723,6 +3727,28 @@
           "session",
           "timezone",
           "vcm"
+        ],
+        "type": "object"
+      },
+      "RulesContact": {
+        "description": "官方 QQ 机器人（加好友链接）和运营者邮箱；未配置时为 null",
+        "properties": {
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qq_bot": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "email",
+          "qq_bot"
         ],
         "type": "object"
       },
@@ -5477,7 +5503,7 @@
             "bot": []
           }
         ],
-        "summary": "机器人解除绑定（群里 /解绑）",
+        "summary": "机器人解除绑定（群里 /安易 解绑）",
         "tags": [
           "bot"
         ]

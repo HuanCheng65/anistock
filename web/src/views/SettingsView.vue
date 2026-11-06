@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, call, errorText, type BindCode } from '../api'
-import { QQ_BOT_URL } from '../contact'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
 import { hm } from '../format'
@@ -14,6 +13,7 @@ import { markEditing } from '../version'
 
 const prefs = usePrefs()
 const session = useSession()
+const bot = computed(() => session.rules?.contact.qq_bot)
 const account = useAccount()
 const router = useRouter()
 const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]
@@ -157,7 +157,7 @@ async function unbind(id: number) {
         </div>
       </template>
       <template v-else>
-        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里私聊<a :href="QQ_BOT_URL" target="_blank" rel="noopener">机器人</a>，发送“/安易 绑定 绑定码”。完成后也可以通过机器人找回密码。</p>
+        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里私聊<a v-if="bot" :href="bot" target="_blank" rel="noopener">机器人</a><template v-else>机器人</template>，发送“/安易 绑定 绑定码”。完成后也可以通过机器人找回密码。</p>
         <div v-if="code" class="code">
           <span class="num big">{{ code.code }}</span>
           <span class="muted">{{ hm(code.expires_at) }} 前有效</span>

@@ -400,6 +400,14 @@ pub struct Rules {
     pub restructure: RulesRestructure,
     pub ipo: RulesIpo,
     pub order_quantity_max: i64,
+    pub contact: RulesContact,
+}
+
+/// 官方 QQ 机器人（加好友链接）和运营者邮箱；未配置时为 null
+#[derive(Serialize, ToSchema)]
+pub struct RulesContact {
+    pub qq_bot: Option<String>,
+    pub email: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
