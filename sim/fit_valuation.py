@@ -814,6 +814,254 @@ def fit_stage1(shows, curve_us, keep=lambda sid, prem: True):
     return out
 
 
+def close_days(x, cal, partial=None):
+    """One show through the close's observation logic, day by day (backend/src/vclose.rs valuation_step, in season:
+    from the premiere to a week after the finale; shows premiering inside the data, with a point-in-time prior). The
+    joint state `base` takes the complete us episode weeks and the new cn/jp values; with `partial` (the
+    `partial_us` fit) the days so far of an episode week are observed on top of it (`post`), replaced every day.
+    Returns (complete weeks, days): a week is {ys, seg, heat, premiere, finale, mu, s0, drift} (its 7 daily log values
+    when aligned on an air day, the base's predictive mean and variance of its observation); a day is
+    (day, n, base mean, post mean, partial observation or None, base predictive variance)."""
+    ad = air_days(x)
+    if not ad or x["long_runner"] or x["aired"][0] > 0:
+        return [], []
+    prem = ad[0]
+    idx = {d: i for i, d in enumerate(x["days"])}
+    pre_i = idx.get(prem)
+    if pre_i is None or x["prior_us"][pre_i] is None or x["prior_us"][pre_i] <= 0:
+        return [], []
+    lp = math.log(x["prior_us"][pre_i])
+    dr = [tuple(cal["drift_by_week"][m]) for m in MARKETS]
+    q = [cal["q"][m] for m in MARKETS]
+    r = [cal["r"][m] for m in MARKETS]
+    op = [cal["outlier_p"][m] for m in MARKETS]
+    orr = [cal["outlier_r"][m] for m in MARKETS]
+    bump = [cal["finale_bump"][m] for m in MARKETS]
+    bvar = [cal["finale_bump_var"][m] for m in MARKETS]
+    cu = cal["curve_us"]
+    fp = {"partial_us": partial} if partial else {}
+    mean = [cal["prior_bias"][m] + cal["prior_beta"][m] * lp for m in MARKETS]
+    cov = V.prior_cov([cal["p0"][m] for m in MARKETS], cal["rho"])
+    fin = finale_day(x)
+    day = prem
+    ys, seg, heat, prem_wk = [], None, None, False
+    prev_raw = [None, None, None]
+    weeks, days = [], []
+    for i, d in enumerate(x["days"]):
+        if d < prem or (fin is not None and d >= fin + 7):
+            continue
+        if d > day:
+            cum = [d_cum(dr[k], prem, day, d) / (d - day) for k in range(3)]
+            mean, cov = V.kf_predict_joint(mean, cov, d - day, cum, q)
+        day = d
+        a_ = V.last_air_before(ad, d)
+        k = None if a_ is None else d - a_
+        in_fin = fin is not None and fin <= d < fin + 7
+        drift_us = d_at(dr[0], prem, d)
+        if ys and (k == 0 or len(ys) >= 7):
+            covers = fin is not None and d - len(ys) <= fin + 6 and d - 1 >= fin
+            xr = bvar[0] if covers else 0.0
+            y = V.week_observation(sum(ys) / len(ys), len(ys), drift_us)
+            weeks.append({"ys": list(ys), "seg": seg, "heat": heat, "premiere": prem_wk, "finale": covers,
+                          "mu": mean[0], "s0": cov[0][0] + r[0] + xr, "y": y, "drift": drift_us, "day": d})
+            mean, cov, _, _ = V.kf_update_joint_robust(mean, cov, 0, y, r[0] + xr, op[0], orr[0], CLIP)
+            ys, seg, heat, prem_wk = [], None, None, False
+        att = [x["att"][m][i] for m in MARKETS]
+        obs = [x["obs"][m][i] for m in MARKETS]
+        if att[0] > 0 and obs[0]:
+            v = att[0] / bump[0] if in_fin else att[0]
+            ys.append(math.log(v / (cu[k] if (k is not None and k < 7) else 1.0)))
+        for m in (1, 2):
+            if not x["src"][MARKETS[m]] or not obs[m] or att[m] <= 0:
+                continue
+            if prev_raw[m] is not None and att[m] == prev_raw[m]:
+                continue
+            prev_raw[m] = att[m]
+            v = att[m] / bump[m] if in_fin else att[m]
+            mean, cov, _, _ = V.kf_update_joint_robust(mean, cov, m, math.log(v), r[m] + (bvar[m] if in_fin else 0.0),
+                                                       op[m], orr[m], CLIP)
+        if k == 0 and len(ys) == 1:
+            heat, prem_wk = mean[0], x["aired"][i] == 1
+            # (not the finale's week: outside the fit, as in the server)
+            if fin is not None and d >= fin:
+                seg = None
+            else:
+                seg = V.partial_segment(fp, heat, prem_wk) if partial else -1
+        po = None
+        if partial and seg is not None and k is not None and len(ys) == k + 1:
+            po = V.partial_observation(fp, seg, ys, drift_us)
+        post = mean
+        if po is not None:
+            post, _, _, _ = V.kf_update_joint_robust(mean, cov, 0, po[0], r[0] + po[1], op[0], orr[0], CLIP)
+        days.append((d, len(ys) if seg is not None and k is not None and len(ys) == k + 1 else 0, mean[0], post[0],
+                     po, cov[0][0], drift_us))
+    return weeks, days
+
+
+def partial_segments(weeks, cuts):
+    seg = lambda w: 0 if w["premiere"] else 1 + (w["heat"] >= cuts[0]) + (w["heat"] >= cuts[1])
+    out = [[], [], [], []]
+    for w in weeks:
+        out[seg(w)].append(w)
+    return out
+
+
+def partial_params(weeks, min_days=2):
+    """The partial-week observation from complete aligned episode weeks (not the finale's): cut points of the heat
+    terciles (later weeks), and per segment the mean and covariance of d_j = ybar_j - ybar_7, j = 1..6 (maximum
+    likelihood: the sample moments), turned into GLS weights on the daily values (engine/valuation.py
+    `partial_observation`)."""
+    ws = [w for w in weeks if len(w["ys"]) == 7 and w["heat"] is not None and not w["finale"]]
+    hs = sorted(w["heat"] for w in ws if not w["premiere"])
+    cuts = [hs[len(hs) // 3], hs[2 * len(hs) // 3]]
+    segs = []
+    for g in partial_segments(ws, cuts):
+        D = [[sum(w["ys"][:j]) / j - sum(w["ys"]) / 7 for j in range(1, 7)] for w in g]
+        m = [sum(r[j] for r in D) / len(D) for j in range(6)]
+        S = [[sum((r[i] - m[i]) * (r[j] - m[j]) for r in D) / len(D) for j in range(6)] for i in range(6)]
+        a_l, c_l, v_l = [], [], []
+        for n in range(1, 7):
+            gi = solve_n([row[:n] for row in S[:n]], [1.0] * n)
+            v = 1.0 / sum(gi)
+            gw = [z * v for z in gi]
+            # weights on the daily values: ybar_j = (y_0 + ... + y_{j-1}) / j
+            a = [sum(gw[j - 1] / j for j in range(kk + 1, n + 1)) for kk in range(n)]
+            a_l.append([round(z, 9) for z in a])
+            c_l.append(round(sum(gw[j] * m[j] for j in range(n)), 9))
+            v_l.append(round(v, 9))
+        segs.append({"weeks": len(g), "a": a_l, "c": c_l, "v": v_l, "mean": [round(z, 6) for z in m],
+                     "var": [round(S[j][j], 6) for j in range(6)]})
+    return {"min_days": min_days, "cuts": [round(c, 6) for c in cuts], "segments": segs}
+
+
+def week_predictive(t, scale=1.0):
+    """The predictive (mean, variance) of a complete week's observation from the base's (mu, s0) and the days so far
+    (yh with extra variance v × scale): the week's observation is X, the partial one X + noise of variance v."""
+    seg, n, y, mu, s0, yh, v = t
+    if yh is None:
+        return mu, s0
+    v = v * scale
+    return mu + s0 / (s0 + v) * (yh - mu), s0 * v / (s0 + v)
+
+
+def week_logscore(t, scale=1.0):
+    m, s = week_predictive(t, scale)
+    e = t[2] - m
+    return -0.5 * (math.log(2 * math.pi * s) + e * e / s)
+
+
+def predictive_stats(terms, scale=None):
+    """80% coverage and mean log score of the complete week's observation by n (and by segment), given `scale` per n."""
+    out = {}
+    for key in sorted({(t[1], None) for t in terms} | {(t[1], t[0]) for t in terms}, key=lambda z: (z[0], z[1] is not None, z[1] or 0)):
+        n, seg = key
+        ts = [t for t in terms if t[1] == n and (seg is None or t[0] == seg)]
+        sc = (scale or {}).get(n, 1.0)
+        cov = sum(abs(t[2] - week_predictive(t, sc)[0]) <= Z80 * math.sqrt(week_predictive(t, sc)[1]) for t in ts)
+        out[f"n{n}" + ("" if seg is None else f"_seg{seg}")] = {
+            "weeks": len(ts), "coverage80": round(cov / len(ts), 4),
+            "mean_logscore": round(sum(week_logscore(t, sc) for t in ts) / len(ts), 4)}
+    return out
+
+
+def fit_scale(terms):
+    """Per n, the factor on the partial observation's variance that maximises the likelihood of the complete weeks'
+    observations given the days so far (out-of-fold terms: the covariance was fitted on other shows). Golden-section
+    search on log scale in [1/4, 16]."""
+    out = {}
+    for n in sorted({t[1] for t in terms if t[1] > 0}):
+        ts = [t for t in terms if t[1] == n]
+        f = lambda ls: -sum(week_logscore(t, math.exp(ls)) for t in ts)
+        lo, hi = math.log(0.25), math.log(16.0)
+        g = (math.sqrt(5) - 1) / 2
+        a, b = hi - g * (hi - lo), lo + g * (hi - lo)
+        for _ in range(60):
+            if f(a) < f(b):
+                hi = b
+            else:
+                lo = a
+            a, b = hi - g * (hi - lo), lo + g * (hi - lo)
+        out[n] = round(math.exp((lo + hi) / 2), 4)
+    return out
+
+
+def partial_check(shows, cal, partial, keep=lambda sid: True):
+    """Validation of the partial-week observation on the shows `keep` selects: (1) the predictive of each complete
+    week's observation given the base state and the days so far (n = 0: the base alone), its 80% coverage and mean
+    log score, by n; (2) the forecast check: the next 7 days' revision of the us level estimate (less the drift)
+    against the days-so-far surprise (partial observation - base mean), with and without the partial observation."""
+    terms = []
+    rows = []
+    for sid, x in sorted(shows.items()):
+        if not keep(sid):
+            continue
+        weeks, days = close_days(x, cal, partial)
+        for w in weeks:
+            if w["seg"] is None or len(w["ys"]) != 7 or w["seg"] < 0:
+                continue
+            terms.append((w["seg"], 0, w["y"], w["mu"], w["s0"], None, None))
+            for n in range(partial["min_days"], 7):
+                po = V.partial_observation({"partial_us": partial}, w["seg"], w["ys"][:n], w["drift"])
+                # (on the complete week's calendar)
+                terms.append((w["seg"], n, w["y"], w["mu"], w["s0"], po[0] + (8 - n) * w["drift"], po[1]))
+        by_day = {d: (bm, pm) for d, n, bm, pm, po, bv, dr in days}
+        for d, n, bm, pm, po, bv, dr in days:
+            if po is None or n >= 7 or (d + 7) not in by_day:
+                continue
+            exp_drift = 7 * dr
+            s = po[0] - bm
+            rows.append((s, by_day[d + 7][0] - bm - exp_drift, by_day[d + 7][1] - pm - exp_drift, n))
+    out = {"predictive": predictive_stats(terms), "terms": terms}
+    if rows:
+        res = {}
+        sx = [r_[0] for r_ in rows]
+        mx = sum(sx) / len(sx)
+        sxx = sum((u - mx) ** 2 for u in sx)
+        for name, col in (("without", 1), ("with", 2)):
+            sy = [r_[col] for r_ in rows]
+            my = sum(sy) / len(sy)
+            b = sum((u - mx) * (w - my) for u, w in zip(sx, sy)) / sxx
+            rv = sum((w - my - b * (u - mx)) ** 2 for u, w in zip(sx, sy)) / len(sy)
+            hi = [r_[col] for r_ in rows if r_[0] > math.log(1.25)]
+            lo = [r_[col] for r_ in rows if r_[0] < math.log(0.875)]
+            res[name] = {"after_above_25pct": math.exp(sum(hi) / len(hi)) - 1 if hi else None, "n_above": len(hi),
+                         "after_below_12pct": math.exp(sum(lo) / len(lo)) - 1 if lo else None, "n_below": len(lo),
+                         "slope": b, "slope_se": math.sqrt(rv / sxx)}
+        out["forecast"] = res
+        out["forecast_days"] = len(rows)
+    return out
+
+
+def fit_partial_week(shows, cal, lines=None):
+    """Fit `partial_us` on all shows (the base filter's complete weeks), validate held out (fit on even AniList ids,
+    tested on odd) and in sample."""
+    weeks = {sid: close_days(x, cal)[0] for sid, x in shows.items()}
+    pu = partial_params([w for ws in weeks.values() for w in ws])
+    fold = {par: partial_params([w for sid, ws in weeks.items() if sid % 2 == par for w in ws]) for par in (0, 1)}
+    oof = {par: partial_check(shows, cal, fold[par], lambda sid, par=par: sid % 2 != par) for par in (0, 1)}
+    # the variance of the days so far, scaled per n by maximum likelihood out of fold (the GLS covariance fitted on
+    # one half's ~120 weeks per segment understates the other half's: coverage 71-73% at n = 3..5 before)
+    scale = fit_scale(oof[0]["terms"] + oof[1]["terms"])
+    unscaled = predictive_stats(oof[0]["terms"])
+    for p_ in [pu] + list(fold.values()):
+        for sg in p_["segments"]:
+            sg["v"] = [round(v * scale.get(n + 1, 1.0), 9) for n, v in enumerate(sg["v"])]
+    held = partial_check(shows, cal, fold[0], lambda sid: sid % 2 == 1)
+    ins = partial_check(shows, cal, pu)
+    held["predictive_unscaled"] = unscaled
+    for o in (held, ins):
+        o.pop("terms")
+    pu["variance_scale"] = scale
+    # stability: the premiere segment fitted on summer and autumn premieres separately
+    split = date(2026, 9, 15).toordinal()
+    seasons = {}
+    for name, sel in (("summer", lambda p: p < split), ("autumn", lambda p: p >= split)):
+        ws = [w for x in shows.values() if air_days(x) and sel(air_days(x)[0]) for w in close_days(x, cal)[0]]
+        seasons[name] = partial_params(ws)["segments"][0]["mean"]
+    pu["fit"] = {"held_out": held, "in_sample": ins, "premiere_mean_by_season": seasons}
+    return pu
+
+
 def fit_outlier(shows, cal, m):
     """Market m's outlier component by maximum likelihood of its own filter (a profile fit: drift, q and r fixed at
     the calibration `cal`). The weekly cn/jp series and the us week average have occasional one-episode spikes
@@ -937,6 +1185,9 @@ def main():
     ap.add_argument("--outlier-only", action="store_true",
                     help="fit only each market's outlier component (outlier_p, outlier_r) with the rest of --out fixed, "
                          "and write those two keys back")
+    ap.add_argument("--partial-only", action="store_true",
+                    help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
+                         "write that key back")
     a = ap.parse_args()
     global GAUSSIAN, CLIP
     GAUSSIAN, CLIP = a.gaussian, a.clip
@@ -947,6 +1198,13 @@ def main():
             r = fit_outlier(shows, cal, m)
             cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
             print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.partial_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        BUMP.update(cal["finale_bump"])
+        cal["partial_us"] = fit_partial_week(shows, cal)
+        print(json.dumps(cal["partial_us"]["fit"], indent=1))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     curve_us = fit_curve(shows)
@@ -1038,6 +1296,8 @@ def main():
     res["rho"] = round(P["rho"], 6)
     res["prior_beta"] = {m: round(P["beta"][k], 6) for k, m in enumerate(MARKETS)}
     res["prior"] = "us"
+    # the us episode week's days so far (v0.6.1), on the filter above
+    res["partial_us"] = fit_partial_week(shows, res)
     res["fit"]["joint"] = {"shows": len(data), "loglik": ll, "rho": P["rho"], "rho_summer_fit": P_s["rho"],
                            "rho_autumn_fit": P_a["rho"], "summer_shows": n_s, "autumn_shows": n_a}
     lines.insert(3, f"Joint filter (v0.3.2): one state per show, the three markets' log levels. Prior at the premiere: "

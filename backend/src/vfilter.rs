@@ -94,6 +94,28 @@ struct RawParams {
     /// phase 1: the long tail after the finale, per market, and the tail-level prior (docs/v2-series.md §4)
     #[serde(default)]
     tail: Option<RawTail>,
+    /// v0.6.1: the us episode week's days so far as an observation (`partial_observation`)
+    #[serde(default)]
+    partial_us: Option<PartialUs>,
+}
+
+/// The us episode week's days so far (Python `partial_segment` / `partial_observation`, sim/fit_valuation.py
+/// `fit_partial_week`): from `min_days` days on; segment 0 the premiere's week, 1-3 the later weeks by the
+/// tercile (`cuts`) of the show's us log level when the episode aired.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct PartialUs {
+    pub min_days: i64,
+    pub cuts: [f64; 2],
+    pub segments: Vec<PartialSeg>,
+}
+
+/// Per n = 1..6 days so far: the GLS weights on the daily log values (`a[n-1]`, summing to 1), the offset `c` and
+/// the variance `v` beyond the complete week's r.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct PartialSeg {
+    pub a: Vec<Vec<f64>>,
+    pub c: Vec<f64>,
+    pub v: Vec<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -186,6 +208,8 @@ pub struct FilterParams {
     /// days until a halted show (AniList HIATUS) resumes, for its value: the median announcement-to-premiere lag of
     /// sequel.json (docs/v2-corporate.md §2.3)
     pub hiatus_lag: i64,
+    /// the us episode week's days so far as an observation (None: the week is observed only when complete)
+    pub partial_us: Option<PartialUs>,
 }
 
 impl FilterParams {
@@ -324,6 +348,7 @@ impl FilterParams {
             tail_prior: r.tail.as_ref().and_then(|t| t.prior.clone()),
             tail: r.tail.map_or([None, None, None], |t| [t.us, t.cn, t.jp]),
             sequel: None,
+            partial_us: r.partial_us,
         })
     }
 }
@@ -434,6 +459,42 @@ pub fn kf_update_joint_robust(mean: &M3, cov: &Cov, m: usize, y: f64, r: f64, pi
 /// today with the drift (Python `week_observation`).
 pub fn week_observation(y_mean: f64, n: i64, drift: f64) -> f64 {
     y_mean + drift * (n - 1) as f64 / 2.0
+}
+
+/// Which fitted shape a us episode week's days so far are read with (Python `partial_segment`): 0 the premiere's
+/// week, else 1-3 by the tercile of the show's us log level when the episode aired. None without the fit.
+pub fn partial_segment(fp: &FilterParams, heat: f64, premiere: bool) -> Option<i64> {
+    let pu = fp.partial_us.as_ref()?;
+    if premiere {
+        return Some(0);
+    }
+    Some(1 + (heat >= pu.cuts[0]) as i64 + (heat >= pu.cuts[1]) as i64)
+}
+
+/// The first n days of a us episode week (`ys`: log(attention / curve) from the air day on) as an observation of the
+/// level today, and its variance beyond the complete week's r (Python `partial_observation`: the GLS estimate of
+/// the week's average from the nested averages so far, on the complete week's calendar moved back to today; n = 7
+/// the complete week). None without the fit, or before `min_days`.
+pub fn partial_observation(fp: &FilterParams, seg: i64, ys: &[f64], drift: f64) -> Option<(f64, f64)> {
+    let pu = fp.partial_us.as_ref()?;
+    let n = ys.len();
+    if (n as i64) < pu.min_days || n > 7 {
+        return None;
+    }
+    if n == 7 {
+        let mut acc = 0.0;
+        for y in ys {
+            acc += y;
+        }
+        return Some((acc / 7.0 + 2.0 * drift, 0.0));
+    }
+    let sg = pu.segments.get(seg as usize)?;
+    let a = &sg.a[n - 1];
+    let mut acc = 0.0;
+    for k in 0..n {
+        acc += a[k] * ys[k];
+    }
+    Some((acc - sg.c[n - 1] + (n as i64 - 5) as f64 * drift, sg.v[n - 1]))
 }
 
 /// Every episode's air day (day numbers): the known ones, then weekly until `episodes`.
@@ -1025,6 +1086,15 @@ mod tests {
         assert!(ulps(own1[1][100], 10.094127256246056) <= 2, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
         assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.644)));
+        // the us episode week's days so far (v0.6.1)
+        let wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9];
+        let segs = [partial_segment(&fp, 6.0, false), partial_segment(&fp, 7.0, false), partial_segment(&fp, 9.0, false), partial_segment(&fp, 9.0, true)];
+        assert_eq!(segs, [Some(1), Some(2), Some(3), Some(0)]);
+        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0958627956, 0.231230597)));
+        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.724444698599999, 0.016586442)));
+        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.497311277, 0.000402115)));
+        assert_eq!(partial_observation(&fp, 1, &wk, -0.0065), Some((7.437, 0.0)));
+        assert_eq!(partial_observation(&fp, 1, &wk[..1], 0.0), None);
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
         // a show not airing yet: no fading before its premiere; the post-finale profile
         let s3 = schedule(&[today + 10], Some(12), false);

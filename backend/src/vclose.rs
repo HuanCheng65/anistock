@@ -38,6 +38,16 @@ pub struct JState {
     /// us: this episode week's daily log values so far (sum, count), observed together when it ends
     pub acc: f64,
     pub acc_n: i64,
+    /// us: the same daily log values one by one, and the shape they are read with (`vfilter::partial_segment`,
+    /// fixed on the air day; None: the week did not start on an air day, it is observed only when complete)
+    #[serde(default)]
+    pub wk: Vec<f64>,
+    #[serde(default)]
+    pub wk_seg: Option<i64>,
+    /// the state without the current us episode week's days so far (`vfilter::partial_observation`): the close
+    /// observes them on top of it and starts from it again the next day, until the complete week replaces them
+    #[serde(default)]
+    pub base: Option<(M3, Cov)>,
     pub day: String,
     /// the post-finale factor on `day` (1 before the finale's week): the levels above are pre-finale
     /// equivalents, the show draws level × post now
@@ -181,6 +191,9 @@ impl JState {
             zero_days: [0; 3],
             acc: 0.0,
             acc_n: 0,
+            wk: Vec::new(),
+            wk_seg: None,
+            base: None,
             day: day.to_string(),
             post: [1.0; 3],
             next: None,
@@ -623,7 +636,12 @@ impl Engine {
                 let mean = std::array::from_fn(|m| fp.prior_bias[m] + fp.prior_beta[m] * lp);
                 fresh(mean, F::prior_cov(&fp.p0, fp.rho))
             }
-            (Some(st), _) => {
+            (Some(mut st), _) => {
+                // without yesterday's days so far of the us week: today's are observed again below
+                if let Some((bm, bc)) = st.base.take() {
+                    st.mean = bm;
+                    st.cov = bc;
+                }
                 let days = day_no(&st.day).map_or(1, |d| (today - d).max(0));
                 // each market's drift over the days since the state, by weeks since the premiere (per day)
                 let prem = day_no(&s.first_air).unwrap_or(today);
@@ -677,10 +695,14 @@ impl Engine {
             ys.push((0, F::week_observation(st.acc / st.acc_n as f64, st.acc_n, drift_us)));
             st.acc = 0.0;
             st.acc_n = 0;
+            st.wk.clear();
+            st.wk_seg = None;
         }
         if att[0] > 0.0 {
-            st.acc += (att[0] / F::curve(fp, 0, k)).ln();
+            let y = (att[0] / F::curve(fp, 0, k)).ln();
+            st.acc += y;
             st.acc_n += 1;
+            st.wk.push(y);
             st.last_obs[0] = Some(att[0]);
             st.seen[0] = true;
         }
@@ -731,6 +753,28 @@ impl Engine {
             } else if !st.active[m] && st.zero_days[m] == 0 {
                 // newly mapped to its data source: in, at the level the other markets imply
                 st.active[m] = true;
+            }
+        }
+        // the us episode week's days so far (docs/v2-valuation.md §3.2): public every day, and waiting for the
+        // complete week priced its news up to a week late. From the second day of an episode week (aligned on its air
+        // day, every day present; not the finale's week, not a long-runner: outside the fit) the days so far are
+        // observed as an estimate of the complete week, with the fitted extra noise of a partial week, on top of the
+        // state without them (`base`); the next close starts from `base` again, so each day's estimate replaces the
+        // previous one and the complete week replaces the last
+        st.base = None;
+        let finale_week = fin.is_some_and(|f| k.is_some_and(|k| today - k >= f));
+        if k == Some(0) && st.wk.len() == 1 && st.acc_n == 1 && !s.long_runner && !finale_week {
+            st.wk_seg = F::partial_segment(fp, st.mean[0], s.aired == 1);
+        }
+        if let (Some(seg), Some(kk)) = (st.wk_seg, k) {
+            if st.active[0] && st.wk.len() as i64 == kk + 1 && st.acc_n == kk + 1 {
+                if let Some((y, xr)) = F::partial_observation(fp, seg, &st.wk, drift_us) {
+                    st.base = Some((st.mean, st.cov));
+                    let (mean, cov, _, _) =
+                        F::kf_update_joint_robust(&st.mean, &st.cov, 0, y, fp.r[0] + xr, fp.outlier_p[0], fp.outlier_r[0], fp.clip);
+                    st.mean = mean;
+                    st.cov = cov;
+                }
             }
         }
         // tomorrow's expected attention on the value's own path (with the work's shape as the values see it)
@@ -1203,8 +1247,10 @@ impl Engine {
         }
         let Some(day) = last else { return Ok(0) };
         // the history ends mid-week: observe the us days collected so far (at least three), so the first
-        // live close doesn't revise every show at once
-        let mut part: Vec<(i64, JState)> = self.st.jstate.iter().filter(|(_, v)| v.acc_n >= 3).map(|(k, v)| (*k, v.clone())).collect();
+        // live close doesn't revise every show at once (a week whose days so far are already observed on top of
+        // `base` is left as it is: the next close goes on from there)
+        let mut part: Vec<(i64, JState)> =
+            self.st.jstate.iter().filter(|(_, v)| v.acc_n >= 3 && v.base.is_none()).map(|(k, v)| (*k, v.clone())).collect();
         part.sort_by_key(|(k, _)| *k);
         for (id, mut st) in part {
             let long = self.st.companies.get(&id).is_some_and(|c| c.long_runner != 0);
@@ -1214,6 +1260,8 @@ impl Engine {
             st.cov = cov;
             st.acc = 0.0;
             st.acc_n = 0;
+            st.wk.clear();
+            st.wk_seg = None;
             self.save_jstate(id, st, ts);
         }
         let today = day_no(&day).ok_or("bad day")?;
@@ -1308,7 +1356,9 @@ impl Engine {
         let nb = Base { episode, mean: b.mean, cov: b.cov, last: post };
         self.set_state(&key, &serde_json::to_string(&nb).unwrap_or_default());
         let old = c.fair_value;
-        self.save_jstate(company, JState { mean, cov, ..st.clone() }, ts);
+        // (the state without the us week's days so far moves with the flash too, or the next close would drop it)
+        let base = st.base.map(|(bm, bc)| (std::array::from_fn(|m| bm[m] + (mean[m] - st.mean[m])), bc));
+        self.save_jstate(company, JState { mean, cov, base, ..st.clone() }, ts);
         let paths = self.paths(&fp, &p, today);
         let totals = self.totals_from(&paths, &fp, today);
         let new = match paths.get(&company) {

@@ -77,3 +77,9 @@ mj, cj = V.kf_predict_joint([1.0, -4.0, -2.5], c, 3, [-0.02, -0.022, -0.027], [0
 mr, cr, llr, svr = V.kf_update_joint_robust(mj, cj, 1, -1.5, 0.0235, 0.013, 0.2537, 4.0)
 print("robust_joint", repr(mr), repr(cr[1][1]), repr(cr[0][2]), repr(llr), repr(svr))
 print("robust_joint_pi0", V.kf_update_joint_robust(mj, cj, 1, -1.5, 0.0235, 0.0, 0.2537, 4.0) == V.kf_update_joint(mj, cj, 1, -1.5, 0.0235, 4.0))
+# the us episode week's days so far (v0.6.1): segments, and the observation after 3 days (premiere, a mid-tercile week)
+# and 7 days
+wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9]
+print("pseg", V.partial_segment(fp, 6.0, False), V.partial_segment(fp, 7.0, False), V.partial_segment(fp, 9.0, False), V.partial_segment(fp, 9.0, True))
+print("po0_3", repr(V.partial_observation(fp, 0, wk[:3], -0.019)), "po2_3", repr(V.partial_observation(fp, 2, wk[:3], -0.0065)))
+print("po3_6", repr(V.partial_observation(fp, 3, wk[:6], 0.0)), "po1_7", repr(V.partial_observation(fp, 1, wk, -0.0065)), "po_1", V.partial_observation(fp, 1, wk[:1], 0.0))

@@ -275,6 +275,47 @@ def week_observation(y_mean: float, n: int, drift: float) -> float:
     return y_mean + drift * (n - 1) / 2.0
 
 
+def partial_segment(fp: dict, heat: float, premiere: bool) -> int | None:
+    """Which fitted shape the days so far of a us episode week are read with (`partial_us`, sim/fit_valuation.py
+    `fit_partial_week`): 0 the premiere's week, else 1-3 by the tercile of the show's us log level when the episode
+    aired (`heat`, the state's mean that day; small shows' air day is relatively higher and their days 1-2 lower).
+    Fixed for the week. None without the fit."""
+    pu = fp.get("partial_us")
+    if not pu:
+        return None
+    if premiere:
+        return 0
+    c1, c2 = pu["cuts"]
+    return 1 + (1 if heat >= c1 else 0) + (1 if heat >= c2 else 0)
+
+
+def partial_observation(fp: dict, seg: int, ys: list[float], drift: float) -> tuple[float, float] | None:
+    """The first n days of a us episode week (`ys`: log(attention / curve) from the air day on, every day present) as
+    an observation of the level today, and its noise variance beyond the complete week's r (docs/v2-valuation.md
+    §3.2). The days so far estimate the complete week's average by generalised least squares: with
+    d_j = (average of the first j days) - (the week's average), mean m_j and covariance W fitted on complete weeks
+    of the segment, the nested averages are ybar_j = X + m_j + e_j, X the week's average; the best linear unbiased
+    estimate of X is sum_j g_j (ybar_j - m_j), g = W^-1 1 / 1'W^-1 1, with variance 1 / 1'W^-1 1. Stored per n as
+    weights on the daily values (`a`, summing to 1), the offset `c` and the variance `v`. Read on the complete week's
+    calendar (week_observation: the average plus 3 days of drift is the level the day after the week's last day),
+    moved back to today. n = 7: the complete week itself (v = 0). None without the fit, or before `min_days`."""
+    pu = fp.get("partial_us")
+    n = len(ys)
+    if not pu or n < pu["min_days"] or n > 7:
+        return None
+    if n == 7:
+        acc = 0.0
+        for y in ys:
+            acc += y
+        return acc / 7 + 2.0 * drift, 0.0
+    sg = pu["segments"][seg]
+    a = sg["a"][n - 1]
+    acc = 0.0
+    for k in range(n):
+        acc += a[k] * ys[k]
+    return acc - sg["c"][n - 1] + (n - 5) * drift, sg["v"][n - 1]
+
+
 def schedule(air_days: list[int], episodes: int | None, long_runner: bool) -> list[int]:
     """Air days (day numbers) of every episode: the ones known so far, then weekly until `episodes`."""
     out = sorted(air_days)
