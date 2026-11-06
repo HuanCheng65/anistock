@@ -725,7 +725,24 @@ def main() -> int:
             failures += 1
             store.run_end(run_id, "failed", repr(e))
             log.exception("%s failed", name)
+    if args.source == "all":
+        failures += after_collection()
     return 1 if failures else 0
+
+
+def after_collection() -> int:
+    """After a full collection: the heat index in the background (engine/heat_index.py: every trading day whose
+    next-day snapshots now exist), then the collection check (engine/collect_check.py; 1 if it fails, so the unit
+    shows as failed). Each runs in its own process; neither stops the other."""
+    import subprocess
+    here = Path(__file__).parent
+    bad = 0
+    for script in ("engine/heat_index.py", "engine/collect_check.py"):
+        r = subprocess.run([sys.executable, str(here / script)], cwd=here)
+        if r.returncode != 0:
+            log.error("%s exited with %d", script, r.returncode)
+            bad += script.endswith("collect_check.py")
+    return bad
 
 
 if __name__ == "__main__":
