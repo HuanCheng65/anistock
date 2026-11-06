@@ -340,12 +340,19 @@ fn transfers_go_to_every_household() {
     for n in npcs {
         assert_eq!(cash(&e, n), 10_000);
     }
+    // a player who is not eligible (crate::kyc) gets nothing; the households that are share it
+    let q = e.create_account("player", "q", Some("q"), None, None, TS);
+    let mut cx = ctx(&e, &cfg, &inp);
+    e.pay_transfers_to(&mut cx, 50_000, Some(&std::collections::HashSet::from([p])));
+    assert_eq!(cash(&e, p), 22_500); // 50,000 over p and the 3 NPCs; q left out
+    assert_eq!(cash(&e, q), 0);
     // the v1 rule: players only
     let mut cfg1 = cfg.clone();
     cfg1.economy_v1 = true;
     let mut cx1 = ctx(&e, &cfg1, &inp);
     e.pay_transfers(&mut cx1, 40_000);
-    assert_eq!(cash(&e, p), 50_000);
+    assert_eq!(cash(&e, p), 42_500); // 40,000 over p and q
+    assert_eq!(cash(&e, q), 20_000);
 }
 
 #[test]

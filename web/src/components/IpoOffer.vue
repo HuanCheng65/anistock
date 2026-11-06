@@ -46,7 +46,12 @@ const rate = computed(() => session.rules?.fees.commission ?? 0.00025)
 // cents frozen: the price, commission and one cent per share for rounding (the server's reserve)
 const freeze = computed(() => (n.value > 0 ? n.value * props.ipo.price + Math.ceil(n.value * props.ipo.price * rate.value) + n.value : 0))
 const room = computed(() => (session.me?.available_cash ?? 0) + (props.ipo.viewer?.frozen ?? 0))
-const maxQty = computed(() => Math.min(props.ipo.float_quantity, Math.floor(room.value / (props.ipo.price * (1 + rate.value) + 1))))
+// 身份验证 and the quota (A-share 市值配售): amount = quantity × the offer price
+const gate = computed(() => session.me?.eligibility.ipo ?? null)
+const quota = computed(() => gate.value?.quota ?? 0)
+const quotaQty = computed(() => (props.ipo.price > 0 ? Math.floor(quota.value / props.ipo.price) : 0))
+const maxQty = computed(() =>
+  Math.min(props.ipo.float_quantity, quotaQty.value, Math.floor(room.value / (props.ipo.price * (1 + rate.value) + 1))))
 const expected = computed(() => {
   if (n.value <= 0) return 0
   const applied = props.ipo.applied_quantity - mine.value + n.value
@@ -56,6 +61,7 @@ const problem = computed(() => {
   if (qty.value === '') return ''
   if (n.value < 0) return '数量需为整数'
   if (n.value > props.ipo.float_quantity) return `最多认购 ${fmtQty(props.ipo.float_quantity)} 股`
+  if (n.value > quotaQty.value) return `认购额度最多认购 ${fmtQty(quotaQty.value)} 股`
   if (freeze.value > room.value) return `可用资金最多认购 ${fmtQty(maxQty.value)} 股`
   return ''
 })
@@ -120,10 +126,15 @@ async function submit(q: number) {
     </div>
 
     <form v-if="open" class="term form" @submit.prevent="submit(n)">
-      <template v-if="session.me">
+      <template v-if="session.me && gate && !gate.eligible && !mine">
+        <p class="note">{{ gate.reason }}</p>
+        <RouterLink v-if="!session.me.verification.verified" to="/settings" class="tbtn plain cta">身份验证</RouterLink>
+      </template>
+      <template v-else-if="session.me">
         <label class="row">认购数量
           <input class="tinput num" inputmode="numeric" v-model="qty" autocomplete="off" :placeholder="`最多 ${fmtQty(maxQty)}`" />
         </label>
+        <div class="kv"><span>认购额度</span><span class="num v">{{ money(quota) }}</span></div>
         <div class="kv"><span>冻结资金</span><span class="num v">{{ money(freeze) }}</span></div>
         <div class="kv"><span>预计中签</span><span class="num v">{{ n > 0 ? `约 ${fmtQty(expected)} 股` : '–' }}</span></div>
         <p v-if="problem" class="note err">{{ problem }}</p>

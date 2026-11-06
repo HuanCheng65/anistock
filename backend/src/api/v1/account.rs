@@ -74,6 +74,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         .map_err(sql)?;
     let (username, cash, frozen, created_at) = row.ok_or_else(error::unauthenticated)?;
     let pending_documents = pending_documents(&st.cfg, c, id)?;
+    let (verification, eligibility) = eligibility_of(st, c, id, &created_at)?;
     let stock = stock_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
     let total = cash + stock - liab;
@@ -118,7 +119,25 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         credit_status,
         created_at: ts(created_at),
         pending_documents,
+        verification,
+        eligibility,
     })
+}
+
+/// 身份验证 and the three gates it opens (crate::kyc).
+pub fn eligibility_of(st: &AppState, c: &Connection, id: i64, created_at: &str) -> R<(Verification, EligibilityState)> {
+    use crate::kyc;
+    let r = &st.cfg.eligibility;
+    let today = st.clock.today();
+    let method = kyc::method(c, id).map_err(sql)?;
+    let verified = method.is_some();
+    let gate = |g: kyc::Gate, what: &str| Eligibility { eligible: g == kyc::Gate::Open, reason: kyc::reason(&g, what) };
+    let transfer = gate(kyc::transfer_gate(c, r, id, verified, created_at, &today).map_err(sql)?, "领取财政补贴");
+    let leaderboard = gate(kyc::rank_gate(c, r, id, verified, created_at, &today).map_err(sql)?, "进入排行");
+    let quota = kyc::ipo_quota(c, r, id, &today).map_err(sql)?;
+    let g = kyc::ipo_gate(r, verified, quota);
+    let ipo = IpoEligibility { eligible: g == kyc::Gate::Open, reason: kyc::reason(&g, "认购新股"), quota: m(quota) };
+    Ok((Verification { verified, method }, EligibilityState { transfer, ipo, leaderboard }))
 }
 
 /// The current documents `id` has not accepted yet.
@@ -885,7 +904,18 @@ pub async fn subscribe(
     if qty > super::market::ORDER_QTY_MAX {
         return Err(error::invalid(vec![error::too_large("quantity", super::market::ORDER_QTY_MAX)]));
     }
+    // 身份验证, and the quota of A-share 市值配售 (crate::kyc)
+    let st2 = st.clone();
+    let (verified, quota) = read(&st, move |c| -> R<(bool, i64)> {
+        let verified = crate::kyc::method(c, me).map_err(sql)?.is_some();
+        Ok((verified, crate::kyc::ipo_quota(c, &st2.cfg.eligibility, me, &st2.clock.today()).map_err(sql)?))
+    })
+    .await?;
+    if st.cfg.eligibility.require_kyc && !verified {
+        return Err(error::verification_required("认购新股"));
+    }
     let (d, t) = (st.clock.today(), st.clock.ts());
+    let days = st.cfg.eligibility.ipo_mv_days;
     let frozen = engine(&st, move |ctx| -> R<i64> {
         let e = &mut ctx.engine;
         let co = e.company(id).cloned().filter(|c| c.sub_start.as_deref().is_some_and(|s| !s.is_empty()));
@@ -894,6 +924,14 @@ pub async fn subscribe(
         if co.status != "subscribing" || !(start.as_str() <= d.as_str() && d.as_str() <= end.as_str()) {
             return Err(E::new(422, "ipo_not_open", format!("不在认购期（认购时间是 {start} 至 {end}）"))
                 .details(json!({"sub_start": start, "sub_end": end})));
+        }
+        if co.ipo_price.saturating_mul(qty) > quota {
+            return Err(E::new(
+                422,
+                "ipo_quota_exceeded",
+                format!("认购金额超过认购额度 {} 星辉（前 {days} 个交易日的日均持仓市值）", error::coins(quota)),
+            )
+            .details(json!({"quota": quota, "max_quantity": if co.ipo_price > 0 { quota / co.ipo_price } else { 0 }})));
         }
         let need_cash = e.fees.buy_reserve(co.ipo_price, qty);
         let released = e.ipo_application(id, me).map_or(0, |a| a.frozen);
@@ -967,9 +1005,19 @@ fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i6
 /// Every player ranked: `period_start: None` is the 总榜 (return = return index − 1); `Some(day)` divides
 /// the current return index by the last `player_days` one before `day` (1.0 for players who joined since).
 /// Sorted by return, ties by user id; ranks filled in.
-pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>) -> R<Vec<LeaderRow>> {
+pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>, gate: Option<(&crate::kyc::Rules, &str)>) -> R<Vec<LeaderRow>> {
     let mut rows: Vec<(f64, LeaderRow)> = Vec::new();
+    let verified = crate::kyc::verified_ids(c).map_err(sql)?;
     for (id, username, total, idx, count) in players_now(c, initial)? {
+        // only players who meet the 排行榜 gate are ranked (crate::kyc::rank_gate)
+        if let Some((rules, today)) = gate {
+            let created: String =
+                c.query_row("SELECT created_at FROM accounts WHERE id=?", [id], |r| r.get(0)).map_err(sql)?;
+            let g = crate::kyc::rank_gate(c, rules, id, verified.contains(&id), &created, today).map_err(sql)?;
+            if g != crate::kyc::Gate::Open {
+                continue;
+            }
+        }
         let ret = match period_start {
             None => idx - 1.0,
             Some(start) => {
@@ -1010,7 +1058,7 @@ pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Optio
         _ => state(c, "launched_on")?.filter(|s| !s.is_empty()),
     };
     let start = if period == "all" { None } else { from_day.as_deref() };
-    let items = ranked(c, initial_cents(&st.cfg), start)?;
+    let items = ranked(c, initial_cents(&st.cfg), start, Some((&st.cfg.eligibility, today.as_str())))?;
     let viewer = viewer.and_then(|v| items.iter().find(|r| r.user.id == v)).map(|r| LeaderViewer { rank: r.rank, r#return: r.r#return });
     Ok(Leaderboard { period: period.into(), from_day: from_day.map(day), to_day: day(today), as_of: ts(st.clock.ts()), items, viewer })
 }

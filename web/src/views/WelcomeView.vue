@@ -137,7 +137,7 @@ async function sign() {
             <div><dt>初始资金</dt><dd>{{ money(session.me?.initial_cash, 0) }}</dd></div>
           </dl>
           <nav class="rows">
-            <RouterLink to="/settings" class="row"><span>绑定 QQ</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+            <RouterLink to="/settings" class="row"><span>身份验证</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
             <RouterLink to="/guide" class="row"><span>新手指南</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           </nav>
         </template>

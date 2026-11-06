@@ -136,6 +136,9 @@ pub fn bad_invite() -> E {
 pub fn bind_code_invalid() -> E {
     E::new(422, "bind_code_invalid", "绑定码不正确或已过期")
 }
+pub fn verification_required(what: &str) -> E {
+    E::new(403, "verification_required", format!("完成身份验证后才能{what}"))
+}
 pub fn agreement_required() -> E {
     E::new(403, "agreement_required", "签署风险揭示书后才能交易")
 }

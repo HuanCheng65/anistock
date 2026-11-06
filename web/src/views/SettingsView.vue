@@ -24,7 +24,7 @@ async function logout() {
   router.push('/')
 }
 
-// ---- QQ 绑定: a one-time code for the club bot (/绑定 <码> in the group)
+// ---- 身份验证: a QQ binding today (backend/src/kyc.rs); a one-time code for the bot (/绑定 <码>)
 const code = ref<BindCode | null>(null)
 const busy = ref(false)
 const msg = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -39,7 +39,13 @@ const timer = window.setInterval(() => {
   now.value = Date.now()
   if (code.value && Date.parse(code.value.expires_at) <= now.value) code.value = null
   // the bot redeems the code: show the binding as soon as it exists
-  if (code.value && now.value % 5000 < 1000) account.refreshBindings().then(() => binding.value && (code.value = null)).catch(() => {})
+  if (code.value && now.value % 5000 < 1000) {
+    account.refreshBindings().then(() => {
+      if (!binding.value) return
+      code.value = null
+      session.loadMe().catch(() => {})
+    }).catch(() => {})
+  }
 }, 1000)
 onBeforeUnmount(() => window.clearInterval(timer))
 
@@ -61,6 +67,7 @@ async function unbind(id: number) {
     await call(api.DELETE('/api/v1/me/bindings/{id}', { params: { path: { id } } }))
     confirmId.value = null
     await account.refreshBindings()
+    session.loadMe().catch(() => {})
     msg.value = { kind: 'ok', text: '已解除绑定' }
   } catch (e) {
     msg.value = { kind: 'error', text: errorText(e) }
@@ -83,15 +90,15 @@ async function unbind(id: number) {
       </div>
     </section>
     <section v-if="session.me" class="sec">
-      <h2>QQ 绑定</h2>
+      <h2>身份验证</h2>
       <template v-if="binding">
         <div class="acct">
-          <span>QQ <span class="num">{{ binding.display_name }}</span></span>
+          <span>已通过 QQ 完成</span>
           <button v-if="confirmId !== binding.id" type="button" class="btn ghost small" @click="confirmId = binding.id">解除绑定</button>
         </div>
         <div v-if="confirmId === binding.id" class="confirm" role="group" aria-labelledby="unbind-title">
           <h3 id="unbind-title">解除 QQ 绑定？</h3>
-          <p>群里的机器人将无法查看这个账号。</p>
+          <p>身份验证随之取消，不能领取财政补贴、认购新股或进入排行，机器人也无法查看这个账号。</p>
           <div class="acts">
             <button type="button" class="btn small" :disabled="busy" @click="unbind(binding.id)">解除绑定</button>
             <button type="button" class="btn small ghost" :disabled="busy" @click="confirmId = null">取消</button>
@@ -99,7 +106,7 @@ async function unbind(id: number) {
         </div>
       </template>
       <template v-else>
-        <p class="hint">在 QQ 里向机器人发送“/绑定 绑定码”，机器人即可查看你的资产和持仓。</p>
+        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里向机器人发送“/绑定 绑定码”。</p>
         <div v-if="code" class="code">
           <span class="num big">{{ code.code }}</span>
           <span class="muted">{{ hm(code.expires_at) }} 前有效</span>

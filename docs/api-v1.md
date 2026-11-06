@@ -261,6 +261,8 @@
 | 422 | `bad_invite` | 邀请码不正确，可以向社团管理员索取 | — |
 | 403 | `registration_closed` | 暂未开放注册 | — |
 | 403 | `agreement_required` | 签署风险揭示书后才能交易 | — |
+| 403 | `verification_required` | 完成身份验证后才能认购新股 | — |
+| 422 | `ipo_quota_exceeded` | 认购金额超过认购额度 1,234.00 星辉（前 5 个交易日的日均持仓市值） | `quota`、`max_quantity` |
 | 409 | `document_outdated` | 文件已更新，刷新页面后重新阅读 | — |
 | 422 | `pow_required` | 需要先完成验证，重新提交即可 | — |
 | 422 | `pow_invalid` | 验证已失效，重新提交即可 | — |
@@ -428,7 +430,7 @@ X-Act-As: qq:123456789
 ```
 - `doc`：`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书；`version` 必须是当前版本（`game.toml` 的 `[account.documents]`），否则 409 `document_outdated`。
 - 风险揭示书要用自己的用户名签署（去掉首尾空白后一致）；其他文件不需要 `signature`。
-- 200，返回 `Me`。`Me.pending_documents` 列出还没有同意或签署的当前版本文件；不为空时，下单、新股认购、配股认购、开通信用账户返回 403 `agreement_required`。撤单、还款、重整不受影响。
+- 200，返回 `Me`。`Me.verification` 是身份验证状态（`verified`、`method`：目前只有 `qq`，即绑定 QQ）；`Me.eligibility` 列出财政补贴、新股认购（含认购额度 `quota`）、排行榜三项资格，不符合时 `reason` 是可以直接展示的原因。门槛只看身份验证状态，不直接看绑定（`backend/src/kyc.rs`）。排行榜只列出符合排行榜资格的玩家。`Me.pending_documents` 列出还没有同意或签署的当前版本文件；不为空时，下单、新股认购、配股认购、开通信用账户返回 403 `agreement_required`。撤单、还款、重整不受影响。
 
 #### `POST /api/v1/auth/login`
 

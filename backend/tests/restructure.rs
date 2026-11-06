@@ -168,7 +168,7 @@ fn the_linked_return_keeps_the_loss() {
     // then +10% on the new segment
     fx.e.transfer(world, a, 1_000_000, "test", DAY, TS, None, None);
     let c = fx.db();
-    let rows = ranked(&c, INITIAL, None).unwrap_or_else(|e| panic!("{}", e.message));
+    let rows = ranked(&c, INITIAL, None, None).unwrap_or_else(|e| panic!("{}", e.message));
     let names: Vec<&str> = rows.iter().map(|r| r.user.username.as_str()).collect();
     let pos = |n: &str| names.iter().position(|x| *x == n).unwrap();
     // a has more assets (110,000 vs 50,000) but ranks below b

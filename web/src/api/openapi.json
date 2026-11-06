@@ -1052,6 +1052,47 @@
         ],
         "type": "object"
       },
+      "Eligibility": {
+        "description": "一项资格",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "不符合时的原因，可以直接展示",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "eligible",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "EligibilityState": {
+        "properties": {
+          "ipo": {
+            "$ref": "#/components/schemas/IpoEligibility"
+          },
+          "leaderboard": {
+            "$ref": "#/components/schemas/Eligibility",
+            "description": "排行榜"
+          },
+          "transfer": {
+            "$ref": "#/components/schemas/Eligibility",
+            "description": "财政补贴"
+          }
+        },
+        "required": [
+          "ipo",
+          "leaderboard",
+          "transfer"
+        ],
+        "type": "object"
+      },
       "EpisodeComments": {
         "description": "Bangumi 单集吐槽数（采集器最新快照）",
         "properties": {
@@ -1449,6 +1490,30 @@
           "sub_start",
           "title_ja",
           "viewer"
+        ],
+        "type": "object"
+      },
+      "IpoEligibility": {
+        "description": "新股认购资格",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Money",
+            "description": "认购额度：前几个交易日的日均持仓市值；每支新股的认购金额（数量 × 发行价）不能超过它"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "eligible",
+          "quota",
+          "reason"
         ],
         "type": "object"
       },
@@ -2036,6 +2101,10 @@
           "dividends": {
             "$ref": "#/components/schemas/Money"
           },
+          "eligibility": {
+            "$ref": "#/components/schemas/EligibilityState",
+            "description": "财政补贴、新股认购、排行榜的资格"
+          },
           "frozen_cash": {
             "$ref": "#/components/schemas/Money"
           },
@@ -2077,6 +2146,10 @@
           },
           "username": {
             "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/Verification",
+            "description": "身份验证"
           }
         },
         "required": [
@@ -2086,6 +2159,7 @@
           "credit_status",
           "deposit_rate",
           "dividends",
+          "eligibility",
           "frozen_cash",
           "id",
           "initial_cash",
@@ -2096,7 +2170,8 @@
           "total_assets",
           "total_return",
           "trading_day",
-          "username"
+          "username",
+          "verification"
         ],
         "type": "object"
       },
@@ -4018,6 +4093,26 @@
           "high",
           "low",
           "until"
+        ],
+        "type": "object"
+      },
+      "Verification": {
+        "description": "身份验证（docs/v2-account.md §2）",
+        "properties": {
+          "method": {
+            "description": "验证方式：`qq`（绑定 QQ）；未验证时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "method",
+          "verified"
         ],
         "type": "object"
       },

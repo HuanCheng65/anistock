@@ -410,6 +410,38 @@ async fn agreements_gate_trading() {
 }
 
 #[tokio::test]
+async fn verification_gates_transfers_ipo_and_leaderboard() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["verification"], json!({"verified": false, "method": null}));
+    assert_eq!(me["eligibility"]["transfer"]["reason"], "完成身份验证后才能领取财政补贴");
+    assert_eq!(me["eligibility"]["ipo"]["reason"], "完成身份验证后才能认购新股");
+    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "完成身份验证后才能进入排行");
+    let lb = a.get("/api/v1/leaderboard", Some(&ck)).await.json;
+    assert_eq!(lb["items"], json!([]));
+    err(&a.req("PUT", "/api/v1/ipos/2/subscription", Some(json!({"quantity": 10})), &h).await, 403, "verification_required");
+
+    // 身份验证 = a QQ binding today
+    let id = me["id"].as_i64().unwrap();
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    c.execute(
+        "INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', 'OPENID1', 'read:account', ?)",
+        rusqlite::params![id, TS],
+    )
+    .unwrap();
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["verification"], json!({"verified": true, "method": "qq"}));
+    // registered today: too new for 财政补贴 and 排行榜
+    assert_eq!(me["eligibility"]["transfer"]["reason"], "注册满 7 天后才能领取财政补贴");
+    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "注册满 14 天后才能进入排行");
+    assert_eq!(me["eligibility"]["ipo"]["quota"], 0);
+    assert!(me["eligibility"]["ipo"]["reason"].as_str().unwrap().starts_with("认购额度按前 5 个交易日的日均持仓市值计算"));
+    a.validate(&a.schema("GET", "/api/v1/me", 200), &me, "me");
+}
+
+#[tokio::test]
 async fn static_assets_are_immutable() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("assets")).unwrap();

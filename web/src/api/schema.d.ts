@@ -1059,6 +1059,19 @@ export interface components {
             /** Format: double */
             rate: number;
         };
+        /** @description 一项资格 */
+        Eligibility: {
+            eligible: boolean;
+            /** @description 不符合时的原因，可以直接展示 */
+            reason: string | null;
+        };
+        EligibilityState: {
+            ipo: components["schemas"]["IpoEligibility"];
+            /** @description 排行榜 */
+            leaderboard: components["schemas"]["Eligibility"];
+            /** @description 财政补贴 */
+            transfer: components["schemas"]["Eligibility"];
+        };
         /** @description Bangumi 单集吐槽数（采集器最新快照） */
         EpisodeComments: {
             /** Format: int64 */
@@ -1185,6 +1198,13 @@ export interface components {
             sub_start: string;
             title_ja: string | null;
             viewer: null | components["schemas"]["IpoViewer"];
+        };
+        /** @description 新股认购资格 */
+        IpoEligibility: {
+            eligible: boolean;
+            /** @description 认购额度：前几个交易日的日均持仓市值；每支新股的认购金额（数量 × 发行价）不能超过它 */
+            quota: components["schemas"]["Money"];
+            reason: string | null;
         };
         IpoEnvelope: {
             ipo: components["schemas"]["Ipo"];
@@ -1325,6 +1345,8 @@ export interface components {
             /** Format: double */
             deposit_rate: number;
             dividends: components["schemas"]["Money"];
+            /** @description 财政补贴、新股认购、排行榜的资格 */
+            eligibility: components["schemas"]["EligibilityState"];
             frozen_cash: components["schemas"]["Money"];
             /** Format: int64 */
             id: number;
@@ -1344,6 +1366,8 @@ export interface components {
             total_return: number;
             trading_day: components["schemas"]["TradingDay"];
             username: string;
+            /** @description 身份验证 */
+            verification: components["schemas"]["Verification"];
         };
         MeEnvelope: {
             me: components["schemas"]["Me"];
@@ -1906,6 +1930,12 @@ export interface components {
             high: null | components["schemas"]["Money"];
             low: null | components["schemas"]["Money"];
             until: null | components["schemas"]["Timestamp"];
+        };
+        /** @description 身份验证（docs/v2-account.md §2） */
+        Verification: {
+            /** @description 验证方式：`qq`（绑定 QQ）；未验证时为 null */
+            method: string | null;
+            verified: boolean;
         };
         Work: {
             /** @description 已播各集的讨论（最多最近 26 集） */

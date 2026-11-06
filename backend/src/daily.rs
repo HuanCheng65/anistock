@@ -786,14 +786,47 @@ impl Engine {
     }
 
     fn pay_transfers(&mut self, cx: &mut Ctx, amount: i64) {
-        // per capita to every household: players and (v2) the NPC agents, who stand for the rest of the
-        // population (v1 paid players only: with 40 players that was ~30% of starting cash a season)
+        let eligible = if cx.cfg.economy_v1 { None } else { self.transfer_eligible(cx) };
+        self.pay_transfers_to(cx, amount, eligible.as_ref());
+    }
+
+    /// The players who may receive 财政补贴 (crate::kyc::transfer_gate), read from the committed database:
+    /// bindings are written outside the engine, trades of earlier days are on disk. `None` for an engine
+    /// without a database (tests, simulations): every player.
+    fn transfer_eligible(&mut self, cx: &Ctx) -> Option<std::collections::HashSet<i64>> {
+        let players: Vec<(i64, String)> =
+            self.st.accounts.values().filter(|a| a.kind == "player").map(|a| (a.id, a.created_at.clone())).collect();
+        let c = self.reader_conn()?;
+        let verified = match crate::kyc::verified_ids(c) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("transfers: cannot read bindings ({e}); paying no player this week");
+                return Some(Default::default());
+            }
+        };
+        let rules = &cx.cfg.eligibility;
+        Some(
+            players
+                .into_iter()
+                .filter(|(id, created)| {
+                    crate::kyc::transfer_gate(c, rules, *id, verified.contains(id), created, &cx.day)
+                        .is_ok_and(|g| g == crate::kyc::Gate::Open)
+                })
+                .map(|(id, _)| id)
+                .collect(),
+        )
+    }
+
+    /// Per capita to every household: eligible players and (v2) the NPC agents, who stand for the rest of
+    /// the population (v1 paid every player and no NPC: with 40 players that was ~30% of starting cash a
+    /// season). A player who is not eligible gets nothing; the others' shares grow.
+    fn pay_transfers_to(&mut self, cx: &mut Ctx, amount: i64, eligible: Option<&std::collections::HashSet<i64>>) {
         let v1 = cx.cfg.economy_v1;
         let players: Vec<i64> = self
             .st
             .accounts
             .values()
-            .filter(|a| a.kind == "player" || (!v1 && a.kind == "npc"))
+            .filter(|a| (a.kind == "player" && eligible.is_none_or(|s| s.contains(&a.id))) || (!v1 && a.kind == "npc"))
             .map(|a| a.id)
             .collect();
         if players.is_empty() || amount <= 0 {
@@ -805,13 +838,22 @@ impl Engine {
             self.do_transfer(cx.gov, pid, each, "transfer", &cx.day, &cx.ts, None, None);
         }
         if each != 0 {
+            let body = if v1 {
+                "本周税收的一部分按人头返还。".to_string()
+            } else {
+                let r = &cx.cfg.eligibility;
+                format!(
+                    "本周税收的一部分按人头返还。完成身份验证、注册满 {} 天、过去 {} 天有成交的玩家可以领取。",
+                    r.transfer_min_days, r.transfer_active_days
+                )
+            };
             self.push_news(
                 &cx.ts,
                 &cx.day,
                 "system",
                 None,
                 format!("财政补贴：每位玩家 {} 星辉", fixed_grouped(each as f64 / 100.0, 2)),
-                "本周税收的一部分按人头返还。".into(),
+                body,
             );
         }
     }

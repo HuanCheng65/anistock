@@ -107,6 +107,8 @@ pub struct Config {
     pub registration: Registration,
     /// current versions of the documents a player accepts (`[account.documents]`)
     pub documents: Vec<(String, i64)>,
+    /// `[account.eligibility]`: what 身份验证 and activity unlock (crate::kyc)
+    pub eligibility: crate::kyc::Rules,
     pub always_open: bool,
     pub no_loops: bool,
     /// v1 economy rules (raw 7-day revenue, stepwise episode valuation, transfers to players only, no penny
@@ -227,6 +229,8 @@ impl Config {
             .iter()
             .map(|d| (d.to_string(), docs_raw.and_then(|t| t.get(*d)).and_then(|v| v.as_integer()).unwrap_or(1)))
             .collect();
+        let eligibility =
+            crate::kyc::Rules::from_table(raw.get("account").and_then(|a| a.get("eligibility"))).map_err(ConfigError)?;
         let path_env = |k: &str, default: PathBuf| env(k).map(PathBuf::from).unwrap_or(default);
         Ok(Config {
             root: root.to_path_buf(),
@@ -242,6 +246,7 @@ impl Config {
             invite_code: if invite.is_empty() { "anistock".into() } else { invite },
             registration,
             documents,
+            eligibility,
             always_open: env("ANISTOCK_ALWAYS_OPEN").as_deref() == Some("1"),
             no_loops: env("ANISTOCK_NO_LOOPS").as_deref() == Some("1"),
             // development/difftest only: the v1 economy rules (see `economy_v1`)

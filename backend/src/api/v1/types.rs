@@ -843,6 +843,44 @@ pub struct Me {
     pub created_at: Timestamp,
     /// 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户
     pub pending_documents: Vec<PendingDocument>,
+    /// 身份验证
+    pub verification: Verification,
+    /// 财政补贴、新股认购、排行榜的资格
+    pub eligibility: EligibilityState,
+}
+
+/// 身份验证（docs/v2-account.md §2）
+#[derive(Serialize, ToSchema, Clone)]
+pub struct Verification {
+    pub verified: bool,
+    /// 验证方式：`qq`（绑定 QQ）；未验证时为 null
+    pub method: Option<String>,
+}
+
+/// 一项资格
+#[derive(Serialize, ToSchema, Clone)]
+pub struct Eligibility {
+    pub eligible: bool,
+    /// 不符合时的原因，可以直接展示
+    pub reason: Option<String>,
+}
+
+/// 新股认购资格
+#[derive(Serialize, ToSchema, Clone)]
+pub struct IpoEligibility {
+    pub eligible: bool,
+    pub reason: Option<String>,
+    /// 认购额度：前几个交易日的日均持仓市值；每支新股的认购金额（数量 × 发行价）不能超过它
+    pub quota: Money,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct EligibilityState {
+    /// 财政补贴
+    pub transfer: Eligibility,
+    pub ipo: IpoEligibility,
+    /// 排行榜
+    pub leaderboard: Eligibility,
 }
 
 /// 一份待同意或签署的文件
