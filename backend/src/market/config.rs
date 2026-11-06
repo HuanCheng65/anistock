@@ -216,19 +216,22 @@ pub struct MarketConfig {
     pub bubble_run: f64,
     pub bubble_run_days: usize,
     pub bubble_heat: f64,
-    /// strength s of a bubble: log-normal, mean 1, this spread; the trend agents' participation in the stock
-    /// is (1 + s) times, their buy threshold 1 / (1 + s) and their stop-loss (1 + s) times (inflating)
+    /// strength s of a bubble: log-normal, mean 1, this spread. While it inflates, the chasers' (trend and
+    /// retail agents') participation in the stock is (1 + s) times, the retail agents' buy odds (1 + s) times,
+    /// the trend agents' buy threshold 1 / (1 + s) and their stop-loss (1 + s) times
     pub bubble_sigma: f64,
     /// it bursts at a constant hazard: the expected life is drawn log-uniform from this range (days), and it
     /// lasts at most `bubble_max_days`
     pub bubble_life_days: [f64; 2],
     pub bubble_max_days: f64,
     /// after the burst the chasers dump for a time drawn log-uniform from this range (hours): participation
-    /// stays (1 + s) times, the buy threshold is (1 + s) times and the stop-loss 1 / (1 + s)
+    /// stays (1 + s) times, retail sell odds are (1 + s) times, the trend buy threshold (1 + s) times and their
+    /// stop-loss 1 / (1 + s)
     pub bubble_crash_h: [f64; 2],
     /// disposition effect (Shefrin–Statman; Odean 1998): a retail agent's chance of selling a holding is this
     /// many times higher when it shows a paper gain than when it shows a paper loss against the agent's own
-    /// average cost (the average sell rate unchanged; 1: off)
+    /// average cost; normalised by the share of retail holdings at a gain (refreshed at each close) so the
+    /// retail agents' total sales are unchanged (1: off)
     pub disposition_ratio: f64,
 }
 

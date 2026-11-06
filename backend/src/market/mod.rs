@@ -129,6 +129,8 @@ pub struct MarketStats {
     pub rebalance_shares: i64,
     pub flashes: u64,
     pub events: u64,
+    /// retail agents' decisions on a holding at a paper gain: looked at, sold; at a paper loss: looked at, sold
+    pub retail_realise: [u64; 4],
     /// most NPC orders in one minute, and the distribution of per-minute counts
     pub peak_orders_per_min: u64,
     pub minutes_with_orders: u64,
@@ -177,6 +179,8 @@ pub struct Market {
     reactions: HashMap<(i64, i64), (f64, f64)>,
     /// sentiment layer batch 2: each stock's recent daily closes (bubble triggers; kept in the state table)
     closes: HashMap<i64, VecDeque<i64>>,
+    /// share of the retail agents' holdings at a paper gain (disposition effect; refreshed at each close)
+    gain_share: Option<f64>,
     /// run starts at the last close: (company, close time, became a bubble) (reports)
     pub run_starts: Vec<(i64, i64, bool)>,
     /// events the market created itself (revisions, attention), for the caller to log (restart safety)
@@ -218,6 +222,7 @@ impl Market {
             next_rank_check: 0,
             reactions: HashMap::new(),
             closes: HashMap::new(),
+            gain_share: None,
             run_starts: Vec::new(),
             fresh: Vec::new(),
             stats: MarketStats::default(),
@@ -599,6 +604,9 @@ impl Market {
     /// `bubble_prob` (a hash of seed, secret, stock and time, like every draw of the layer). A bubble is an
     /// event (logged, so it survives a restart); the closes are kept in the state table.
     pub fn note_closes(&mut self, engine: &mut Engine, t: i64) {
+        if self.cfg.disposition_ratio != 1.0 {
+            self.refresh_gain_share(engine);
+        }
         if self.cfg.bubble_prob <= 0.0 {
             return;
         }
@@ -681,8 +689,9 @@ impl Market {
         let sg = self.cfg.bubble_sigma;
         let s = (sg * normal(&key(1)) - sg * sg / 2.0).exp();
         let mean_life = log_uniform(self.cfg.bubble_life_days, unit(hash(&key(2))));
-        let life = (-mean_life * (1.0 - unit(hash(&key(3)))).ln()).min(self.cfg.bubble_max_days);
         let crash_h = log_uniform(self.cfg.bubble_crash_h, unit(hash(&key(4))));
+        // the whole episode stays within the 8 days of events kept (`prune_events`)
+        let life = (-mean_life * (1.0 - unit(hash(&key(3)))).ln()).min(self.cfg.bubble_max_days).min(7.9 - crash_h / 24.0);
         let burst = e.at + (life * 86_400.0) as i64;
         (s, burst, burst + (crash_h * 3600.0) as i64)
     }
@@ -1224,13 +1233,13 @@ impl Market {
 
     fn choose_stock(&mut self, i: usize, t: i64, engine: &Engine) -> Option<i64> {
         let watch = self.agents[i].watch.clone();
-        let trend = self.agents[i].kind == AgentKind::Trend;
+        let chaser = matches!(self.agents[i].kind, AgentKind::Trend | AgentKind::Retail);
         let w: Vec<f64> = watch
             .iter()
             .map(|&c| match engine.company(c) {
                 Some(co) if co.status == "listed" => {
-                    // a bubble draws the trend chasers into the stock (positive feedback)
-                    let b = if trend { self.bubble(c, t).map_or(1.0, |(_, s)| 1.0 + s) } else { 1.0 };
+                    // a bubble draws the chasers (trend and retail agents) into the stock: turnover (1 + s) times
+                    let b = if chaser { self.bubble(c, t).map_or(1.0, |(_, s)| 1.0 + s) } else { 1.0 };
                     self.heat(c).powf(self.cfg.heat_alpha) * self.activity(c, t) * b
                 }
                 _ => 0.0,
@@ -1422,8 +1431,17 @@ impl Market {
         // attention (a stock in the news is bought, not sold: buying means choosing among all stocks, selling
         // only among one's own) and market sentiment (risk appetite) tilt the buy/sell split and the size
         let ss = self.sentiment_tilt(c, t);
-        let tilt = self.cfg.attention * self.attention(c, t) + ss;
-        let sell = held > 0 && self.rng.f64() < 0.5 * (1.0 - tilt.tanh()) * self.disposition(engine, a.account, c, p);
+        // a bubble: buy odds (1 + s) times while it inflates, sell odds (1 + s) times after the burst
+        let bt = self.bubble(c, t).map_or(0.0, |(up, s)| if up { 0.5 } else { -0.5 } * (1.0 + s).ln());
+        let tilt = self.cfg.attention * self.attention(c, t) + ss + bt;
+        let (disp, gain) = if held > 0 { self.disposition(engine, a.account, c, p) } else { (1.0, 0) };
+        let sell = held > 0 && self.rng.f64() < 0.5 * (1.0 - tilt.tanh()) * disp;
+        if gain != 0 {
+            // realisation counts (Odean's PGR / PLR): holdings at a gain / loss looked at, and sold
+            let k = if gain > 0 { 0 } else { 2 };
+            self.stats.retail_realise[k] += 1;
+            self.stats.retail_realise[k + 1] += sell as u64;
+        }
         let market = !Self::phase_auction(t) && self.rng.f64() < self.cfg.retail_market_prob;
         let limit = Self::clamp_price(engine, &rules, c, p * (1.0 + self.cfg.retail_price_sd * self.rng.normal()), t);
         if sell {
@@ -1453,23 +1471,52 @@ impl Market {
     /// `c` at price `p`: 2r / (1 + r) with a paper gain against its own average cost, 2 / (1 + r) with a paper
     /// loss (r = `disposition_ratio`: Odean's PGR / PLR), so gains are realised r times as readily as losses
     /// and an even book sells as often as without the effect.
-    fn disposition(&self, engine: &Engine, acct: i64, c: i64, p: f64) -> f64 {
+    fn disposition(&mut self, engine: &Engine, acct: i64, c: i64, p: f64) -> (f64, i8) {
+        let gain = match Self::paper_gain(engine, acct, c, p) {
+            Some(g) if g > 0.0 => 1,
+            Some(g) if g < 0.0 => -1,
+            _ => return (1.0, 0),
+        };
         let r = self.cfg.disposition_ratio;
         if r == 1.0 {
-            return 1.0;
+            return (1.0, gain);
         }
+        let w = match self.gain_share {
+            Some(w) => w,
+            None => self.refresh_gain_share(engine),
+        };
+        // gains are sold r times as readily as losses, and the retail agents' sales in total stay the same: the
+        // effect decides which holdings they sell, not how much (Odean 1998)
+        let loss = 1.0 / (w * r + (1.0 - w));
+        (if gain > 0 { r * loss } else { loss }, gain)
+    }
+
+    /// ln(price / average cost) of an agent's holding of `c` (None without lots).
+    fn paper_gain(engine: &Engine, acct: i64, c: i64, p: f64) -> Option<f64> {
         let (q, v) = engine.lots_of(acct, c).iter().fold((0i64, 0f64), |(q, v), l| (q + l.qty, v + l.qty as f64 * l.cost as f64));
-        if q <= 0 {
-            return 1.0;
+        (q > 0 && v > 0.0 && p > 0.0).then(|| (p * q as f64 / v).ln())
+    }
+
+    /// The share of the retail agents' holdings (positions) showing a paper gain at the last prices; kept until
+    /// the next close.
+    fn refresh_gain_share(&mut self, engine: &Engine) -> f64 {
+        let (mut up, mut n) = (0u64, 0u64);
+        for a in self.agents.iter().filter(|a| a.kind == AgentKind::Retail) {
+            for h in engine.holdings_of(a.account).filter(|h| h.qty > 0) {
+                let p = engine.company(h.company_id).map_or(0, |c| c.last_price) as f64;
+                match Self::paper_gain(engine, a.account, h.company_id, p) {
+                    Some(g) if g > 0.0 => {
+                        up += 1;
+                        n += 1
+                    }
+                    Some(g) if g < 0.0 => n += 1,
+                    _ => {}
+                }
+            }
         }
-        let cost = v / q as f64;
-        if p > cost {
-            2.0 * r / (1.0 + r)
-        } else if p < cost {
-            2.0 / (1.0 + r)
-        } else {
-            1.0
-        }
+        let w = if n == 0 { 0.5 } else { up as f64 / n as f64 };
+        self.gain_share = Some(w);
+        w
     }
 
     // ------------------------------------------------------------ market maker and committee

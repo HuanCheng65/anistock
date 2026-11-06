@@ -129,6 +129,13 @@ sentiment_strength = 0.15      # market sentiment (Baker–Wurgler), daily AR(1)
 attention = 0.25               # attention buying (Barber–Odean): retail buy share 62% at a mean-strength episode
 attention_rank_n = 6           # 上热榜 = the market page's top-6 gainers / losers lists
 reaction = true                # under/over-reaction (Barberis–Shleifer–Vishny) of the news agents to revisions
+# Sentiment layer batch 2 (docs/v2-sentiment.md §7)
+bubble_prob = 0.5              # positive-feedback bubbles (De Long et al.): a run (5-close return >= 25%, about two sd of
+                               # a 5-session return at the replay's 5% daily sd) in a stock at least average heat becomes a
+                               # bubble half the time (Greenwood–Shleifer–You 2019: 21 of 40 100% run-ups crashed);
+                               # strength log-normal mean 1, constant-hazard burst (mean life 1-5 days, at most 7)
+disposition_ratio = 1.5        # disposition effect: retail agents sell paper gains 1.5x as readily as paper losses
+                               # (Odean 1998: PGR 0.148 / PLR 0.098), total retail sales unchanged
 
 [api.rate_limit]
 # API v1 token buckets (docs/api-v1.md §2.12): requests per second and burst per subject
