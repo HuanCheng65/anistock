@@ -1937,7 +1937,7 @@
             "type": "integer"
           },
           "kind": {
-            "description": "开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash",
+            "description": "开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash、sequel（续作公布、新一季并入系列公司）",
             "type": "string"
           },
           "stock": {

@@ -189,7 +189,8 @@ impl Engine {
         self.commit();
         let saved: State = self.st.clone();
         let companies: Vec<Company> = self.st.companies.values().filter(|c| c.status == "listed").cloned().collect();
-        let listed: Vec<&ShowInputs> = companies.iter().filter_map(|c| inputs.show(c.id)).collect();
+        // every work of the listed companies (a company is a series: docs/v2-series.md §3)
+        let listed: Vec<&ShowInputs> = companies.iter().flat_map(|c| self.works_of(c.id)).filter_map(|w| inputs.show(w)).collect();
         let mut cx = Ctx {
             cfg,
             p,
@@ -261,16 +262,20 @@ impl Engine {
         }
 
         // 1. revenue
+        // (v2: post-finale cn/jp days without data earn the filter's expectation, `revenue_att`)
+        let att_of = |e: &Engine, s: &ShowInputs| if cx.cfg.economy_v1 || !p.impute_tail { s.att.m3() } else { e.revenue_att(s) };
         let mut totals = [0.0f64; 3];
         for m in 0..3 {
             let mut t = 0.0;
             for s in &cx.listed {
-                t += s.att.m3()[m];
+                t += att_of(self, s)[m];
             }
             totals[m] = t;
         }
         let tot_us = totals[0];
         let demand_day = V::demand_day(tot_us, a_ref, &p);
+        // the absolute revenue rule (docs/v2-series.md §6), once the platform size averages enough history
+        let abs = if cx.cfg.economy_v1 { None } else { self.platform_switch(cx, &p, &totals, demand_day) };
         if let Ok(path) = std::env::var("SIM_FORECAST") {
             // the realised side (sim/forecast_check.py): totals, demand, each listed show's attention and revenue
             use std::io::Write;
@@ -286,9 +291,31 @@ impl Engine {
         }
         for c in cx.companies.clone() {
             let Some(s) = cx.inp.show(c.id) else { continue };
-            let (share, parts) = V::blended_share(&s.att.m3(), &totals, &p.market_weights);
-            let rev = pround(demand_day * share * 100.0);
-            let split: Vec<i64> = parts.iter().map(|x| pround(demand_day * x * 100.0)).collect();
+            // the company's revenue sums its works'
+            let works: Vec<&ShowInputs> = self.works_of(c.id).into_iter().filter_map(|w| cx.inp.show(w)).collect();
+            let (rev, split): (i64, Vec<i64>) = match &abs {
+                Some((pl, sc)) => {
+                    let mut parts = [0.0; 3];
+                    for x in &works {
+                        let q = crate::vfilter::absolute_parts(&att_of(self, x), pl, *sc, &p.market_weights, &p);
+                        for m in 0..3 {
+                            parts[m] += q[m];
+                        }
+                    }
+                    (pround((parts[0] + parts[1] + parts[2]) * 100.0), parts.iter().map(|x| pround(x * 100.0)).collect())
+                }
+                None => {
+                    let (mut share, mut parts) = (0.0, [0.0; 3]);
+                    for x in &works {
+                        let (sh, q) = V::blended_share(&att_of(self, x), &totals, &p.market_weights);
+                        share += sh;
+                        for m in 0..3 {
+                            parts[m] += q[m];
+                        }
+                    }
+                    (pround(demand_day * share * 100.0), parts.iter().map(|x| pround(demand_day * x * 100.0)).collect())
+                }
+            };
             let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
             let cid = Some(c.id);
             self.do_transfer(cx.world, acct, rev, "revenue", &day, &ts, cid, None);
@@ -403,8 +430,10 @@ impl Engine {
                 eprintln!("valuation: {msg}");
             }
             for c in &cx.companies {
-                if let Some(s) = cx.inp.show(c.id) {
-                    self.valuation_step(&fp, &p, s, &day, &ts);
+                for w in self.works_of(c.id) {
+                    if let Some(s) = cx.inp.show(w) {
+                        self.valuation_step(&fp, &p, s, &day, &ts);
+                    }
                 }
             }
             // shows in their subscription window have a value too (the offer is priced off it)
@@ -538,6 +567,54 @@ impl Engine {
         self.snapshot_players(&day, (cx.cfg.game.initial_cash * 100.0).round_ties_even() as i64);
         self.check_invariants()?;
         Ok(rate)
+    }
+
+    /// The absolute revenue rule for this close (docs/v2-series.md §6): each market's platform size from the
+    /// inputs, once it averages at least `revenue.platform_min_days` days, and the scale set on the first such day
+    /// so that the day's total revenue is unchanged (state `platform_rule`: "us,cn,jp,scale"). Inputs without a
+    /// platform size keep the last one. None: the relative rule.
+    fn platform_switch(&mut self, cx: &Ctx, p: &Params, totals: &V::M3, demand_day: f64) -> Option<(V::M3, f64)> {
+        if !p.absolute_revenue {
+            return None;
+        }
+        let prev = self.platform_rule();
+        let Some(pl) = cx.inp.platform.as_ref().map(|x| x.m3()) else { return prev };
+        if pl.iter().any(|x| *x <= 0.0) {
+            return prev;
+        }
+        // the scale that leaves today's total revenue unchanged: set on the switch day; before it, today's estimate
+        let scale_today = || {
+            let (mut old, mut new) = (0.0, 0.0);
+            for c in &cx.companies {
+                for w in self.works_of(c.id) {
+                    let Some(s) = cx.inp.show(w) else { continue };
+                    let a = self.revenue_att(s);
+                    old += demand_day * V::blended_share(&a, totals, &p.market_weights).0;
+                    let parts = crate::vfilter::absolute_parts(&a, &pl, 1.0, &p.market_weights, p);
+                    new += parts[0] + parts[1] + parts[2];
+                }
+            }
+            (new > 0.0).then(|| old / new)
+        };
+        if cx.inp.platform_days < p.platform_min_days {
+            if prev.is_none() {
+                // the switch is on a known day: the value prices the absolute rule from then on (vclose `value_rule`)
+                if let (Some(sc), Some(today)) = (scale_today(), crate::vclose::day_no(&cx.day)) {
+                    let at = today + p.platform_min_days - cx.inp.platform_days;
+                    self.do_set_state(
+                        "platform_pending",
+                        &format!("{},{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(sc), at),
+                    );
+                }
+            }
+            return prev;
+        }
+        let scale = match prev {
+            Some((_, sc)) => sc,
+            None => scale_today()?,
+        };
+        self.do_set_state("platform_rule", &format!("{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(scale)));
+        Some((pl, scale))
     }
 
     /// Per-share value in cents from the company's own revenue history (v1 `daily.fair_value`).
@@ -710,6 +787,9 @@ impl Engine {
     }
 
     fn maybe_delist(&mut self, cx: &mut Ctx, c: &Company, s: &ShowInputs, total_week_rev: i64) -> Result<(), String> {
+        if !cx.cfg.economy_v1 {
+            return self.maybe_delist_series(cx, c);
+        }
         let finished = V::finished(s.aired, s.episodes, s.long_runner);
         let week_ago = iso(cx.d - Duration::days(7));
         let week_rev: i64 = self
@@ -721,6 +801,50 @@ impl Engine {
             .map(|(_, r)| r.revenue)
             .sum();
         let low = finished && (week_rev as f64) < cx.g().delist_revenue_share * (total_week_rev.max(1) as f64);
+        let weeks = if low { c.low_weeks + 1 } else { 0 };
+        self.st.companies.get_mut(&c.id).unwrap().low_weeks = weeks;
+        self.mark_company(c.id);
+        if weeks < cx.g().delist_after_weeks {
+            return Ok(());
+        }
+        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
+    }
+
+    /// Delisting of a series (docs/v2-series.md §9): every work finished, the last week's revenue under
+    /// `delist_tail_share` of the median weekly revenue of the companies with a work on air, and a sequel
+    /// announcement within three years less likely than `delist_sequel_p` (no announced sequel), for
+    /// `delist_after_weeks` Sundays in a row. Liquidation at book value per share, as before.
+    fn maybe_delist_series(&mut self, cx: &mut Ctx, c: &Company) -> Result<(), String> {
+        let week_ago = iso(cx.d - Duration::days(7));
+        let week_rev = |e: &Engine, id: i64| -> i64 {
+            e.st.company_days
+                .range((id, String::new())..)
+                .take_while(|(k, _)| k.0 == id)
+                .filter(|(k, _)| k.1.as_str() > week_ago.as_str())
+                .map(|(_, r)| r.revenue)
+                .sum()
+        };
+        let airing = |e: &Engine, id: i64| {
+            e.works_of(id).into_iter().any(|w| cx.inp.show(w).is_some_and(|x| x.aired >= 1 && !V::finished(x.aired, x.episodes, x.long_runner)))
+        };
+        let mut on_air: Vec<i64> = cx.companies.iter().filter(|x| airing(self, x.id)).map(|x| week_rev(self, x.id)).collect();
+        on_air.sort_unstable();
+        let reference = if on_air.is_empty() { 0 } else { on_air[on_air.len() / 2] };
+        let works = self.works_of(c.id);
+        let all_finished = works.iter().all(|w| cx.inp.show(*w).is_some_and(|x| V::finished(x.aired, x.episodes, x.long_runner)));
+        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+        let today = crate::vclose::day_no(&cx.day).unwrap_or(0);
+        // the series' latest work carries the sequel chance
+        let latest = works.iter().filter_map(|w| self.valuation_state(*w).map(|j| (j, *w))).max_by_key(|(j, _)| j.meta.as_ref().map_or(0, |m| m.first_air));
+        let sequel_p = match (latest, &fp.sequel) {
+            (Some((j, _)), _) if j.sequel.is_some() => 1.0,
+            (Some((j, _)), Some(sp)) => {
+                let fin = j.meta.as_ref().and_then(|m| m.air.last().copied()).unwrap_or(today);
+                crate::vfilter::sequel_within(sp, j.seq_z, today - fin, 3.0)
+            }
+            _ => 0.0,
+        };
+        let low = all_finished && reference > 0 && (week_rev(self, c.id) as f64) < cx.p.delist_tail_share * reference as f64 && sequel_p < cx.p.delist_sequel_p;
         let weeks = if low { c.low_weeks + 1 } else { 0 };
         self.st.companies.get_mut(&c.id).unwrap().low_weeks = weeks;
         self.mark_company(c.id);
@@ -965,10 +1089,49 @@ impl Engine {
         let tomorrow = cx.d + Duration::days(1);
         let lead = cx.p.ipo_lead_days;
         let window = cx.g().ipo_subscription_days;
-        let existing: HashSet<i64> = self.st.companies.keys().copied().collect();
+        let existing: HashSet<i64> = self.st.companies.keys().chain(self.st.company_works.keys()).copied().collect();
         let inp = cx.inp;
+        // the series of the listed companies (docs/v2-series.md §3.3): a new season of one joins its company
+        let mut series: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        if !cx.cfg.economy_v1 {
+            let mut listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+            listed.sort_unstable();
+            for c in listed {
+                for w in self.works_of(c) {
+                    if let Some(k) = inp.show(w).and_then(|x| x.series) {
+                        series.entry(k).or_insert(c);
+                    }
+                }
+            }
+        }
         for s in &inp.shows {
-            if existing.contains(&s.id) || s.excluded().is_some() || s.popularity_end < cx.g().min_listing_popularity {
+            if existing.contains(&s.id) || s.excluded().is_some() {
+                continue;
+            }
+            if let Some(&c) = s.series.and_then(|k| series.get(&k)) {
+                // a work of a listed series: no new shares, a company notice; its attention joins the company. A new
+                // season joins when its subscription would have opened; an earlier work (its long tail) when the
+                // series is first known, unless it premiered long before (the same 60 days as a listing)
+                let first_air = date(&s.first_air)?;
+                if first_air - Duration::days(lead + window) > tomorrow {
+                    continue;
+                }
+                if first_air < tomorrow - Duration::days(60) && !s.long_runner {
+                    continue;
+                }
+                self.st.company_works.insert(s.id, c);
+                self.out.push(Change::CompanyWork { work_id: s.id, company_id: c, joined_on: cx.day.clone() });
+                let name = inp.cn_titles.get(&s.id).cloned().unwrap_or_else(|| s.title_ja.clone());
+                let co = self.st.companies[&c].title.clone();
+                let (title, body) = if first_air >= tomorrow {
+                    (format!("《{name}》{} 月 {} 日开播", first_air.month(), first_air.day()), format!("《{co}》的新一季。热度计入公司营收和估值，不发行新股。"))
+                } else {
+                    (format!("《{name}》并入《{co}》"), "同一系列的作品。热度计入公司营收和估值，不发行新股。".to_string())
+                };
+                self.push_news(&cx.ts, &cx.day, "sequel", Some(c), title, body);
+                continue;
+            }
+            if s.popularity_end < cx.g().min_listing_popularity {
                 continue;
             }
             let first_air = date(&s.first_air)?;

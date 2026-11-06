@@ -27,6 +27,8 @@ pub enum Change {
     /// `INSERT OR REPLACE INTO valuation_joint` (the joint filter's state of one show, JSON)
     ValuationJoint { company_id: i64, state: String, day: String, updated_at: String },
     ValuationJointDelete { company_id: i64 },
+    /// `INSERT INTO company_works` (a new season joins its series' company; V8)
+    CompanyWork { work_id: i64, company_id: i64, joined_on: String },
     /// `UPDATE accounts SET kind`
     AccountKind { id: i64, kind: String },
     AccountBalance {
@@ -134,6 +136,10 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                  ON CONFLICT(company_id) DO UPDATE SET state=excluded.state, day=excluded.day, updated_at=excluded.updated_at",
             )?
             .execute(params![company_id, state, day, updated_at])?;
+        }
+        Change::CompanyWork { work_id, company_id, joined_on } => {
+            conn.prepare_cached("INSERT OR REPLACE INTO company_works(work_id, company_id, joined_on) VALUES (?,?,?)")?
+                .execute(params![work_id, company_id, joined_on])?;
         }
         Change::ValuationJointDelete { company_id } => {
             conn.prepare_cached("DELETE FROM valuation_joint WHERE company_id=?")?.execute(params![company_id])?;

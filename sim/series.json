@@ -1,0 +1,5 @@
+{
+ "note": "Series grouping exceptions (docs/v2-series.md §3.1; engine/series.py). subsidiary: AniList id -> parent id, listed as its own company. merge: groups of AniList ids that are one series although AniList does not link them. Kept by hand each season, like sim/matches.json.",
+ "subsidiary": {},
+ "merge": []
+}
