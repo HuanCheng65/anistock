@@ -53,7 +53,7 @@ const session = useSession()
 
     <section class="sec">
       <h2>身份验证</h2>
-      <p>注册后就能买卖股票。一些功能为了防止小号刷好处，要求先完成身份验证：在 QQ 里私聊机器人绑定账号，一个 QQ 只能绑定一个账号。</p>
+      <p>注册后就能买卖股票。为了保证一人一号，以下功能需要身份验证：在 QQ 里私聊机器人绑定账号，一个 QQ 只能绑定一个账号。</p>
       <dl class="unlocks">
         <div v-for="[k, v] in KYC_UNLOCKS" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></div>
       </dl>

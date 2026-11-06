@@ -147,7 +147,7 @@ async function unbind(id: number) {
         </Modal>
       </template>
       <template v-else>
-        <p class="hint">买卖股票不需要身份验证。以下功能需要先完成：</p>
+        <p class="hint">买卖股票不需要身份验证。以下功能需要身份验证：</p>
         <dl class="unlocks">
           <div v-for="[k, v] in KYC_UNLOCKS" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></div>
         </dl>

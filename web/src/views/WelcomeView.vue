@@ -137,8 +137,8 @@ async function sign() {
             <div><dt>初始资金</dt><dd>{{ money(session.me?.initial_cash, 0) }}</dd></div>
           </dl>
           <nav class="rows">
-            <RouterLink to="/settings" class="row"><span>身份验证</span><span class="v">补贴、新股、排行、两融</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
-            <RouterLink to="/assessment/risk" class="row"><span>风险测评</span><span class="v">开通两融需要</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+            <RouterLink to="/settings" class="row"><span>身份验证</span><span class="v">财政补贴、新股认购等</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+            <RouterLink to="/assessment/risk" class="row"><span>风险测评</span><span class="v">开通融资融券需要</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
             <RouterLink to="/guide" class="row"><span>新手指南</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           </nav>
         </template>

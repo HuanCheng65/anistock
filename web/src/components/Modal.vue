@@ -38,6 +38,10 @@ function onCancel(e: Event) {
   e.preventDefault()
   dismiss()
 }
+// closed natively anyway (a repeated Esc is not cancelable): the parent's state follows the element
+function onClosed() {
+  if (props.open) emit('close')
+}
 // a press on the backdrop lands on the <dialog> itself; the content fills it edge to edge
 function onClick(e: MouseEvent) {
   if (e.target === el.value) dismiss()
@@ -46,7 +50,7 @@ function onClick(e: MouseEvent) {
 
 <template>
   <Teleport to="body">
-    <dialog ref="el" class="modal" :aria-labelledby="titleId" @cancel="onCancel" @click="onClick">
+    <dialog ref="el" class="modal" :aria-labelledby="titleId" @cancel="onCancel" @close="onClosed" @click="onClick">
       <div ref="sheet" class="sheet" tabindex="-1">
         <h2 :id="titleId" class="title">{{ title }}</h2>
         <div class="content"><slot /></div>
@@ -59,7 +63,7 @@ function onClick(e: MouseEvent) {
 <style scoped>
 .modal {
   /* phones: a sheet along the bottom edge */
-  position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: 100%; max-height: 88dvh;
+  position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: 100%; max-height: 88vh; max-height: 88dvh;
   padding: 0; border: 0; border-top: 2px solid var(--rule); background: var(--ground); color: var(--ink);
   overflow: hidden;
 }
