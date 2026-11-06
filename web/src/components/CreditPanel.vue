@@ -30,8 +30,10 @@ const owed = computed(() => (c.value ? c.value.debt + c.value.interest : 0))
 const steps = computed(() => {
   const s = props.me.credit_steps
   const r = props.me.risk
+  // a server before credit_steps.verified (frontend deployed ahead of the binary): the account's own status
+  const verified = s.verified ?? props.me.verification.verified
   return [
-    { k: 'kyc', to: '/settings', label: '身份验证', ok: s.verified, v: s.verified ? '已完成' : '未完成' },
+    { k: 'kyc', to: '/settings', label: '身份验证', ok: verified, v: verified ? '已完成' : '未完成' },
     { k: 'risk', to: '/assessment/risk', label: `风险测评 ${s.min_level} 及以上`, ok: s.risk_ok, v: r ? (r.valid ? `${r.level} ${r.name}` : '已过期') : '未测评' },
     { k: 'quiz', to: '/assessment/margin-quiz', label: '融资融券知识测试', ok: s.quiz_passed, v: s.quiz_passed ? '已通过' : '未通过' },
     { k: 'sign', to: '/legal/margin_disclosure?sign=1', label: '融资融券风险揭示书', ok: s.disclosure_signed, v: s.disclosure_signed ? '已签署' : '未签署' },
