@@ -54,8 +54,12 @@ journalctl --user -u anistock-server -n 50 --no-pager
 
 ```bash
 set -a; source .env; set +a
+uv run sim/reconstruct.py airtimes
+uv run sim/reconstruct.py build
 uv run engine/daily_inputs.py --from 2026-07-01 --day <上一个交易日> --force
 ```
+
+- 先用新代码重建中国、日本序列（`data/derived/markets.json`）：它由每天日结前的旧代码生成，不重建的话输入会沿用旧规则（2026-11-06 的教训，docs/revalue-v0.6.7.md）。`build` 输出里的 `extended` 应为 0。
 
 ## 4. 用新模型重建估值
 
