@@ -733,6 +733,49 @@ impl Engine {
                 sum[m][t] += level[m] * r;
             }
         }
+        // ... and, after their seasons, those shows' long tails (docs/v2-series.md §4): a season's shows not listed
+        // yet enter the market totals not only while they air but for years after, so the shares of the shows on
+        // the market are expected to be diluted by them too. Without this the totals rose at every season change,
+        // when the new shows listed with their tails: a predictable fall of every listed show's value under the
+        // relative share rule. For each season starting from 14 days before today's on: the share of its attention
+        // not listed yet × its shows' total level at the end of the season (recorded a season earlier, else the
+        // peak) × the finale bump × the expected tail factor after its finale's week (a 12-week season)
+        if fp.tail.iter().any(|t| t.is_some()) {
+            let mut seasons = Vec::new();
+            let mut s0 = prev_season_start(today + 14);
+            while s0 + 91 < today + h as i64 {
+                seasons.push(s0);
+                s0 = next_season_start(s0);
+            }
+            for s in seasons {
+                let r = fp.unlisted(today - s);
+                if r <= 0.0 {
+                    continue;
+                }
+                let mut end = None;
+                let mut p0 = s;
+                for _ in 0..4 {
+                    p0 = prev_season_start(p0 - 1);
+                    if let Some(v) = hist.get(&(p0 + 77)) {
+                        end = Some(*v);
+                        break;
+                    }
+                }
+                let level = end.unwrap_or(peak);
+                for t in 0..h {
+                    let d = today + t as i64 + 1;
+                    let k = d - (s + 91);
+                    if k < 0 {
+                        continue;
+                    }
+                    for m in 0..3 {
+                        if let Some(tl) = &fp.tail[m] {
+                            sum[m][t] += level[m] * r * fp.finale_bump[m] * F::tail_mean(tl, k, 1.0);
+                        }
+                    }
+                }
+            }
+        }
         sum
     }
 
