@@ -287,6 +287,32 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
     return {m: sum(tot[d][m] for d in days) / n for m in E.MARKETS}, n
 
 
+# A show still airing whose cn/jp series has had no data for this long counts as unmapped in that market
+# (no revenue there) instead of having it inferred from the us market: see `airing_sources`.
+STALE_DAYS = 28
+
+
+def airing_sources(s: E.Show, day: date, markets: dict, mapped: dict[str, bool]) -> dict[str, bool]:
+    """The cn/jp `sources` flags on `day`, given the point-in-time mapping. A show still airing (a long-runner,
+    or fewer episodes aired than announced), premiered at least STALE_DAYS ago, with no value in a market's
+    rebuilt series for the last STALE_DAYS days, is unmapped there: the rebuild reads Bangumi/Annict episode
+    pages, which for many long-runners stop updating (Chiikawa's end in May 2025), and a missing market is
+    otherwise filled from the us level through a relation fitted on new shows' first weeks, which priced some
+    long-runners several times over. A finished show keeps its source: after the finale a missing market is
+    the long tail's (docs/v2-series.md §4)."""
+    out = {m: bool(mapped.get(m)) for m in ("cn", "jp")}
+    if (day - s.first_air).days < STALE_DAYS:
+        return out
+    aired = E.at(s, s.aired, day, 0)
+    if not s.long_runner and s.episodes and aired >= s.episodes:
+        return out
+    rows = markets.get(s.id, {})
+    for m in ("cn", "jp"):
+        if out[m] and not any(m in rows.get((day - timedelta(days=k)).isoformat(), {}) for k in range(STALE_DAYS)):
+            out[m] = False
+    return out
+
+
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
           window_start: date, aud_dated: dict | None = None, sources: dict | None = None,
           relations: dict | None = None, schedules: dict | None = None, airing: dict | None = None) -> dict:
@@ -321,7 +347,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "preair": {m: v for m, v in E.preair_att(s, day, val, aud).items()},
             "prior": E.preair_pit(s, day, val, aud_dated),
             "observed": E.observed_markets(s, day, markets),
-            "sources": {"us": True, **sources.get(s.id, {"cn": False, "jp": False})},
+            "sources": {"us": True, **airing_sources(s, day, markets, sources.get(s.id, {"cn": False, "jp": False}))},
             **({"adult": True} if s.adult else {}),
             **({"promo": True} if s.promo else {}),
             "air_dates": air_dates(s, day),

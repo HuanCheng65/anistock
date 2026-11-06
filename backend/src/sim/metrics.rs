@@ -23,6 +23,8 @@ pub struct DayRow {
     /// dividend per share paid at this day's close (the next day trades ex-dividend)
     pub div: i64,
     pub close: i64,
+    /// the day's opening price: the auction's, else the previous close (`open_ref` at the day's end)
+    pub open: i64,
     pub fair: i64,
     pub heat: f64,
     pub trades: u32,
@@ -44,6 +46,8 @@ pub struct Series {
     pub paths: Vec<(i64, String, Vec<(String, i64, i64, i64)>)>,
     /// market sentiment per day, standard units (empty when the sentiment layer is off)
     pub sentiment: Vec<f64>,
+    /// every stock: (company, [(day, open)]) (the opening gap against the previous close)
+    pub opens: Vec<(i64, Vec<(String, i64)>)>,
 }
 
 pub struct Recorder {
@@ -441,6 +445,7 @@ impl Recorder {
         for c in e.companies().filter(|c| c.status == "listed") {
             if let Some(r) = self.rows.get_mut(&c.id).and_then(|x| x.get_mut(day)) {
                 r.close = c.last_price;
+                r.open = c.open_ref.unwrap_or(c.prev_close);
             }
         }
     }
@@ -1060,6 +1065,7 @@ impl Recorder {
                 group.get(c).unwrap_or(&"").to_string(),
                 rows.iter().map(|(d, r)| (d.clone(), r.close, r.fair, r.div)).collect(),
             ));
+            self.series.opens.push((*c, rows.iter().map(|(d, r)| (d.clone(), r.open)).collect()));
         }
         let mut by_kind: BTreeMap<String, (i64, i64, usize)> = BTreeMap::new();
         for ag in &m.agents {
