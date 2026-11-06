@@ -639,7 +639,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 {"id": 8890, "at": "2026-11-07T01:12:40+08:00", "trading_day": "2026-11-06",
  "kind": "flash", "category": "flash",
  "title": "热度快讯：《航海王》第 1180 集讨论量高于预期 35%",
- "body": "播出 3 小时后的 Bangumi 单集吐槽数。估值随之修正：212.30 → 231.10 星辉。",
+ "body": "播出 3 小时后的 Bangumi 单集吐槽数，与前几集同一时间相比。",
  "stock": {"id": 21, "code": "100123", "title": "航海王"}}
 ```
 `body`、`stock` 可空（`system` 类资讯没有关联股票）。`body` 是展示用的中文文本，里面的金额已经格式化，客户端不解析。
