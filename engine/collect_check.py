@@ -2,7 +2,7 @@
 
     uv run engine/collect_check.py [--day YYYY-MM-DD]
 
-Checks, for the collector's run on DAY (default today, Asia/Shanghai):
+Checks, for the collector's run on DAY (default: the day of its latest run, Asia/Shanghai):
 - every source (bgm, anilist, annict) has a run that day and its last one ended `ok`;
 - each snapshot kind covers at least 90% of the works it covered the day before;
 - AniList trend rows for the previous UTC day cover at least 90% of the media of the day before that;
@@ -32,11 +32,13 @@ MIN_COVER = 0.9
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--day", default=datetime.now(TZ).date().isoformat())
+    ap.add_argument("--day", help="the collection day to check (default: the day of the latest run)")
     args = ap.parse_args()
-    day = args.day
-    prev = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
     col = sqlite3.connect(f"file:{os.environ.get('ANISTOCK_DB', ROOT / 'data' / 'anistock.db')}?mode=ro", uri=True)
+    # by hand before the 06:00 run, "today" has nothing yet: check the latest collection instead
+    day = args.day or (col.execute("SELECT MAX(substr(started_at, 1, 10)) FROM runs").fetchone()[0]
+                       or datetime.now(TZ).date().isoformat())
+    prev = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
     checks: list[tuple[bool, str]] = []
 
     for source in ("bgm", "anilist", "annict"):
