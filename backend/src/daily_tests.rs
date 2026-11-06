@@ -12,6 +12,13 @@ fn cfg() -> Config {
     Config::load_from(&root, |_| None).unwrap()
 }
 
+/// The config with the absolute revenue rule on (off by default until the platform history allows it).
+fn cfg_absolute() -> Config {
+    let mut c = cfg();
+    c.params.get_mut("revenue").and_then(|v| v.as_table_mut()).unwrap().insert("absolute_revenue".into(), toml::Value::Integer(1));
+    c
+}
+
 fn company(id: i64, status: &str, shares: i64, first_air: &str, listed_on: &str) -> Company {
     Company {
         id,
@@ -425,4 +432,118 @@ fn a_newly_mapped_market_posts_one_notice() {
     e.commit();
     assert_eq!(notices(&sink).len(), 1);
     assert_eq!(e.state("sources:1"), Some("111"));
+}
+
+/// Two listed shows and the day's inputs with a platform size averaging `days` days.
+fn platform_case(days: i64) -> (Engine, Inputs) {
+    let (mut e, _sink) = Engine::in_memory(Fees::default(), Rules::default());
+    for k in ["world", "cb", "gov"] {
+        e.create_account(k, k, None, None, None, TS);
+    }
+    for id in [1, 2] {
+        let mut c = company(id, "listed", 10000, "2026-10-01", "2026-09-10");
+        c.episodes = Some(12);
+        e.insert_company(c);
+        for k in ["company", "committee"] {
+            e.create_account(k, k, None, None, Some(id), TS);
+        }
+        let committee = e.account_of("committee", id).unwrap();
+        e.add_shares(committee, id, 10000, 500, "2026-09-10");
+    }
+    for (k, v) in [("rate", "0.03"), ("a_ref", "100000.0"), ("last_closed", "2026-11-07")] {
+        e.set_state(k, v);
+    }
+    let show = |id: i64, us: f64, cn: f64, jp: f64| {
+        serde_json::json!({"id": id, "title_ja": "x", "title_en": null, "studio": null, "first_air": "2026-10-01",
+            "episodes": 12, "episodes_known": true, "long_runner": false, "popularity_end": 9000, "aired": 6,
+            "has_real_data": true, "att": {"us": us, "cn": cn, "jp": jp}, "expected": {"us": us, "cn": cn, "jp": jp}})
+    };
+    let inp = Inputs::parse(
+        &serde_json::to_string(&serde_json::json!({
+            "day": DAY, "cn_titles": {}, "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": days,
+            "shows": [show(1, 3000.0, 30.0, 40.0), show(2, 1200.0, 5.0, 25.0)]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    (e, inp)
+}
+
+#[test]
+fn the_switch_to_absolute_revenue_keeps_the_days_total() {
+    // docs/v2-series.md §6: on the first day the platform size averages enough history, the scale is set so that
+    // the day's total revenue is what the relative rule gives
+    let cfg = cfg_absolute();
+    let (mut a, inp_short) = platform_case(30);
+    let (mut b, inp_long) = platform_case(200);
+    let ra = match a.run_day(&cfg, DAY, TS, &inp_short).unwrap() {
+        CloseOutcome::Closed(s) => s.injected,
+        _ => panic!(),
+    };
+    let rb = match b.run_day(&cfg, DAY, TS, &inp_long).unwrap() {
+        CloseOutcome::Closed(s) => s.injected,
+        _ => panic!(),
+    };
+    assert!(a.platform_rule().is_none());
+    let (pl, scale) = b.platform_rule().expect("switched");
+    assert_eq!(pl, [90000.0, 400.0, 1500.0]);
+    assert!(scale > 0.0);
+    assert!((ra - rb).abs() <= 2, "relative {ra} vs absolute {rb} (cents, per-company rounding)");
+    // the shares differ: absolute revenue is not renormalised to the listed shows
+    let rev = |e: &Engine, id: i64| e.st.company_days.get(&(id, DAY.to_string())).unwrap().revenue;
+    assert_ne!(rev(&a, 1), rev(&b, 1));
+}
+
+#[test]
+fn a_new_season_of_a_listed_series_joins_its_company() {
+    // docs/v2-series.md §3.3: no new shares; a company notice; its attention enters the company's revenue
+    let cfg = cfg_absolute();
+    let (mut e, _) = platform_case(200);
+    let show = |id: i64, first_air: &str, aired: i64, us: f64, series: i64| {
+        serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,
+            "first_air": first_air, "episodes": 12, "episodes_known": true, "long_runner": false,
+            "popularity_end": 9000, "aired": aired, "has_real_data": aired > 0, "series": series,
+            "att": {"us": us, "cn": 0.0, "jp": 0.0}, "expected": {"us": us, "cn": 0.0, "jp": 0.0}})
+    };
+    let inp = |day: &str, s3_us: f64| {
+        Inputs::parse(
+            &serde_json::to_string(&serde_json::json!({
+                "day": day, "cn_titles": {}, "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": 200,
+                "shows": [show(1, "2026-10-01", 6, 3000.0, 1), show(2, "2026-10-01", 6, 1200.0, 2),
+                          show(3, "2026-11-20", 0, s3_us, 1), show(4, "2026-10-15", 3, 800.0, 1),
+                          show(5, "2026-07-01", 12, 100.0, 1)]
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    assert!(matches!(e.run_day(&cfg, DAY, TS, &inp(DAY, 0.0)).unwrap(), CloseOutcome::Closed(_)));
+    assert_eq!(e.st.company_works.get(&3), Some(&1));
+    // (show 2 premiered 2026-10-01, within 60 days, but is of another series: untouched)
+    assert!(e.st.company_works.get(&2).is_none());
+    assert!(e.company(3).is_none(), "no new listing");
+    // an earlier work of the series on air (within 60 days of its premiere) joins too; one long past does not
+    assert_eq!(e.works_of(1), vec![1, 3, 4]);
+    assert!(e.company(5).is_none() && e.st.company_works.get(&5).is_none());
+    // the next day the new season's pre-air attention earns for company 1
+    let day2 = "2026-11-09";
+    assert!(matches!(e.run_day(&cfg, day2, "2026-11-09T06:30:00+08:00", &inp(day2, 500.0)).unwrap(), CloseOutcome::Closed(_)));
+    let (pl, sc) = e.platform_rule().unwrap();
+    let p = Params::from_config(&cfg).unwrap();
+    let one = |us: f64| crate::vfilter::absolute_parts(&[us, 0.0, 0.0], &pl, sc, &p.market_weights, &p)[0];
+    let want = pround((one(3000.0) + one(500.0) + one(800.0)) * 100.0);
+    let got = e.st.company_days.get(&(1, day2.to_string())).unwrap().revenue;
+    assert!((got - want).abs() <= 1, "{got} vs {want}");
+}
+
+#[test]
+fn a_missing_episode_marker_is_not_a_finish_when_the_schedule_has_more() {
+    // 185874: AniList stopped recording episodes at 8 of 10; Bangumi lists episodes 9 and 10
+    let aired: Vec<i64> = (0..8).map(|k| 1000 + 7 * k).collect();
+    let today = 1049 + 14;
+    assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &[]), Some(8));
+    let schedule: Vec<i64> = (0..10).map(|k| 1000 + 7 * k).collect();
+    assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &schedule), Some(10));
+    // a season released at once: the schedule has nothing after the last episode seen
+    assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &aired), Some(8));
 }
