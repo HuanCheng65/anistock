@@ -325,3 +325,23 @@ window of the replay: mean +1.5%, sd 4.5): no dilution of the incumbents at the 
 point-in-time priors against their realised us attention, level-weighted (sum of realised weekly mean / sum of the
 prior's expected level): premiere week 0.91 (summer) / 1.04 (autumn), weeks 1–3 0.74–0.84; per-show means 1.16–1.19 and
 0.85–0.95. The priors are not low in aggregate; if anything big new shows fall short of them after the premiere week.
+
+## Run-up before the finale (v0.6.1, `--runup-only --history`)
+
+Weekly attention aligned on the last episode's air day (week 0 = the finale's week), log relative to the level of weeks
+−6..−4 less that level's drift (weeks −7 → −4):
+
+| | week −3 | week −2 | week −1 | week 0 |
+|---|---|---|---|---|
+| us history, 32 seasons, mean (season-clustered se) | +0.004 (0.007) | +0.011 (0.031) | +0.076 (0.052) | +0.404 (0.068) |
+| us history, season median | +0.012 | +0.056 | +0.119 | +0.492 |
+| us history, odd years / even years (mean) | +0.002 / +0.006 | +0.023 / −0.001 | +0.092 / +0.061 | +0.474 / +0.333 |
+| us calibration (47 shows) | +0.070 (0.033) | +0.096 (0.052) | +0.225 (0.078) | +0.598 (0.096) |
+| cn calibration (41) | −0.132 (0.063) | −0.154 (0.078) | −0.174 (0.107) | −0.122 (0.105) |
+| jp calibration (34) | +0.009 (0.006) | +0.024 (0.008) | +0.045 (0.016) | +0.054 (0.018) |
+
+The history's mean is pulled down by 2018Q2 (week −1: −1.36); the median is used. By heat tercile (history), week −1:
++0.061 / +0.097 / +0.074. `runup`: us [1.127], jp [1.046, 1.024], cn none (flat over weeks −3..0: the reference sits
+high). The finale bump is rebased on the run-up of weeks −2/−3 it was fitted against: jp 0.967 → 0.978. Calibration
+us complete-week log-likelihood −73.39 → −73.11; mean innovation in week −1 +0.062 (0.029) → −0.055 (0.029). Heat
+offsets and partial_us refitted on top (unchanged to the printed precision; held-out forecast slope 0.027).
