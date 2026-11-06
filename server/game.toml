@@ -135,7 +135,8 @@ big_move_window_min = 30
 [margin]
 # 融资融券 (docs/v2-margin.md §11). These are the defaults in backend/src/margin.rs; change a value here to override it.
 enabled = true
-min_days = 7              # days since registration before credit can be opened
+min_days = 0              # days since registration before credit can be opened (0: no wait; the club invite
+                          # code already limits alt accounts, and a default keeps the leaderboard at -100%)
 min_assets = 0.5          # net assets at least this share of initial_cash
 listed_days = 5           # a stock is marginable this many days after listing
 haircut = 0.7             # collateral value of a marginable stock (折算率)
