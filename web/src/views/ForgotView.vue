@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// 找回密码 (docs/v2-account.md §13): a code from the QQ bot (private message, /找回密码), or from the
+// 找回密码 (docs/v2-account.md §13): a code from the QQ bot (private message, /安易 找回密码), or from the
 // operator for an account without 身份验证.
 import { ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, call, errorText } from '../api'
+import { CONTACT_EMAIL, QQ_BOT_URL } from '../contact'
 import BackButton from '../components/BackButton.vue'
 import { useSession } from '../stores/session'
 
@@ -42,7 +43,7 @@ async function submit() {
       <BackButton fallback="/login" />
       <h1 class="serif">找回密码</h1>
     </header>
-    <p class="lede">在 QQ 里私聊机器人，发送“/找回密码”，获取 8 位验证码。</p>
+    <p class="lede">在 QQ 里私聊<a :href="QQ_BOT_URL" target="_blank" rel="noopener">机器人</a>，发送“/安易 找回密码”，获取 8 位验证码。</p>
     <form class="form" @submit.prevent="submit">
       <label class="field">用户名
         <input v-model="username" class="input" autocomplete="username" maxlength="20" />
@@ -56,7 +57,7 @@ async function submit() {
       <p v-if="error" class="msg error" role="alert">{{ error }}</p>
       <button class="btn block" :disabled="busy">{{ busy ? '处理中…' : '重设密码' }}</button>
     </form>
-    <p class="foot">没有完成身份验证的账号，发邮件到 aniex@huanchengfly.top 联系运营者。<RouterLink to="/login" class="back">返回登录</RouterLink></p>
+    <p class="foot">没有完成身份验证的账号，发邮件到 {{ CONTACT_EMAIL }} 联系运营者。<RouterLink to="/login" class="back">返回登录</RouterLink></p>
   </main>
 </template>
 
@@ -65,6 +66,7 @@ async function submit() {
 .head { display: flex; align-items: center; gap: 4px; margin-left: -12px; padding-top: calc(16px + env(safe-area-inset-top, 0px)); }
 .head h1 { font-size: 26px; font-weight: 900; }
 .lede { padding: 14px 0 6px; font-size: 14px; line-height: 1.7; color: var(--ink-2); text-wrap: pretty; }
+.lede a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .form { display: flex; flex-direction: column; gap: 14px; padding-top: 12px; }
 .form .btn { height: 48px; font-size: 16px; margin-top: 4px; }
 .foot { margin: auto 0 28px; padding-top: 28px; font-size: 12px; line-height: 1.6; color: var(--muted); }

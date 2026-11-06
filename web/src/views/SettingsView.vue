@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, call, errorText, type BindCode } from '../api'
+import { QQ_BOT_URL } from '../contact'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
 import { hm } from '../format'
@@ -74,7 +75,7 @@ async function logout() {
   router.push('/')
 }
 
-// ---- 身份验证: a QQ binding today (backend/src/kyc.rs); a one-time code for the bot (/绑定 <码>)
+// ---- 身份验证: a QQ binding today (backend/src/kyc.rs); a one-time code for the bot (/安易 绑定 <码>)
 const code = ref<BindCode | null>(null)
 const busy = ref(false)
 const msg = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
@@ -156,7 +157,7 @@ async function unbind(id: number) {
         </div>
       </template>
       <template v-else>
-        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里私聊机器人，发送“/绑定 绑定码”。完成后也可以通过机器人找回密码。</p>
+        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里私聊<a :href="QQ_BOT_URL" target="_blank" rel="noopener">机器人</a>，发送“/安易 绑定 绑定码”。完成后也可以通过机器人找回密码。</p>
         <div v-if="code" class="code">
           <span class="num big">{{ code.code }}</span>
           <span class="muted">{{ hm(code.expires_at) }} 前有效</span>
@@ -221,6 +222,7 @@ async function unbind(id: number) {
 .opts button[aria-checked="true"] { background: var(--ink); color: var(--ground); font-weight: 700; }
 .acct { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
 .hint { font-size: 13px; color: var(--ink-2); line-height: 1.6; margin: 0 0 10px; }
+.hint a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .code { display: flex; align-items: baseline; gap: 12px; margin: 4px 0 12px; }
 .code .big { font-size: 28px; font-weight: 600; letter-spacing: 0.08em; }
 .code .muted { font-size: 12px; }
