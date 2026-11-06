@@ -1308,13 +1308,17 @@ impl Market {
 
         engine.cancel_all(acct, c, &ts);
         let held = engine.holding(acct, c).map_or(0, |h| h.qty);
+        // its position is signed: shares held less shares owed to the lending pool (it is short only when it
+        // holds none, see below)
+        let short = engine.short_qty(acct, c);
+        let position = held - short;
         let unit_cents = (co.shares as f64 * self.cfg.mm_quote_frac * p).max(self.cfg.mm_quote_min * 100.0).max(1.0);
         let human_half = 0.5f64.powf(dt / (self.cfg.adapt_half_life_min * 60.0));
         let flow_now = engine.player_flow(c);
         let st = self.mms.get_mut(&c).unwrap();
         // adverse selection: what the shares it bought (sold) since the last requote lost by now (markout)
-        let net = st.last_inv.map_or(0, |l| held - l) as f64;
-        st.last_inv = Some(held);
+        let net = st.last_inv.map_or(0, |l| position - l) as f64;
+        st.last_inv = Some(position);
         let markout = if p_prev > 0.0 { net * (p - p_prev) } else { 0.0 };
         st.toxicity = decay * st.toxicity + (1.0 - decay) * (-markout).max(0.0) / unit_cents;
         let toxicity = st.toxicity;
@@ -1325,9 +1329,11 @@ impl Market {
         let fair = co.fair_value as f64;
         let a = self.cfg.mm_anchor_to_price;
         let reference = if fair > 0.0 { (1.0 - a) * fair + a * p } else { p };
-        let inv = engine.available_shares(acct, c);
         let target = self.mm_target(&co).max(1);
-        let x = ((inv - target) as f64 / target as f64).clamp(-1.0, 1.0);
+        // below zero it sells borrowed stock, at most `short_cap` shares: the skew runs on through zero, so
+        // its offers keep shrinking as the short grows (no step at zero)
+        let short_cap = self.short_cap(&co);
+        let x = ((position - target) as f64 / target as f64).clamp(-((target + short_cap) as f64 / target as f64), 1.0);
         let center = reference * (-self.cfg.mm_inventory_skew * 0.1 * x).exp();
         // scheduled information (air windows, fresh events, the first half hour of the session): a dealer
         // widens and quotes smaller while informed flow is likely
@@ -1393,6 +1399,23 @@ impl Market {
                 ask_floor = pa;
             }
         }
+        // selling short (docs/v2-margin.md §8): the same credit account, lending pool, fees, manufactured
+        // dividends and forced liquidation as a player; only in continuous trading, only a marginable stock,
+        // only once it holds none (a credit account cannot sell short a stock it holds). While short, every
+        // bid is a buy to cover (买券还券), up to what it owes.
+        let day = day_of(t);
+        let may_short = short_cap > 0
+            && engine.margin.enabled
+            && !Self::phase_auction(t)
+            && held == 0
+            && engine.margin_ineligible(c, &day).is_none()
+            && engine.credit(acct).is_none_or(|x| x.status == crate::margin::NORMAL);
+        if may_short && engine.credit(acct).is_none() {
+            engine.open_credit_unchecked(acct, &ts);
+        }
+        let mut cover = short;
+        // short sales go in after the bids: once it owes stock, an ordinary buy is refused
+        let mut shorts: Vec<(i64, i64)> = Vec::new();
         let mut last_bid = i64::MAX;
         let mut last_ask = i64::MIN;
         for k in 1..=levels {
@@ -1405,15 +1428,34 @@ impl Market {
                 .min(cash.div_euclid(engine.fees.buy_reserve(bid.max(1), 1).max(1)))
                 .min(room);
             if qb > 0 && bid >= lo && bid >= 1 {
-                self.place(engine, "mm", acct, c, "buy", "limit", qb, Some(bid), t);
-                room -= qb;
+                if short > 0 {
+                    let qc = qb.min(cover);
+                    if qc > 0 && !Self::phase_auction(t) {
+                        self.credit_order(engine, "mm_cover", acct, c, crate::margin::Mode::BuyReturn, qc, bid, t);
+                        cover -= qc;
+                    }
+                } else {
+                    self.place(engine, "mm", acct, c, "buy", "limit", qb, Some(bid), t);
+                    room -= qb;
+                }
             }
-            let qa = ((q as f64 * ask_mult).round() as i64).min(engine.available_shares(acct, c));
-            if qa > 0 && ask <= hi {
-                self.place(engine, "mm", acct, c, "sell", "limit", qa, Some(ask), t);
+            let want = (q as f64 * ask_mult).round() as i64;
+            if held > 0 {
+                let qa = want.min(engine.available_shares(acct, c));
+                if qa > 0 && ask <= hi {
+                    self.place(engine, "mm", acct, c, "sell", "limit", qa, Some(ask), t);
+                }
+            } else if may_short && ask <= hi {
+                shorts.push((ask, want));
             }
             last_bid = bid;
             last_ask = ask;
+        }
+        for (ask, want) in shorts {
+            let qs = want.min(short_cap - engine.short_qty(acct, c)).min(engine.lendable(c));
+            // at or above the last trade (the short-sale price rule)
+            let last = engine.company(c).map_or(0, |x| x.last_price);
+            self.credit_order(engine, "mm_short", acct, c, crate::margin::Mode::ShortSell, qs, ask.max(last), t);
         }
 
         // rights holders (v1 rule): trim when the price runs far above value
@@ -1612,6 +1654,13 @@ impl Market {
     /// Stock the rights holders lend to the market maker (`mm_loan_frac` of the company's shares).
     fn loan_target(&self, co: &crate::model::Company) -> i64 {
         (co.shares as f64 * self.cfg.mm_loan_frac).round() as i64
+    }
+
+    /// The most the market maker sells short (borrowed from the lending pool): the same `mm_loan_frac` of the
+    /// shares the rights holders committed to it. The pool's own limits (`lend_frac`, `stock_cap`), the initial
+    /// margin and the size skew bind before this in practice.
+    fn short_cap(&self, co: &crate::model::Company) -> i64 {
+        self.loan_target(co)
     }
 
     /// The market maker's inventory target: its share of the float plus the stock lent to it.
@@ -1828,3 +1877,7 @@ fn log_uniform(r: [f64; 2], u: f64) -> f64 {
 fn lerp(r: [f64; 2], u: f64) -> f64 {
     r[0] + (r[1] - r[0]) * u
 }
+
+#[cfg(test)]
+#[path = "mm_tests.rs"]
+mod mm_tests;

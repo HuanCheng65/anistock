@@ -316,6 +316,7 @@ impl Engine {
             cx.sum.injected += rev;
             cx.sum.exported += cost;
             cx.sum.taxes += tax;
+            self.note_new_sources(&ts, &day, &c, s);
             if let Some(pa) = prev_aired {
                 if aired > pa {
                     if pa == 0 {
@@ -538,6 +539,37 @@ impl Engine {
         self.snapshot_players(&day, (cx.cfg.game.initial_cash * 100.0).round_ties_even() as i64);
         self.check_invariants()?;
         Ok(rate)
+    }
+
+    /// A market's data source newly mapped to the show (the inputs' `sources` flag turns on): its revenue and
+    /// hidden value in that market are restated from today, so the company posts a notice. The flags last
+    /// seen are kept in the game state (`sources:<company>`); the first sighting only records them, so a
+    /// running game does not post a notice for every show at once.
+    fn note_new_sources(&mut self, ts: &str, day: &str, c: &crate::model::Company, s: &crate::inputs::ShowInputs) {
+        const NAMES: [&str; 3] = ["欧美", "中国", "日本"];
+        let Some(f) = s.sources.as_ref() else { return };
+        let now = [f.us, f.cn, f.jp];
+        let code: String = now.iter().map(|&b| if b { '1' } else { '0' }).collect();
+        let key = format!("sources:{}", c.id);
+        let before: Option<Vec<bool>> = self.state(&key).map(|v| v.chars().map(|ch| ch == '1').collect());
+        if before.as_deref() == Some(&now[..]) {
+            return;
+        }
+        if let Some(before) = before {
+            for m in 0..3 {
+                if now[m] && !before.get(m).copied().unwrap_or(false) {
+                    self.push_news(
+                        ts,
+                        day,
+                        "system",
+                        Some(c.id),
+                        format!("《{}》接入{}市场数据", c.title, NAMES[m]),
+                        format!("{}市场的热度数据从今天起计入营收和估值。", NAMES[m]),
+                    );
+                }
+            }
+        }
+        self.do_set_state(&key, &code);
     }
 
     /// Per-share value in cents from the company's own revenue history (v1 `daily.fair_value`).

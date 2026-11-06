@@ -52,6 +52,8 @@ pub struct Recorder {
     rows: BTreeMap<i64, BTreeMap<String, DayRow>>,
     spreads: HashMap<i64, Vec<f64>>,
     two_sided: HashMap<i64, (u32, u32)>,
+    /// (company, day) -> (samples, samples with no offer, samples with no bid)
+    book_gaps: HashMap<(i64, String), (u32, u32, u32)>,
     events: Vec<(i64, i64, String, i8, f64)>,
     npc: HashSet<i64>,
     mm_accounts: HashSet<i64>,
@@ -173,6 +175,7 @@ impl Recorder {
             rows: BTreeMap::new(),
             spreads: HashMap::new(),
             two_sided: HashMap::new(),
+            book_gaps: HashMap::new(),
             events: Vec::new(),
             npc: npc.clone(),
             mm_accounts,
@@ -279,9 +282,14 @@ impl Recorder {
         self.events.push((ev.company_id, ev.at, ev.kind.clone(), ev.direction, ev.magnitude));
     }
 
-    pub fn sample_spreads(&mut self, e: &Engine, m: &Market, _t: i64) {
+    pub fn sample_spreads(&mut self, e: &Engine, m: &Market, t: i64) {
+        let day = crate::market::day_of(t);
         for c in e.companies().filter(|c| c.status == "listed") {
             let b = e.book(c.id, 1);
+            let gap = self.book_gaps.entry((c.id, day.clone())).or_default();
+            gap.0 += 1;
+            gap.1 += b.asks.is_empty() as u32;
+            gap.2 += b.bids.is_empty() as u32;
             let ent = self.two_sided.entry(c.id).or_default();
             ent.1 += 1;
             if let (Some(bid), Some(ask)) = (b.bids.first(), b.asks.first()) {
@@ -940,6 +948,59 @@ impl Recorder {
                        "fair0": first.map(|r| r.fair), "fair1": last.map(|r| r.fair), "days": rows.len()})
             })
             .collect();
+        // one-sided books: share of the 5-minute samples with no offer (no bid), overall and on the days the
+        // hidden value jumped up (the close before brought a rise of at least `revision_min`, or 20%)
+        let book = {
+            let rmin = m.cfg.revision_min;
+            let mut acc: BTreeMap<&str, (u64, u64, u64)> = BTreeMap::new();
+            let mut worst: Vec<(f64, i64)> = Vec::new();
+            let mut per_c: HashMap<i64, (u64, u64)> = HashMap::new();
+            for ((c, d), (n, na, nb)) in &self.book_gaps {
+                let mut add = |k: &'static str| {
+                    let a = acc.entry(k).or_default();
+                    a.0 += *n as u64;
+                    a.1 += *na as u64;
+                    a.2 += *nb as u64;
+                };
+                add("all");
+                let pc = per_c.entry(*c).or_default();
+                pc.0 += *n as u64;
+                pc.1 += *na as u64;
+                if let Some(rows) = self.rows.get(c) {
+                    let prev = rows.range(..d.clone()).next_back().map(|(_, r)| r.fair);
+                    let prev2 = rows.range(..d.clone()).rev().nth(1).map(|(_, r)| r.fair);
+                    let cur = rows.get(d).map(|r| r.fair);
+                    let up = |a: Option<i64>, b: Option<i64>| match (a, b) {
+                        (Some(a), Some(b)) if a > 0 && b > 0 => (b as f64 / a as f64).ln(),
+                        _ => 0.0,
+                    };
+                    let j0 = up(prev, cur);
+                    let j1 = up(prev2, prev);
+                    if j0 >= rmin {
+                        add("jump_day");
+                    }
+                    if j0 >= 0.2f64.ln_1p() {
+                        add("jump20_day");
+                    }
+                    if j1 >= 0.2f64.ln_1p() {
+                        add("jump20_next_day");
+                    }
+                }
+            }
+            for (c, (n, na)) in &per_c {
+                worst.push((*na as f64 / (*n).max(1) as f64, *c));
+            }
+            worst.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            let mut out = serde_json::Map::new();
+            for (k, (n, na, nb)) in &acc {
+                out.insert(
+                    k.to_string(),
+                    json!({"samples": n, "no_offer": *na as f64 / (*n).max(1) as f64, "no_bid": *nb as f64 / (*n).max(1) as f64}),
+                );
+            }
+            out.insert("worst_no_offer".into(), json!(worst.iter().take(5).map(|(s, c)| json!([c, s])).collect::<Vec<_>>()));
+            serde_json::Value::Object(out)
+        };
         let total_orders: u64 = m.stats.orders.values().sum();
         let session_s = days.len() as f64 * (14.25 * 3600.0);
         let out = json!({
@@ -951,6 +1012,7 @@ impl Recorder {
             "npc_agents": m.agents.len(),
             "trades": self.trades.len(),
             "groups": table,
+            "book": book,
             "npc": npc,
             "market": m.stats,
             "npc_orders_per_s": total_orders as f64 / session_s,
