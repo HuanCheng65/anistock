@@ -121,7 +121,13 @@ pub async fn asset(dist: &Path, rest: &str, method: &Method, headers: &HeaderMap
         return plain(404, "Not Found");
     }
     let inm = headers.get("if-none-match").and_then(|v| v.to_str().ok());
-    file_response(&full, inm).await
+    let mut r = file_response(&full, inm).await;
+    // Vite puts a content hash in every file name under assets/: a changed file is a new URL, so the
+    // browser and Cloudflare's edge may keep these for good (no revalidation round trip on each visit)
+    if r.status() == StatusCode::OK || r.status() == StatusCode::NOT_MODIFIED {
+        r.headers_mut().insert("cache-control", HeaderValue::from_static("public, max-age=31536000, immutable"));
+    }
+    r
 }
 
 /// The SPA catch-all `GET /{path:path}`.
@@ -135,5 +141,8 @@ pub async fn catch_all(dist: &Path, path: &str) -> Response<Body> {
             }
         }
     }
-    file_response(&dist.join("index.html"), None).await
+    // the page names the current asset files: always revalidate it, so a release is picked up at once
+    let mut r = file_response(&dist.join("index.html"), None).await;
+    r.headers_mut().insert("cache-control", HeaderValue::from_static("no-cache"));
+    r
 }

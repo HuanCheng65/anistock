@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, ApiError, call, type Leaderboard, type MarketStatus, type Me, type Rules } from '../api'
 import { onLive } from '../live'
+import type { PowSolution } from '../pow'
 
 export type Period = 'all' | 'week' | 'season'
 
@@ -45,13 +46,18 @@ export const useSession = defineStore('session', () => {
     boards.value[period] = await call(api.GET('/api/v1/leaderboard', { params: { query: { period } } }))
   }
 
-  async function login(username: string, password: string) {
-    me.value = await call(api.POST('/api/v1/auth/login', { body: { username, password } }))
+  /** The registration mode, and a proof-of-work challenge when one is needed now. */
+  function challenge(purpose: 'register' | 'login') {
+    return call(api.GET('/api/v1/auth/challenge', { params: { query: { purpose } } }))
+  }
+
+  async function login(username: string, password: string, pow: PowSolution | null) {
+    me.value = await call(api.POST('/api/v1/auth/login', { body: { username, password, pow } }))
     checked.value = true
   }
 
-  async function register(username: string, password: string, invite: string) {
-    me.value = await call(api.POST('/api/v1/auth/register', { body: { username, password, invite } }))
+  async function register(username: string, password: string, invite: string, pow: PowSolution | null) {
+    me.value = await call(api.POST('/api/v1/auth/register', { body: { username, password, invite: invite || null, pow, agree: true } }))
     checked.value = true
   }
 
@@ -73,5 +79,5 @@ export const useSession = defineStore('session', () => {
     s.last_closed_day = m.last_closed_day
   })
 
-  return { me, status, rules, checked, boards, loadMe, loadStatus, loadRules, loadLeaders, login, register, logout }
+  return { challenge, me, status, rules, checked, boards, loadMe, loadStatus, loadRules, loadLeaders, login, register, logout }
 })

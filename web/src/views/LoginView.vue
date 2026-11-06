@@ -1,43 +1,96 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api'
 import BrandMark from '../components/BrandMark.vue'
 import Tabs from '../components/Tabs.vue'
-import { usePrefs } from '../stores/prefs'
+import { powSupported, solve, type PowSolution } from '../pow'
 import { useSession } from '../stores/session'
 
+type Purpose = 'register' | 'login'
+
 const session = useSession()
-const prefs = usePrefs()
 const router = useRouter()
 const route = useRoute()
-const mode = ref(route.query.invite ? 'register' : 'login')
+const mode = ref<Purpose>(route.query.invite ? 'register' : 'login')
 const username = ref('')
 const password = ref('')
 const invite = ref(typeof route.query.invite === 'string' ? route.query.invite : '')
+const agreed = ref(false)
 const busy = ref(false)
 const error = ref('')
+// open / invite / closed, from the server; unknown until the first challenge arrives
+const registration = ref<string | null>(null)
 const reg = computed(() => mode.value === 'register')
+const needInvite = computed(() => registration.value === 'invite' || (registration.value === null && !!invite.value))
+const closed = computed(() => reg.value && registration.value === 'closed')
 const tabs = [
   { key: 'login', label: '登录' },
   { key: 'register', label: '注册' },
 ]
+
+class Unsupported extends Error {}
+
+// The proof of work is fetched and solved in the background while the form is being filled in.
+let pending: { purpose: Purpose; answer: Promise<PowSolution | null> } | null = null
+
+function prepare(purpose: Purpose) {
+  const answer = (async () => {
+    const r = await session.challenge(purpose)
+    if (purpose === 'register') registration.value = r.registration
+    if (!r.challenge) return null
+    if (!powSupported()) throw new Unsupported()
+    return solve(r.challenge)
+  })()
+  answer.catch(() => {}) // reported when the form is submitted
+  pending = { purpose, answer }
+}
+
+function take(purpose: Purpose): Promise<PowSolution | null> {
+  if (pending?.purpose !== purpose) prepare(purpose)
+  const p = pending!.answer
+  pending = null
+  return p
+}
+
+prepare(mode.value)
+watch(mode, (m) => {
+  error.value = ''
+  prepare(m)
+})
+
+async function attempt(name: string): Promise<void> {
+  const purpose = mode.value
+  const pow = await take(purpose)
+  if (purpose === 'register') await session.register(name, password.value, needInvite.value ? invite.value.trim() : '', pow)
+  else await session.login(name, password.value, pow)
+}
 
 async function submit() {
   error.value = ''
   const name = username.value.trim()
   if (name.length < 2 || name.length > 20) return (error.value = '用户名需为 2–20 个字符')
   if (password.value.length < 6) return (error.value = '密码至少 6 位')
-  if (reg.value && !invite.value.trim()) return (error.value = '填写邀请码，可以向社团管理员索取')
+  if (reg.value && needInvite.value && !invite.value.trim()) return (error.value = '填写邀请码，可以向社团管理员索取')
+  if (reg.value && !agreed.value) return (error.value = '需要同意《用户协议》和《隐私政策》')
   busy.value = true
   try {
-    if (reg.value) await session.register(name, password.value, invite.value.trim())
-    else await session.login(name, password.value)
+    try {
+      await attempt(name)
+    } catch (e) {
+      // the challenge expired, or a surge started since it was fetched: once more with a fresh one
+      if (e instanceof ApiError && (e.code === 'pow_required' || e.code === 'pow_invalid')) await attempt(name)
+      else throw e
+    }
     const next = typeof route.query.next === 'string' ? route.query.next : '/'
-    if (!prefs.onboarded) router.replace({ name: 'welcome', query: { next } })
+    // a new account opens with the account-opening flow; a sign-in only when a document awaits
+    if (reg.value) router.replace({ name: 'welcome', query: { next, new: '1' } })
+    else if (session.me?.pending_documents.length) router.replace({ name: 'welcome', query: { next } })
     else router.replace(next)
   } catch (e) {
-    error.value = e instanceof ApiError ? e.message : '无法完成操作，稍后重试'
+    if (e instanceof Unsupported) error.value = '当前浏览器无法完成验证，在系统浏览器中打开后重试'
+    else error.value = e instanceof ApiError ? e.message : '无法完成操作，稍后重试'
+    prepare(mode.value) // a challenge is spent by its first try
   } finally {
     busy.value = false
   }
@@ -61,15 +114,21 @@ async function submit() {
       <label class="field">密码
         <input class="input" type="password" v-model="password" :autocomplete="reg ? 'new-password' : 'current-password'" :placeholder="reg ? '至少 6 位' : ''" />
       </label>
-      <label v-if="reg" class="field">邀请码
+      <label v-if="reg && needInvite" class="field">邀请码
         <input class="input" v-model="invite" autocomplete="off" />
       </label>
+      <label v-if="reg && !closed" class="agree">
+        <input v-model="agreed" type="checkbox" />
+        <span>已阅读并同意<a href="/legal/terms" target="_blank" rel="noopener">《用户协议》</a>和<a href="/legal/privacy" target="_blank" rel="noopener">《隐私政策》</a></span>
+      </label>
+      <p v-if="closed" class="msg">暂未开放注册</p>
       <p v-if="error" class="msg error" role="alert">{{ error }}</p>
-      <button class="btn block" :disabled="busy">{{ busy ? (reg ? '注册中…' : '登录中…') : reg ? '注册' : '登录' }}</button>
+      <RouterLink v-if="!reg" to="/forgot" class="forgotlink">忘记密码</RouterLink>
+      <button class="btn block" :disabled="busy || closed">{{ busy ? (reg ? '注册中…' : '登录中…') : reg ? '注册' : '登录' }}</button>
     </form>
 
     <p class="foot">
-      <template v-if="reg">注册后获得 100,000 币。</template>游戏币与真实货币无关，不能充值或提现。
+      <template v-if="reg">注册后获得 100,000 星辉。</template>星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。
       <RouterLink to="/" class="look">去看市场</RouterLink>
     </p>
   </main>
@@ -84,6 +143,10 @@ async function submit() {
 .form { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; }
 .form .btn { height: 48px; font-size: 16px; margin-top: 4px; }
 .foot { margin: auto 0 28px; padding-top: 28px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.forgotlink { align-self: flex-end; margin-top: -6px; font-size: 13px; color: var(--ink-2); }
+.agree { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.agree input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }
+.agree a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .look { margin-left: 4px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
 @media (min-width: 1024px) { .brand { padding-top: 120px; } }
 </style>

@@ -25,6 +25,17 @@ const c = computed(() => credit.account)
 const rate = (v: number) => share(v, 2)
 const low = computed(() => c.value?.maintenance_ratio != null && c.value.maintenance_ratio < c.value.call_ratio)
 const owed = computed(() => (c.value ? c.value.debt + c.value.interest : 0))
+// 风险测评, the knowledge test, the margin disclosure (docs/v2-account.md §6); days and net assets: can_open
+const steps = computed(() => {
+  const s = props.me.credit_steps
+  const r = props.me.risk
+  return [
+    { k: 'risk', to: '/assessment/risk', label: `风险测评 ${s.min_level} 及以上`, ok: s.risk_ok, v: r ? (r.valid ? `${r.level} ${r.name}` : '已过期') : '未测评' },
+    { k: 'quiz', to: '/assessment/margin-quiz', label: '融资融券知识测试', ok: s.quiz_passed, v: s.quiz_passed ? '已通过' : '未通过' },
+    { k: 'sign', to: '/legal/margin_disclosure?sign=1', label: '融资融券风险揭示书', ok: s.disclosure_signed, v: s.disclosure_signed ? '已签署' : '未签署' },
+  ]
+})
+const ready = computed(() => steps.value.every((s) => s.ok))
 
 async function open() {
   busy.value = true
@@ -49,7 +60,7 @@ async function repay() {
   error.value = ''
   try {
     const paid = await credit.repay(cents)
-    done.value = `已还款 ${money(paid)} 币`
+    done.value = `已还款 ${money(paid)} 星辉`
     repaying.value = false
     amount.value = ''
   } catch (e) {
@@ -73,10 +84,19 @@ async function repay() {
         <p>融资利率 {{ rate(c.financing_rate) }}，融券费率 {{ rate(c.lending_rate) }}，按日计息。</p>
         <p>维持担保比例低于 {{ share(c.call_ratio) }} 需追加担保物，低于 {{ share(c.liquidate_ratio) }} 强制平仓。</p>
         <p>穿仓后排行的本段收益记为 −100%。</p>
+        <ol class="steps">
+          <li v-for="s in steps" :key="s.k">
+            <RouterLink :to="s.to" class="step" :class="{ ok: s.ok }">
+              <span class="tick" aria-hidden="true"></span>
+              <span class="l">{{ s.label }}</span>
+              <span class="v">{{ s.v }}</span>
+            </RouterLink>
+          </li>
+        </ol>
         <p v-if="error" class="msg error" role="alert">{{ error }}</p>
         <p v-else-if="!c.can_open && c.open_message" class="wait">{{ c.open_message }}</p>
         <div class="acts">
-          <button type="button" class="btn small" :disabled="busy || !c.can_open" @click="open">{{ busy ? '处理中' : '开通' }}</button>
+          <button type="button" class="btn small" :disabled="busy || !c.can_open || !ready" @click="open">{{ busy ? '处理中' : '开通' }}</button>
           <button type="button" class="btn small ghost" :disabled="busy" @click="opening = false; error = ''">取消</button>
         </div>
       </div>
@@ -128,6 +148,13 @@ async function repay() {
 .confirm p:not(.msg) { color: var(--ink-2); }
 .confirm .wait { color: var(--muted); }
 .acts { display: flex; gap: 8px; margin-top: 8px; }
+.steps { margin: 6px 0 0; border-top: 1px solid var(--hair-2); }
+.step { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--hair-2); font-size: 13px; color: var(--ink); }
+.tick { width: 14px; height: 14px; flex: none; border: 1px solid var(--base-line); transition: background-color 0.2s ease, border-color 0.2s ease; }
+.step.ok .tick { background: var(--ink); border-color: var(--ink); box-shadow: inset 0 0 0 3px var(--ground); }
+.step .l { min-width: 0; }
+.step .v { margin-left: auto; font-size: 12px; color: var(--muted); }
+.step.ok .v { color: var(--ink-2); }
 .facts dd.warn { color: var(--danger); }
 .owe { list-style: none; margin: 4px 0 0; padding: 0; border-top: 1px solid var(--hair-2); }
 .owe li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--hair-2); font-size: 13px; }

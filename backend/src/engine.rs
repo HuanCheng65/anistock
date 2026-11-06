@@ -973,6 +973,16 @@ impl Engine {
         Ok(())
     }
 
+    /// A read connection to the engine's database (its committed state), opened on first use; `None` for
+    /// an engine in memory.
+    pub(crate) fn reader_conn(&mut self) -> Option<&rusqlite::Connection> {
+        let path = self.db_path.clone()?;
+        if self.reader.is_none() {
+            self.reader = store::connect(&path).ok();
+        }
+        self.reader.as_ref()
+    }
+
     fn closed_order_owner(&mut self, order_id: i64) -> Option<i64> {
         if order_id <= 0 || order_id > self.st.last_order_id {
             return None;

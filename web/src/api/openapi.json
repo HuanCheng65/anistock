@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "AgreementRequest": {
+        "description": "同意或签署一份文件",
+        "properties": {
+          "doc": {
+            "description": "`terms`、`privacy` 或 `disclosure`",
+            "type": "string"
+          },
+          "signature": {
+            "description": "风险揭示书：输入自己的用户名作为签名；其他文件不需要",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "description": "必须是当前版本",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc",
+          "version"
+        ],
+        "type": "object"
+      },
       "Airing": {
         "properties": {
           "airs_at": {
@@ -101,6 +127,105 @@
         "required": [
           "id",
           "watchers"
+        ],
+        "type": "object"
+      },
+      "AnswersRequest": {
+        "description": "每题所选选项的序号（从 0 开始）",
+        "properties": {
+          "answers": {
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "type": "object"
+      },
+      "Assessment": {
+        "description": "一份测评的题目",
+        "properties": {
+          "kind": {
+            "description": "`risk` 或 `margin-quiz`",
+            "type": "string"
+          },
+          "pass_score": {
+            "description": "知识测试的及格题数；风险测评为 null",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/AssessmentQuestion"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "pass_score",
+          "questions",
+          "version"
+        ],
+        "type": "object"
+      },
+      "AssessmentQuestion": {
+        "properties": {
+          "options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "options",
+          "text"
+        ],
+        "type": "object"
+      },
+      "AssessmentResult": {
+        "properties": {
+          "quiz": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/QuizResult",
+                "description": "知识测试的结果"
+              }
+            ]
+          },
+          "risk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RiskResult",
+                "description": "风险测评的结果"
+              }
+            ]
+          }
+        },
+        "required": [
+          "quiz",
+          "risk"
         ],
         "type": "object"
       },
@@ -227,6 +352,31 @@
         ],
         "type": "object"
       },
+      "AuthChallenge": {
+        "description": "注册模式和验证题目",
+        "properties": {
+          "challenge": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PowChallenge",
+                "description": "不需要验证时为 null"
+              }
+            ]
+          },
+          "registration": {
+            "description": "`open`：开放注册；`invite`：需要邀请码；`closed`：暂停注册",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge",
+          "registration"
+        ],
+        "type": "object"
+      },
       "BangumiAudience": {
         "properties": {
           "collection": {
@@ -337,7 +487,7 @@
             "$ref": "#/components/schemas/Timestamp"
           },
           "display_name": {
-            "description": "打码后的号码",
+            "description": "打码后的 openid（显示用）",
             "type": "string"
           },
           "external_id": {
@@ -451,6 +601,24 @@
           "auction",
           "bids",
           "trading_day"
+        ],
+        "type": "object"
+      },
+      "BotResetRequest": {
+        "description": "机器人为私聊它的 QQ 申请找回密码的验证码",
+        "properties": {
+          "external_id": {
+            "description": "私聊消息里发送者的 openid",
+            "type": "string"
+          },
+          "platform": {
+            "description": "`qq`",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "external_id"
         ],
         "type": "object"
       },
@@ -570,6 +738,22 @@
         ],
         "type": "object"
       },
+      "ChangePasswordRequest": {
+        "description": "修改密码",
+        "properties": {
+          "current_password": {
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "type": "object"
+      },
       "ClawbackBand": {
         "properties": {
           "oversubscribed": {
@@ -584,6 +768,23 @@
         "required": [
           "oversubscribed",
           "public_share"
+        ],
+        "type": "object"
+      },
+      "CloseAccountRequest": {
+        "description": "注销账号",
+        "properties": {
+          "confirm": {
+            "description": "必须为 true",
+            "type": "boolean"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "password",
+          "confirm"
         ],
         "type": "object"
       },
@@ -965,6 +1166,38 @@
         ],
         "type": "object"
       },
+      "CreditSteps": {
+        "description": "开通信用账户的前置步骤（注册天数、净资产在开通时检查）",
+        "properties": {
+          "disclosure_signed": {
+            "description": "签署了当前版本的《融资融券风险揭示书》",
+            "type": "boolean"
+          },
+          "disclosure_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min_level": {
+            "type": "string"
+          },
+          "quiz_passed": {
+            "description": "通过了融资融券知识测试",
+            "type": "boolean"
+          },
+          "risk_ok": {
+            "description": "风险测评有效且不低于 `min_level`",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disclosure_signed",
+          "disclosure_version",
+          "min_level",
+          "quiz_passed",
+          "risk_ok"
+        ],
+        "type": "object"
+      },
       "DividendPaid": {
         "properties": {
           "per_share": {
@@ -998,6 +1231,47 @@
         "required": [
           "max_holding_days",
           "rate"
+        ],
+        "type": "object"
+      },
+      "Eligibility": {
+        "description": "一项资格",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "不符合时的原因，可以直接展示",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "eligible",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "EligibilityState": {
+        "properties": {
+          "ipo": {
+            "$ref": "#/components/schemas/IpoEligibility"
+          },
+          "leaderboard": {
+            "$ref": "#/components/schemas/Eligibility",
+            "description": "排行榜"
+          },
+          "transfer": {
+            "$ref": "#/components/schemas/Eligibility",
+            "description": "财政补贴"
+          }
+        },
+        "required": [
+          "ipo",
+          "leaderboard",
+          "transfer"
         ],
         "type": "object"
       },
@@ -1401,6 +1675,30 @@
         ],
         "type": "object"
       },
+      "IpoEligibility": {
+        "description": "新股认购资格",
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/Money",
+            "description": "认购额度：前几个交易日的日均持仓市值；每支新股的认购金额（数量 × 发行价）不能超过它"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "eligible",
+          "quota",
+          "reason"
+        ],
+        "type": "object"
+      },
       "IpoEnvelope": {
         "properties": {
           "ipo": {
@@ -1680,6 +1978,17 @@
           "password": {
             "type": "string"
           },
+          "pow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PowSolution",
+                "description": "登录请求过多时需要（`GET /auth/challenge?purpose=login` 返回题目时）"
+              }
+            ]
+          },
           "username": {
             "type": "string"
           }
@@ -1956,6 +2265,10 @@
           "cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "开户时间"
+          },
           "credit_status": {
             "description": "信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null",
             "type": [
@@ -1963,12 +2276,20 @@
               "null"
             ]
           },
+          "credit_steps": {
+            "$ref": "#/components/schemas/CreditSteps",
+            "description": "开通信用账户还需要的步骤"
+          },
           "deposit_rate": {
             "format": "double",
             "type": "number"
           },
           "dividends": {
             "$ref": "#/components/schemas/Money"
+          },
+          "eligibility": {
+            "$ref": "#/components/schemas/EligibilityState",
+            "description": "财政补贴、新股认购、排行榜的资格"
           },
           "frozen_cash": {
             "$ref": "#/components/schemas/Money"
@@ -1984,8 +2305,26 @@
             "$ref": "#/components/schemas/Money",
             "description": "融资融券负债"
           },
+          "pending_documents": {
+            "description": "还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户",
+            "items": {
+              "$ref": "#/components/schemas/PendingDocument"
+            },
+            "type": "array"
+          },
           "restructure": {
             "$ref": "#/components/schemas/RestructureState"
+          },
+          "risk": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RiskResult",
+                "description": "最近一次风险测评；没有测评过时为 null"
+              }
+            ]
           },
           "stock_value": {
             "$ref": "#/components/schemas/Money"
@@ -2004,24 +2343,34 @@
           },
           "username": {
             "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/Verification",
+            "description": "身份验证"
           }
         },
         "required": [
           "available_cash",
           "cash",
+          "created_at",
           "credit_status",
+          "credit_steps",
           "deposit_rate",
           "dividends",
+          "eligibility",
           "frozen_cash",
           "id",
           "initial_cash",
           "liabilities",
+          "pending_documents",
           "restructure",
+          "risk",
           "stock_value",
           "total_assets",
           "total_return",
           "trading_day",
-          "username"
+          "username",
+          "verification"
         ],
         "type": "object"
       },
@@ -2037,7 +2386,7 @@
         "type": "object"
       },
       "Money": {
-        "description": "金额，单位：分（1 币 = 100 分）。显示时除以 100。",
+        "description": "金额，单位：分（1 星辉 = 100 分）。显示时除以 100。",
         "format": "int64",
         "type": "integer"
       },
@@ -2386,6 +2735,24 @@
         ],
         "type": "string"
       },
+      "PendingDocument": {
+        "description": "一份待同意或签署的文件",
+        "properties": {
+          "doc": {
+            "description": "`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书",
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc",
+          "version"
+        ],
+        "type": "object"
+      },
       "Phase": {
         "description": "市场阶段（封闭）",
         "enum": [
@@ -2572,6 +2939,75 @@
         ],
         "type": "object"
       },
+      "PowChallenge": {
+        "description": "验证题目：原样随 `pow.challenge` 交回",
+        "properties": {
+          "algorithm": {
+            "description": "固定为 `PBKDF2-SHA-256`",
+            "type": "string"
+          },
+          "cost": {
+            "description": "PBKDF2 迭代次数",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expires": {
+            "description": "过期时间（Unix 秒）",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max": {
+            "description": "答案在 `[0, max)` 之内",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "purpose": {
+            "description": "`register` 或 `login`",
+            "type": "string"
+          },
+          "salt": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "target": {
+            "description": "PBKDF2-SHA-256(password = 答案的十进制字符串, salt = `salt` 的 UTF-8 字节, iterations = `cost`, 32 字节) 的十六进制",
+            "type": "string"
+          }
+        },
+        "required": [
+          "algorithm",
+          "cost",
+          "expires",
+          "max",
+          "purpose",
+          "salt",
+          "signature",
+          "target"
+        ],
+        "type": "object"
+      },
+      "PowSolution": {
+        "description": "验证答案",
+        "properties": {
+          "challenge": {
+            "$ref": "#/components/schemas/PowChallenge"
+          },
+          "number": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "challenge",
+          "number"
+        ],
+        "type": "object"
+      },
       "PublicTrade": {
         "properties": {
           "at": {
@@ -2624,6 +3060,61 @@
           "has_more",
           "items",
           "next_cursor"
+        ],
+        "type": "object"
+      },
+      "QuizResult": {
+        "properties": {
+          "pass_score": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "review": {
+            "items": {
+              "$ref": "#/components/schemas/QuizReview"
+            },
+            "type": "array"
+          },
+          "score": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pass_score",
+          "passed",
+          "review",
+          "score",
+          "total"
+        ],
+        "type": "object"
+      },
+      "QuizReview": {
+        "description": "一题的批改",
+        "properties": {
+          "answer": {
+            "description": "正确选项的序号",
+            "format": "int64",
+            "type": "integer"
+          },
+          "correct": {
+            "type": "boolean"
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "answer",
+          "correct",
+          "explanation"
         ],
         "type": "object"
       },
@@ -2901,7 +3392,15 @@
       },
       "RegisterRequest": {
         "properties": {
+          "agree": {
+            "description": "同意《用户协议》和《隐私政策》，必须为 true",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "invite": {
+            "description": "只在邀请注册模式下需要",
             "type": [
               "string",
               "null"
@@ -2909,6 +3408,17 @@
           },
           "password": {
             "type": "string"
+          },
+          "pow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PowSolution",
+                "description": "`GET /auth/challenge?purpose=register` 返回题目时必填"
+              }
+            ]
           },
           "username": {
             "type": "string"
@@ -2948,6 +3458,49 @@
         "required": [
           "credit",
           "paid"
+        ],
+        "type": "object"
+      },
+      "ResetCode": {
+        "description": "找回密码的验证码（10 分钟有效，只能用一次）",
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/UserRef",
+            "description": "绑定的账号"
+          },
+          "code": {
+            "description": "`K7Q3-9MZD`",
+            "type": "string"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "account",
+          "code",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "ResetPasswordRequest": {
+        "description": "用验证码重设密码",
+        "properties": {
+          "code": {
+            "description": "机器人发送的 8 位验证码，大小写和连字符不限",
+            "type": "string"
+          },
+          "new_password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "code",
+          "new_password"
         ],
         "type": "object"
       },
@@ -3073,6 +3626,51 @@
         },
         "required": [
           "quantity"
+        ],
+        "type": "object"
+      },
+      "RiskResult": {
+        "description": "风险测评结果",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "level": {
+            "description": "`C1`..`C5`",
+            "type": "string"
+          },
+          "motto": {
+            "description": "结果卡上的一句话",
+            "type": "string"
+          },
+          "name": {
+            "description": "保守型、稳健型、平衡型、积极型、激进型",
+            "type": "string"
+          },
+          "score": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "taken_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "valid": {
+            "description": "是否仍在有效期内",
+            "type": "boolean"
+          },
+          "valid_until": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "description",
+          "level",
+          "motto",
+          "name",
+          "score",
+          "taken_at",
+          "valid",
+          "valid_until"
         ],
         "type": "object"
       },
@@ -3840,6 +4438,26 @@
         ],
         "type": "object"
       },
+      "Verification": {
+        "description": "身份验证（docs/v2-account.md §2）",
+        "properties": {
+          "method": {
+            "description": "验证方式：`qq`（绑定 QQ）；未验证时为 null",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "method",
+          "verified"
+        ],
+        "type": "object"
+      },
       "Work": {
         "properties": {
           "discussion": {
@@ -4523,7 +5141,7 @@
     },
     "securitySchemes": {
       "bot": {
-        "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<QQ号> 代表已绑定的玩家",
+        "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家",
         "scheme": "bearer",
         "type": "http"
       }
@@ -4539,6 +5157,90 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/assessments/{kind}": {
+      "get": {
+        "operationId": "questions",
+        "parameters": [
+          {
+            "description": "risk（风险测评）或 margin-quiz（融资融券知识测试）",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Assessment"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "测评题目",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/auth/challenge": {
+      "get": {
+        "operationId": "challenge",
+        "parameters": [
+          {
+            "description": "register 或 login",
+            "in": "query",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthChallenge"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "注册模式和验证题目",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "operationId": "login",
@@ -4599,6 +5301,47 @@
           }
         },
         "summary": "退出登录",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password-reset": {
+      "post": {
+        "operationId": "reset",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "用验证码重设密码（忘记密码）",
         "tags": [
           "auth"
         ]
@@ -4705,7 +5448,7 @@
             }
           },
           {
-            "description": "QQ 号",
+            "description": "私聊消息里发送者的 openid",
             "in": "path",
             "name": "external_id",
             "required": true,
@@ -4735,6 +5478,47 @@
           }
         ],
         "summary": "机器人解除绑定（群里 /解绑）",
+        "tags": [
+          "bot"
+        ]
+      }
+    },
+    "/api/v1/bot/password-resets": {
+      "post": {
+        "operationId": "bot_issue",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResetCode"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "为绑定的账号生成找回密码的验证码（机器人）",
         "tags": [
           "bot"
         ]
@@ -5188,6 +5972,38 @@
       }
     },
     "/api/v1/me": {
+      "delete": {
+        "operationId": "close",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloseAccountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "已注销"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "注销账号",
+        "tags": [
+          "account"
+        ]
+      },
       "get": {
         "operationId": "me",
         "responses": {
@@ -5213,6 +6029,99 @@
           }
         },
         "summary": "我的账户",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/agreements": {
+      "post": {
+        "operationId": "sign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgreementRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "同意或签署文件",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/assessments/{kind}": {
+      "post": {
+        "operationId": "submit",
+        "parameters": [
+          {
+            "description": "risk 或 margin-quiz",
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssessmentResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "提交风险测评或知识测试",
         "tags": [
           "account"
         ]
@@ -5779,6 +6688,47 @@
           }
         },
         "summary": "一笔委托",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/password": {
+      "post": {
+        "operationId": "change",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "修改密码",
         "tags": [
           "account"
         ]

@@ -40,6 +40,7 @@ const podium = computed(() => {
 })
 const rest = computed(() => (podium.value.length ? rows.value.slice(3) : rows.value))
 const mine = (id: number) => id === session.me?.id
+const unranked = computed(() => (session.me && !session.me.eligibility.leaderboard.eligible ? session.me.eligibility.leaderboard.reason : null))
 </script>
 
 <template>
@@ -52,6 +53,7 @@ const mine = (id: number) => id === session.me?.id
       <h1 class="pagetitle desk-only">排行</h1>
       <Tabs v-model="periodModel" :items="periods" label="排行周期" class="ptabs gutter"><span v-if="since" class="since num">{{ since }}</span></Tabs>
       <EmptyState v-if="error && !board" :text="error" action="重试" tone="error" @act="refresh" />
+      <p v-if="unranked" class="unranked gutter">{{ unranked }}</p>
       <section v-if="podium.length" class="podium gutter">
         <div v-for="p in podium" :key="p.rank" class="pod">
           <span class="nm clamp1" :class="{ me: mine(p.user.id) }">{{ p.user.username }}</span>
@@ -67,12 +69,16 @@ const mine = (id: number) => id === session.me?.id
         <span class="num">{{ money(r.total_assets) }}</span>
         <span class="num" :class="dir(r.return)">{{ pct(r.return) }}</span>
       </div>
-      <EmptyState v-if="board && !rows.length" text="暂无玩家" action="注册" to="/login" />
+      <template v-if="board && !rows.length">
+        <EmptyState v-if="session.me" text="暂无上榜玩家" />
+        <EmptyState v-else text="暂无上榜玩家" action="注册" to="/login" />
+      </template>
     </div>
   </main>
 </template>
 
 <style scoped>
+.unranked { padding-top: 10px; padding-bottom: 10px; font-size: 13px; color: var(--ink-2); border-bottom: 1px solid var(--hair); }
 .ptabs { gap: 20px; }
 .since { margin-left: auto; font-size: 12px; color: var(--muted); align-self: center; }
 .podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; padding-top: 22px; border-bottom: 1px solid var(--rule); }

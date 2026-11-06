@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-/// 金额，单位：分（1 币 = 100 分）。显示时除以 100。
+/// 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(transparent)]
 #[schema(value_type = i64, format = Int64)]
@@ -839,6 +839,193 @@ pub struct Me {
     pub restructure: RestructureState,
     /// 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null
     pub credit_status: Option<String>,
+    /// 开户时间
+    pub created_at: Timestamp,
+    /// 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户
+    pub pending_documents: Vec<PendingDocument>,
+    /// 身份验证
+    pub verification: Verification,
+    /// 财政补贴、新股认购、排行榜的资格
+    pub eligibility: EligibilityState,
+    /// 最近一次风险测评；没有测评过时为 null
+    pub risk: Option<RiskResult>,
+    /// 开通信用账户还需要的步骤
+    pub credit_steps: CreditSteps,
+}
+
+/// 风险测评结果
+#[derive(Serialize, ToSchema, Clone)]
+pub struct RiskResult {
+    /// `C1`..`C5`
+    pub level: String,
+    /// 保守型、稳健型、平衡型、积极型、激进型
+    pub name: String,
+    pub description: String,
+    /// 结果卡上的一句话
+    pub motto: String,
+    pub score: i64,
+    pub taken_at: Timestamp,
+    pub valid_until: TradingDay,
+    /// 是否仍在有效期内
+    pub valid: bool,
+}
+
+/// 开通信用账户的前置步骤（注册天数、净资产在开通时检查）
+#[derive(Serialize, ToSchema, Clone)]
+pub struct CreditSteps {
+    /// 风险测评有效且不低于 `min_level`
+    pub risk_ok: bool,
+    pub min_level: String,
+    /// 通过了融资融券知识测试
+    pub quiz_passed: bool,
+    /// 签署了当前版本的《融资融券风险揭示书》
+    pub disclosure_signed: bool,
+    pub disclosure_version: i64,
+}
+
+/// 一份测评的题目
+#[derive(Serialize, ToSchema)]
+pub struct Assessment {
+    /// `risk` 或 `margin-quiz`
+    pub kind: String,
+    pub version: i64,
+    /// 知识测试的及格题数；风险测评为 null
+    pub pass_score: Option<i64>,
+    pub questions: Vec<AssessmentQuestion>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AssessmentQuestion {
+    pub text: String,
+    pub options: Vec<String>,
+}
+
+/// 每题所选选项的序号（从 0 开始）
+#[derive(Deserialize, ToSchema)]
+pub struct AnswersRequest {
+    pub answers: Vec<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AssessmentResult {
+    /// 风险测评的结果
+    pub risk: Option<RiskResult>,
+    /// 知识测试的结果
+    pub quiz: Option<QuizResult>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct QuizResult {
+    pub score: i64,
+    pub total: i64,
+    pub pass_score: i64,
+    pub passed: bool,
+    pub review: Vec<QuizReview>,
+}
+
+/// 一题的批改
+#[derive(Serialize, ToSchema)]
+pub struct QuizReview {
+    pub correct: bool,
+    /// 正确选项的序号
+    pub answer: i64,
+    pub explanation: String,
+}
+
+/// 修改密码
+#[derive(Deserialize, ToSchema)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// 用验证码重设密码
+#[derive(Deserialize, ToSchema)]
+pub struct ResetPasswordRequest {
+    pub username: String,
+    /// 机器人发送的 8 位验证码，大小写和连字符不限
+    pub code: String,
+    pub new_password: String,
+}
+
+/// 机器人为私聊它的 QQ 申请找回密码的验证码
+#[derive(Deserialize, ToSchema)]
+pub struct BotResetRequest {
+    /// `qq`
+    pub platform: String,
+    /// 私聊消息里发送者的 openid
+    pub external_id: String,
+}
+
+/// 找回密码的验证码（10 分钟有效，只能用一次）
+#[derive(Serialize, ToSchema)]
+pub struct ResetCode {
+    /// `K7Q3-9MZD`
+    pub code: String,
+    pub expires_at: Timestamp,
+    /// 绑定的账号
+    pub account: UserRef,
+}
+
+/// 注销账号
+#[derive(Deserialize, ToSchema)]
+pub struct CloseAccountRequest {
+    pub password: String,
+    /// 必须为 true
+    pub confirm: bool,
+}
+
+/// 身份验证（docs/v2-account.md §2）
+#[derive(Serialize, ToSchema, Clone)]
+pub struct Verification {
+    pub verified: bool,
+    /// 验证方式：`qq`（绑定 QQ）；未验证时为 null
+    pub method: Option<String>,
+}
+
+/// 一项资格
+#[derive(Serialize, ToSchema, Clone)]
+pub struct Eligibility {
+    pub eligible: bool,
+    /// 不符合时的原因，可以直接展示
+    pub reason: Option<String>,
+}
+
+/// 新股认购资格
+#[derive(Serialize, ToSchema, Clone)]
+pub struct IpoEligibility {
+    pub eligible: bool,
+    pub reason: Option<String>,
+    /// 认购额度：前几个交易日的日均持仓市值；每支新股的认购金额（数量 × 发行价）不能超过它
+    pub quota: Money,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct EligibilityState {
+    /// 财政补贴
+    pub transfer: Eligibility,
+    pub ipo: IpoEligibility,
+    /// 排行榜
+    pub leaderboard: Eligibility,
+}
+
+/// 一份待同意或签署的文件
+#[derive(Serialize, ToSchema, Clone)]
+pub struct PendingDocument {
+    /// `terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书
+    pub doc: String,
+    pub version: i64,
+}
+
+/// 同意或签署一份文件
+#[derive(Deserialize, ToSchema)]
+pub struct AgreementRequest {
+    /// `terms`、`privacy` 或 `disclosure`
+    pub doc: String,
+    /// 必须是当前版本
+    pub version: i64,
+    /// 风险揭示书：输入自己的用户名作为签名；其他文件不需要
+    pub signature: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -994,13 +1181,29 @@ pub struct Leaderboard {
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
+    /// 只在邀请注册模式下需要
     pub invite: Option<String>,
+    /// `GET /auth/challenge?purpose=register` 返回题目时必填
+    pub pow: Option<super::pow::PowSolution>,
+    /// 同意《用户协议》和《隐私政策》，必须为 true
+    pub agree: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    /// 登录请求过多时需要（`GET /auth/challenge?purpose=login` 返回题目时）
+    pub pow: Option<super::pow::PowSolution>,
+}
+
+/// 注册模式和验证题目
+#[derive(Serialize, ToSchema)]
+pub struct AuthChallenge {
+    /// `open`：开放注册；`invite`：需要邀请码；`closed`：暂停注册
+    pub registration: String,
+    /// 不需要验证时为 null
+    pub challenge: Option<super::pow::PowChallenge>,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -1022,7 +1225,7 @@ pub struct Binding {
     pub id: i64,
     pub platform: String,
     pub external_id: String,
-    /// 打码后的号码
+    /// 打码后的 openid（显示用）
     pub display_name: String,
     pub scopes: Vec<String>,
     pub created_at: Timestamp,

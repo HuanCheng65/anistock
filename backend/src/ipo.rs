@@ -52,7 +52,7 @@ impl Engine {
             let released = self.ipo_application(company_id, account_id).map_or(0, |a| a.frozen);
             if self.available_cash(account_id) + released < frozen {
                 return Err(OrderError(format!(
-                    "可用资金不足：认购 {} 股需要冻结 {} 币",
+                    "可用资金不足：认购 {} 股需要冻结 {} 星辉",
                     int_grouped(qty),
                     fixed_grouped(frozen as f64 / 100.0, 2)
                 )));

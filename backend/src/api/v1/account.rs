@@ -33,7 +33,7 @@ pub fn trading_day_of(st: &AppState, t: &str) -> String {
 fn restructure_reason(r: &crate::restructure::Refusal) -> (&'static str, String) {
     use crate::restructure::Refusal::*;
     match r {
-        NotPoor(c) => ("not_poor", format!("总资产低于 {} 币才能申请重整", error::coins(*c).trim_end_matches(".00"))),
+        NotPoor(c) => ("not_poor", format!("总资产低于 {} 星辉才能申请重整", error::coins(*c).trim_end_matches(".00"))),
         ThisSeason => ("this_season", "本季已经重整过一次".into()),
         MarketClosed => ("market_closed", "连续交易时段才能申请重整".into()),
         Margin => ("margin_debt", "先了结融资融券负债才能申请重整".into()),
@@ -66,13 +66,17 @@ pub fn stock_value(c: &Connection, id: i64) -> R<i64> {
 
 /// The `Me` of an account; `unauthenticated` when it is not a player.
 pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
-    let row: Option<(String, i64, i64)> = c
-        .query_row("SELECT username, cash, cash_frozen FROM accounts WHERE id=? AND kind='player'", [id], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    let row: Option<(String, i64, i64, String)> = c
+        .query_row("SELECT username, cash, cash_frozen, created_at FROM accounts WHERE id=? AND kind='player'", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
         })
         .optional()
         .map_err(sql)?;
-    let (username, cash, frozen) = row.ok_or_else(error::unauthenticated)?;
+    let (username, cash, frozen, created_at) = row.ok_or_else(error::unauthenticated)?;
+    let pending_documents = pending_documents(&st.cfg, c, id)?;
+    let (verification, eligibility) = eligibility_of(st, c, id, &created_at)?;
+    let risk = super::assess::risk_of(st, c, id)?;
+    let credit_steps = super::assess::credit_steps(st, c, id)?;
     let stock = stock_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
     let total = cash + stock - liab;
@@ -115,10 +119,97 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         deposit_rate: r6(deposit_rate(&st.cfg, rate)),
         restructure: RestructureState { count, eligible: eligible.is_ok(), reason, message },
         credit_status,
+        created_at: ts(created_at),
+        pending_documents,
+        verification,
+        eligibility,
+        risk,
+        credit_steps,
     })
 }
 
-async fn load_me(st: &Arc<AppState>, id: i64) -> R<Me> {
+/// 身份验证 and the three gates it opens (crate::kyc).
+pub fn eligibility_of(st: &AppState, c: &Connection, id: i64, created_at: &str) -> R<(Verification, EligibilityState)> {
+    use crate::kyc;
+    let r = &st.cfg.eligibility;
+    let today = st.clock.today();
+    let method = kyc::method(c, id).map_err(sql)?;
+    let verified = method.is_some();
+    let gate = |g: kyc::Gate, what: &str| Eligibility { eligible: g == kyc::Gate::Open, reason: kyc::reason(&g, what) };
+    let transfer = gate(kyc::transfer_gate(c, r, id, verified, created_at, &today).map_err(sql)?, "领取财政补贴");
+    let leaderboard = gate(kyc::rank_gate(c, r, id, verified, created_at, &today).map_err(sql)?, "进入排行");
+    let quota = kyc::ipo_quota(c, r, id, &today).map_err(sql)?;
+    let g = kyc::ipo_gate(r, verified, quota);
+    let ipo = IpoEligibility { eligible: g == kyc::Gate::Open, reason: kyc::reason(&g, "认购新股"), quota: m(quota) };
+    Ok((Verification { verified, method }, EligibilityState { transfer, ipo, leaderboard }))
+}
+
+/// The current documents `id` has not accepted yet.
+pub fn pending_documents(cfg: &crate::config::Config, c: &Connection, id: i64) -> R<Vec<PendingDocument>> {
+    let mut q = c.prepare_cached("SELECT 1 FROM account_agreements WHERE account_id=? AND doc=? AND version=?").map_err(sql)?;
+    let mut out = Vec::new();
+    for (doc, version) in &cfg.documents {
+        if !q.exists(rusqlite::params![id, doc, version]).map_err(sql)? {
+            out.push(PendingDocument { doc: doc.clone(), version: *version });
+        }
+    }
+    Ok(out)
+}
+
+/// Orders, subscriptions and opening credit need every current document accepted (docs/v2-account.md §8).
+pub async fn require_signed(st: &Arc<AppState>, id: i64) -> R<()> {
+    let st2 = st.clone();
+    let pending = read(st, move |c| pending_documents(&st2.cfg, c, id)).await?;
+    if pending.is_empty() { Ok(()) } else { Err(error::agreement_required()) }
+}
+
+fn record_agreement(st: &AppState, id: i64, doc: &str, version: i64, signature: Option<&str>) -> R<()> {
+    super::bind::side_exec(
+        st,
+        "INSERT OR IGNORE INTO account_agreements(account_id, doc, version, signed_at, signature) VALUES (?,?,?,?,?)",
+        rusqlite::params![id, doc, version, st.clock.ts(), signature],
+    )?;
+    Ok(())
+}
+
+/// 同意或签署文件
+#[utoipa::path(post, path = "/api/v1/me/agreements", tag = "account",
+    request_body = AgreementRequest,
+    responses((status = 200, body = Me), (status = "default", body = ErrorBody)))]
+pub async fn sign(
+    State(st): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Json<Me>> {
+    let id = caller.player()?;
+    let b = json_body(&headers, &body)?;
+    let doc = need(body_str(&b, "doc")?, "doc")?;
+    let version = need(body_int(&b, "version")?, "version")?;
+    let signature = body_str(&b, "signature")?;
+    let current = match st.cfg.documents.iter().find(|(d, _)| *d == doc) {
+        Some((_, v)) => *v,
+        None if doc == "margin_disclosure" => st.cfg.margin_disclosure,
+        None => return Err(error::invalid(vec![error::not_allowed("doc")])),
+    };
+    if version != current {
+        return Err(E::new(409, "document_outdated", "文件已更新，刷新页面后重新阅读"));
+    }
+    let me = load_me(&st, id).await?;
+    let signature = if doc == "disclosure" || doc == "margin_disclosure" {
+        let typed = signature.as_deref().map(str::trim).unwrap_or("");
+        if typed != me.username {
+            return Err(error::invalid(vec![error::field("signature", "mismatch", "签名需与用户名一致")]));
+        }
+        Some(typed.to_string())
+    } else {
+        None
+    };
+    record_agreement(&st, id, &doc, version, signature.as_deref())?;
+    load_me(&st, id).await.map(Json)
+}
+
+pub(super) async fn load_me(st: &Arc<AppState>, id: i64) -> R<Me> {
     let st2 = st.clone();
     read(st, move |c| me_of(&st2, c, id)).await
 }
@@ -394,6 +485,7 @@ pub async fn place(
     body: Bytes,
 ) -> R<Response> {
     let me = caller.player()?;
+    require_signed(&st, me).await?;
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::to_string);
     let Some(k) = key else { return place_new(&st, me, &headers, &body).await.map(super::created) };
     if k.is_empty() || k.len() > 64 {
@@ -502,7 +594,7 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
                 return Err(E::new(
                     422,
                     "price_out_of_range",
-                    format!("价格超出范围：不能超过昨收的 {} 倍（{} 币）", e.rules.sanity_mult, error::coins(hi)),
+                    format!("价格超出范围：不能超过昨收的 {} 倍（{} 星辉）", e.rules.sanity_mult, error::coins(hi)),
                 )
                 .details(json!({"max": hi, "min": lo})));
             }
@@ -510,7 +602,7 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
                 let need_cash = e.fees.buy_reserve(p, qty);
                 let avail = e.available_cash(me);
                 if avail < need_cash {
-                    return Err(E::new(422, "insufficient_cash", format!("可用资金不足：需要 {} 币", error::coins(need_cash)))
+                    return Err(E::new(422, "insufficient_cash", format!("可用资金不足：需要 {} 星辉", error::coins(need_cash)))
                         .details(json!({"required": need_cash, "available": avail})));
                 }
             }
@@ -671,6 +763,7 @@ pub fn reason_label(reason: &str) -> String {
         "ipo" => "新股认购缴款",
         "ipo_refund" => "认购退款",
         "restructure" => "破产重整",
+        "account_closed" => "注销账号",
         "trade" => "成交",
         "margin_loan" => "融资借款",
         "margin_repay" => "融资还款",
@@ -808,6 +901,7 @@ pub async fn subscribe(
     body: Bytes,
 ) -> R<Json<SubscriptionResponse>> {
     let me = caller.player()?;
+    require_signed(&st, me).await?;
     let id = super::path_id(&raw, "id")?;
     let b = json_body(&headers, &body)?;
     let qty = need(body_int(&b, "quantity")?, "quantity")?;
@@ -817,7 +911,18 @@ pub async fn subscribe(
     if qty > super::market::ORDER_QTY_MAX {
         return Err(error::invalid(vec![error::too_large("quantity", super::market::ORDER_QTY_MAX)]));
     }
+    // 身份验证, and the quota of A-share 市值配售 (crate::kyc)
+    let st2 = st.clone();
+    let (verified, quota) = read(&st, move |c| -> R<(bool, i64)> {
+        let verified = crate::kyc::method(c, me).map_err(sql)?.is_some();
+        Ok((verified, crate::kyc::ipo_quota(c, &st2.cfg.eligibility, me, &st2.clock.today()).map_err(sql)?))
+    })
+    .await?;
+    if st.cfg.eligibility.require_kyc && !verified {
+        return Err(error::verification_required("认购新股"));
+    }
     let (d, t) = (st.clock.today(), st.clock.ts());
+    let days = st.cfg.eligibility.ipo_mv_days;
     let frozen = engine(&st, move |ctx| -> R<i64> {
         let e = &mut ctx.engine;
         let co = e.company(id).cloned().filter(|c| c.sub_start.as_deref().is_some_and(|s| !s.is_empty()));
@@ -827,6 +932,14 @@ pub async fn subscribe(
             return Err(E::new(422, "ipo_not_open", format!("不在认购期（认购时间是 {start} 至 {end}）"))
                 .details(json!({"sub_start": start, "sub_end": end})));
         }
+        if co.ipo_price.saturating_mul(qty) > quota {
+            return Err(E::new(
+                422,
+                "ipo_quota_exceeded",
+                format!("认购金额超过认购额度 {} 星辉（前 {days} 个交易日的日均持仓市值）", error::coins(quota)),
+            )
+            .details(json!({"quota": quota, "max_quantity": if co.ipo_price > 0 { quota / co.ipo_price } else { 0 }})));
+        }
         let need_cash = e.fees.buy_reserve(co.ipo_price, qty);
         let released = e.ipo_application(id, me).map_or(0, |a| a.frozen);
         let avail = e.available_cash(me) + released;
@@ -834,7 +947,7 @@ pub async fn subscribe(
             return Err(E::new(
                 422,
                 "insufficient_cash",
-                format!("可用资金不足：认购 {} 股需要冻结 {} 币", error::group(qty), error::coins(need_cash)),
+                format!("可用资金不足：认购 {} 股需要冻结 {} 星辉", error::group(qty), error::coins(need_cash)),
             )
             .details(json!({"required": need_cash, "available": avail})));
         }
@@ -899,9 +1012,19 @@ fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i6
 /// Every player ranked: `period_start: None` is the 总榜 (return = return index − 1); `Some(day)` divides
 /// the current return index by the last `player_days` one before `day` (1.0 for players who joined since).
 /// Sorted by return, ties by user id; ranks filled in.
-pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>) -> R<Vec<LeaderRow>> {
+pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>, gate: Option<(&crate::kyc::Rules, &str)>) -> R<Vec<LeaderRow>> {
     let mut rows: Vec<(f64, LeaderRow)> = Vec::new();
+    let verified = crate::kyc::verified_ids(c).map_err(sql)?;
     for (id, username, total, idx, count) in players_now(c, initial)? {
+        // only players who meet the 排行榜 gate are ranked (crate::kyc::rank_gate)
+        if let Some((rules, today)) = gate {
+            let created: String =
+                c.query_row("SELECT created_at FROM accounts WHERE id=?", [id], |r| r.get(0)).map_err(sql)?;
+            let g = crate::kyc::rank_gate(c, rules, id, verified.contains(&id), &created, today).map_err(sql)?;
+            if g != crate::kyc::Gate::Open {
+                continue;
+            }
+        }
         let ret = match period_start {
             None => idx - 1.0,
             Some(start) => {
@@ -942,7 +1065,7 @@ pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Optio
         _ => state(c, "launched_on")?.filter(|s| !s.is_empty()),
     };
     let start = if period == "all" { None } else { from_day.as_deref() };
-    let items = ranked(c, initial_cents(&st.cfg), start)?;
+    let items = ranked(c, initial_cents(&st.cfg), start, Some((&st.cfg.eligibility, today.as_str())))?;
     let viewer = viewer.and_then(|v| items.iter().find(|r| r.user.id == v)).map(|r| LeaderViewer { rank: r.rank, r#return: r.r#return });
     Ok(Leaderboard { period: period.into(), from_day: from_day.map(day), to_day: day(today), as_of: ts(st.clock.ts()), items, viewer })
 }
@@ -986,25 +1109,84 @@ fn credentials(b: &serde_json::Map<String, serde_json::Value>) -> R<(String, Str
     Ok((name, password))
 }
 
-fn with_cookie(mut r: Response, cookie: &str) -> Response {
+pub(super) fn with_cookie(mut r: Response, cookie: &str) -> Response {
     if let Ok(v) = HeaderValue::from_str(cookie) {
         r.headers_mut().insert("set-cookie", v);
     }
     r
 }
 
+/// The `pow` of a register / login body, checked against `purpose`: required when a challenge would be
+/// issued now (or one was sent anyway).
+fn check_pow(st: &AppState, b: &serde_json::Map<String, serde_json::Value>, purpose: &str) -> R<()> {
+    let sol = match b.get("pow") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => Some(
+            serde_json::from_value::<super::pow::PowSolution>(v.clone())
+                .map_err(|_| error::invalid(vec![error::wrong_type("pow")]))?,
+        ),
+    };
+    let Some(sol) = sol else {
+        return if st.v1.pow.max_for(purpose) > 0 { Err(error::pow_required()) } else { Ok(()) };
+    };
+    st.v1.pow.verify(&st.secret, purpose, &sol, st.unix_now() as i64).map_err(|_| error::pow_invalid())
+}
+
+/// A password hash on a blocking thread, at most `hash_concurrency` at a time; waits up to 5 s for a slot.
+pub(super) async fn hashing<T: Send + 'static>(st: &AppState, f: impl FnOnce() -> T + Send + 'static) -> R<T> {
+    let permit = tokio::time::timeout(std::time::Duration::from_secs(5), st.v1.hashing.acquire())
+        .await
+        .map_err(|_| error::busy())?
+        .map_err(error::internal)?;
+    let out = tokio::task::spawn_blocking(f).await.map_err(error::internal)?;
+    drop(permit);
+    Ok(out)
+}
+
+/// 注册模式和验证题目
+#[utoipa::path(get, path = "/api/v1/auth/challenge", tag = "auth",
+    params(("purpose" = String, Query, description = "register 或 login")),
+    responses((status = 200, body = AuthChallenge), (status = "default", body = ErrorBody)))]
+pub async fn challenge(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> R<Json<AuthChallenge>> {
+    let q = Q::parse(q.as_deref());
+    let purpose = q.get("purpose").unwrap_or("").to_string();
+    if purpose != "register" && purpose != "login" {
+        return Err(error::invalid(vec![error::not_allowed("purpose")]));
+    }
+    let registration = st.cfg.registration;
+    let challenge = if purpose == "register" && registration == crate::config::Registration::Closed {
+        None
+    } else {
+        st.v1.pow.issue(&st.secret, &purpose, st.unix_now() as i64)
+    };
+    Ok(Json(AuthChallenge { registration: registration.as_str().into(), challenge }))
+}
+
 /// 注册
 #[utoipa::path(post, path = "/api/v1/auth/register", tag = "auth",
     request_body = RegisterRequest,
     responses((status = 201, body = Me), (status = "default", body = ErrorBody)))]
-pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> R<Response> {
+pub async fn register(
+    State(st): State<Arc<AppState>>,
+    Extension(ip): Extension<super::ClientIp>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Response> {
+    use crate::config::Registration;
     let b = json_body(&headers, &body)?;
+    if st.cfg.registration == Registration::Closed {
+        return Err(error::registration_closed());
+    }
     let (name, password) = credentials(&b)?;
+    if b.get("agree") != Some(&serde_json::Value::Bool(true)) {
+        return Err(error::invalid(vec![error::field("agree", "required", "需要同意《用户协议》和《隐私政策》")]));
+    }
     let invite = body_str(&b, "invite")?;
-    if invite.as_deref().map(str::trim) != Some(st.cfg.invite_code.as_str()) {
+    if st.cfg.registration == Registration::Invite && invite.as_deref().map(str::trim) != Some(st.cfg.invite_code.as_str()) {
         return Err(error::bad_invite());
     }
-    let pw_hash = tokio::task::spawn_blocking(move || auth::hash_pw(&password)).await.map_err(error::internal)?;
+    check_pow(&st, &b, "register")?;
+    let pw_hash = hashing(&st, move || auth::hash_pw(&password)).await?;
     let (d, t) = (st.clock.today(), st.clock.ts());
     let grant = initial_cents(&st.cfg);
     let id = engine(&st, move |ctx| -> R<i64> {
@@ -1018,19 +1200,45 @@ pub async fn register(State(st): State<Arc<AppState>>, headers: HeaderMap, body:
         Ok(id)
     })
     .await??;
+    for (doc, version) in st.cfg.documents.iter().filter(|(d, _)| d != "disclosure") {
+        record_agreement(&st, id, doc, *version, None)?;
+    }
+    record_login(&st, id, &ip.0);
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(super::created(me), &auth::session_cookie(&token)))
+}
+
+/// One sign-in (or registration) from `ip` (the limit key), kept 6 months: the wash-trade report reads
+/// it (crate::surveil), and the logs are kept as 网络安全法 §21 asks.
+fn record_login(st: &AppState, id: i64, ip: &str) {
+    let ip = super::ratelimit::ip_key(ip);
+    let cutoff = st.clock.now() - chrono::Duration::days(183);
+    let res = super::bind::with_side(st, |c| {
+        c.execute("INSERT INTO account_logins(account_id, ip, at) VALUES (?,?,?)", rusqlite::params![id, ip, st.clock.ts()])
+            .map_err(sql)?;
+        c.execute("DELETE FROM account_logins WHERE at < ?", [cutoff.format("%Y-%m-%dT%H:%M:%S").to_string()]).map_err(sql)?;
+        Ok(())
+    });
+    if let Err(e) = res {
+        eprintln!("account_logins: {}", e.message);
+    }
 }
 
 /// 登录
 #[utoipa::path(post, path = "/api/v1/auth/login", tag = "auth",
     request_body = LoginRequest,
     responses((status = 200, body = Me), (status = "default", body = ErrorBody)))]
-pub async fn login(State(st): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> R<Response> {
+pub async fn login(
+    State(st): State<Arc<AppState>>,
+    Extension(ip): Extension<super::ClientIp>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Response> {
     let b = json_body(&headers, &body)?;
     let username = need(body_str(&b, "username")?, "username")?.trim().to_string();
     let password = need(body_str(&b, "password")?, "password")?;
+    check_pow(&st, &b, "login")?;
     let row: Option<(i64, Option<String>)> = read(&st, move |c| {
         c.query_row("SELECT id, pw_hash FROM accounts WHERE username=? AND kind='player'", [&username], |r| {
             Ok((r.get(0)?, r.get(1)?))
@@ -1040,16 +1248,62 @@ pub async fn login(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     })
     .await?;
     let Some((id, stored)) = row else { return Err(error::bad_credentials()) };
-    let ok = tokio::task::spawn_blocking(move || auth::check_pw(&password, stored.as_deref()))
-        .await
-        .map_err(error::internal)?
-        .unwrap_or(false);
+    let ok = hashing(&st, move || auth::check_pw(&password, stored.as_deref())).await?.unwrap_or(false);
     if !ok {
         return Err(error::bad_credentials());
     }
+    record_login(&st, id, &ip.0);
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(Json(me).into_response(), &auth::session_cookie(&token)))
+}
+
+/// 注销账号
+#[utoipa::path(delete, path = "/api/v1/me", tag = "account",
+    request_body = CloseAccountRequest,
+    responses((status = 204, description = "已注销"), (status = "default", body = ErrorBody)))]
+pub async fn close(
+    State(st): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> R<Response> {
+    let id = caller.player()?;
+    let b = json_body(&headers, &body)?;
+    let password = need(body_str(&b, "password")?, "password")?;
+    if b.get("confirm") != Some(&serde_json::Value::Bool(true)) {
+        return Err(error::invalid(vec![error::field("confirm", "not_allowed", "确认后才能注销")]));
+    }
+    let stored: Option<String> = read(&st, move |c| {
+        c.query_row("SELECT pw_hash FROM accounts WHERE id=?", [id], |r| r.get(0)).map_err(sql)
+    })
+    .await?;
+    let ok = hashing(&st, move || auth::check_pw(&password, stored.as_deref())).await?.unwrap_or(false);
+    if !ok {
+        return Err(error::invalid(vec![error::field("password", "mismatch", "密码不正确")]));
+    }
+    let (d, t) = (st.clock.today(), st.clock.ts());
+    engine(&st, move |ctx| -> R<()> {
+        let r = ctx.engine.close_player(id, &d, &t);
+        ctx.engine.flush().map_err(error::internal)?;
+        match r {
+            Ok(()) => Ok(()),
+            Err(crate::restructure::Refusal::Margin) => Err(E::new(422, "close_not_allowed", "还清融资融券负债后才能注销")),
+            Err(e) => Err(error::internal(format!("{e:?}"))),
+        }
+    })
+    .await??;
+    // personal data outside the game books (docs/v2-account.md §9); the ledger and trades stay, anonymous
+    super::bind::with_side(&st, |c| {
+        for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins"] {
+            c.execute(&format!("DELETE FROM {t} WHERE account_id=?"), [id]).map_err(sql)?;
+        }
+        Ok(())
+    })?;
+    if let Some(live) = &st.live {
+        let _ = live.send(crate::live::Ctl::Logout { account: id });
+    }
+    Ok(with_cookie(super::no_content(), &auth::delete_cookie(std::time::SystemTime::now())))
 }
 
 /// 退出登录

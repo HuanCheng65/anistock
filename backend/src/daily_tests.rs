@@ -313,7 +313,7 @@ fn rejected_subscription_keeps_the_old_one() {
     let (mut e, p) = ipo_fixture(60_000);
     let frozen = e.subscribe(p, 2, 100, "2026-11-07", TS).unwrap();
     let err = e.subscribe(p, 2, 1000, "2026-11-07", TS).unwrap_err();
-    assert_eq!(err.0, "可用资金不足：认购 1,000 股需要冻结 5,011.25 币");
+    assert_eq!(err.0, "可用资金不足：认购 1,000 股需要冻结 5,011.25 星辉");
     assert_eq!(e.ipo_application(2, p).unwrap().qty, 100);
     assert_eq!(e.account(p).unwrap().cash_frozen, frozen);
     // the old application's frozen cash counts as available for the new one
@@ -340,12 +340,19 @@ fn transfers_go_to_every_household() {
     for n in npcs {
         assert_eq!(cash(&e, n), 10_000);
     }
+    // a player who is not eligible (crate::kyc) gets nothing; the households that are share it
+    let q = e.create_account("player", "q", Some("q"), None, None, TS);
+    let mut cx = ctx(&e, &cfg, &inp);
+    e.pay_transfers_to(&mut cx, 50_000, Some(&std::collections::HashSet::from([p])));
+    assert_eq!(cash(&e, p), 22_500); // 50,000 over p and the 3 NPCs; q left out
+    assert_eq!(cash(&e, q), 0);
     // the v1 rule: players only
     let mut cfg1 = cfg.clone();
     cfg1.economy_v1 = true;
     let mut cx1 = ctx(&e, &cfg1, &inp);
     e.pay_transfers(&mut cx1, 40_000);
-    assert_eq!(cash(&e, p), 50_000);
+    assert_eq!(cash(&e, p), 42_500); // 40,000 over p and q
+    assert_eq!(cash(&e, q), 20_000);
 }
 
 #[test]

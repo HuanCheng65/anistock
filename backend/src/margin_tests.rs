@@ -103,7 +103,7 @@ fn opening_conditions() {
     // 1,000 币 of net assets is under half the starting cash
     w.e.margin.min_days = 7;
     let poor = player(&mut w.e, "poor", 100_000);
-    assert!(w.e.open_credit(poor, 10_000_000, DAY, TS).unwrap_err().0.contains("净资产不低于 50,000 币"));
+    assert!(w.e.open_credit(poor, 10_000_000, DAY, TS).unwrap_err().0.contains("净资产不低于 50,000 星辉"));
     let young = w.e.create_account("player", "young", Some("young"), None, None, TS);
     assert!(w.e.open_credit(young, 0, DAY, TS).unwrap_err().0.contains("注册满 7 天"));
     // no credit: no credit orders

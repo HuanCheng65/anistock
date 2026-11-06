@@ -46,7 +46,7 @@ fn ipo_company(fx: &mut Fx) {
 fn eligibility_threshold_counts_frozen_cash() {
     assert_eq!(check(999_999, INITIAL, TH, None, DAY), Ok(()));
     assert_eq!(check(1_000_000, INITIAL, TH, None, DAY), Err(Refusal::NotPoor(1_000_000)));
-    assert_eq!(Refusal::NotPoor(1_000_000).message(), "总资产低于 10,000 币才能申请重整");
+    assert_eq!(Refusal::NotPoor(1_000_000).message(), "总资产低于 10,000 星辉才能申请重整");
 
     let mut fx = Fx::new();
     // 9,000 币 available + 2,000 币 frozen in a resting buy = 11,000 币: not eligible
@@ -168,7 +168,7 @@ fn the_linked_return_keeps_the_loss() {
     // then +10% on the new segment
     fx.e.transfer(world, a, 1_000_000, "test", DAY, TS, None, None);
     let c = fx.db();
-    let rows = ranked(&c, INITIAL, None).unwrap_or_else(|e| panic!("{}", e.message));
+    let rows = ranked(&c, INITIAL, None, None).unwrap_or_else(|e| panic!("{}", e.message));
     let names: Vec<&str> = rows.iter().map(|r| r.user.username.as_str()).collect();
     let pos = |n: &str| names.iter().position(|x| *x == n).unwrap();
     // a has more assets (110,000 vs 50,000) but ranks below b

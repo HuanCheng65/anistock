@@ -4,9 +4,10 @@
 // estimates what filling the quantity now costs against the mid price, walking the visible book.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
-import { api, call, errorText, type PlaceOrderResponse, type StockDetail } from '../api'
+import { api, ApiError, call, errorText, type PlaceOrderResponse, type StockDetail } from '../api'
 import { centsText, hm, money, qty as fmtQty, sessionText, toCents } from '../format'
 import { useAccount } from '../stores/account'
+import { usePrefs } from '../stores/prefs'
 import { MODE_LABEL, useCredit } from '../stores/credit'
 import { useSession } from '../stores/session'
 import type { Book } from '../stores/stock'
@@ -18,13 +19,14 @@ const session = useSession()
 const account = useAccount()
 const credit = useCredit()
 const route = useRoute()
+const prefs = usePrefs()
 
 const side = ref<'buy' | 'sell'>(props.initialSide ?? 'buy')
 const kind = ref<'limit' | 'market'>('limit')
 const price = ref(centsText(props.stock.quote.price))
 const qty = ref('')
 const busy = ref(false)
-const msg = ref<{ kind: 'ok' | 'error'; text: string } | null>(null)
+const msg = ref<{ kind: 'ok' | 'error'; text: string; sign?: boolean } | null>(null)
 const cancelling = ref<number | null>(null)
 const editKey = `order-${Math.random()}`
 watch(qty, (v) => markEditing(editKey, v.trim() !== ''))
@@ -170,7 +172,7 @@ const impactText = computed(() => {
   if (!x) return '盘口深度不足'
   const pctText = (x.ratio * 100).toFixed(2) + '%'
   if (!n.value) return `立即成交 · 每股约${side.value === 'buy' ? '多付' : '少收'} ${pctText}`
-  return `立即成交 · 约${side.value === 'buy' ? '多付' : '少收'} ${pctText}（${money(x.extra)} 币）`
+  return `立即成交 · 约${side.value === 'buy' ? '多付' : '少收'} ${pctText}（${money(x.extra)} 星辉）`
 })
 
 const problem = computed(() => {
@@ -201,8 +203,21 @@ const modeFact = computed<{ k: string; v: string } | null>(() => {
 })
 const submitText = computed(() => (creditMode.value ? MODE_LABEL[mode.value] : side.value === 'buy' ? '买入' : '卖出'))
 
+// 下单前确认 (settings): the first press asks, the second sends; any edit takes the question back
+const confirming = ref(false)
+watch([side, kind, price, qty, mode], () => (confirming.value = false))
+const confirmText = computed(() => {
+  const at = kind.value === 'limit' ? `以 ${money(px.value)} ` : '以市价'
+  return `${at}${submitText.value}《${props.stock.stock.title}》${fmtQty(n.value)} 股？`
+})
+
 async function submit() {
   if (busy.value || problem.value || !n.value) return
+  if (prefs.confirmOrders && !confirming.value) {
+    confirming.value = true
+    return
+  }
+  confirming.value = false
   busy.value = true
   msg.value = null
   try {
@@ -223,7 +238,7 @@ async function submit() {
     }
     emit('placed')
   } catch (e) {
-    msg.value = { kind: 'error', text: errorText(e, '无法提交委托') }
+    msg.value = { kind: 'error', text: errorText(e, '无法提交委托'), sign: e instanceof ApiError && e.code === 'agreement_required' }
   } finally {
     busy.value = false
   }
@@ -305,12 +320,22 @@ async function cancel(id: number) {
 
     <RouterLink v-if="!session.me" :to="{ name: 'login', query: { next: route.fullPath } }" class="tbtn buy cta">登录后交易</RouterLink>
     <template v-else>
-      <button type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || !n || phase === 'closed'">
-        {{ busy ? '提交中…' : submitText }}
-      </button>
+      <Transition name="ask">
+        <p v-if="confirming" id="order-ask" class="ask">{{ confirmText }}</p>
+      </Transition>
+      <div class="send" :class="{ two: confirming }">
+        <button type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || !n || phase === 'closed'"
+          :aria-describedby="confirming ? 'order-ask' : undefined">
+          {{ busy ? '提交中…' : submitText }}
+        </button>
+        <button v-if="confirming" type="button" class="tbtn plain cta" @click="confirming = false">取消</button>
+      </div>
       <p v-if="phase === 'closed'" class="note">休市中。集合竞价 {{ sess.auction_start }}–{{ sess.open }}，连续交易 {{ sessionText(sess.open, sess.close) }}</p>
     </template>
-    <p v-if="msg" class="note" :class="msg.kind === 'error' ? 'err' : 'ok'" role="status">{{ msg.text }}</p>
+    <p v-if="msg" class="note" :class="msg.kind === 'error' ? 'err' : 'ok'" role="status">
+      {{ msg.text }}
+      <RouterLink v-if="msg.sign" :to="{ name: 'welcome', query: { next: route.fullPath } }" class="signlink">签署</RouterLink>
+    </p>
 
     <div v-if="myOrders.length" class="mine">
       <div v-for="o in myOrders" :key="o.id" class="ord num">
@@ -324,6 +349,13 @@ async function cancel(id: number) {
 </template>
 
 <style scoped>
+.signlink { margin-left: 8px; color: var(--t-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.send { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.send.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.ask { font-size: 14px; line-height: 1.5; color: var(--t-ink); font-weight: 700; overflow-wrap: anywhere; }
+.ask-enter-active { transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.ask-enter-from { opacity: 0; transform: translateY(4px); }
+@media (prefers-reduced-motion: reduce) { .ask-enter-from { transform: none; } }
 .of { display: flex; flex-direction: column; gap: 10px; color: var(--t-ink); }
 .sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--t-field-border); }
 .sides button { height: 36px; border: 0; font-size: 14px; font-weight: 700; background: transparent; color: var(--t-ink-2); }

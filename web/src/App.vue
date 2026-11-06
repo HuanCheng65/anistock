@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import BottomNav from './components/BottomNav.vue'
 import DeskHeader from './components/DeskHeader.vue'
+import AgreementBanner from './components/AgreementBanner.vue'
 import MarginBanner from './components/MarginBanner.vue'
 import Toaster from './components/Toaster.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
@@ -68,6 +69,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 <template>
   <DeskHeader v-if="!bare" />
   <MarginBanner v-if="!bare" />
+  <AgreementBanner v-if="!bare" />
   <RouterView v-slot="{ Component }">
     <component :is="Component" :key="route.path" />
   </RouterView>

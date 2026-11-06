@@ -147,9 +147,49 @@ bot_rps = 30
 bot_burst = 60
 anon_rps = 10
 anon_burst = 20
-auth_per_min = 10             # login / register per IP
+auth_per_min = 10             # login / register per IP (an IPv6 address counts by its /64)
+register_per_ip_day = 20      # successful registrations per IP per day, on top of auth_per_min (campus NAT)
 bind_per_hour = 5             # bind-code redemptions per QQ number
-ws_per_ip = 8                 # concurrent WebSocket connections per IP
+ws_per_ip = 32                # concurrent WebSocket connections per IP (campus NAT shares one address)
+ws_total = 2000               # concurrent WebSocket connections, site-wide
+hash_concurrency = 2          # password hashes (scrypt, ~50 ms each) at a time; a login waits up to 5 s for a slot
+
+[api.pow]
+# proof of work for register / login (docs/v2-account.md §3.2): the browser finds n in [0, max) with
+# PBKDF2-SHA-256(n, salt, cost) = target. register_max = 0 turns it off.
+cost = 5000
+register_max = 1000           # about 1-2 s on a mid-range phone (measure before launch)
+login_max = 1000              # login needs a proof only while surging
+surge_per_min = 60            # register + login attempts per minute, site-wide, that start a surge
+surge_factor = 4              # register's max multiplier while surging
+cooldown_secs = 600           # a surge lasts this long after the last minute over the threshold
+expires_secs = 300            # a challenge is valid this long
+
+[account]
+# who may register (docs/v2-account.md §3.1): open, invite (needs ANISTOCK_INVITE), closed.
+# ANISTOCK_REGISTRATION in .env overrides this.
+registration = "invite"
+
+[account.eligibility]
+# what 身份验证 (a QQ binding today; crate::kyc) and activity unlock (docs/v2-account.md §4)
+require_kyc = true
+transfer_min_days = 7          # 财政补贴: registered at least this many days
+transfer_active_days = 28      # 财政补贴: a trade in this many days
+ipo_mv_days = 5                # 新股认购: quota = mean holdings value over this many closed trading days
+ipo_quota_ratio = 1.0          #   × this (A-share 市值配售)
+rank_min_days = 14             # 排行榜: registered at least this many days
+rank_min_trades = 10           # 排行榜: trades so far
+credit_min_level = 4           # 融资融券: 风险测评 C4 积极型 or above (and the knowledge test, the margin disclosure)
+assessment_valid_days = 90     # a 风险测评 counts about a season
+assessment_per_day = 3         # 风险测评 / knowledge tests a day, each
+
+[account.documents]
+# current versions of 用户协议, 隐私政策, 风险揭示书 (texts: web/src/legal/). Raise one after a material change:
+# every player then accepts it again (signs, for the disclosure) before the next order.
+terms = 1
+privacy = 1
+disclosure = 1
+margin_disclosure = 1          # 融资融券风险揭示书: signed before opening credit
 
 [api.events]
 # bot events (docs/api-v1.md §5.3.7): big_move thresholds
@@ -160,8 +200,8 @@ big_move_window_min = 30
 [margin]
 # 融资融券 (docs/v2-margin.md §11). These are the defaults in backend/src/margin.rs; change a value here to override it.
 enabled = true
-min_days = 0              # days since registration before credit can be opened (0: no wait; the club invite
-                          # code already limits alt accounts, and a default keeps the leaderboard at -100%)
+min_days = 14             # days since registration before credit can be opened (A-share: 6 months; open
+                          # registration needs a wait against throwaway accounts, docs/v2-account.md §6)
 min_assets = 0.5          # net assets at least this share of initial_cash
 listed_days = 5           # a stock is marginable this many days after listing
 haircut = 0.7             # collateral value of a marginable stock (折算率)

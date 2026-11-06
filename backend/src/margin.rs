@@ -78,7 +78,7 @@ impl Default for MarginRules {
     fn default() -> MarginRules {
         MarginRules {
             enabled: true,
-            min_days: 7,
+            min_days: 14,
             min_assets: 0.5,
             listed_days: 5,
             haircut: 0.7,
@@ -636,7 +636,7 @@ impl Engine {
         }
         let need = (initial_cents as f64 * self.margin.min_assets).round() as i64;
         if self.net_assets(account_id) < need {
-            return Some(format!("净资产不低于 {} 币才能开通", crate::pyfmt::int_grouped(need / 100)));
+            return Some(format!("净资产不低于 {} 星辉才能开通", crate::pyfmt::int_grouped(need / 100)));
         }
         None
     }

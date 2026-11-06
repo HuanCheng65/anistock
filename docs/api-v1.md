@@ -19,7 +19,7 @@
 | D5 | 交易日 | 每个按天归属的对象都带 `trading_day`（04:00 换日），时间戳一律 ISO 8601 带 `+08:00` | 夜盘到 04:00，自然日和交易日在 00:00–04:00 不同 |
 | D6 | 分页 | 会增长的列表用游标（`before` 往旧翻，`after` 补新的），固定规模的列表不分页 | 断线重连后用 `after` 补齐漏掉的成交、资讯、流水 |
 | D7 | 机器人认证 | 服务器级机器人令牌 + `X-Act-As: qq:<QQ号>` 代表已绑定的玩家；v1 只开放只读权限 | 交易权限（`trade`）预留，不在 v1 |
-| D8 | 绑定 | 网页生成一次性绑定码，群里发 `/绑定 <码>`；网页或 `/解绑` 解除 | 证明“这个 QQ 号的人能登录这个账号”，不需要在 QQ 里输密码 |
+| D8 | 绑定 | 网页生成一次性绑定码，私聊机器人发 `/绑定 <码>`；网页或 `/解绑` 解除 | 证明“这个 QQ 的主人能登录这个账号”，不需要在 QQ 里输密码 |
 | D9 | 实时推送 | 以正在开发的 `/api/ws` 为基础，只改一致性所需的地方（§5.5 列出差异）；机器人推送也走 WebSocket | 推送设计已压测验证（`bench/SPEC-v2.md`） |
 | D11 | 迁移方式 | **一次切换**：同一个版本里上线 v1、迁完前端、删除旧接口和兼容代码（§7） | 只有自己的前端在用，并存期只有成本 |
 | D12 | 资产快照 | 本次就建每日资产快照表（周榜、季榜、资产曲线） | §4.5.10 |
@@ -63,8 +63,13 @@
 | | `GET /api/v1/me/trades` | 玩家 / 机器人代表 | `/api/trades` |
 | | `GET /api/v1/me/ledger` | 玩家 / 机器人代表 | `/api/ledger` |
 | | `POST /api/v1/me/restructure` | 玩家 | `POST /api/me/restructure`（开发中） |
+| | `POST /api/v1/me/agreements` | 玩家 | 新 |
+| | `DELETE /api/v1/me` | 玩家 | 新（注销账号） |
+| | `GET /api/v1/assessments/{risk\|margin-quiz}` | 无 | 新 |
+| | `POST /api/v1/me/assessments/{risk\|margin-quiz}` | 玩家 | 新 |
 | 排行 | `GET /api/v1/leaderboard?period=all\|week\|season` | 无 | `/api/leaderboard` |
-| 认证 | `POST /api/v1/auth/register` | 无 | `/api/register` |
+| 认证 | `GET /api/v1/auth/challenge?purpose=register\|login` | 无 | 新 |
+| | `POST /api/v1/auth/register` | 无 | `/api/register` |
 | | `POST /api/v1/auth/login` | 无 | `/api/login` |
 | | `POST /api/v1/auth/logout` | 无 | `/api/logout` |
 | 绑定 | `POST /api/v1/me/bind-codes` | 玩家（仅网页） | 新 |
@@ -204,7 +209,7 @@
 ```json
 {
   "code": "insufficient_cash",
-  "message": "可用资金不足：认购 1,000 股需要冻结 5,011.25 币",
+  "message": "可用资金不足：认购 1,000 股需要冻结 5,011.25 星辉",
   "details": {"required": 501125, "available": 230000}
 }
 ```
@@ -235,7 +240,7 @@
 | 401 | `unauthenticated` | 登录后可用 | — |
 | 401 | `bad_credentials` | 用户名或密码不正确 | — |
 | 403 | `forbidden` | 没有权限 | `required_scope` |
-| 403 | `not_bound` | 这个 QQ 号还没有绑定账号 | — |
+| 403 | `not_bound` | 这个 QQ 还没有绑定账号 | — |
 | 404 | `not_found` | 没有这个接口 | — |
 | 404 | `stock_not_found` | 股票不存在 | `id` |
 | 404 | `order_not_found` | 委托不存在 | `id` |
@@ -246,20 +251,31 @@
 | 405 | `method_not_allowed` | 不支持这个操作 | `allow` |
 | 409 | `username_taken` | 用户名已有人使用 | — |
 | 409 | `order_finished` | 委托已结束，无法撤单 | `status` |
-| 409 | `already_bound` | 这个 QQ 号已经绑定了账号 / 这个账号已经绑定了 QQ 号，先解绑再绑定 | `side`: `qq` \| `account` |
+| 409 | `already_bound` | 这个 QQ 已经绑定了另一个账号 / 这个账号已经绑定了其他 QQ，先解除绑定再绑定 | `side`: `qq` \| `account` |
 | 422 | `market_closed` | 休市中（集合竞价 08:45–09:00，连续交易 09:00–次日 04:00） | `phase`、`next_open_at` |
 | 422 | `auction_limit_only` | 集合竞价时段只接受限价委托 | — |
 | 422 | `price_required` | 限价委托需要填写价格 | — |
-| 422 | `price_out_of_range` | 价格超出范围：不能超过昨收的 20 倍（4,409.00 币） | `max`、`min` |
+| 422 | `price_out_of_range` | 价格超出范围：不能超过昨收的 20 倍（4,409.00 星辉） | `max`、`min` |
 | 422 | `insufficient_cash` | 可用资金不足 | `required`、`available` |
 | 422 | `insufficient_shares` | 可卖数量不足 | `requested`、`available` |
 | 422 | `stock_not_tradable` | 这支股票已退市 | `status` |
 | 422 | `ipo_not_open` | 不在认购期（认购时间是 2026-11-06 至 2026-11-09） | `sub_start`、`sub_end` |
 | 422 | `ipo_closed` | 认购已截止，无法撤回 | — |
 | 422 | `bad_invite` | 邀请码不正确，可以向社团管理员索取 | — |
-| 422 | `restructure_not_eligible` | 总资产低于 10,000 币才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
+| 403 | `registration_closed` | 暂未开放注册 | — |
+| 403 | `agreement_required` | 签署风险揭示书后才能交易 | — |
+| 403 | `verification_required` | 完成身份验证后才能认购新股 | — |
+| 422 | `assessment_limit` | 每天最多测评 3 次，明天再试 | — |
+| 422 | `reset_code_invalid` | 验证码不正确或已过期，重新获取后再试 | — |
+| 422 | `close_not_allowed` | 还清融资融券负债后才能注销 | — |
+| 422 | `ipo_quota_exceeded` | 认购金额超过认购额度 1,234.00 星辉（前 5 个交易日的日均持仓市值） | `quota`、`max_quantity` |
+| 409 | `document_outdated` | 文件已更新，刷新页面后重新阅读 | — |
+| 422 | `pow_required` | 需要先完成验证，重新提交即可 | — |
+| 422 | `pow_invalid` | 验证已失效，重新提交即可 | — |
+| 503 | `busy` | 当前登录的人较多，稍后重试 | `retry_after`（秒） |
+| 422 | `restructure_not_eligible` | 总资产低于 10,000 星辉才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
 | 409 | `credit_open` | 信用账户已经开通 | — |
-| 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 币才能开通 / 穿仓后需要先申请重整 | — |
+| 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 星辉才能开通 / 穿仓后需要先申请重整 | — |
 | 422 | `credit_not_open` | 尚未开通信用账户 | — |
 | 422 | `credit_defaulted` | 信用账户已穿仓 | — |
 | 422 | `credit_limit_only` | 信用委托只接受限价 | — |
@@ -327,11 +343,14 @@ ETag 主要是给机器人和轮询的客户端省流量；网页连上 WebSocke
 | 机器人令牌（按令牌，代表的所有玩家合计） | **30 次/秒**（桶容量 60） | `bot_rps`、`bot_burst` |
 | 未登录（按 IP） | 10 次/秒（桶容量 20） | `anon_rps`、`anon_burst` |
 | 登录 / 注册（按 IP） | 10 次/分 | `auth_per_min` |
-| 绑定码兑换（按 QQ 号） | 5 次/小时 | `bind_per_hour` |
+| 注册（按 IP，另外计数；只有注册成功才计入） | 20 次/天 | `register_per_ip_day` |
+| 绑定码兑换（按 QQ） | 5 次/小时 | `bind_per_hour` |
 
 - 下单、撤单不另设限额，算在玩家的 10 次/秒里（引擎吞吐远高于这个数）。
 - 响应头采用 IETF 草案 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`；超限返回 429 `rate_limited` 和 `Retry-After`。
-- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 8，`ws_per_ip`）和每条连接的订阅数（§5.2）。
+- 按 IP 计数时，IPv6 地址按所在的 /64 合并（一个用户通常有整个 /64，可以随意换地址）；IPv4 映射地址按 IPv4 计。
+- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 32，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 2000，`ws_total`）和每条连接的订阅数（§5.2）。
+- 密码哈希（scrypt，每次约 50 ms）同时最多算 `hash_concurrency` 个（默认 2）。登录、注册最多等 5 秒，等不到返回 503 `busy`，撮合和推送不受影响。
 
 ### 2.13 其他
 
@@ -384,21 +403,59 @@ X-Act-As: qq:123456789
 
 ### 3.4 认证接口
 
+#### `GET /api/v1/auth/challenge?purpose=register|login`
+
+注册模式和工作量证明的题目（设计见 `docs/v2-account.md` §3.2）。不缓存。
+
+```json
+{"registration": "open",
+ "challenge": {"algorithm": "PBKDF2-SHA-256", "purpose": "register", "salt": "9f2c…", "cost": 5000, "max": 1000,
+               "target": "3a7e…", "expires": 1793000000, "signature": "c41b…"}}
+```
+- `registration`：`open` 开放注册；`invite` 需要邀请码；`closed` 暂停注册。由 `game.toml` 的 `[account] registration` 或环境变量 `ANISTOCK_REGISTRATION` 决定。
+- `challenge`：不需要验证时为 `null`（注册已关闭；登录且不在高压状态）。
+- 解法：找 `[0, max)` 里的整数 `n`，使 PBKDF2-SHA-256(password = `n` 的十进制字符串, salt = `salt` 的 UTF-8 字节, iterations = `cost`, 输出 32 字节) 的十六进制等于 `target`。提交 `{"challenge": <原样>, "number": n}`。
+- 每道题只能提交一次（答错也算），有效期 `expires_secs`（默认 5 分钟）。
+- 注册一直需要验证；登录只在全站每分钟的登录和注册请求超过 `surge_per_min` 时需要（之后持续 `cooldown_secs`），这段时间注册的 `max` 也乘以 `surge_factor`。参数在 `[api.pow]`。
+
 #### `POST /api/v1/auth/register`
 
 ```json
-{"username": "alice", "password": "secret123", "invite": "CLUB2026"}
+{"username": "alice", "password": "secret123", "invite": "CLUB2026", "pow": {"challenge": {…}, "number": 417}}
 ```
-- `username`：去掉首尾空白后 2–20 个字符；`password`：至少 6 位；`invite`：开放注册前必填。
+- `username`：去掉首尾空白后 2–20 个字符；`password`：至少 6 位；`invite`：邀请注册模式下必填；`pow`：题目不为 `null` 时必填；`agree`：必须为 `true`（同意《用户协议》和《隐私政策》，记为当前版本的签署记录）。
 - 201，设置 cookie，返回 `Me`（§4.5.1）。
-- 错误：`invalid_request`、`bad_invite`、`username_taken`、`rate_limited`。
+- 错误：`invalid_request`、`registration_closed`、`bad_invite`、`pow_required`、`pow_invalid`、`username_taken`、`busy`、`rate_limited`。
+
+#### `POST /api/v1/me/agreements`
+
+同意或签署一份文件（`docs/v2-account.md` §7）：
+
+```json
+{"doc": "disclosure", "version": 1, "signature": "alice"}
+```
+- `doc`：`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书；`version` 必须是当前版本（`game.toml` 的 `[account.documents]`），否则 409 `document_outdated`。
+- 风险揭示书要用自己的用户名签署（去掉首尾空白后一致）；其他文件不需要 `signature`。
+- 200，返回 `Me`。`Me.verification` 是身份验证状态（`verified`、`method`：目前只有 `qq`，即绑定 QQ）；`Me.eligibility` 列出财政补贴、新股认购（含认购额度 `quota`）、排行榜三项资格，不符合时 `reason` 是可以直接展示的原因。门槛只看身份验证状态，不直接看绑定（`backend/src/kyc.rs`）。排行榜只列出符合排行榜资格的玩家。`Me.pending_documents` 列出还没有同意或签署的当前版本文件；不为空时，下单、新股认购、配股认购、开通信用账户返回 403 `agreement_required`。撤单、还款、重整不受影响。
+
+#### 风险测评与知识测试
+
+`GET /api/v1/assessments/risk` 返回 8 道题；`GET /api/v1/assessments/margin-quiz` 返回 10 道题和及格题数 `pass_score`（8）。题目在服务器端（`backend/src/assessment.rs`），由服务器评分。
+
+`POST /api/v1/me/assessments/{kind}`，`{"answers": [3, 1, …]}`（每题所选选项的序号）：风险测评返回 `risk`（C1–C5、名称、说明、有效期，`[account.eligibility] assessment_valid_days`）；知识测试返回 `quiz`（得分、是否通过、每题的正确答案和解释）。每种每天最多 `assessment_per_day` 次。
+
+开通信用账户（`POST /api/v1/me/credit`）在原有条件（注册天数、净资产）之外，还要求：风险测评有效且不低于 C4、通过知识测试、签署当前版本的《融资融券风险揭示书》（`doc: "margin_disclosure"`，用用户名签署）。`Me.credit_steps` 列出这三项的状态，未满足时返回 422 `credit_not_eligible`。
+
+#### `DELETE /api/v1/me`
+
+`{"password": "…", "confirm": true}`。撤销全部委托和认购，持仓按最新价转给 world 账户，现金转给 world 账户，账号变为 `closed`、不再有用户名和密码；绑定、签署记录、测评、登录记录删除，账本和成交记录以匿名形式保留。有融资融券负债时返回 422 `close_not_allowed`。204，清除 cookie。
 
 #### `POST /api/v1/auth/login`
 
 ```json
-{"username": "alice", "password": "secret123"}
+{"username": "alice", "password": "secret123", "pow": null}
 ```
-200，设置 cookie，返回 `Me`。错误：`invalid_request`、`bad_credentials`、`rate_limited`。
+200，设置 cookie，返回 `Me`。错误：`invalid_request`、`pow_required`、`pow_invalid`、`bad_credentials`、`busy`、`rate_limited`。收到 `pow_required` 或 `pow_invalid` 时，重新取题再提交。
 
 #### `POST /api/v1/auth/logout`
 
@@ -414,8 +471,8 @@ X-Act-As: qq:123456789
 网页（已登录）                 服务器                          群里 / Koishi
 POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
           ◄── {code:"K7Q3-9MZD", expires_at}
-玩家在群里发 “/绑定 K7Q39MZD” ─────────────────────────────►  机器人收到
-                                ◄── POST /bot/bindings {code, platform:"qq", external_id:"123456789"}
+玩家私聊机器人 “/绑定 K7Q39MZD” ───────────────────────────►  机器人收到
+                                ◄── POST /bot/bindings {code, platform:"qq", external_id:"<openid>"}
                                校验码 → 写绑定，作废码
                                 ──► 201 {binding, account:{id, username}}
                                                                回复“已绑定 alice”
@@ -423,7 +480,8 @@ POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
 
 - 码由网页生成，这样“谁的账号”由登录会话证明，“谁的 QQ”由可信的机器人证明，两边都不需要在群里暴露密码。
 - 码：8 个字符，Crockford Base32（去掉易混的 I L O U），显示时中间加连字符，兑换时忽略连字符和大小写；一次性；10 分钟过期；同一账号同时只有一个有效码（再生成会作废旧码）。
-- **一对一（已决定）**：一个账号只能绑一个 QQ 号，一个 QQ 号只能绑一个账号。换绑须先解绑（网页上解绑，或者在群里 `/解绑`），再生成新码。
+- **只在私聊中兑换（已决定）**：绑定码在群里发出会被别人抢先兑换；绑定的 QQ 又是找回密码的凭据，所以绑定、解绑、找回密码都只在私聊中处理（`docs/qq-bot.md`）。`external_id` 是官方机器人私聊事件里发送者的 openid（字母、数字、`_`、`-`，最长 64 位）。
+- **一对一（已决定）**：一个账号只能绑一个 QQ，一个 QQ 只能绑一个账号。换绑须先解绑（网页上解绑，或者私聊机器人 `/解绑`），再生成新码。
 
 #### `POST /api/v1/me/bind-codes`（仅网页 cookie）
 
@@ -463,7 +521,14 @@ POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
 
 #### `DELETE /api/v1/bot/bindings/{platform}/{external_id}`（机器人令牌）
 
-群里 `/解绑`。204。错误：`binding_not_found`。
+私聊 `/解绑`。204。错误：`binding_not_found`。
+
+#### 修改和找回密码
+
+- `POST /api/v1/me/password`（玩家）：`{"current_password", "new_password"}`。200，返回 `Me`，换发 cookie。错误：`invalid_request`（`current_password` 不正确、新密码不足 6 位）。
+- `POST /api/v1/bot/password-resets`（机器人令牌）：`{"platform": "qq", "external_id": "<openid>"}`。201，`{"code": "K7Q3-9MZD", "expires_at", "account": {"id", "username"}}`。错误：`not_bound`、`rate_limited`（同一 QQ 每小时 5 次）。
+- `POST /api/v1/auth/password-reset`（无需登录）：`{"username", "code", "new_password"}`。200，返回 `Me`，设置 cookie。错误：422 `reset_code_invalid`（验证码不正确、过期、用过或输错 5 次）。按 IP 计入登录限额。
+- 改密码或重设后，签发时间早于这次修改的 cookie 不再有效（`docs/v2-account.md` §13）。
 
 **需要的新表**（迁移 V5，示意）：
 
@@ -554,7 +619,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 {"id": 8890, "at": "2026-11-07T01:12:40+08:00", "trading_day": "2026-11-06",
  "kind": "flash", "category": "flash",
  "title": "热度快讯：《航海王》第 1180 集讨论量高于预期 35%",
- "body": "播出 3 小时后的 Bangumi 单集吐槽数。估值随之修正：212.30 → 231.10 币。",
+ "body": "播出 3 小时后的 Bangumi 单集吐槽数。估值随之修正：212.30 → 231.10 星辉。",
  "stock": {"id": 21, "code": "100123", "title": "航海王"}}
 ```
 `body`、`stock` 可空（`system` 类资讯没有关联股票）。`body` 是展示用的中文文本，里面的金额已经格式化，客户端不解析。
@@ -1059,7 +1124,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "dividends": 12800,
   "deposit_rate": 0.02,
   "restructure": {"count": 0, "eligible": false, "reason": "not_poor",
-                  "message": "总资产低于 10,000 币才能申请重整"},
+                  "message": "总资产低于 10,000 星辉才能申请重整"},
   "liabilities": 0, "credit_status": null
 }
 ```

@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/v1/assessments/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 测评题目 */
+        get: operations["questions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 注册模式和验证题目 */
+        get: operations["challenge"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -32,6 +66,23 @@ export interface paths {
         put?: never;
         /** 退出登录 */
         post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 用验证码重设密码（忘记密码） */
+        post: operations["reset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -84,6 +135,23 @@ export interface paths {
         post?: never;
         /** 机器人解除绑定（群里 /解绑） */
         delete: operations["bot_remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bot/password-resets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 为绑定的账号生成找回密码的验证码（机器人） */
+        post: operations["bot_issue"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -254,6 +322,41 @@ export interface paths {
         get: operations["me"];
         put?: never;
         post?: never;
+        /** 注销账号 */
+        delete: operations["close"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/agreements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 同意或签署文件 */
+        post: operations["sign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/assessments/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 提交风险测评或知识测试 */
+        post: operations["submit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -411,6 +514,23 @@ export interface paths {
         post?: never;
         /** 撤单 */
         delete: operations["cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 修改密码 */
+        post: operations["change"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -727,6 +847,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description 同意或签署一份文件 */
+        AgreementRequest: {
+            /** @description `terms`、`privacy` 或 `disclosure` */
+            doc: string;
+            /** @description 风险揭示书：输入自己的用户名作为签名；其他文件不需要 */
+            signature?: string | null;
+            /**
+             * Format: int64
+             * @description 必须是当前版本
+             */
+            version: number;
+        };
         Airing: {
             airs_at: components["schemas"]["Timestamp"];
             /** Format: int64 */
@@ -753,6 +885,31 @@ export interface components {
             /** Format: int64 */
             watchers: number | null;
         };
+        /** @description 每题所选选项的序号（从 0 开始） */
+        AnswersRequest: {
+            answers: number[];
+        };
+        /** @description 一份测评的题目 */
+        Assessment: {
+            /** @description `risk` 或 `margin-quiz` */
+            kind: string;
+            /**
+             * Format: int64
+             * @description 知识测试的及格题数；风险测评为 null
+             */
+            pass_score: number | null;
+            questions: components["schemas"]["AssessmentQuestion"][];
+            /** Format: int64 */
+            version: number;
+        };
+        AssessmentQuestion: {
+            options: string[];
+            text: string;
+        };
+        AssessmentResult: {
+            quiz: null | components["schemas"]["QuizResult"];
+            risk: null | components["schemas"]["RiskResult"];
+        };
         AssetDay: {
             cash: components["schemas"]["Money"];
             is_partial: boolean;
@@ -778,6 +935,12 @@ export interface components {
             anilist: null | components["schemas"]["AnilistAudience"];
             annict: null | components["schemas"]["AnnictAudience"];
             bangumi: null | components["schemas"]["BangumiAudience"];
+        };
+        /** @description 注册模式和验证题目 */
+        AuthChallenge: {
+            challenge: null | components["schemas"]["PowChallenge"];
+            /** @description `open`：开放注册；`invite`：需要邀请码；`closed`：暂停注册 */
+            registration: string;
         };
         BangumiAudience: {
             collection: null | components["schemas"]["BangumiCollection"];
@@ -810,7 +973,7 @@ export interface components {
         };
         Binding: {
             created_at: components["schemas"]["Timestamp"];
-            /** @description 打码后的号码 */
+            /** @description 打码后的 openid（显示用） */
             display_name: string;
             external_id: string;
             /** Format: int64 */
@@ -836,6 +999,13 @@ export interface components {
             auction: null | components["schemas"]["AuctionIndication"];
             bids: components["schemas"]["BookLevel"][];
             trading_day: components["schemas"]["TradingDay"];
+        };
+        /** @description 机器人为私聊它的 QQ 申请找回密码的验证码 */
+        BotResetRequest: {
+            /** @description 私聊消息里发送者的 openid */
+            external_id: string;
+            /** @description `qq` */
+            platform: string;
         };
         Breadth: {
             /** Format: int64 */
@@ -873,11 +1043,22 @@ export interface components {
             ex_days: components["schemas"]["ExDay"][];
             items: components["schemas"]["Candle"][];
         };
+        /** @description 修改密码 */
+        ChangePasswordRequest: {
+            current_password: string;
+            new_password: string;
+        };
         ClawbackBand: {
             /** Format: double */
             oversubscribed: number;
             /** Format: double */
             public_share: number;
+        };
+        /** @description 注销账号 */
+        CloseAccountRequest: {
+            /** @description 必须为 true */
+            confirm: boolean;
+            password: string;
         };
         /** @description 公司资本政策的一次行动：拆股、配股或回购 */
         CorporateAction: {
@@ -994,6 +1175,18 @@ export interface components {
             /** @description 欠券市值（数量 × 最新价） */
             value: components["schemas"]["Money"];
         };
+        /** @description 开通信用账户的前置步骤（注册天数、净资产在开通时检查） */
+        CreditSteps: {
+            /** @description 签署了当前版本的《融资融券风险揭示书》 */
+            disclosure_signed: boolean;
+            /** Format: int64 */
+            disclosure_version: number;
+            min_level: string;
+            /** @description 通过了融资融券知识测试 */
+            quiz_passed: boolean;
+            /** @description 风险测评有效且不低于 `min_level` */
+            risk_ok: boolean;
+        };
         DividendPaid: {
             per_share: components["schemas"]["Money"];
             trading_day: components["schemas"]["TradingDay"];
@@ -1006,6 +1199,19 @@ export interface components {
             max_holding_days: number | null;
             /** Format: double */
             rate: number;
+        };
+        /** @description 一项资格 */
+        Eligibility: {
+            eligible: boolean;
+            /** @description 不符合时的原因，可以直接展示 */
+            reason: string | null;
+        };
+        EligibilityState: {
+            ipo: components["schemas"]["IpoEligibility"];
+            /** @description 排行榜 */
+            leaderboard: components["schemas"]["Eligibility"];
+            /** @description 财政补贴 */
+            transfer: components["schemas"]["Eligibility"];
         };
         /** @description Bangumi 单集吐槽数（采集器最新快照） */
         EpisodeComments: {
@@ -1134,6 +1340,13 @@ export interface components {
             title_ja: string | null;
             viewer: null | components["schemas"]["IpoViewer"];
         };
+        /** @description 新股认购资格 */
+        IpoEligibility: {
+            eligible: boolean;
+            /** @description 认购额度：前几个交易日的日均持仓市值；每支新股的认购金额（数量 × 发行价）不能超过它 */
+            quota: components["schemas"]["Money"];
+            reason: string | null;
+        };
         IpoEnvelope: {
             ipo: components["schemas"]["Ipo"];
         };
@@ -1212,6 +1425,7 @@ export interface components {
         };
         LoginRequest: {
             password: string;
+            pow?: null | components["schemas"]["PowSolution"];
             username: string;
         };
         MacroResponse: {
@@ -1265,18 +1479,27 @@ export interface components {
         Me: {
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
+            /** @description 开户时间 */
+            created_at: components["schemas"]["Timestamp"];
             /** @description 信用账户状态，开放枚举：normal、call、liquidating、defaulted；未开通时为 null */
             credit_status: string | null;
+            /** @description 开通信用账户还需要的步骤 */
+            credit_steps: components["schemas"]["CreditSteps"];
             /** Format: double */
             deposit_rate: number;
             dividends: components["schemas"]["Money"];
+            /** @description 财政补贴、新股认购、排行榜的资格 */
+            eligibility: components["schemas"]["EligibilityState"];
             frozen_cash: components["schemas"]["Money"];
             /** Format: int64 */
             id: number;
             initial_cash: components["schemas"]["Money"];
             /** @description 融资融券负债 */
             liabilities: components["schemas"]["Money"];
+            /** @description 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户 */
+            pending_documents: components["schemas"]["PendingDocument"][];
             restructure: components["schemas"]["RestructureState"];
+            risk: null | components["schemas"]["RiskResult"];
             stock_value: components["schemas"]["Money"];
             /** @description 净资产：现金 + 持仓市值 − 负债 */
             total_assets: components["schemas"]["Money"];
@@ -1287,13 +1510,15 @@ export interface components {
             total_return: number;
             trading_day: components["schemas"]["TradingDay"];
             username: string;
+            /** @description 身份验证 */
+            verification: components["schemas"]["Verification"];
         };
         MeEnvelope: {
             me: components["schemas"]["Me"];
         };
         /**
          * Format: int64
-         * @description 金额，单位：分（1 币 = 100 分）。显示时除以 100。
+         * @description 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
          */
         Money: number;
         MyTrade: {
@@ -1393,6 +1618,13 @@ export interface components {
          * @enum {string}
          */
         OrderSide: "buy" | "sell";
+        /** @description 一份待同意或签署的文件 */
+        PendingDocument: {
+            /** @description `terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书 */
+            doc: string;
+            /** Format: int64 */
+            version: number;
+        };
         /**
          * @description 市场阶段（封闭）
          * @enum {string}
@@ -1445,6 +1677,38 @@ export interface components {
             stock: components["schemas"]["StockRef"];
             value: components["schemas"]["Money"];
         };
+        /** @description 验证题目：原样随 `pow.challenge` 交回 */
+        PowChallenge: {
+            /** @description 固定为 `PBKDF2-SHA-256` */
+            algorithm: string;
+            /**
+             * Format: int32
+             * @description PBKDF2 迭代次数
+             */
+            cost: number;
+            /**
+             * Format: int64
+             * @description 过期时间（Unix 秒）
+             */
+            expires: number;
+            /**
+             * Format: int64
+             * @description 答案在 `[0, max)` 之内
+             */
+            max: number;
+            /** @description `register` 或 `login` */
+            purpose: string;
+            salt: string;
+            signature: string;
+            /** @description PBKDF2-SHA-256(password = 答案的十进制字符串, salt = `salt` 的 UTF-8 字节, iterations = `cost`, 32 字节) 的十六进制 */
+            target: string;
+        };
+        /** @description 验证答案 */
+        PowSolution: {
+            challenge: components["schemas"]["PowChallenge"];
+            /** Format: int64 */
+            number: number;
+        };
         PublicTrade: {
             at: components["schemas"]["Timestamp"];
             /** Format: int64 */
@@ -1459,6 +1723,26 @@ export interface components {
             items: components["schemas"]["PublicTrade"][];
             /** @description 继续翻页用的游标；没有更多时为 null */
             next_cursor: string | null;
+        };
+        QuizResult: {
+            /** Format: int64 */
+            pass_score: number;
+            passed: boolean;
+            review: components["schemas"]["QuizReview"][];
+            /** Format: int64 */
+            score: number;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description 一题的批改 */
+        QuizReview: {
+            /**
+             * Format: int64
+             * @description 正确选项的序号
+             */
+            answer: number;
+            correct: boolean;
+            explanation: string;
         };
         /** @description 行情表的一行 */
         Quote: {
@@ -1529,8 +1813,12 @@ export interface components {
             binding: components["schemas"]["Binding"];
         };
         RegisterRequest: {
+            /** @description 同意《用户协议》和《隐私政策》，必须为 true */
+            agree?: boolean | null;
+            /** @description 只在邀请注册模式下需要 */
             invite?: string | null;
             password: string;
+            pow?: null | components["schemas"]["PowSolution"];
             username: string;
         };
         RepayRequest: {
@@ -1539,6 +1827,21 @@ export interface components {
         RepayResponse: {
             credit: components["schemas"]["CreditAccount"];
             paid: components["schemas"]["Money"];
+        };
+        /** @description 找回密码的验证码（10 分钟有效，只能用一次） */
+        ResetCode: {
+            /** @description 绑定的账号 */
+            account: components["schemas"]["UserRef"];
+            /** @description `K7Q3-9MZD` */
+            code: string;
+            expires_at: components["schemas"]["Timestamp"];
+        };
+        /** @description 用验证码重设密码 */
+        ResetPasswordRequest: {
+            /** @description 机器人发送的 8 位验证码，大小写和连字符不限 */
+            code: string;
+            new_password: string;
+            username: string;
         };
         RestructureRequest: {
             /** @description 必须为 true */
@@ -1582,6 +1885,22 @@ export interface components {
         RightsRequest: {
             /** Format: int64 */
             quantity: number;
+        };
+        /** @description 风险测评结果 */
+        RiskResult: {
+            description: string;
+            /** @description `C1`..`C5` */
+            level: string;
+            /** @description 结果卡上的一句话 */
+            motto: string;
+            /** @description 保守型、稳健型、平衡型、积极型、激进型 */
+            name: string;
+            /** Format: int64 */
+            score: number;
+            taken_at: components["schemas"]["Timestamp"];
+            /** @description 是否仍在有效期内 */
+            valid: boolean;
+            valid_until: components["schemas"]["TradingDay"];
         };
         Rules: {
             dividend_tax: components["schemas"]["DividendTaxBand"][];
@@ -1807,6 +2126,12 @@ export interface components {
             low: null | components["schemas"]["Money"];
             until: null | components["schemas"]["Timestamp"];
         };
+        /** @description 身份验证（docs/v2-account.md §2） */
+        Verification: {
+            /** @description 验证方式：`qq`（绑定 QQ）；未验证时为 null */
+            method: string | null;
+            verified: boolean;
+        };
         Work: {
             /** @description 已播各集的讨论（最多最近 26 集） */
             discussion: components["schemas"]["EpisodeComments"][];
@@ -1971,6 +2296,66 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    questions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description risk（风险测评）或 margin-quiz（融资融券知识测试） */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    challenge: {
+        parameters: {
+            query: {
+                /** @description register 或 login */
+                purpose: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthChallenge"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     login: {
         parameters: {
             query?: never;
@@ -2017,6 +2402,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
             };
             default: {
                 headers: {
@@ -2097,7 +2513,7 @@ export interface operations {
             path: {
                 /** @description qq */
                 platform: string;
-                /** @description QQ 号 */
+                /** @description 私聊消息里发送者的 openid */
                 external_id: string;
             };
             cookie?: never;
@@ -2110,6 +2526,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    bot_issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BotResetRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetCode"];
+                };
             };
             default: {
                 headers: {
@@ -2443,6 +2890,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    close: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description 已注销 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    sign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgreementRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    submit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description risk 或 margin-quiz */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswersRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssessmentResult"];
                 };
             };
             default: {
@@ -2819,6 +3361,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrderEnvelope"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    change: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
                 };
             };
             default: {

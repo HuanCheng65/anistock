@@ -16,6 +16,9 @@ pub mod error;
 pub mod events;
 pub mod market;
 pub mod openapi;
+pub mod assess;
+pub mod password;
+pub mod pow;
 pub mod ratelimit;
 pub mod search;
 pub mod stocks;
@@ -59,6 +62,12 @@ pub struct V1State {
     /// `Idempotency-Key`: (account, key) -> (when, status, body)
     pub idem: Mutex<HashMap<(i64, String), (std::time::Instant, u16, Vec<u8>)>>,
     pub events: events::EventRules,
+    /// register / login proof of work (docs/v2-account.md §3.2)
+    pub pow: pow::Pow,
+    /// password hashes computed at the same time (`limits.hash_concurrency`)
+    pub hashing: tokio::sync::Semaphore,
+    /// account -> last password change (Unix seconds), loaded on first use (password.rs)
+    pub pw_changed: std::sync::RwLock<Option<HashMap<i64, i64>>>,
 }
 
 impl V1State {
@@ -71,6 +80,9 @@ impl V1State {
             side: Mutex::new(None),
             idem: Mutex::new(HashMap::new()),
             events: events::EventRules::from_config(cfg),
+            pow: pow::Pow::new(pow::PowConfig::from_config(cfg)),
+            hashing: tokio::sync::Semaphore::new(ratelimit::Limits::from_config(cfg).hash_concurrency),
+            pw_changed: std::sync::RwLock::new(None),
         }
     }
 }
@@ -146,7 +158,8 @@ pub fn session_account(st: &AppState, headers: &HeaderMap) -> Option<i64> {
         .iter()
         .find_map(|v| crate::auth::cookie_value(&[&String::from_utf8_lossy(v.as_bytes())], "session"));
     match read_session(&st.secret, token.as_deref(), st.unix_now()) {
-        Session::Player(a) if a > 0 => Some(a),
+        // a cookie from before the last password change no longer counts
+        Session::Player(a) if a > 0 && !password::issued_before_change(st, a, token.as_deref().unwrap_or("")) => Some(a),
         _ => None,
     }
 }
@@ -260,17 +273,28 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
     let mut resp = match resolve(&st, req.headers()).await {
         Err(e) => e.into_response(),
         Ok(caller) => {
+            let ip_key = ratelimit::ip_key(&ip);
             let key = match &caller {
                 Caller::Player { id } => ratelimit::Key::Player(*id),
                 Caller::Bot { name } | Caller::BotAs { name, .. } => ratelimit::Key::Bot(name.clone()),
-                Caller::Anon => ratelimit::Key::Anon(ip.clone()),
+                Caller::Anon => ratelimit::Key::Anon(ip_key.clone()),
             };
-            let auth_path = method == Method::POST && (path.ends_with("/auth/login") || path.ends_with("/auth/register"));
+            let register = method == Method::POST && path.ends_with("/auth/register");
+            let auth_path = register
+                || (method == Method::POST && (path.ends_with("/auth/login") || path.ends_with("/auth/password-reset")));
+            if auth_path {
+                st.v1.pow.note_attempt();
+            }
             let verdict = {
                 let mut l = st.v1.limiter.lock().unwrap();
                 let mut v = l.take(&st.v1.limits, key);
                 if v.allowed && auth_path {
-                    v = l.take(&st.v1.limits, ratelimit::Key::Auth(ip.clone()));
+                    v = l.take(&st.v1.limits, ratelimit::Key::Auth(ip_key.clone()));
+                }
+                // the daily registration quota is spent only by a registration that succeeds (below):
+                // failed attempts from a shared campus address must not lock everyone else out
+                if v.allowed && register {
+                    v = l.peek(&st.v1.limits, ratelimit::Key::Register(ip_key.clone()));
                 }
                 v
             };
@@ -282,6 +306,9 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
                 req.extensions_mut().insert(caller);
                 req.extensions_mut().insert(ClientIp(ip.clone()));
                 let mut r = next.run(req).await;
+                if register && r.status() == StatusCode::CREATED {
+                    st.v1.limiter.lock().unwrap().take(&st.v1.limits, ratelimit::Key::Register(ip_key.clone()));
+                }
                 verdict.headers(r.headers_mut());
                 r
             }
@@ -552,7 +579,9 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/ipos", get(stocks::ipos))
         .route("/ipos/{id}", get(stocks::ipo_one))
         .route("/ipos/{id}/subscription", put(account::subscribe).delete(account::unsubscribe))
-        .route("/me", get(account::me))
+        .route("/me", get(account::me).delete(account::close))
+        .route("/assessments/{kind}", get(assess::questions))
+        .route("/me/assessments/{kind}", post(assess::submit))
         .route("/me/portfolio", get(account::portfolio))
         .route("/me/asset-history", get(account::asset_history))
         .route("/me/orders", get(account::orders).post(account::place))
@@ -560,13 +589,18 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/trades", get(account::my_trades))
         .route("/me/ledger", get(account::ledger))
         .route("/me/restructure", post(account::restructure))
+        .route("/me/agreements", post(account::sign))
         .route("/me/credit", get(credit::credit).post(credit::open))
         .route("/me/credit/repay", post(credit::repay))
         .route("/stocks/{id}/margin", get(credit::stock_margin))
         .route("/leaderboard", get(account::leaderboard))
+        .route("/auth/challenge", get(account::challenge))
         .route("/auth/register", post(account::register))
         .route("/auth/login", post(account::login))
         .route("/auth/logout", post(account::logout))
+        .route("/auth/password-reset", post(password::reset))
+        .route("/me/password", post(password::change))
+        .route("/bot/password-resets", post(password::bot_issue))
         .route("/me/bind-codes", post(bind::create_code))
         .route("/me/bindings", get(bind::list))
         .route("/me/bindings/{id}", delete(bind::remove))
@@ -591,7 +625,10 @@ fn method_fallback(path: &str) -> Response {
         ["", "me", "orders"] => "GET, POST",
         ["", "me", "orders", _] => "GET, DELETE",
         ["", "ipos", _, "subscription"] | ["", "stocks", _, "rights", "subscription"] => "PUT, DELETE",
-        ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
+        ["", "auth", "challenge"] => "GET",
+        ["", "me"] => "GET, DELETE",
+        ["", "me", "assessments", _] | ["", "me", "password"] | ["", "bot", "password-resets"] => "POST",
+        ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "agreements"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
         _ => "GET",
     };

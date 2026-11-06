@@ -90,7 +90,7 @@ pub fn forbidden(scope: &str) -> E {
     E::new(403, "forbidden", "没有权限").details(json!({"required_scope": scope}))
 }
 pub fn not_bound() -> E {
-    E::new(403, "not_bound", "这个 QQ 号还没有绑定账号")
+    E::new(403, "not_bound", "这个 QQ 还没有绑定账号")
 }
 pub fn not_found() -> E {
     E::new(404, "not_found", "没有这个接口")
@@ -127,7 +127,7 @@ pub fn order_finished(status: &str) -> E {
     E::new(409, "order_finished", "委托已结束，无法撤单").details(json!({"status": status}))
 }
 pub fn already_bound(side: &str) -> E {
-    let msg = if side == "qq" { "这个 QQ 号已经绑定了账号" } else { "这个账号已经绑定了 QQ 号，先解绑再绑定" };
+    let msg = if side == "qq" { "这个 QQ 已经绑定了另一个账号" } else { "这个账号已经绑定了其他 QQ，先解除绑定再绑定" };
     E::new(409, "already_bound", msg).details(json!({"side": side}))
 }
 pub fn bad_invite() -> E {
@@ -135,6 +135,26 @@ pub fn bad_invite() -> E {
 }
 pub fn bind_code_invalid() -> E {
     E::new(422, "bind_code_invalid", "绑定码不正确或已过期")
+}
+pub fn verification_required(what: &str) -> E {
+    E::new(403, "verification_required", format!("完成身份验证后才能{what}"))
+}
+pub fn agreement_required() -> E {
+    E::new(403, "agreement_required", "签署风险揭示书后才能交易")
+}
+pub fn registration_closed() -> E {
+    E::new(403, "registration_closed", "暂未开放注册")
+}
+pub fn pow_required() -> E {
+    E::new(422, "pow_required", "需要先完成验证，重新提交即可")
+}
+pub fn pow_invalid() -> E {
+    E::new(422, "pow_invalid", "验证已失效，重新提交即可")
+}
+pub fn busy() -> E {
+    let mut e = E::new(503, "busy", "当前登录的人较多，稍后重试").details(json!({"retry_after": 5}));
+    e.header = Some(("retry-after", "5".into()));
+    e
 }
 pub fn rate_limited(retry_after: u64) -> E {
     let mut e = E::new(429, "rate_limited", "操作太频繁，稍后重试").details(json!({"retry_after": retry_after}));
@@ -164,6 +184,10 @@ pub fn label(field: &str) -> &'static str {
         "username" => "用户名",
         "password" => "密码",
         "invite" => "邀请码",
+        "pow" => "验证",
+        "doc" => "文件",
+        "version" => "版本",
+        "signature" => "签名",
         "quantity" => "数量",
         "price" => "价格",
         "stock_id" | "id" => "股票",
@@ -172,9 +196,12 @@ pub fn label(field: &str) -> &'static str {
         "q" => "搜索内容",
         "code" => "绑定码",
         "confirm" => "确认",
+        "answers" => "答案",
+        "current_password" => "当前密码",
+        "new_password" => "新密码",
         "scopes" => "权限",
         "platform" => "平台",
-        "external_id" => "QQ 号",
+        "external_id" => "QQ 标识",
         "trading_day" | "from" | "to" | "listed_since" => "交易日",
         "limit" => "条数",
         "before" | "after" => "翻页位置",

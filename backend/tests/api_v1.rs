@@ -30,6 +30,12 @@ fn root() -> std::path::PathBuf {
 }
 
 fn app(at: &str, always_open: bool) -> App {
+    app_env(at, always_open, &[])
+}
+
+/// `app` with extra environment variables for `Config::load_from`.
+fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) -> App {
+    let extra: Vec<(&'static str, &'static str)> = extra.to_vec();
     let mut fx = Fx::new();
     let pw = anistock::auth::hash_pw_with_salt("secret1", &[7u8; 16]);
     let alice = fx.e.create_account("player", "alice", Some("alice"), Some(&pw), None, TS);
@@ -48,10 +54,21 @@ fn app(at: &str, always_open: bool) -> App {
         "ANISTOCK_GAME_DB" => Some(db2.display().to_string()),
         "ANISTOCK_DB" => Some(coll.display().to_string()),
         "ANISTOCK_INVITE" => Some("club".into()),
-        _ => None,
+        k => extra.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()),
     })
     .unwrap();
     cfg.always_open = always_open;
+    // alice has accepted every current document
+    {
+        let c = rusqlite::Connection::open(&db).unwrap();
+        for (doc, v) in &cfg.documents {
+            c.execute("INSERT INTO account_agreements VALUES (?,?,?,?,?)", rusqlite::params![alice, doc, v, TS, "alice"]).unwrap();
+        }
+        // and may open credit: C5, the knowledge test, the margin disclosure
+        c.execute("INSERT INTO account_agreements VALUES (?,'margin_disclosure',?,?,?)", rusqlite::params![alice, cfg.margin_disclosure, TS, "alice"]).unwrap();
+        c.execute("INSERT INTO risk_assessments(account_id, version, answers, score, level, taken_at, day) VALUES (?,1,'[]',32,5,?,?)", rusqlite::params![alice, TS, "2026-11-05"]).unwrap();
+        c.execute("INSERT INTO quiz_results(account_id, quiz, version, score, passed, taken_at, day) VALUES (?,'margin',1,10,1,?,?)", rusqlite::params![alice, TS, "2026-11-05"]).unwrap();
+    }
     let cfg = Arc::new(cfg);
     let clock = Clock::fixed(cfg.tz, at).with_rollover(&cfg.game.day_rollover);
     let Fx { dir, e } = fx;
@@ -61,6 +78,10 @@ fn app(at: &str, always_open: bool) -> App {
     v1s.limits.anon = (1e9, 1e9);
     v1s.limits.player = (1e9, 1e9);
     v1s.limits.auth = (1e9, 1e9);
+    v1s.limits.register = (1e9, 1e9);
+    // a cheap proof of work: the tests run unoptimised
+    v1s.pow.cfg.cost = 2;
+    v1s.pow.cfg.register_max = 20;
     let st = Arc::new(AppState {
         actor,
         cfg: cfg.clone(),
@@ -304,14 +325,303 @@ async fn orders_and_their_errors() {
     err(&a.req("POST", "/api/v1/me/restructure", Some(json!({"confirm": true})), &h).await, 422, "restructure_not_eligible");
 }
 
+/// A fresh register challenge with its answer, as the request's `pow`.
+async fn solved(a: &App) -> Value {
+    solved_for(a, "register").await
+}
+
+async fn solved_for(a: &App, purpose: &str) -> Value {
+    let r = a.get(&format!("/api/v1/auth/challenge?purpose={purpose}"), None).await;
+    let c: anistock::api::v1::pow::PowChallenge = serde_json::from_value(r.json["challenge"].clone()).unwrap();
+    let n = anistock::api::v1::pow::solve(&c).unwrap();
+    json!({"challenge": c, "number": n})
+}
+
+#[tokio::test]
+async fn registration_modes() {
+    let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_REGISTRATION", "open")]);
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    assert_eq!(r.json["registration"], "open");
+    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "agree": true, "pow": solved(&a).await})), &[]).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+
+    let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_REGISTRATION", "closed")]);
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    assert_eq!(r.json["registration"], "closed");
+    assert_eq!(r.json["challenge"], Value::Null);
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "invite": "club"})), &[]).await, 403, "registration_closed");
+    // login is unaffected
+    assert!(!a.login().await.is_empty());
+}
+
+#[tokio::test]
+async fn login_needs_pow_during_a_surge() {
+    let mut a = app("2026-11-05T10:00:00+08:00", true);
+    let v1 = &mut Arc::get_mut(&mut a.st).unwrap().v1;
+    v1.pow.cfg.surge_per_min = 0; // any attempt starts a surge
+    v1.pow.cfg.login_max = 20;
+    let body = |pow: Value| Some(json!({"username": "alice", "password": "secret1", "pow": pow}));
+    err(&a.req("POST", "/api/v1/auth/login", body(Value::Null), &[]).await, 422, "pow_required");
+    let r = a.req("POST", "/api/v1/auth/login", body(solved_for(&a, "login").await), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    // a register challenge is not a login challenge
+    err(&a.req("POST", "/api/v1/auth/login", body(solved_for(&a, "register").await), &[]).await, 422, "pow_invalid");
+}
+
+#[tokio::test]
+async fn only_successful_registrations_use_the_daily_quota() {
+    let mut a = app("2026-11-05T10:00:00+08:00", true);
+    Arc::get_mut(&mut a.st).unwrap().v1.limits.register = (1.0 / 86400.0, 1.0);
+    let reg = |name: &str, pow: Value| Some(json!({"username": name, "password": "secret1", "invite": "club", "agree": true, "pow": pow}));
+    for _ in 0..3 {
+        err(&a.req("POST", "/api/v1/auth/register", reg("alice", solved(&a).await), &[]).await, 409, "username_taken");
+    }
+    let r = a.req("POST", "/api/v1/auth/register", reg("bob", solved(&a).await), &[]).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    err(&a.req("POST", "/api/v1/auth/register", reg("carol", solved(&a).await), &[]).await, 429, "rate_limited");
+}
+
+#[tokio::test]
+async fn agreements_gate_trading() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let body = |agree: Value| Some(json!({"username": "dan", "password": "secret1", "invite": "club", "agree": agree, "pow": Value::Null}));
+    let r = a.req("POST", "/api/v1/auth/register", body(Value::Null), &[]).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["details"]["fields"][0]["field"], "agree");
+    let r = a
+        .req("POST", "/api/v1/auth/register", Some(json!({"username": "dan", "password": "secret1", "invite": "club", "agree": true, "pow": solved(&a).await})), &[])
+        .await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    // terms and privacy accepted at registration; the disclosure is still to sign
+    assert_eq!(r.json["pending_documents"], json!([{"doc": "disclosure", "version": 1}]));
+    let ck = r.headers.get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    let h = [("cookie", ck.as_str())];
+    let order = json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 500, "quantity": 1});
+    err(&a.req("POST", "/api/v1/me/orders", Some(order.clone()), &h).await, 403, "agreement_required");
+    err(&a.req("POST", "/api/v1/me/credit", None, &h).await, 403, "agreement_required");
+    let sign = |sig: &str, v: i64| Some(json!({"doc": "disclosure", "version": v, "signature": sig}));
+    let r = a.req("POST", "/api/v1/me/agreements", sign("alice", 1), &h).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "签名需与用户名一致");
+    err(&a.req("POST", "/api/v1/me/agreements", sign("dan", 2), &h).await, 409, "document_outdated");
+    err(&a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "nope", "version": 1})), &h).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/agreements", sign(" dan ", 1), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/agreements", 200), &r.json, "sign");
+    assert_eq!(r.json["pending_documents"], json!([]));
+    let r = a.req("POST", "/api/v1/me/orders", Some(order), &h).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+}
+
+#[tokio::test]
+async fn verification_gates_transfers_ipo_and_leaderboard() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["verification"], json!({"verified": false, "method": null}));
+    assert_eq!(me["eligibility"]["transfer"]["reason"], "完成身份验证后才能领取财政补贴");
+    assert_eq!(me["eligibility"]["ipo"]["reason"], "完成身份验证后才能认购新股");
+    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "完成身份验证后才能进入排行");
+    let lb = a.get("/api/v1/leaderboard", Some(&ck)).await.json;
+    assert_eq!(lb["items"], json!([]));
+    err(&a.req("PUT", "/api/v1/ipos/2/subscription", Some(json!({"quantity": 10})), &h).await, 403, "verification_required");
+
+    // 身份验证 = a QQ binding today
+    let id = me["id"].as_i64().unwrap();
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    c.execute(
+        "INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', 'OPENID1', 'read:account', ?)",
+        rusqlite::params![id, TS],
+    )
+    .unwrap();
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["verification"], json!({"verified": true, "method": "qq"}));
+    // registered today: too new for 财政补贴 and 排行榜
+    assert_eq!(me["eligibility"]["transfer"]["reason"], "注册满 7 天后才能领取财政补贴");
+    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "注册满 14 天后才能进入排行");
+    assert_eq!(me["eligibility"]["ipo"]["quota"], 0);
+    assert!(me["eligibility"]["ipo"]["reason"].as_str().unwrap().starts_with("认购额度按前 5 个交易日的日均持仓市值计算"));
+    a.validate(&a.schema("GET", "/api/v1/me", 200), &me, "me");
+}
+
+#[tokio::test]
+async fn assessments_and_opening_credit() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let r = a.get("/api/v1/assessments/risk", None).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("GET", "/api/v1/assessments/{kind}", 200), &r.json, "risk");
+    assert_eq!(r.json["questions"].as_array().unwrap().len(), 8);
+    let quiz = a.get("/api/v1/assessments/margin-quiz", None).await.json;
+    assert_eq!(quiz["pass_score"], 8);
+    err(&a.get("/api/v1/assessments/nope", None).await, 404, "not_found");
+
+    // a new player: everything to do before opening credit
+    let r = a
+        .req("POST", "/api/v1/auth/register", Some(json!({"username": "erin", "password": "secret1", "invite": "club", "agree": true, "pow": solved(&a).await})), &[])
+        .await;
+    assert_eq!(r.json["risk"], Value::Null);
+    assert_eq!(r.json["credit_steps"]["risk_ok"], false);
+    let ck = r.headers.get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    let h = [("cookie", ck.as_str())];
+    a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "disclosure", "version": 1, "signature": "erin"})), &h).await;
+
+    let r = a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [1, 1, 1, 1, 1, 1, 1, 1]})), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    assert_eq!(r.json["risk"]["level"], "C2");
+    assert_eq!(r.json["risk"]["name"], "稳健型");
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    err(&r, 422, "credit_not_eligible");
+    assert_eq!(r.json["message"], "风险测评为 C4 及以上才能开通");
+    a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await;
+    let r = a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await;
+    assert_eq!(r.json["risk"]["level"], "C5");
+    err(&a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await, 422, "assessment_limit");
+    err(&a.req("POST", "/api/v1/me/assessments/margin-quiz", Some(json!({"answers": [0, 0]})), &h).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/assessments/margin-quiz", Some(json!({"answers": vec![0; 10]})), &h).await;
+    assert_eq!(r.json["quiz"]["passed"], false);
+    assert_eq!(r.json["quiz"]["review"].as_array().unwrap().len(), 10);
+    let right = json!([1, 0, 1, 2, 1, 0, 2, 1, 1, 1]);
+    let r = a.req("POST", "/api/v1/me/assessments/margin-quiz", Some(json!({"answers": right})), &h).await;
+    assert_eq!(r.json["quiz"]["score"], 10);
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    assert_eq!(r.json["message"], "签署《融资融券风险揭示书》后才能开通");
+    a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "margin_disclosure", "version": 1, "signature": "erin"})), &h).await;
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["credit_steps"], json!({"risk_ok": true, "min_level": "C4", "quiz_passed": true, "disclosure_signed": true, "disclosure_version": 1}));
+    // the engine's own checks remain: registered today
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    err(&r, 422, "credit_not_eligible");
+    assert!(r.json["message"].as_str().unwrap().contains("14 天"), "{}", r.json);
+}
+
+#[tokio::test]
+async fn closing_an_account() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    let id = me["id"].as_i64().unwrap();
+    err(&a.req("DELETE", "/api/v1/me", Some(json!({"password": "secret1"})), &h).await, 400, "invalid_request");
+    let r = a.req("DELETE", "/api/v1/me", Some(json!({"password": "wrong!!", "confirm": true})), &h).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "密码不正确");
+    let r = a.req("DELETE", "/api/v1/me", Some(json!({"password": "secret1", "confirm": true})), &h).await;
+    assert_eq!(r.status.as_u16(), 204, "{}", r.json);
+    // the cookie no longer works, the name and password are gone, the books still balance
+    err(&a.get("/api/v1/me", Some(&ck)).await, 401, "unauthenticated");
+    err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "secret1"})), &[]).await, 401, "bad_credentials");
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    let (kind, name, user, cash): (String, String, Option<String>, i64) =
+        c.query_row("SELECT kind, name, username, cash FROM accounts WHERE id=?", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+    assert_eq!((kind.as_str(), user, cash), ("closed", None, 0));
+    assert_eq!(name, format!("已注销用户 #{id}"));
+    let left: i64 = c.query_row("SELECT COUNT(*) FROM holdings WHERE account_id=?", [id], |r| r.get(0)).unwrap();
+    assert_eq!(left, 0);
+    for t in ["account_agreements", "risk_assessments", "account_logins"] {
+        let n: i64 = c.query_row(&format!("SELECT COUNT(*) FROM {t} WHERE account_id=?"), [id], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "{t}");
+    }
+    a.st.actor.call(|ctx| ctx.engine.check_invariants()).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn changing_and_resetting_a_password() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    a.login().await;
+    // a session from a minute ago (the test clock stands still)
+    let id: i64 = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap().query_row("SELECT id FROM accounts WHERE username='alice'", [], |r| r.get(0)).unwrap();
+    let old = format!("session={}", anistock::auth::make_session(&a.st.secret, id, a.st.unix_now() - 60.0));
+    let h = [("cookie", old.as_str())];
+    let change = |cur: &str, new: &str| Some(json!({"current_password": cur, "new_password": new}));
+    let r = a.req("POST", "/api/v1/me/password", change("wrong!!", "newpass1"), &h).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "当前密码不正确");
+    err(&a.req("POST", "/api/v1/me/password", change("secret1", "123"), &h).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/password", change("secret1", "newpass1"), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    let fresh = r.headers.get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    // the cookie from before the change no longer works; the new one does
+    err(&a.get("/api/v1/me", Some(&old)).await, 401, "unauthenticated");
+    assert_eq!(a.get("/api/v1/me", Some(&fresh)).await.status, 200);
+    err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "secret1"})), &[]).await, 401, "bad_credentials");
+
+    // forgotten: the bot asks for a code for the QQ bound to alice
+    let bot = [("authorization", &*format!("Bearer {BOT}"))];
+    let openid = "E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6";
+    let r = a.req("POST", "/api/v1/bot/password-resets", Some(json!({"platform": "qq", "external_id": openid})), &bot).await;
+    err(&r, 403, "not_bound");
+    rusqlite::Connection::open(&a.st.cfg.game_db)
+        .unwrap()
+        .execute("INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', ?, 'read:account', ?)", rusqlite::params![id, openid, TS])
+        .unwrap();
+    let r = a.req("POST", "/api/v1/bot/password-resets", Some(json!({"platform": "qq", "external_id": openid})), &bot).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/bot/password-resets", 201), &r.json, "reset code");
+    assert_eq!(r.json["account"]["username"], "alice");
+    let code = r.json["code"].as_str().unwrap().to_string();
+    let reset = |code: &str| Some(json!({"username": "alice", "code": code, "new_password": "third333"}));
+    err(&a.req("POST", "/api/v1/auth/password-reset", reset("AAAA-AAAA"), &[]).await, 422, "reset_code_invalid");
+    let r = a.req("POST", "/api/v1/auth/password-reset", reset(&code.to_lowercase()), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    // signed in, the code is spent
+    err(&a.req("POST", "/api/v1/auth/password-reset", reset(&code), &[]).await, 422, "reset_code_invalid");
+    let r = a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "third333"})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+}
+
+#[tokio::test]
+async fn reset_codes_take_five_wrong_tries() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let mut c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    let id: i64 = c.query_row("SELECT id FROM accounts WHERE username='alice'", [], |r| r.get(0)).unwrap();
+    let now = a.st.clock.now();
+    let (code, _) = anistock::api::v1::password::issue_code(&mut c, id, "operator", &now).unwrap();
+    let reset = |code: &str| Some(json!({"username": "alice", "code": code, "new_password": "third333"}));
+    for _ in 0..5 {
+        err(&a.req("POST", "/api/v1/auth/password-reset", reset("ZZZZZZZZ"), &[]).await, 422, "reset_code_invalid");
+    }
+    // the right code, too late
+    err(&a.req("POST", "/api/v1/auth/password-reset", reset(&code), &[]).await, 422, "reset_code_invalid");
+}
+
+#[tokio::test]
+async fn static_assets_are_immutable() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("assets")).unwrap();
+    std::fs::write(dir.path().join("assets/app-abc123.js"), "x").unwrap();
+    std::fs::write(dir.path().join("index.html"), "<html></html>").unwrap();
+    let r = anistock::api::spa::asset(dir.path(), "app-abc123.js", &axum::http::Method::GET, &Default::default()).await;
+    assert_eq!(r.headers().get("cache-control").unwrap(), "public, max-age=31536000, immutable");
+    let r = anistock::api::spa::catch_all(dir.path(), "/stocks/1").await;
+    assert_eq!(r.headers().get("cache-control").unwrap(), "no-cache");
+}
+
 #[tokio::test]
 async fn auth_bindings_and_routing_errors() {
     let a = app("2026-11-05T10:00:00+08:00", true);
     err(&a.get("/api/v1/me", None).await, 401, "unauthenticated");
     err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "nope!!"})), &[]).await, 401, "bad_credentials");
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "x"})), &[]).await, 422, "bad_invite");
-    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "alice", "password": "secret1", "invite": "club"})), &[]).await, 409, "username_taken");
-    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club"})), &[]).await;
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "x", "agree": true})), &[]).await, 422, "bad_invite");
+    // registration needs a proof of work; login does not (no surge)
+    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("GET", "/api/v1/auth/challenge", 200), &r.json, "challenge");
+    assert_eq!(r.json["registration"], "invite");
+    assert_eq!(r.headers.get("cache-control").unwrap(), "no-store");
+    let r = a.get("/api/v1/auth/challenge?purpose=login", None).await;
+    assert_eq!(r.json["challenge"], Value::Null);
+    err(&a.get("/api/v1/auth/challenge?purpose=x", None).await, 400, "invalid_request");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true})), &[]).await, 422, "pow_required");
+    let pow = solved(&a).await;
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "alice", "password": "secret1", "invite": "club", "agree": true, "pow": pow})), &[]).await, 409, "username_taken");
+    // that challenge is spent
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": pow})), &[]).await, 422, "pow_invalid");
+    let mut wrong = solved(&a).await;
+    wrong["number"] = json!((wrong["number"].as_u64().unwrap() + 1) % wrong["challenge"]["max"].as_u64().unwrap());
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": wrong})), &[]).await, 422, "pow_invalid");
+    err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": 3})), &[]).await, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/auth/register", Some(json!({"username": "bob", "password": "secret1", "invite": "club", "agree": true, "pow": solved(&a).await})), &[]).await;
     assert_eq!(r.status, 201, "{}", r.json);
     a.validate(&a.schema("POST", "/api/v1/auth/register", 201), &r.json, "register");
     err(&a.get("/api/v1/nope", None).await, 404, "not_found");

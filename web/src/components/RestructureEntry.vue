@@ -43,7 +43,7 @@ async function confirm() {
       <h2 id="rs-title">申请破产重整？</h2>
       <p>全部持仓按现价卖出。</p>
       <p>委托和新股认购全部撤销。</p>
-      <p>资金补足到 {{ initial }} 币。</p>
+      <p>资金补足到 {{ initial }} 星辉。</p>
       <p>排行的收益率继续计入此前的亏损。</p>
       <p>每季只能申请一次。</p>
       <p v-if="error" class="msg error" role="alert">{{ error }}</p>
