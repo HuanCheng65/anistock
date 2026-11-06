@@ -128,19 +128,21 @@ fn margin_buy_draws_and_repays_the_loan() {
     let n = w.e.credit_numbers(w.p, DAY);
     assert_eq!(n.liabilities, 75_019);
     assert_eq!(n.net(), 200_000 + 75_000 - 75_019);
-    // available margin: 200,000 + 0.7 × 75,000 − 75,019 − 75,019
-    assert_eq!(n.available_margin, 200_000 + 52_500 - 2 * 75_019);
+    // available margin: cash + (financed value − financing, a loss of the commission in full) − 100% × financing
+    assert_eq!(w.e.debts_of(w.p).next().unwrap().qty, 150);
+    assert_eq!(n.available_margin, 200_000 + (75_000 - 75_019) - 75_019);
     ok(&w.e);
 
-    // too much: at most available / (1 + 1 − 0.7) more
+    // too much: 249 more need 124,781 (inside the stock's financing room) but leave the margin at −100
     assert_eq!(credit(&mut w.e, w.p, Mode::MarginBuy, 250, 500).unwrap_err().0, "这支股票的融资额度已满");
-    assert_eq!(credit(&mut w.e, w.p, Mode::MarginBuy, 200, 500).unwrap_err().0, "可用保证金不足");
+    assert_eq!(credit(&mut w.e, w.p, Mode::MarginBuy, 249, 500).unwrap_err().0, "可用保证金不足");
     // 卖券还款: proceeds repay the debt (no commission/stamp left over to keep)
     order(&mut w.e, w.buyer, "buy", 100, 500);
     let r = credit(&mut w.e, w.p, Mode::SellRepay, 100, 500).unwrap();
     assert_eq!(r.filled, 100);
     let net = 50_000 - 13 - 25;
     assert_eq!(w.e.debts_of(w.p).next().unwrap().principal, 75_019 - net);
+    assert_eq!(w.e.debts_of(w.p).next().unwrap().qty, 50, "the sale takes the financed shares first");
     // 直接还款
     let paid = w.e.repay_cash(w.p, None, DAY, TS).unwrap();
     assert_eq!(paid, 75_019 - net);
@@ -306,4 +308,83 @@ fn delisting_settles_shorts_in_cash() {
     assert_eq!(w.e.account(w.p).unwrap().cash_frozen, 0);
     let _ = w.seller;
     ok(&w.e);
+}
+
+// ---- 保证金可用余额 (the exchanges' formula; docs/v2-margin.md §4)
+
+/// A player with `cash` and credit open, outside the order flow (positions are set by hand).
+fn bare(cash: i64) -> (W, i64) {
+    let mut w = world();
+    let q = player(&mut w.e, "q", cash);
+    w.e.open_credit(q, 0, DAY, TS).unwrap();
+    (w, q)
+}
+
+fn set_debt(e: &mut Engine, acct: i64, principal: i64, qty: i64) {
+    e.st.margin.debts.insert((acct, 1), Debt { account_id: acct, company_id: 1, principal, interest: 0, opened_on: DAY.into(), qty });
+}
+
+#[test]
+fn all_cash_finances_its_own_amount() {
+    let (w, q) = bare(10_000_000);
+    // 100,000 币 of cash: 100,000 币 of new financing (it was 100,000 / 1.3 = 76,923 before)
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_000_000);
+    // in practice: a stock with room for it, and its float on offer at 5 币
+    // a 2,000-币 account: 390 shares at 5 币 fit, 399 (199,949 cents) do not
+    let (mut w2, q2) = bare(200_000);
+    w2.e.margin.stock_cap = 100.0;
+    order(&mut w2.e, w2.seller, "sell", 400, 500);
+    assert!(credit(&mut w2.e, q2, Mode::MarginBuy, 390, 500).is_ok());
+    let n = w2.e.credit_numbers(q2, DAY);
+    // 195,439 drawn (195,000 + 49 commission + a cent a share); the unused 390 repaid when it filled
+    assert_eq!(n.debt_principal, 195_049);
+    let (mut w3, q3) = bare(200_000);
+    w3.e.margin.stock_cap = 100.0;
+    order(&mut w3.e, w3.seller, "sell", 400, 500);
+    assert_eq!(credit(&mut w3.e, q3, Mode::MarginBuy, 399, 500).unwrap_err().0, "可用保证金不足");
+}
+
+#[test]
+fn own_stock_counts_at_the_haircut() {
+    let (mut w, q) = bare(10_000_000);
+    w.e.add_shares(q, 1, 100, 500, DAY);
+    // 100,000 + 100 × 5 × 0.7
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_000_000 + 35_000);
+}
+
+#[test]
+fn financed_gain_at_the_haircut_loss_in_full() {
+    let (mut w, q) = bare(10_000_000);
+    w.e.add_shares(q, 1, 100, 500, DAY);
+    set_debt(&mut w.e, q, 50_000, 100);
+    // at 6 币: + (60,000 − 50,000) × 0.7 − 50,000 × 100%
+    set_price(&mut w.e, 600);
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_000_000 + 7_000 - 50_000);
+    // at 4 币: the 10,000 loss counts in full
+    set_price(&mut w.e, 400);
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_000_000 - 10_000 - 50_000);
+    // own shares beside the financed ones count as collateral
+    w.e.add_shares(q, 1, 50, 400, DAY);
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_000_000 + 14_000 - 10_000 - 50_000);
+}
+
+#[test]
+fn short_gain_at_the_haircut_loss_in_full() {
+    let (mut w, q) = bare(10_000_000);
+    // 100 shares sold short for 50,000, the proceeds locked in the account's cash
+    let world_id = w.e.special("world").unwrap();
+    w.e.transfer(world_id, q, 50_000, "test", DAY, TS, None, None);
+    w.e.st.margin.shorts.insert(
+        (q, 1),
+        Short { account_id: q, company_id: 1, lender_id: w.committee, qty: 100, proceeds: 50_000, fee: 0, opened_on: DAY.into(), amount: 50_000 },
+    );
+    // at 4 币: + (50,000 − 40,000) × 0.7 − 50,000 − 40,000 × 100%
+    set_price(&mut w.e, 400);
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_050_000 + 7_000 - 50_000 - 40_000);
+    // at 6 币: the 10,000 loss in full
+    set_price(&mut w.e, 600);
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_050_000 - 10_000 - 50_000 - 60_000);
+    // at 5 币 the short takes exactly its own value of margin: C − Y
+    set_price(&mut w.e, 500);
+    assert_eq!(w.e.credit_numbers(q, DAY).available_margin, 10_000_000 - 50_000);
 }

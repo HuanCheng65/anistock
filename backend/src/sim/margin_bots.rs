@@ -151,7 +151,8 @@ pub fn on_minute(b: &mut Bot, e: &mut Engine, t: i64) {
             let names = eligible(e, &day);
             let n = e.credit_numbers(acct, &day);
             let r = &e.margin;
-            let budget = n.available_margin as f64 / (1.0 + r.margin_ratio - r.haircut) * 0.95;
+            // each 币 financed takes 保证金比例 of margin (the new shares' value against the loan nets to ~0)
+            let budget = n.available_margin as f64 / r.margin_ratio * 0.95;
             if budget <= 0.0 || names.is_empty() {
                 return;
             }
