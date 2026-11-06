@@ -497,8 +497,10 @@ impl Engine {
     }
 
     /// The show's long-tail prior from its score and format (`vfilter::tail_mult`).
-    fn tail_mult_of(fp: &FilterParams, s: &ShowInputs) -> f64 {
-        F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"), s.popularity)
+    /// `week`: weeks since the premiere for a show not finished yet (its popularity against the reference shows at
+    /// that week), None from the finale on.
+    fn tail_mult_of(fp: &FilterParams, s: &ShowInputs, week: Option<i64>) -> f64 {
+        F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"), s.popularity, week)
     }
 
     /// For each market whose expected path ends in the long tail: (its tail, the show's prior, days after the
@@ -551,7 +553,11 @@ impl Engine {
         // the long tail's prior: from the inputs until the finale's week ends, then the state's
         let mult = match self.st.jstate.get(&s.id) {
             Some(j) if after_finale => j.tail_mult,
-            _ => Self::tail_mult_of(fp, s),
+            _ => {
+                let prem = day_no(&s.first_air).unwrap_or(today);
+                let week = if fin.is_some_and(|f| today >= f) { None } else { Some((today - prem).div_euclid(7).max(0)) };
+                Self::tail_mult_of(fp, s, week)
+            }
         };
         let prev_state = self.st.jstate.get(&s.id).cloned();
         // (the sequel hazard's inputs follow the inputs every day: unlike the tail prior they do not say how the
@@ -1314,7 +1320,7 @@ impl Engine {
         let first = day_no(&s.first_air).unwrap_or(today);
         let sched = Self::meta_of(s).map_or_else(|| F::schedule(&[first], episodes, long), |m| m.planned(&[first], episodes, long));
         let pc = Self::prior_cov_at(fp, s, today);
-        let mult = Self::tail_mult_of(fp, s);
+        let mult = Self::tail_mult_of(fp, s, Some(0));
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {
             if src[m] {
                 F::att_path(fp, p, m, pm[m], pc[m][m], today, &sched, first, long, fp.horizon_days, mult)

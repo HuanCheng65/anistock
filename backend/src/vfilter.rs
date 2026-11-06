@@ -176,6 +176,9 @@ pub struct TailPrior {
     /// the effect of each popularity fifth (empty: the bottom/top flags above)
     #[serde(default)]
     pub pop_fifth: Vec<f64>,
+    /// v0.6.1: the same shows' popularity w weeks after their premiere, sorted (for a show not finished yet)
+    #[serde(default)]
+    pub pop_ref_week: Vec<Vec<f64>>,
 }
 
 #[derive(Debug, Clone)]
@@ -723,16 +726,20 @@ pub fn tail_var(tl: &Tail, t: i64) -> f64 {
 }
 
 /// The show's prior tail level relative to the average (Python `tail_mult`).
-pub fn tail_mult(fp: &FilterParams, score: Option<f64>, ona: bool, popularity: Option<f64>) -> f64 {
+pub fn tail_mult(fp: &FilterParams, score: Option<f64>, ona: bool, popularity: Option<f64>, week: Option<i64>) -> f64 {
     let Some(pr) = &fp.tail_prior else { return 1.0 };
     let s = match score {
         Some(x) if x != 0.0 => (x - pr.score_ref) / 10.0,
         _ => 0.0,
     };
     let mut x = pr.score * s + if ona { pr.ona } else { 0.0 };
-    if let (Some(pop), false) = (popularity, pr.pop_ref.is_empty()) {
-        // the percentile among the reference year's finales (Python `pop_percentile`)
-        let q = pr.pop_ref.iter().filter(|v| **v < pop).count() as f64 / pr.pop_ref.len() as f64;
+    // the reference: the finales, or for a show not finished yet the same shows at its week (Python `pop_percentile`)
+    let rf: &[f64] = match week {
+        Some(w) if !pr.pop_ref_week.is_empty() => &pr.pop_ref_week[(w.max(0) as usize).min(pr.pop_ref_week.len() - 1)],
+        _ => &pr.pop_ref,
+    };
+    if let (Some(pop), false) = (popularity, rf.is_empty()) {
+        let q = rf.iter().filter(|v| **v < pop).count() as f64 / rf.len() as f64;
         if pr.pop_fifth.is_empty() {
             x = x + if q < 0.2 { pr.pop_bottom } else { 0.0 } + if q >= 0.9 { pr.pop_top } else { 0.0 };
         } else {
@@ -1190,8 +1197,14 @@ mod tests {
         }
         // the long tail (phase 1): a show that finished 200 days ago with a score prior; the value includes the
         // closed-form sum beyond the horizon (backend/difftest/valuation_ref.py prints these)
-        let mult = tail_mult(&fp, Some(78.0), true, Some(250000.0));
-        assert!(ulps(mult, 1.694491676526353) <= 2, "{mult}");
+        let mult = tail_mult(&fp, Some(78.0), true, Some(250000.0), None);
+        assert!(ulps(mult, 1.2032884694787451) <= 2, "{mult}");
+        // the tail prior in season, against the reference shows at the same week (v0.6.1)
+        let tw = [tail_mult(&fp, Some(78.0), false, Some(6000.0), Some(0)), tail_mult(&fp, Some(78.0), false, Some(6000.0), Some(30)),
+                  tail_mult(&fp, Some(78.0), false, Some(6000.0), None), tail_mult(&fp, None, true, None, Some(3))];
+        for (v, w) in tw.iter().zip([1.1029034473068702, 1.0966282005415675, 1.0966282005415675, 1.0977284508743859]) {
+            assert!(ulps(*v, w) <= 2, "tail_mult by week {v} {w}");
+        }
         let s4 = schedule(&(0..12).map(|k| today - 290 + 7 * k).collect::<Vec<_>>(), Some(12), false);
         let fin4 = *s4.last().unwrap();
         let own4: [Vec<f64>; 3] = std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s4, s4[0], false, 400, mult));
@@ -1199,14 +1212,14 @@ mod tests {
         let tails: [TailEnd; 3] = std::array::from_fn(|m| fp.tail[m].as_ref().map(|tl| (tl, mult, today + 400 - fin4 - 7)));
         let c4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, None, None);
         let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None], None, None);
-        assert!((own4[0][0] / 390.37406564780855 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
-        assert!((own4[1][399] / 2.455339142749654 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
-        assert!((c4 / 66.28576927185647 - 1.0).abs() < 1e-13 && (c0 / 30.13560097600698 - 1.0).abs() < 1e-13, "{c4} {c0}");
-        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.318943692361672) <= 2);
+        assert!((own4[0][0] / 277.21151923300187 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
+        assert!((own4[1][399] / 1.7435796941694433 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
+        assert!((c4 / 49.74609675059636 - 1.0).abs() < 1e-13 && (c0 / 22.707883319096137 - 1.0).abs() < 1e-13, "{c4} {c0}");
+        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.22648754948062882) <= 2);
         assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
         // absolute revenue (phase 1 step 2)
         let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), None);
-        assert!((d4 / 25.04852790627803 - 1.0).abs() < 1e-13, "{d4}");
+        assert!((d4 / 17.788654682500482 - 1.0).abs() < 1e-13, "{d4}");
         // the sequel option (phase 1 step 3; off by config, loaded here directly)
         let sp = fp.sequel.as_ref().unwrap();
         let z = sequel_z(sp, Some(78.0), Some("LIGHT_NOVEL"), false, true);
@@ -1220,10 +1233,10 @@ mod tests {
         assert!(ulps(z, 1.4591888) <= 2, "{z}");
         assert!(close(e1, 185259.0513666545) && close(e4, 1742.2352104961365) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
         let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), Some(&[e1, e4, e5]));
-        assert!(close(g, 43.95086762338151), "{g}");
+        assert!(close(g, 36.69099439960396), "{g}");
         // a scheduled switch 30 days ahead
         let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 30)), None);
-        assert!(close(swv, 63.20951264916694), "{swv}");
+        assert!(close(swv, 47.88233917543998), "{swv}");
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
         assert!(close(e6, 3944.0482601881704), "{e6}");

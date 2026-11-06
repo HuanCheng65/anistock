@@ -445,7 +445,10 @@ def solve3(A, b):
     return x
 
 
-def tail_prior_fit(us_hist, pct, ref, tail=None):
+LIST_MIN_POP = 3000.0   # the game lists a show only with this many AniList list entries
+
+
+def tail_prior_fit(us_hist, pct, ref, tail=None, drop=()):
     """Tail level by score, format and popularity (docs/v2-series.md §4.1). Per show, the mean log residual of its us
     factor 3-36 months after the finale against the fitted curve's median (`tail` with no prior), regressed (OLS) on
     (score - 70)/10, ONA and the popularity fifth within its finale year (sim/long_tail_analysis.py's definition; one
@@ -464,7 +467,7 @@ def tail_prior_fit(us_hist, pct, ref, tail=None):
             continue
         k = min(4, int(pct[mid] * 5))
         x = [1.0, (m["averageScore"] - 70) / 10, 1.0 if m["format"] == "ONA" else 0.0] + \
-            [1.0 if k == j else 0.0 for j in (0, 1, 3, 4)]
+            [1.0 if (k == j and j not in drop) else 0.0 for j in (0, 1, 3, 4)]
         rows.append((mid, x, sum(res) / len(res)))
 
     def ols(rs):
@@ -479,6 +482,16 @@ def tail_prior_fit(us_hist, pct, ref, tail=None):
         res = sum((y - sum(b * v for b, v in zip(beta, x))) ** 2 for _, x, y in rs)
         return 1 - res / sum((y - mu) ** 2 for y in ys), res
 
+    def ols_(rs):
+        # a dropped fifth's column is all zero: fit without it, its effect 0
+        keep = [i for i in range(len(rs[0][1])) if any(x[i] for _, x, _ in rs)]
+        b = ols0([(mid, [x[i] for i in keep], y) for mid, x, y in rs])
+        out = [0.0] * len(rs[0][1])
+        for i, v in zip(keep, b):
+            out[i] = v
+        return out
+    ols0 = ols
+    ols = ols_ if drop else ols0
     beta = ols(rows)
     r2_in, res = r2(beta, rows)
     odd = [r for r in rows if r[0] % 2 == 1]
@@ -561,6 +574,26 @@ def tail_table(lines, st_, tail, t_min):
         lines.append(f"| {t} | {n} | {math.exp(mu):.4f} | {v:.3f} | {math.exp(mu + 0.5 * v):.4f} | {model} |")
 
 
+def tail_prior_select(hist, us_hist, tail, lines):
+    """v0.6.1 (docs/v2-valuation.md §3.12): the tail prior on the shows the game would list (>= LIST_MIN_POP list
+    entries at the finale; below that the history only holds shows whose tail later grew), popularity fifths among
+    them; a fifth's effect is kept only if the held-out half agrees (fit on even ids and on odd: same sign, the smaller
+    at least half the larger), else 0. The in-season references (`pop_ref_week`) let a show not finished yet be placed
+    against the reference shows at the same week since the premiere."""
+    pct, ref = hist.popularity_percentiles(LIST_MIN_POP)
+    full = tail_prior_fit(us_hist, pct, ref, tail)
+    halves = [tail_prior_fit([h for h in us_hist if h[0] % 2 == par], pct, ref, tail)[0]["pop_fifth"] for par in (0, 1)]
+    drop = tuple(j for j in (0, 1, 3, 4) if not (halves[0][j] * halves[1][j] > 0 and
+                                                 min(abs(halves[0][j]), abs(halves[1][j])) >= 0.5 * max(abs(halves[0][j]), abs(halves[1][j]))))
+    prior, n, r2, r2_out, sd = tail_prior_fit(us_hist, pct, ref, tail, drop) if drop else full
+    prior["pop_ref_week"] = hist.popularity_by_week(prior["pop_ref_year"], LIST_MIN_POP)
+    prior["min_pop"] = LIST_MIN_POP
+    lines.append(f"Tail prior by popularity fifth among shows with >= {LIST_MIN_POP:.0f} list entries at the finale: all "
+                 f"{full[0]['pop_fifth']}, even ids {halves[0]}, odd ids {halves[1]}; dropped (halves disagree) {list(drop)}; "
+                 f"used {prior['pop_fifth']} ({n} shows).\n")
+    return prior, n, r2, r2_out, sd
+
+
 def fit_tail(hist_path, shows, drift8, bump, lines):
     """The long tail after the finale (docs/v2-series.md §4), per market: a weekly transition, then floor ×
     yearly^(t/365) + slow excess × exp(-t/tau2) + fast excess × exp(-t/tau) (the expected factor relative to the level at the finale × the finale bump,
@@ -612,8 +645,7 @@ def fit_tail(hist_path, shows, drift8, bump, lines):
     out["jp_source"] = "us"
     lines.append("jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; "
                  "the Annict watch-record history is not collected yet): **the us shape, flagged**.\n")
-    pct, ref = hist.popularity_percentiles()
-    prior, n, r2, r2_out, sd = tail_prior_fit(us_hist, pct, ref, out["us"])
+    prior, n, r2, r2_out, sd = tail_prior_select(hist, us_hist, out["us"], lines)
     out["prior"] = prior
     f5 = prior["pop_fifth"]
     lines.append(f"Tail level prior (us, mean log residual 3–36 months after the finale against the curve, {n} shows): "
@@ -1546,6 +1578,8 @@ def main():
     ap.add_argument("--partial-only", action="store_true",
                     help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
                          "write that key back")
+    ap.add_argument("--tail-prior-only", action="store_true",
+                    help="refit only the long tail's prior by popularity (`tail.prior`, --history) on the current curve")
     ap.add_argument("--runup-only", action="store_true",
                     help="fit only the run-up before the finale (`runup`; us from --history) with the rest of --out fixed, "
                          "and write that key back (then refit --heat-only and --partial-only)")
@@ -1565,6 +1599,19 @@ def main():
             r = fit_outlier(shows, cal, m)
             cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
             print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.tail_prior_only:
+        from sim.tail_history import History
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        hist = History(str(a.history))
+        lines = []
+        old = cal["tail"]["prior"]
+        prior, n, r2, r2_out, sd = tail_prior_select(hist, hist.us_tail(cal["finale_bump"]["us"]), cal["tail"]["us"], lines)
+        cal["tail"]["prior"] = prior
+        cal.setdefault("fit", {})["tail_prior_v061"] = {"before": {k: v for k, v in old.items() if not k.startswith("pop_ref")},
+                                                        "note": lines, "shows": n, "r2": r2, "r2_held_out": r2_out}
+        print("\n".join(lines))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.runup_only:

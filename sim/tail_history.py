@@ -136,15 +136,43 @@ class History:
                 return t[d][1]
         return m.get("popularity") or 0
 
-    def popularity_percentiles(self):
+    def pop_at(self, mid, d: date) -> float | None:
+        """AniList list entries on day d (the first trend day within a week after it), None without data."""
+        t = self.trend.get(mid, {})
+        for k in range(0, 7):
+            x = t.get(d + timedelta(days=k))
+            if x and x[1]:
+                return x[1]
+        return None
+
+    def popularity_percentiles(self, min_pop: float = 0.0):
         """({id: percentile of its popularity at the finale among the finished shows of its finale year},
-        {year: sorted popularity at the finale}) (sim/long_tail_analysis.py's definition)."""
+        {year: sorted popularity at the finale}) (sim/long_tail_analysis.py's definition). `min_pop`: only shows with at
+        least this many list entries at the finale (the game lists a show only from 3,000; the history holds shows with
+        3,000 today, so below that at the finale it is selected on a tail that grew)."""
         pops = {mid: (e.year, self.pop_at_finale(mid, m, e)) for mid, m, s, e in self.finished_shows()}
+        pops = {mid: v for mid, v in pops.items() if v[1] >= min_pop}
         by_y = defaultdict(list)
         for y, p in pops.values():
             by_y[y].append(p)
         pct = {mid: sum(1 for x in by_y[y] if x < p) / len(by_y[y]) for mid, (y, p) in pops.items()}
         return pct, {y: sorted(v) for y, v in by_y.items()}
+
+    def popularity_by_week(self, year: int, min_pop: float, weeks: int = 13):
+        """[sorted list entries w weeks after the premiere, w = 0..weeks-1] over the shows finishing in `year` with at
+        least `min_pop` at the finale and still airing then (the in-season reference for a show not finished yet)."""
+        out = [[] for _ in range(weeks)]
+        for mid, m, s, e in self.finished_shows():
+            if e.year != year or self.pop_at_finale(mid, m, e) < min_pop:
+                continue
+            for w in range(weeks):
+                d = s + timedelta(days=7 * w)
+                if d >= e:
+                    break
+                v = self.pop_at(mid, d)
+                if v:
+                    out[w].append(v)
+        return [sorted(v) for v in out]
 
     def us_tail(self, bump: float = 1.0):
         """[(show id, media, [(t days after finale+7, factor)])]: deflated factors relative to level × bump."""

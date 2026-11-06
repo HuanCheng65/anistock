@@ -492,15 +492,19 @@ def tail_var(tl: dict, t: int) -> float:
     return v[0] * (1.0 - math.exp(-t / v[1])) + v[2] * t
 
 
-def pop_percentile(pr: dict, popularity: float | None) -> float | None:
-    """The show's popularity percentile among the reference year's finales (`pop_ref`, sorted); None if unknown."""
-    ref = pr.get("pop_ref") or []
+def pop_percentile(pr: dict, popularity: float | None, week: int | None = None) -> float | None:
+    """The show's popularity percentile among the reference year's finales (`pop_ref`, sorted; v0.6.1: the shows the
+    game would list, at their finale); for a show not finished yet (`week` since its premiere) among the same shows at
+    that week (`pop_ref_week`), so in-season popularity is not compared with popularity at the finale. None if
+    unknown."""
+    rw = pr.get("pop_ref_week")
+    ref = (rw[min(max(week, 0), len(rw) - 1)] if (week is not None and rw) else pr.get("pop_ref")) or []
     if popularity is None or not ref:
         return None
     return sum(1 for v in ref if v < popularity) / len(ref)
 
 
-def tail_mult(fp: dict, score: float | None, ona: bool, popularity: float | None = None) -> float:
+def tail_mult(fp: dict, score: float | None, ona: bool, popularity: float | None = None, week: int | None = None) -> float:
     """The show's prior tail level relative to the average (docs/v2-series.md §4.1): fitted on score, format and the
     popularity percentile (bottom fifth, top tenth), log-linear, centred so the average show has 1. A missing score
     counts as the reference score; an unknown popularity as the middle."""
@@ -508,7 +512,7 @@ def tail_mult(fp: dict, score: float | None, ona: bool, popularity: float | None
     if not pr:
         return 1.0
     x = pr["score"] * ((score - pr["score_ref"]) / 10.0 if score else 0.0) + (pr["ona"] if ona else 0.0)
-    q = pop_percentile(pr, popularity)
+    q = pop_percentile(pr, popularity, week)
     if q is not None and pr.get("pop_fifth"):
         x = x + pr["pop_fifth"][min(4, int(q * 5))]
     elif q is not None:
