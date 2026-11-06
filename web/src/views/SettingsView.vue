@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { api, call, errorText, type BindCode } from '../api'
+import { api, ApiError, call, errorText, type ApiKey, type ApiKeyCreated, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
-import { hm } from '../format'
+import { hm, when } from '../format'
 import { KYC_UNLOCKS } from '../kyc'
 import { useAccount } from '../stores/account'
 import { useCredit } from '../stores/credit'
@@ -56,6 +56,74 @@ async function closeAccount() {
     router.replace('/')
   } catch (e) {
     closeErr.value = errorText(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+// ---- API 密钥 (docs/v2-api-access.md): read-only for now; the token is shown once
+const keys = ref<ApiKey[] | null>(null)
+// an older server without API keys: hide the section
+const keysMissing = ref(false)
+const keyMax = ref(5)
+const keyErr = ref('')
+const making = ref(false)
+const keyName = ref('')
+const keyDays = ref(90)
+const made = ref<ApiKeyCreated | null>(null)
+const copied = ref(false)
+const revokeId = ref<number | null>(null)
+const lifetimes = [30, 90, 365]
+const liveKeys = computed(() => (keys.value ?? []).filter((k) => !k.expired).length)
+async function loadKeys() {
+  try {
+    const r = await call(api.GET('/api/v1/me/api-keys'))
+    keys.value = r.items
+    keyMax.value = r.max
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'not_found') keysMissing.value = true
+    else keyErr.value = errorText(e)
+  }
+}
+if (session.me) loadKeys()
+function closeMaking() {
+  making.value = false
+  keyName.value = ''
+  keyDays.value = 90
+  made.value = null
+  copied.value = false
+  keyErr.value = ''
+}
+async function makeKey() {
+  busy.value = true
+  keyErr.value = ''
+  try {
+    made.value = await call(api.POST('/api/v1/me/api-keys', { body: { name: keyName.value.trim(), expires_in_days: keyDays.value } }))
+    await loadKeys()
+  } catch (e) {
+    keyErr.value = errorText(e)
+  } finally {
+    busy.value = false
+  }
+}
+async function copyKey() {
+  if (!made.value) return
+  try {
+    await navigator.clipboard.writeText(made.value.token)
+    copied.value = true
+  } catch {
+    copied.value = false
+  }
+}
+async function revokeKey(id: number) {
+  busy.value = true
+  keyErr.value = ''
+  try {
+    await call(api.DELETE('/api/v1/me/api-keys/{id}', { params: { path: { id } } }))
+    revokeId.value = null
+    await loadKeys()
+  } catch (e) {
+    keyErr.value = errorText(e)
   } finally {
     busy.value = false
   }
@@ -168,6 +236,57 @@ async function unbind(id: number) {
           @click="prefs.confirmOrders = !prefs.confirmOrders"><span></span></button>
       </div>
     </section>
+    <section v-if="session.me && !keysMissing" class="sec">
+      <h2>API 密钥</h2>
+      <p class="hint">用于脚本读取账户数据和接收成交推送，目前不能下单。接口说明见 <a href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI 文档</a>。</p>
+      <ul v-if="keys?.length" class="keys">
+        <li v-for="k in keys" :key="k.id">
+          <div class="keyhead">
+            <span class="keyname">{{ k.name }}</span>
+            <button type="button" class="btn ghost small" @click="revokeId = k.id">吊销</button>
+          </div>
+          <div class="keymeta">
+            <span class="num">{{ k.prefix }}…</span>
+            <span v-if="k.expired" class="expired">已过期</span>
+            <span v-else>{{ k.expires_at.slice(0, 10) }} 到期</span>
+            <span>{{ k.last_used_at ? `${when(k.last_used_at)}使用` : '未使用' }}</span>
+          </div>
+          <Modal :open="revokeId === k.id" title="吊销 API 密钥？" edit-key="revoke-key" :busy="busy" @close="revokeId = null">
+            <p>使用“{{ k.name }}”的脚本将无法访问账户，吊销后不能恢复。</p>
+            <template #actions>
+              <button type="button" class="btn" :disabled="busy" @click="revokeKey(k.id)">吊销</button>
+              <button type="button" class="btn ghost" :disabled="busy" @click="revokeId = null">取消</button>
+            </template>
+          </Modal>
+        </li>
+      </ul>
+      <button type="button" class="btn small" :disabled="busy || liveKeys >= keyMax" @click="making = true">生成密钥</button>
+      <p v-if="liveKeys >= keyMax" class="hint cap">最多同时有 {{ keyMax }} 个有效密钥</p>
+      <p v-if="keyErr && !making" class="msg error" role="alert">{{ keyErr }}</p>
+      <Modal :open="making" :title="made ? 'API 密钥' : '生成 API 密钥'" edit-key="make-key" :busy="busy" @close="closeMaking">
+        <template v-if="made">
+          <p>密钥只显示这一次，关闭后无法再查看。</p>
+          <code class="token num">{{ made.token }}</code>
+        </template>
+        <form v-else id="key-form" class="fields" @submit.prevent="makeKey">
+          <input autofocus v-model="keyName" class="input" maxlength="20" placeholder="名称，如“看盘脚本”" />
+          <div class="opts" role="radiogroup" aria-label="有效期">
+            <button v-for="d in lifetimes" :key="d" type="button" role="radio" :aria-checked="keyDays === d" @click="keyDays = d">{{ d }} 天</button>
+          </div>
+          <p v-if="keyErr" class="msg error" role="alert">{{ keyErr }}</p>
+        </form>
+        <template #actions>
+          <template v-if="made">
+            <button type="button" class="btn" @click="copyKey">{{ copied ? '已复制' : '复制' }}</button>
+            <button type="button" class="btn ghost" @click="closeMaking">完成</button>
+          </template>
+          <template v-else>
+            <button type="submit" form="key-form" class="btn" :disabled="busy || !keyName.trim()">生成</button>
+            <button type="button" class="btn ghost" :disabled="busy" @click="closeMaking">取消</button>
+          </template>
+        </template>
+      </Modal>
+    </section>
     <section class="sec">
       <h2>协议</h2>
       <nav class="docs">
@@ -239,6 +358,14 @@ async function unbind(id: number) {
 .close { display: block; margin-top: 14px; color: var(--muted); }
 .fields .input { height: 44px; font-size: 16px; }
 .docrow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--hair-2); font-size: 15px; }
+.keys { list-style: none; margin: 0 0 12px; padding: 0; border-top: 1px solid var(--hair-2); }
+.keys li { padding: 10px 0; border-bottom: 1px solid var(--hair-2); }
+.keyhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.keyname { font-size: 15px; overflow-wrap: anywhere; }
+.keymeta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 2px; font-size: 12px; color: var(--muted); }
+.keymeta .expired { color: var(--danger); }
+.cap { margin: 8px 0 0; }
+.token { display: block; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--base-line); background: var(--field-bg); font-size: 13px; overflow-wrap: anywhere; user-select: all; }
 .docrow:last-child { border-bottom: 0; }
 .chev { color: var(--muted); }
 </style>

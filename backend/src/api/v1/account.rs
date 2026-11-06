@@ -1332,12 +1332,14 @@ pub async fn close(
     })
     .await??;
     // personal data outside the game books (docs/v2-account.md §9); the ledger and trades stay, anonymous
-    super::bind::with_side(&st, |c| {
-        for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins"] {
+    let keys = super::bind::with_side(&st, |c| {
+        let keys = super::keys::revoke_all(c, id, &st.clock.ts())?;
+        for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins", "api_keys"] {
             c.execute(&format!("DELETE FROM {t} WHERE account_id=?"), [id]).map_err(sql)?;
         }
-        Ok(())
+        Ok(keys)
     })?;
+    super::keys::disconnect(&st, &keys);
     if let Some(live) = &st.live {
         let _ = live.send(crate::live::Ctl::Logout { account: id });
     }

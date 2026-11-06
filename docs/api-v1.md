@@ -76,6 +76,8 @@
 | 绑定 | `POST /api/v1/me/bind-codes` | 玩家（仅网页） | 新 |
 | | `GET /api/v1/me/bindings` | 玩家（仅网页） | 新 |
 | | `DELETE /api/v1/me/bindings/{id}` | 玩家（仅网页） | 新 |
+| API 密钥 | `GET`、`POST /api/v1/me/api-keys` | 玩家（仅网页） | 新（§3.6） |
+| | `DELETE /api/v1/me/api-keys/{id}` | 玩家（仅网页） | 新 |
 | 机器人 | `POST /api/v1/bot/bindings` | 机器人 | 新 |
 | | `DELETE /api/v1/bot/bindings/{platform}/{external_id}` | 机器人 | 新 |
 | 实时 | `GET /api/v1/ws`（WebSocket） | 可选 | `/api/ws`（开发中，同一版本内替换） |
@@ -350,7 +352,8 @@ ETag 主要是给机器人和轮询的客户端省流量；网页连上 WebSocke
 - 下单、撤单不另设限额，算在玩家的 10 次/秒里（引擎吞吐远高于这个数）。
 - 响应头采用 IETF 草案 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`；超限返回 429 `rate_limited` 和 `Retry-After`。
 - 按 IP 计数时，IPv6 地址按所在的 /64 合并（一个用户通常有整个 /64，可以随意换地址）；IPv4 映射地址按 IPv4 计。
-- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 32，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 2000，`ws_total`）和每条连接的订阅数（§5.2）。
+- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 32，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 2000，`ws_total`）、每个账号用 API 密钥打开的连接（默认 3，`ws_per_account`，浏览器不计）和每条连接的订阅数（§5.2）。
+- API 密钥和网页共用账号的桶（“已登录玩家”那一行），不按密钥分别计数。
 - 密码哈希（scrypt，每次约 50 ms）同时最多算 `hash_concurrency` 个（默认 2）。登录、注册最多等 5 秒，等不到返回 503 `busy`，撮合和推送不受影响。
 
 ### 2.13 其他
@@ -546,6 +549,16 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
                        external_id TEXT NOT NULL, scopes TEXT NOT NULL, created_at TEXT NOT NULL,
                        last_used_at TEXT, UNIQUE(platform, external_id), UNIQUE(account_id, platform));
 ```
+
+### 3.6 API 密钥（脚本）
+
+玩家自己的密钥，给脚本用。设计和分阶段计划见 `docs/v2-api-access.md`。
+
+- 在网页设置里生成（`POST /api/v1/me/api-keys`，只接受 cookie）：`{"name": "看盘脚本", "expires_in_days": 90}`，有效期 30、90（默认）或 365 天。201 返回 `{"key": ApiKey, "token": "anx_…"}`，明文只返回这一次，服务器只存 SHA-256。每个账号同时有效的密钥最多 5 个，超出返回 409 `too_many_api_keys`。
+- 请求时带 `Authorization: Bearer anx_…`。前缀 `anx_` 区分 API 密钥和机器人令牌。密钥无效、已吊销或已过期返回 401 `unauthenticated`。
+- 权限：目前只有 `read:account`，和机器人代表玩家时相同：公开读接口加 `/me/*` 的读接口，WebSocket 可以订阅 `me`。写接口和只在网页上做的操作返回 403 `forbidden`，`details.required_scope` 为 `"web"`。交易权限 `trade` 在第二阶段开放。
+- `GET /api/v1/me/api-keys` 列出没有吊销的密钥（含已过期的），带 `prefix`（明文前 8 位）、`last_used_at`、`last_used_ip`；`DELETE /api/v1/me/api-keys/{id}` 吊销，立即生效，用它打开的 WebSocket 以 4001 关闭。
+- 找回密码时全部密钥吊销，注销账号时全部删除。主动修改密码不影响密钥。
 
 ---
 
@@ -1356,7 +1369,7 @@ CREATE TABLE player_days (
 | `stock:<id>` | 一支股票的盘口、最新价、VCM、新成交 | 公开，每连接最多 16 个 | 每 100ms 最多一次，最新状态 |
 | `news` | 新资讯 | 公开 | 不合并 |
 | `events`、`events:<kind>` | 机器人关心的事件（§5.3.7），`events` 是全部 | 公开 | 不合并 |
-| `me` | 自己的委托、成交、现金 | 浏览器 cookie | 不合并 |
+| `me` | 自己的委托、成交、现金 | 浏览器 cookie 或 API 密钥（§3.6） | 不合并 |
 
 - 每条订阅消息最多 32 个主题，主题名最长 40 字符（沿用实现）。
 - 服务器对每条 `sub` 回一条确认（新增）：

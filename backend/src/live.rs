@@ -17,7 +17,8 @@
 //! - `news`, `events` and `me` go out as they happen. `news` and `events` keep the last 24 hours (at most
 //!   2000 each) for `since` on reconnect; outside that window the client gets `reset`.
 //! - `time` every 20 s and at once on a phase change, the 04:00 day change and a finished close.
-//! - Sessions: logout (`Ctl::Logout`) and cookie expiry (checked with `time`) close with 4001.
+//! - Sessions: logout (`Ctl::Logout`), a revoked API key (`Ctl::Revoke`) and cookie or key expiry
+//!   (checked with `time`) close with 4001.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -86,7 +87,8 @@ impl ChangeSink for Tee {
 
 /// Control messages from the WebSocket tasks (and the loops) to the engine thread.
 pub enum Ctl {
-    Add { id: u64, account: Option<i64>, bot: bool, exp: Option<i64>, tx: mpsc::Sender<Utf8Bytes>, kill: oneshot::Sender<u16> },
+    /// `key`: the API key the connection authenticated with (docs/v2-api-access.md), if any
+    Add { id: u64, account: Option<i64>, bot: bool, key: Option<i64>, exp: Option<i64>, tx: mpsc::Sender<Utf8Bytes>, kill: oneshot::Sender<u16> },
     Sub { id: u64, topics: Vec<String>, since: HashMap<String, i64> },
     Unsub { id: u64, topics: Vec<String> },
     Resync { id: u64, topics: Vec<String> },
@@ -94,6 +96,8 @@ pub enum Ctl {
     Del(u64),
     /// the session of this account ended (logout): close its connections with 4001
     Logout { account: i64 },
+    /// this API key was revoked: close the connections opened with it (4001)
+    Revoke { key: i64 },
     /// an event built elsewhere (the daily close's `daily_close`, `leaderboard_weekly`)
     Emit(Pending),
     /// send `time` now (after a close)
@@ -103,6 +107,7 @@ pub enum Ctl {
 struct Client {
     account: Option<i64>,
     bot: bool,
+    key: Option<i64>,
     exp: Option<i64>,
     tx: mpsc::Sender<Utf8Bytes>,
     kill: Option<oneshot::Sender<u16>>,
@@ -242,13 +247,14 @@ impl Fanout {
 
     pub fn control(&mut self, c: Ctl, e: &Engine) {
         match c {
-            Ctl::Add { id, account, bot, exp, tx, kill } => {
+            Ctl::Add { id, account, bot, key, exp, tx, kill } => {
                 self.slots[(id % 10) as usize].push(id);
                 self.clients.insert(
                     id,
                     Client {
                         account,
                         bot,
+                        key,
                         exp,
                         tx,
                         kill: Some(kill),
@@ -314,7 +320,15 @@ impl Fanout {
             }
             Ctl::Del(id) => self.remove(id, None),
             Ctl::Logout { account } => {
-                let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.account == Some(account)).map(|(i, _)| *i).collect();
+                // a connection opened with an API key lives as long as the key, not the browser session
+                let ids: Vec<u64> =
+                    self.clients.iter().filter(|(_, c)| c.account == Some(account) && c.key.is_none()).map(|(i, _)| *i).collect();
+                for id in ids {
+                    self.rm.push((id, 4001));
+                }
+            }
+            Ctl::Revoke { key } => {
+                let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.key == Some(key)).map(|(i, _)| *i).collect();
                 for id in ids {
                     self.rm.push((id, 4001));
                 }

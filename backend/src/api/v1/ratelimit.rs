@@ -17,6 +17,8 @@ pub struct Limits {
     /// bind-code redemptions per QQ number
     pub bind: (f64, f64),
     pub ws_per_ip: usize,
+    /// concurrent WebSocket connections opened with API keys, per account
+    pub ws_per_account: usize,
     /// concurrent WebSocket connections, site-wide
     pub ws_total: usize,
     /// password hashes (scrypt) computed at the same time
@@ -42,6 +44,7 @@ impl Limits {
             bind: (bind / 3600.0, bind),
             register: (register / 86400.0, register),
             ws_per_ip: f("ws_per_ip", 32.0) as usize,
+            ws_per_account: f("ws_per_account", 3.0) as usize,
             ws_total: f("ws_total", 2000.0) as usize,
             hash_concurrency: (cfg.api_f64("rate_limit.hash_concurrency", 2.0) as usize).max(1),
         }
@@ -150,6 +153,7 @@ mod tests {
             register: (1.0, 1.0),
             bind: (1.0, 1.0),
             ws_per_ip: 8,
+            ws_per_account: 3,
             ws_total: 100,
             hash_concurrency: 2,
         };
@@ -173,6 +177,7 @@ mod tests {
             register: (1.0, 1.0),
             bind: (1.0, 1.0),
             ws_per_ip: 8,
+            ws_per_account: 3,
             ws_total: 100,
             hash_concurrency: 2,
         };

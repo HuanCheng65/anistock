@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, assess, bind, password, corporate, credit, market, search, stocks, works};
+use super::{account, assess, bind, keys, password, corporate, credit, market, search, stocks, works};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -28,6 +28,7 @@ use super::{account, assess, bind, password, corporate, credit, market, search, 
         account::leaderboard, account::sign, account::read_announcement, account::close, assess::questions, assess::submit, credit::credit, credit::open, credit::repay, credit::stock_margin,
         account::challenge, account::register, account::login, account::logout, password::reset, password::change, password::bot_issue,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
+        keys::list, keys::create, keys::revoke,
     ),
     components(schemas(
         super::error::ErrorBody, super::error::FieldError, Money, TradingDay, Timestamp,
@@ -44,7 +45,7 @@ pub struct ApiDoc;
 /// Request bodies: optional fields stay optional.
 const REQUESTS: &[&str] = &[
     "PlaceOrderRequest", "SubscriptionRequest", "RestructureRequest", "RegisterRequest", "LoginRequest",
-    "BindCodeRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
+    "BindCodeRequest", "ApiKeyRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
 ];
 
 fn require_all(v: &mut Value) {
@@ -84,7 +85,10 @@ pub fn document() -> Value {
     if let Some(Value::Object(c)) = doc.get_mut("components") {
         c.insert(
             "securitySchemes".into(),
-            serde_json::json!({"bot": {"type": "http", "scheme": "bearer", "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家"}}),
+            serde_json::json!({
+                "bot": {"type": "http", "scheme": "bearer", "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家"},
+                "api_key": {"type": "http", "scheme": "bearer", "description": "玩家自己的 API 密钥（anx_ 开头，在网页设置里生成）。权限 read:account：读 /me/*、WebSocket 订阅 me；写操作只能在网页上做（docs/v2-api-access.md）"},
+            }),
         );
     }
     doc

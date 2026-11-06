@@ -363,6 +363,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/api-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的 API 密钥（仅网页） */
+        get: operations["list_api_keys"];
+        put?: never;
+        /** 生成 API 密钥（仅网页）。明文只在这次返回 */
+        post: operations["create_api_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/api-keys/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 吊销 API 密钥（仅网页） */
+        delete: operations["revoke_api_key"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/assessments/{kind}": {
         parameters: {
             query?: never;
@@ -914,6 +949,45 @@ export interface components {
         /** @description 每题所选选项的序号（从 0 开始） */
         AnswersRequest: {
             answers: number[];
+        };
+        /** @description API 密钥（docs/v2-api-access.md）。明文只在生成时返回一次 */
+        ApiKey: {
+            created_at: components["schemas"]["Timestamp"];
+            expired: boolean;
+            expires_at: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            id: number;
+            last_used_at: null | components["schemas"]["Timestamp"];
+            last_used_ip: string | null;
+            name: string;
+            /** @description 明文的前 8 位（`anx_` 加 4 位），用来区分密钥 */
+            prefix: string;
+            scopes: string[];
+        };
+        ApiKeyCreated: {
+            key: components["schemas"]["ApiKey"];
+            /** @description 密钥明文，只返回这一次 */
+            token: string;
+        };
+        ApiKeyRequest: {
+            /**
+             * Format: int64
+             * @description 30、90（默认）或 365
+             */
+            expires_in_days?: number | null;
+            /** @description 备注名，1–20 字 */
+            name: string;
+            /** @description 目前只能是 `["read:account"]`（默认） */
+            scopes?: string[] | null;
+        };
+        ApiKeysResponse: {
+            /** @description 没有吊销的密钥（含已过期的），新的在前 */
+            items: components["schemas"]["ApiKey"][];
+            /**
+             * Format: int64
+             * @description 同时有效的密钥上限
+             */
+            max: number;
         };
         /** @description 一份测评的题目 */
         Assessment: {
@@ -3017,6 +3091,93 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Me"];
                 };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    list_api_keys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeysResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    create_api_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiKeyRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    revoke_api_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 密钥 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已吊销 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: {
                 headers: {

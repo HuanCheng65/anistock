@@ -156,6 +156,7 @@ register_per_ip_day = 20      # successful registrations per IP per day, on top 
 bind_per_hour = 5             # bind-code redemptions per QQ number
 ws_per_ip = 32                # concurrent WebSocket connections per IP (campus NAT shares one address)
 ws_total = 2000               # concurrent WebSocket connections, site-wide
+ws_per_account = 3            # concurrent WebSocket connections opened with API keys, per account (docs/v2-api-access.md)
 hash_concurrency = 2          # password hashes (scrypt, ~50 ms each) at a time; a login waits up to 5 s for a slot
 
 [api.pow]

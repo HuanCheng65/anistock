@@ -1272,6 +1272,46 @@ pub struct RedeemResponse {
     pub account: UserRef,
 }
 
+/// API 密钥（docs/v2-api-access.md）。明文只在生成时返回一次
+#[derive(Serialize, ToSchema, Clone)]
+pub struct ApiKey {
+    pub id: i64,
+    pub name: String,
+    /// 明文的前 8 位（`anx_` 加 4 位），用来区分密钥
+    pub prefix: String,
+    pub scopes: Vec<String>,
+    pub created_at: Timestamp,
+    pub expires_at: Timestamp,
+    pub expired: bool,
+    pub last_used_at: Option<Timestamp>,
+    pub last_used_ip: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ApiKeysResponse {
+    /// 没有吊销的密钥（含已过期的），新的在前
+    pub items: Vec<ApiKey>,
+    /// 同时有效的密钥上限
+    pub max: i64,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ApiKeyRequest {
+    /// 备注名，1–20 字
+    pub name: String,
+    /// 目前只能是 `["read:account"]`（默认）
+    pub scopes: Option<Vec<String>>,
+    /// 30、90（默认）或 365
+    pub expires_in_days: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct ApiKeyCreated {
+    pub key: ApiKey,
+    /// 密钥明文，只返回这一次
+    pub token: String,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct Health {
     pub ok: bool,

@@ -172,6 +172,132 @@
         ],
         "type": "object"
       },
+      "ApiKey": {
+        "description": "API 密钥（docs/v2-api-access.md）。明文只在生成时返回一次",
+        "properties": {
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ]
+          },
+          "last_used_ip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "description": "明文的前 8 位（`anx_` 加 4 位），用来区分密钥",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created_at",
+          "expired",
+          "expires_at",
+          "id",
+          "last_used_at",
+          "last_used_ip",
+          "name",
+          "prefix",
+          "scopes"
+        ],
+        "type": "object"
+      },
+      "ApiKeyCreated": {
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/ApiKey"
+          },
+          "token": {
+            "description": "密钥明文，只返回这一次",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "token"
+        ],
+        "type": "object"
+      },
+      "ApiKeyRequest": {
+        "properties": {
+          "expires_in_days": {
+            "description": "30、90（默认）或 365",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "备注名，1–20 字",
+            "type": "string"
+          },
+          "scopes": {
+            "description": "目前只能是 `[\"read:account\"]`（默认）",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ApiKeysResponse": {
+        "properties": {
+          "items": {
+            "description": "没有吊销的密钥（含已过期的），新的在前",
+            "items": {
+              "$ref": "#/components/schemas/ApiKey"
+            },
+            "type": "array"
+          },
+          "max": {
+            "description": "同时有效的密钥上限",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "max"
+        ],
+        "type": "object"
+      },
       "Assessment": {
         "description": "一份测评的题目",
         "properties": {
@@ -5209,6 +5335,11 @@
       }
     },
     "securitySchemes": {
+      "api_key": {
+        "description": "玩家自己的 API 密钥（anx_ 开头，在网页设置里生成）。权限 read:account：读 /me/*、WebSocket 订阅 me；写操作只能在网页上做（docs/v2-api-access.md）",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "bot": {
         "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家",
         "scheme": "bearer",
@@ -6182,6 +6313,112 @@
           }
         },
         "summary": "公告已读",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/api-keys": {
+      "get": {
+        "operationId": "list_api_keys",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeysResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的 API 密钥（仅网页）",
+        "tags": [
+          "account"
+        ]
+      },
+      "post": {
+        "operationId": "create_api_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyCreated"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "生成 API 密钥（仅网页）。明文只在这次返回",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/api-keys/{id}": {
+      "delete": {
+        "operationId": "revoke_api_key",
+        "parameters": [
+          {
+            "description": "密钥 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "已吊销"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "吊销 API 密钥（仅网页）",
         "tags": [
           "account"
         ]

@@ -3,7 +3,7 @@
 //! - Routing is axum's own `Router`; each handler is a plain async fn with a `utoipa::path` annotation,
 //!   so `openapi.rs` documents exactly what is served.
 //! - `layer` runs around every v1 request: request id, caller resolution (session cookie, bot token,
-//!   `X-Act-As`), rate limits (§2.12), the `AniEx-Version` header, cache headers and ETags (§2.11).
+//!   `X-Act-As`, personal API key), rate limits (§2.12), the `AniEx-Version` header, cache headers and ETags (§2.11).
 //! - Reads run on the pooled read-only SQLite connections (`AppState::reads`) off the async workers;
 //!   writes to game state go through the engine thread (`actor`), which flushes before it replies.
 //!   Bindings, bind codes (not game state) are written on a separate small connection (`side`).
@@ -14,6 +14,7 @@ pub mod corporate;
 pub mod credit;
 pub mod error;
 pub mod events;
+pub mod keys;
 pub mod market;
 pub mod openapi;
 pub mod assess;
@@ -110,6 +111,8 @@ pub enum Caller {
     Bot { name: String },
     /// a bot token acting for a bound player
     BotAs { name: String, account: i64, scopes: Vec<String> },
+    /// a player's own API key (docs/v2-api-access.md)
+    ApiKey { account: i64, key: i64, scopes: Vec<String> },
 }
 
 impl Caller {
@@ -120,6 +123,8 @@ impl Caller {
             Caller::Player { id } => Ok(*id),
             Caller::BotAs { account, scopes, .. } if scopes.iter().any(|s| s == "read:account") => Ok(*account),
             Caller::BotAs { .. } => Err(error::forbidden("read:account")),
+            Caller::ApiKey { account, scopes, .. } if scopes.iter().any(|s| s == "read:account") => Ok(*account),
+            Caller::ApiKey { .. } => Err(error::forbidden("read:account")),
             _ => Err(error::unauthenticated()),
         }
     }
@@ -130,6 +135,7 @@ impl Caller {
             Caller::Player { id } => Ok(*id),
             Caller::BotAs { .. } => Err(error::forbidden("trade")),
             Caller::Bot { .. } => Err(error::forbidden("player")),
+            Caller::ApiKey { .. } => Err(error::web_only()),
             Caller::Anon => Err(error::unauthenticated()),
         }
     }
@@ -139,6 +145,7 @@ impl Caller {
         match self {
             Caller::Player { id } => Some(*id),
             Caller::BotAs { account, scopes, .. } if scopes.iter().any(|s| s == "read:account") => Some(*account),
+            Caller::ApiKey { account, scopes, .. } if scopes.iter().any(|s| s == "read:account") => Some(*account),
             _ => None,
         }
     }
@@ -164,6 +171,13 @@ pub fn session_account(st: &AppState, headers: &HeaderMap) -> Option<i64> {
     }
 }
 
+/// The personal API key in `Authorization: Bearer anx_…`, if that is what the header carries.
+pub fn api_key_token(headers: &HeaderMap) -> Option<String> {
+    let h = headers.get("authorization")?.to_str().ok()?;
+    let t = h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer "))?.trim();
+    t.starts_with(keys::PREFIX).then(|| t.to_string())
+}
+
 /// The bot behind `Authorization: Bearer`, if any: Ok(None) without the header, Err for a bad token.
 pub fn bearer(st: &AppState, headers: &HeaderMap) -> R<Option<String>> {
     use sha2::Digest;
@@ -183,7 +197,11 @@ pub fn bearer(st: &AppState, headers: &HeaderMap) -> R<Option<String>> {
     found.map(Some).ok_or_else(error::bad_token)
 }
 
-async fn resolve(st: &Arc<AppState>, headers: &HeaderMap) -> R<Caller> {
+async fn resolve(st: &Arc<AppState>, headers: &HeaderMap, ip: &str) -> R<Caller> {
+    if let Some(token) = api_key_token(headers) {
+        let k = keys::authenticate(st, &token, ip).await?;
+        return Ok(Caller::ApiKey { account: k.account, key: k.id, scopes: k.scopes });
+    }
     if let Some(name) = bearer(st, headers)? {
         let Some(act) = headers.get("x-act-as") else { return Ok(Caller::Bot { name }) };
         let act = act.to_str().unwrap_or("").trim().to_string();
@@ -270,12 +288,13 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let if_none = req.headers().get("if-none-match").and_then(|v| v.to_str().ok()).map(str::to_string);
-    let mut resp = match resolve(&st, req.headers()).await {
+    let mut resp = match resolve(&st, req.headers(), &ip).await {
         Err(e) => e.into_response(),
         Ok(caller) => {
             let ip_key = ratelimit::ip_key(&ip);
             let key = match &caller {
-                Caller::Player { id } => ratelimit::Key::Player(*id),
+                // a key shares its account's bucket with the browser (docs/v2-api-access.md §5)
+                Caller::Player { id } | Caller::ApiKey { account: id, .. } => ratelimit::Key::Player(*id),
                 Caller::Bot { name } | Caller::BotAs { name, .. } => ratelimit::Key::Bot(name.clone()),
                 Caller::Anon => ratelimit::Key::Anon(ip_key.clone()),
             };
@@ -605,6 +624,8 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/bind-codes", post(bind::create_code))
         .route("/me/bindings", get(bind::list))
         .route("/me/bindings/{id}", delete(bind::remove))
+        .route("/me/api-keys", get(keys::list).post(keys::create))
+        .route("/me/api-keys/{id}", delete(keys::revoke))
         .route("/bot/bindings", post(bind::redeem))
         .route("/bot/bindings/{platform}/{external_id}", delete(bind::bot_remove))
         .route("/openapi.json", get(openapi::serve))
@@ -630,7 +651,8 @@ fn method_fallback(path: &str) -> Response {
         ["", "me"] => "GET, DELETE",
         ["", "me", "assessments", _] | ["", "me", "password"] | ["", "bot", "password-resets"] => "POST",
         ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "agreements"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
-        ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
+        ["", "me", "api-keys"] => "GET, POST",
+        ["", "me", "bindings", _] | ["", "me", "api-keys", _] | ["", "bot", "bindings", _, _] => "DELETE",
         ["", "me", "announcements", _, "read"] => "POST",
         _ => "GET",
     };

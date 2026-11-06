@@ -83,6 +83,15 @@ pub fn unauthenticated() -> E {
 pub fn bad_token() -> E {
     E::new(401, "unauthenticated", "机器人令牌无效")
 }
+pub fn bad_api_key() -> E {
+    E::new(401, "unauthenticated", "API 密钥无效或已过期")
+}
+pub fn web_only() -> E {
+    E::new(403, "forbidden", "只能在网页上操作").details(json!({"required_scope": "web"}))
+}
+pub fn too_many_api_keys(max: i64) -> E {
+    E::new(409, "too_many_api_keys", format!("最多同时有 {max} 个 API 密钥，先吊销不用的")).details(json!({"max": max}))
+}
 pub fn bad_credentials() -> E {
     E::new(401, "bad_credentials", "用户名或密码不正确")
 }
@@ -200,6 +209,8 @@ pub fn label(field: &str) -> &'static str {
         "current_password" => "当前密码",
         "new_password" => "新密码",
         "scopes" => "权限",
+        "name" => "名称",
+        "expires_in_days" => "有效期",
         "platform" => "平台",
         "external_id" => "QQ 标识",
         "trading_day" | "from" | "to" | "listed_since" => "交易日",

@@ -513,8 +513,12 @@ async fn closing_an_account() {
     let r = a.req("DELETE", "/api/v1/me", Some(json!({"password": "wrong!!", "confirm": true})), &h).await;
     err(&r, 400, "invalid_request");
     assert_eq!(r.json["message"], "密码不正确");
+    let r = a.req("POST", "/api/v1/me/api-keys", Some(json!({"name": "脚本"})), &h).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    let key = format!("Bearer {}", r.json["token"].as_str().unwrap());
     let r = a.req("DELETE", "/api/v1/me", Some(json!({"password": "secret1", "confirm": true})), &h).await;
     assert_eq!(r.status.as_u16(), 204, "{}", r.json);
+    err(&a.req("GET", "/api/v1/me", None, &[("authorization", key.as_str())]).await, 401, "unauthenticated");
     // the cookie no longer works, the name and password are gone, the books still balance
     err(&a.get("/api/v1/me", Some(&ck)).await, 401, "unauthenticated");
     err(&a.req("POST", "/api/v1/auth/login", Some(json!({"username": "alice", "password": "secret1"})), &[]).await, 401, "bad_credentials");
@@ -525,7 +529,7 @@ async fn closing_an_account() {
     assert_eq!(name, format!("已注销用户 #{id}"));
     let left: i64 = c.query_row("SELECT COUNT(*) FROM holdings WHERE account_id=?", [id], |r| r.get(0)).unwrap();
     assert_eq!(left, 0);
-    for t in ["account_agreements", "risk_assessments", "account_logins"] {
+    for t in ["account_agreements", "risk_assessments", "account_logins", "api_keys"] {
         let n: i64 = c.query_row(&format!("SELECT COUNT(*) FROM {t} WHERE account_id=?"), [id], |r| r.get(0)).unwrap();
         assert_eq!(n, 0, "{t}");
     }
@@ -789,4 +793,131 @@ async fn announcements_pop_up_once_for_existing_accounts() {
     assert_eq!(r.json["announcement"], Value::Null);
     err(&a.req("POST", "/api/v1/me/announcements/999/read", None, &h).await, 404, "not_found");
     err(&a.req("POST", &format!("/api/v1/me/announcements/{id}/read"), None, &[]).await, 401, "unauthenticated");
+}
+
+#[tokio::test]
+async fn api_keys_read_but_do_not_write() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let (a, h) = (&a, &h);
+    let make = |body: Value| async move { a.req("POST", "/api/v1/me/api-keys", Some(body), h).await };
+    err(&make(json!({})).await, 400, "invalid_request");
+    err(&make(json!({"name": "x".repeat(21)})).await, 400, "invalid_request");
+    err(&make(json!({"name": "行情", "scopes": ["trade"]})).await, 400, "invalid_request");
+    err(&make(json!({"name": "行情", "expires_in_days": 7})).await, 400, "invalid_request");
+    let r = make(json!({"name": "行情", "expires_in_days": 30})).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/api-keys", 201), &r.json, "api key");
+    let token = r.json["token"].as_str().unwrap().to_string();
+    assert!(token.starts_with("anx_") && token.len() == 44, "{token}");
+    assert_eq!(r.json["key"]["prefix"].as_str().unwrap(), &token[..8]);
+    assert_eq!(r.json["key"]["scopes"], json!(["read:account"]));
+    let id = r.json["key"]["id"].as_i64().unwrap();
+    let bearer = format!("Bearer {token}");
+    let k = [("authorization", bearer.as_str())];
+
+    // reads the account like the browser
+    let r = a.req("GET", "/api/v1/me", None, &k).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    assert_eq!(r.json["username"], "alice");
+    assert_eq!(a.req("GET", "/api/v1/me/portfolio", None, &k).await.status, 200);
+    assert_eq!(a.req("GET", "/api/v1/me/orders", None, &k).await.status, 200);
+    // writes and web-only endpoints stay with the browser
+    let order = json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 100, "quantity": 1});
+    let r = a.req("POST", "/api/v1/me/orders", Some(order), &k).await;
+    err(&r, 403, "forbidden");
+    assert_eq!(r.json["details"]["required_scope"], "web");
+    err(&a.req("POST", "/api/v1/me/api-keys", Some(json!({"name": "再来"})), &k).await, 403, "forbidden");
+    err(&a.req("GET", "/api/v1/me/api-keys", None, &k).await, 403, "forbidden");
+    err(&a.req("DELETE", &format!("/api/v1/me/api-keys/{id}"), None, &k).await, 403, "forbidden");
+    err(&a.req("GET", "/api/v1/me", None, &[("authorization", "Bearer anx_nope")]).await, 401, "unauthenticated");
+
+    // five in force at most; the list never shows the token
+    for i in 0..4 {
+        assert_eq!(make(json!({"name": format!("k{i}")})).await.status, 201);
+    }
+    let r = make(json!({"name": "第六个"})).await;
+    err(&r, 409, "too_many_api_keys");
+    let r = a.get("/api/v1/me/api-keys", Some(&ck)).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("GET", "/api/v1/me/api-keys", 200), &r.json, "api keys");
+    assert_eq!(r.json["items"].as_array().unwrap().len(), 5);
+    assert!(!r.json.to_string().contains(&token));
+    // the first use is recorded in the background
+    let mut used = Value::Null;
+    for _ in 0..50 {
+        let r = a.get("/api/v1/me/api-keys", Some(&ck)).await;
+        used = r.json["items"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["last_used_at"].clone();
+        if used.is_string() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(used.is_string(), "{used}");
+
+    // an expired key stops working and frees its place
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    c.execute("UPDATE api_keys SET expires_at='2026-11-01T00:00:00+08:00' WHERE id=?", [id]).unwrap();
+    err(&a.req("GET", "/api/v1/me", None, &k).await, 401, "unauthenticated");
+    let r = make(json!({"name": "第六个"})).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    let token6 = format!("Bearer {}", r.json["token"].as_str().unwrap());
+    let id6 = r.json["key"]["id"].as_i64().unwrap();
+    assert_eq!(a.req("GET", "/api/v1/me", None, &[("authorization", token6.as_str())]).await.status, 200);
+
+    // revoked: gone at once
+    let r = a.req("DELETE", &format!("/api/v1/me/api-keys/{id6}"), None, h).await;
+    assert_eq!(r.status, 204);
+    err(&a.req("GET", "/api/v1/me", None, &[("authorization", token6.as_str())]).await, 401, "unauthenticated");
+    err(&a.req("DELETE", &format!("/api/v1/me/api-keys/{id6}"), None, h).await, 404, "api_key_not_found");
+
+    // a password reset revokes the rest
+    let openid = "E1F2A3B4C5D6E7F8A9B0C1D2E3F4A5B6";
+    let acct: i64 = c.query_row("SELECT id FROM accounts WHERE username='alice'", [], |r| r.get(0)).unwrap();
+    c.execute("INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', ?, 'read:account', ?)", rusqlite::params![acct, openid, TS]).unwrap();
+    let bot = [("authorization", &*format!("Bearer {BOT}"))];
+    let r = a.req("POST", "/api/v1/bot/password-resets", Some(json!({"platform": "qq", "external_id": openid})), &bot).await;
+    let code = r.json["code"].as_str().unwrap().to_string();
+    let r = a.req("POST", "/api/v1/auth/password-reset", Some(json!({"username": "alice", "code": code, "new_password": "third333"})), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    let live: i64 = c.query_row("SELECT COUNT(*) FROM api_keys WHERE account_id=? AND revoked_at IS NULL", [acct], |r| r.get(0)).unwrap();
+    assert_eq!(live, 0);
+}
+
+#[tokio::test]
+async fn key_connections_follow_the_key_not_the_session() {
+    use anistock::live::{Ctl, Fanout};
+    let mut fx = Fx::new();
+    fx.seed_rest();
+    let db = fx.dir.path().join("game.db");
+    let coll = fx.dir.path().join("collector.db");
+    let cfg = Config::load_from(&root(), move |k| match k {
+        "ANISTOCK_GAME_DB" => Some(db.display().to_string()),
+        "ANISTOCK_DB" => Some(coll.display().to_string()),
+        _ => None,
+    })
+    .unwrap();
+    let cfg = Arc::new(cfg);
+    let clock = Clock::fixed(cfg.tz, "2026-11-05T10:00:00+08:00");
+    let (_ctx, crx) = crossbeam_channel::unbounded();
+    let (_ltx, lrx) = crossbeam_channel::unbounded();
+    let mut f = Fanout::new(clock, cfg, crx, lrx, Default::default());
+    let mut add = |id: u64, key: Option<i64>| {
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (kill, killed) = tokio::sync::oneshot::channel::<u16>();
+        f.control(Ctl::Add { id, account: Some(5), bot: false, key, exp: None, tx, kill }, &fx.e);
+        (killed, _rx)
+    };
+    let (mut browser, _b) = add(1, None);
+    let (mut script, _s) = add(2, Some(7));
+    let (mut other, _o) = add(3, Some(8));
+    // logging out of the browser leaves the scripts alone
+    f.control(Ctl::Logout { account: 5 }, &fx.e);
+    assert_eq!(browser.try_recv(), Ok(4001));
+    assert!(script.try_recv().is_err());
+    // revoking one key closes only its connections
+    f.control(Ctl::Revoke { key: 7 }, &fx.e);
+    assert_eq!(script.try_recv(), Ok(4001));
+    assert!(other.try_recv().is_err());
 }

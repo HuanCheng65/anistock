@@ -1,10 +1,12 @@
 //! `GET /api/v1/ws`: the real-time push (docs/api-v1.md §5). What is sent and when is `live.rs`; this
 //! file is the connection: authentication at the handshake, the client messages, the writer, close codes.
 //!
-//! Authentication: the `session` cookie (browsers; may subscribe `me`) or `Authorization: Bearer <bot
-//! token>` (bots; public topics and `events`). A bad bot token is refused before the upgrade with 401 and
-//! the §2.9 error JSON. Close codes: 4001 session ended (logout, expiry), 4008 too slow (queue full),
-//! 4029 too many connections from one address.
+//! Authentication: the `session` cookie (browsers; may subscribe `me`), `Authorization: Bearer <bot
+//! token>` (bots; public topics and `events`) or `Authorization: Bearer anx_…` (a player's API key; may
+//! subscribe `me`, at most `ws_per_account` such connections per account). A bad token or key is refused
+//! before the upgrade with 401 and the §2.9 error JSON. Close codes: 4001 session ended (logout, expiry,
+//! a revoked key), 4008 too slow (queue full), 4029 too many connections from one address or one
+//! account's keys.
 //!
 //! Behind nginx (the server pings every 25 s and sends `time` every 20 s):
 //!     location /api/v1/ws { proxy_pass http://127.0.0.1:18620; proxy_http_version 1.1;
@@ -167,6 +169,25 @@ fn per_ip() -> &'static Mutex<HashMap<String, usize>> {
     M.get_or_init(Default::default)
 }
 
+/// Connections opened with API keys, per account.
+fn per_account() -> &'static Mutex<HashMap<i64, usize>> {
+    static M: OnceLock<Mutex<HashMap<i64, usize>>> = OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
+struct AccountSlot(i64);
+impl Drop for AccountSlot {
+    fn drop(&mut self) {
+        let mut m = per_account().lock().unwrap();
+        if let Some(n) = m.get_mut(&self.0) {
+            *n -= 1;
+            if *n == 0 {
+                m.remove(&self.0);
+            }
+        }
+    }
+}
+
 struct IpSlot(String);
 impl Drop for IpSlot {
     fn drop(&mut self) {
@@ -203,13 +224,43 @@ pub async fn handler(
         r
     };
     let Some(live) = st.live.clone() else { return fail(super::error::unavailable()) };
-    let bot = match super::bearer(&st, &headers) {
-        Ok(b) => b,
-        Err(e) => return fail(e),
+    let real_ip = super::client_ip(Some(peer), &headers);
+    let ip = super::ratelimit::ip_key(&real_ip);
+    let (bot, account, key, exp) = match super::api_key_token(&headers) {
+        Some(token) => match super::keys::authenticate(&st, &token, &real_ip).await {
+            Ok(k) => {
+                let account = k.scopes.iter().any(|s| s == "read:account").then_some(k.account);
+                (None, account, Some(k.id), Some(k.expires))
+            }
+            Err(e) => return fail(e),
+        },
+        None => {
+            let bot = match super::bearer(&st, &headers) {
+                Ok(b) => b,
+                Err(e) => return fail(e),
+            };
+            let account = if bot.is_some() { None } else { super::session_account(&st, &headers) };
+            let exp = account.and_then(|_| cookie_exp(&headers));
+            (bot, account, None, exp)
+        }
     };
-    let account = if bot.is_some() { None } else { super::session_account(&st, &headers) };
-    let exp = account.and_then(|_| cookie_exp(&headers));
-    let ip = super::ratelimit::ip_key(&super::client_ip(Some(peer), &headers));
+    // a key's connections count against its account (browser tabs do not)
+    let acct_slot = match (key, account) {
+        (Some(_), Some(a)) => {
+            let mut m = per_account().lock().unwrap();
+            let n = m.entry(a).or_default();
+            if *n >= st.v1.limits.ws_per_account {
+                if *n == 0 {
+                    m.remove(&a);
+                }
+                None
+            } else {
+                *n += 1;
+                Some(Some(AccountSlot(a)))
+            }
+        }
+        _ => Some(None),
+    };
     let over = {
         let mut m = per_ip().lock().unwrap();
         let total: usize = m.values().sum();
@@ -229,6 +280,18 @@ pub async fn handler(
         }
     }
     let up = ws.read_buffer_size(READ_BUF).write_buffer_size(0).max_message_size(MAX_IN).max_frame_size(MAX_IN);
+    let Some(acct_slot) = acct_slot else {
+        if !over {
+            drop(IpSlot(ip)); // give back the address's slot taken above
+        }
+        return up
+            .on_upgrade(|mut socket| async move {
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame { code: 4029, reason: "too many connections".into() })))
+                    .await;
+            })
+            .into_response();
+    };
     if over {
         return up
             .on_upgrade(|mut socket| async move {
@@ -238,22 +301,23 @@ pub async fn handler(
             })
             .into_response();
     }
-    let slot = IpSlot(ip);
-    up.on_upgrade(move |socket| client(socket, account, bot.is_some(), exp, live, slot)).into_response()
+    let slot = (IpSlot(ip), acct_slot);
+    up.on_upgrade(move |socket| client(socket, account, bot.is_some(), key, exp, live, slot)).into_response()
 }
 
 async fn client(
     socket: WebSocket,
     account: Option<i64>,
     bot: bool,
+    key: Option<i64>,
     exp: Option<i64>,
     live: crossbeam_channel::Sender<Ctl>,
-    _slot: IpSlot,
+    _slot: (IpSlot, Option<AccountSlot>),
 ) {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, mut rx) = mpsc::channel(QUEUE);
     let (kill_tx, kill_rx) = oneshot::channel::<u16>();
-    if live.send(Ctl::Add { id, account, bot, exp, tx, kill: kill_tx }).is_err() {
+    if live.send(Ctl::Add { id, account, bot, key, exp, tx, kill: kill_tx }).is_err() {
         return;
     }
     let (sink, mut stream) = socket.split();
