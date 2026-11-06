@@ -264,6 +264,8 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut bot_by_cp: std::collections::BTreeMap<String, i64> = Default::default();
     let mut bot_by_hour: std::collections::BTreeMap<i64, i64> = Default::default();
     let mut bot_volume: std::collections::BTreeMap<&str, i64> = Default::default();
+    // the bot's fills inside / outside the stock's information windows: (traded value, markout), cents
+    let mut bot_by_info: std::collections::BTreeMap<&str, (i64, i64)> = Default::default();
     // per company: (bought value, bought qty, sold value, sold qty), cents: the P&L decomposition below
     let mut bot_by_company: std::collections::BTreeMap<i64, [i64; 4]> = Default::default();
     let mut rec = Recorder::new(&e, &m, &npc_accounts);
@@ -409,6 +411,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         let next_day = day_of(t_close);
         m.note_revisions(&e, t_close);
+        m.note_closes(&mut e, t_close);
         m.designate_market_makers(&mut e, day, &ts_close);
         if opts.grow.is_some_and(|g| g.1 > 0) && k >= BOT_START_DAY {
             grown_cash += grow_step(&mut m, &mut e, k - BOT_START_DAY, day, &ts_close);
@@ -416,6 +419,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         m.fund_flows(&mut e, day, &ts_close);
         m.prune(t_close);
         // (the live server logs these for restarts; a simulation has nothing to restart)
+        for &(c, at, hit) in &m.run_starts {
+            let draws = m.events.iter().find(|e| e.kind == "bubble" && e.company_id == c && e.at == at).map(|e| m.bubble_draws(e));
+            rec.run_start(c, &day_of(at - 7 * 3600), hit, draws);
+        }
         m.fresh.clear();
         rec.after_close(&e, &m, day, &next_day);
         rec.note_info(&inp, &prev, day);
@@ -441,6 +448,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                     let (_, s) = local(tr.t);
                     *bot_by_hour.entry(s / 3600).or_default() += edge;
                     *bot_volume.entry(if bought { "bought" } else { "sold" }).or_default() += tr.price * tr.qty;
+                    let w = bot_by_info.entry(if m.in_info_window(tr.company, tr.t) { "info" } else { "normal" }).or_default();
+                    w.0 += tr.price * tr.qty;
+                    w.1 += edge;
                     let x = bot_by_company.entry(tr.company).or_default();
                     if bought {
                         x[0] += tr.price * tr.qty;
@@ -528,6 +538,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let y = |v: i64| v as f64 / 100.0;
         b["markout_by_counterparty"] = serde_json::json!(bot_by_cp.iter().map(|(k, v)| (k.clone(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
         b["markout_by_hour"] = serde_json::json!(bot_by_hour.iter().map(|(k, v)| (k.to_string(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
+        b["by_info_window"] = serde_json::json!(bot_by_info.iter().map(|(k, v)| (k.to_string(), [y(v.0), y(v.1)])).collect::<std::collections::BTreeMap<_, _>>());
         b["volume"] = serde_json::json!(bot_volume.iter().map(|(k, v)| (k.to_string(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
         // P&L by company at the average buy price: realised (sold shares: sale value - their average cost, the spread
         // the bot captured) and inventory (shares still held: last price - average cost, the drift it rode)

@@ -90,6 +90,13 @@ pub struct Recorder {
     watch_dividends: i64,
     /// market sentiment per day (sentiment layer on)
     sentiment: HashMap<String, f64>,
+    /// liquidity of the three hottest stocks, every spread sample: (hour, information window, spread, the
+    /// market maker's best bid and ask distance from the mid (NaN: none), its half-spread parts, depth within
+    /// 1.5% of the mid (币, both sides) and the market maker's share of it)
+    hot_liq: Vec<(i64, bool, f64, f64, f64, [f64; 4], f64, f64)>,
+    /// run starts (bubble triggers): company, the day whose close started it, became a bubble, its draws
+    /// (strength, burst, end of the dump; unix seconds)
+    runs: Vec<(i64, String, bool, Option<(f64, i64, i64)>)>,
 }
 
 fn quantile(v: &mut [f64], q: f64) -> f64 {
@@ -165,6 +172,40 @@ fn wealth(e: &Engine, acct: i64) -> i64 {
 }
 
 impl Recorder {
+    /// Liquidity of the three hottest stocks (docs/v2-npc-market.md §12): spread, the market maker's quotes and
+    /// the depth near the mid, inside and outside information windows, and the spread by hour.
+    fn hot_liquidity(&self) -> serde_json::Value {
+        let med = |v: Vec<f64>| median(v.into_iter().filter(|x| x.is_finite()).collect());
+        let part = |info: bool| {
+            let rows: Vec<_> = self.hot_liq.iter().filter(|r| r.1 == info).collect();
+            let mm_not_best = rows.iter().filter(|r| r.3.is_nan() || r.4.is_nan() || r.3 > r.2 / 2.0 + 1e-9 || r.4 > r.2 / 2.0 + 1e-9).count();
+            let mut sp: Vec<f64> = rows.iter().map(|r| r.2).collect();
+            let p90 = quantile(&mut sp, 0.9);
+            json!({
+                "samples": rows.len(),
+                "spread_median": med(rows.iter().map(|r| r.2).collect()),
+                "spread_p90": p90,
+                "mm_half_median": med(rows.iter().map(|r| (r.3 + r.4) / 2.0).collect()),
+                "mm_not_inside_share": mm_not_best as f64 / rows.len().max(1) as f64,
+                "half_base": med(rows.iter().map(|r| r.5[0]).collect()),
+                "half_vol_term": med(rows.iter().map(|r| r.5[1]).collect()),
+                "toxicity_mult": med(rows.iter().map(|r| r.5[2]).collect()),
+                "info_mult": med(rows.iter().map(|r| r.5[3]).collect()),
+                "depth_1p5pct": med(rows.iter().map(|r| r.6).collect()),
+                "mm_depth_share": med(rows.iter().map(|r| r.7).collect()),
+            })
+        };
+        let mut by_hour = BTreeMap::new();
+        for h in 0..24 {
+            let v: Vec<f64> = self.hot_liq.iter().filter(|r| r.0 == h).map(|r| r.2).collect();
+            if !v.is_empty() {
+                let info = self.hot_liq.iter().filter(|r| r.0 == h && r.1).count() as f64 / v.len() as f64;
+                by_hour.insert(format!("{h:02}"), json!({"spread_median": median(v), "info_share": info}));
+            }
+        }
+        json!({"normal": part(false), "info_window": part(true), "by_hour": by_hour})
+    }
+
     pub fn new(e: &Engine, _m: &Market, npc: &HashSet<i64>) -> Recorder {
         let mm_accounts = e.accounts().filter(|a| a.kind == "mm").map(|a| a.id).collect();
         Recorder {
@@ -203,6 +244,8 @@ impl Recorder {
             watch_transfers: 0,
             watch_dividends: 0,
             sentiment: HashMap::new(),
+            hot_liq: Vec::new(),
+            runs: Vec::new(),
         }
     }
 
@@ -271,6 +314,56 @@ impl Recorder {
         }
     }
 
+    pub fn run_start(&mut self, c: i64, day: &str, bubble: bool, draws: Option<(f64, i64, i64)>) {
+        self.runs.push((c, day.to_string(), bubble, draws));
+    }
+
+    /// Bubbles (docs/v2-sentiment.md §7): log(price / value) of every run start from 5 days before to 10 days
+    /// after, for the runs that became bubbles and those that did not (the control), and the bubbles' draws.
+    fn bubble_report(&self) -> serde_json::Value {
+        let offsets: Vec<i64> = vec![-5, 0, 1, 2, 3, 5, 7, 10];
+        let mut groups: BTreeMap<&str, Vec<Vec<f64>>> = BTreeMap::new();
+        let mut peak: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+        let mut list = Vec::new();
+        for (c, day, hit, draws) in &self.runs {
+            let Some(rows) = self.rows.get(c) else { continue };
+            let days: Vec<&String> = rows.keys().collect();
+            let Some(k) = days.iter().position(|d| *d == day) else { continue };
+            let dev = |j: i64| -> f64 {
+                let i = k as i64 + j;
+                if i < 0 || i as usize >= days.len() {
+                    return f64::NAN;
+                }
+                let r = &rows[days[i as usize]];
+                if r.close > 0 && r.fair > 0 { (r.close as f64 / r.fair as f64).ln() } else { f64::NAN }
+            };
+            let g = if *hit { "bubble" } else { "control" };
+            groups.entry(g).or_default().push(offsets.iter().map(|&j| dev(j)).collect());
+            let pk = (1..=7).map(dev).filter(|x| x.is_finite()).fold(f64::NAN, f64::max);
+            peak.entry(g).or_default().push(pk - dev(0));
+            if *hit {
+                let (st, burst, _) = draws.unwrap_or((f64::NAN, 0, 0));
+                let at = at_local(day, 30, 30);
+                list.push(json!({"company": c, "day": day, "strength": st, "life_days": (burst - at) as f64 / 86_400.0,
+                    "dev": offsets.iter().map(|&j| dev(j)).collect::<Vec<_>>()}));
+            }
+        }
+        let mean_at = |rows: &Vec<Vec<f64>>, i: usize| {
+            let v: Vec<f64> = rows.iter().map(|r| r[i]).filter(|x| x.is_finite()).collect();
+            if v.is_empty() { f64::NAN } else { v.iter().sum::<f64>() / v.len() as f64 }
+        };
+        let summary: BTreeMap<&str, serde_json::Value> = groups
+            .iter()
+            .map(|(g, rows)| {
+                let f: Vec<f64> = peak[g].iter().copied().filter(|x| x.is_finite()).collect();
+                let pk = f.iter().sum::<f64>() / f.len().max(1) as f64;
+                (*g, json!({"n": rows.len(), "offsets": offsets, "mean_log_p_over_v": (0..offsets.len()).map(|i| mean_at(rows, i)).collect::<Vec<_>>(),
+                    "mean_peak_rise_7d": pk}))
+            })
+            .collect();
+        json!({"summary": summary, "bubbles": list})
+    }
+
     pub fn flash(&mut self, company: i64, at: i64, surprise: f64) {
         self.events.push((company, at, "flash".into(), if surprise > 0.0 { 1 } else { -1 }, surprise.abs()));
     }
@@ -290,7 +383,50 @@ impl Recorder {
                 self.spreads.entry(c.id).or_default().push((ask.price - bid.price) as f64 / mid);
             }
         }
-        let _ = m;
+        // the three hottest stocks: who makes the inside, and how wide
+        let mut hot: Vec<(f64, i64)> = e.companies().filter(|c| c.status == "listed").map(|c| (m.heat(c.id), c.id)).collect();
+        hot.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
+        let (_, sec) = local(_t);
+        for &(_, c) in hot.iter().take(3) {
+            let b = e.book(c, 200);
+            let (Some(bid), Some(ask)) = (b.bids.first(), b.asks.first()) else { continue };
+            let mid = (bid.price + ask.price) as f64 / 2.0;
+            let mm = e.account_of("mm", c);
+            let (mut mb, mut ma) = (f64::NAN, f64::NAN);
+            let mut mm_depth = 0.0;
+            if let Some(acct) = mm {
+                for o in e.open_orders_of(acct).into_iter().filter(|o| o.company_id == c) {
+                    let Some(px) = o.price else { continue };
+                    let d = (px as f64 - mid).abs() / mid;
+                    if o.side == crate::model::Side::Buy {
+                        mb = if mb.is_nan() { d } else { mb.min(d) };
+                    } else {
+                        ma = if ma.is_nan() { d } else { ma.min(d) };
+                    }
+                    if d <= 0.015 {
+                        mm_depth += (o.left() * px) as f64 / 100.0;
+                    }
+                }
+            }
+            let depth: f64 = b
+                .bids
+                .iter()
+                .chain(b.asks.iter())
+                .filter(|l| (l.price as f64 - mid).abs() / mid <= 0.015)
+                .map(|l| (l.qty * l.price) as f64 / 100.0)
+                .sum();
+            let parts = m.mm_quote_parts(c).unwrap_or([f64::NAN; 4]);
+            self.hot_liq.push((
+                sec / 3600,
+                m.in_info_window(c, _t),
+                (ask.price - bid.price) as f64 / mid,
+                mb,
+                ma,
+                parts,
+                depth,
+                if depth > 0.0 { mm_depth / depth } else { f64::NAN },
+            ));
+        }
     }
 
     pub fn day_end(&mut self, e: &Engine, day: &str) {
@@ -960,6 +1096,8 @@ impl Recorder {
             "revisions": revisions,
             "money": self.money,
             "stocks_detail": movers,
+            "hot_liquidity": self.hot_liquidity(),
+            "bubbles": self.bubble_report(),
             "agents_by_kind": kinds_json,
             "elapsed_s": elapsed,
         });

@@ -104,6 +104,9 @@ mm_cash = 50000.0
 mm_rate = 20.0
 mm_base_spread = 0.006
 mm_vol_mult = 2.0
+mm_vol_roll = true             # volatility net of bid-ask bounce (Roll 1984): from trade prices the market maker's
+                               # own spread fed back into its volatility estimate (5-min sd 1.5% in the hottest stocks,
+                               # half-spread 1.4%), docs/v2-npc-market.md §12
 mm_quote_frac = 0.005
 mm_quote_min = 1500.0          # a quote unit is at least 1,500 币 (level k quotes k units)
 mm_levels = 5

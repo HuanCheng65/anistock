@@ -97,6 +97,9 @@ pub struct MarketConfig {
     pub mm_vol_mult: f64,
     /// EWMA half-life of the volatility estimate, minutes
     pub mm_vol_half_life_min: f64,
+    /// estimate volatility net of bid-ask bounce (Roll 1984: variance plus twice the first autocovariance of
+    /// the last-price changes) instead of the raw variance of the last-price changes
+    pub mm_vol_roll: bool,
     /// quote size, share of the company's shares (level k quotes k times this)
     pub mm_quote_frac: f64,
     /// price levels per side; level k sits (1 + (k-1) * mm_level_step) half-spreads from the centre
@@ -204,6 +207,29 @@ pub struct MarketConfig {
     pub reaction_half_life_h: [f64; 2],
     /// revisions further apart than this do not form a streak (at most 8: the events kept)
     pub reaction_window_days: f64,
+
+    // ---- sentiment layer, batch 2 (docs/v2-sentiment.md §7). Off in these defaults; on in server/game.toml.
+    /// positive-feedback bubbles (De Long–Shleifer–Summers–Waldmann): when a stock at least `bubble_heat` hot
+    /// (listed average = 1) starts a run (its return over the last `bubble_run_days` closes reaches
+    /// `bubble_run`, having been under it the close before), a bubble forms with this probability (0: off)
+    pub bubble_prob: f64,
+    pub bubble_run: f64,
+    pub bubble_run_days: usize,
+    pub bubble_heat: f64,
+    /// strength s of a bubble: log-normal, mean 1, this spread; the trend agents' participation in the stock
+    /// is (1 + s) times, their buy threshold 1 / (1 + s) and their stop-loss (1 + s) times (inflating)
+    pub bubble_sigma: f64,
+    /// it bursts at a constant hazard: the expected life is drawn log-uniform from this range (days), and it
+    /// lasts at most `bubble_max_days`
+    pub bubble_life_days: [f64; 2],
+    pub bubble_max_days: f64,
+    /// after the burst the chasers dump for a time drawn log-uniform from this range (hours): participation
+    /// stays (1 + s) times, the buy threshold is (1 + s) times and the stop-loss 1 / (1 + s)
+    pub bubble_crash_h: [f64; 2],
+    /// disposition effect (Shefrin–Statman; Odean 1998): a retail agent's chance of selling a holding is this
+    /// many times higher when it shows a paper gain than when it shows a paper loss against the agent's own
+    /// average cost (the average sell rate unchanged; 1: off)
+    pub disposition_ratio: f64,
 }
 
 impl Default for MarketConfig {
@@ -255,6 +281,7 @@ impl Default for MarketConfig {
             mm_base_spread: 0.008,
             mm_vol_mult: 2.0,
             mm_vol_half_life_min: 30.0,
+            mm_vol_roll: false,
             mm_quote_frac: 0.005,
             mm_levels: 3,
             mm_level_step: 1.0,
@@ -302,6 +329,15 @@ impl Default for MarketConfig {
             reaction_max: 2.5,
             reaction_half_life_h: [1.0, 8.0],
             reaction_window_days: 8.0,
+            bubble_prob: 0.0,
+            bubble_run: 0.25,
+            bubble_run_days: 5,
+            bubble_heat: 1.0,
+            bubble_sigma: 0.75,
+            bubble_life_days: [1.0, 5.0],
+            bubble_max_days: 7.0,
+            bubble_crash_h: [2.0, 12.0],
+            disposition_ratio: 1.0,
         }
     }
 }
