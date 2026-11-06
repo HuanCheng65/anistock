@@ -2089,7 +2089,7 @@ impl Market {
                 "flash",
                 Some(company),
                 format!("热度快讯：《{title}》第 {ep} 集讨论量{word}预期 {:.0}%", out.surprise.abs() * 100.0),
-                format!("播出 {:.0} 小时后的 Bangumi 单集吐槽数。估值随之修正：{} → {} 币。", hours, crate::exchange::yuan_str(out.old_value), crate::exchange::yuan_str(out.new_value)),
+                format!("播出 {:.0} 小时后的 Bangumi 单集吐槽数。估值随之修正：{} → {} 星辉。", hours, crate::exchange::yuan_str(out.old_value), crate::exchange::yuan_str(out.new_value)),
             );
             self.stats.flashes += 1;
             self.post_attention(company, t, "flash");

@@ -205,7 +205,7 @@
 ```json
 {
   "code": "insufficient_cash",
-  "message": "可用资金不足：认购 1,000 股需要冻结 5,011.25 币",
+  "message": "可用资金不足：认购 1,000 股需要冻结 5,011.25 星辉",
   "details": {"required": 501125, "available": 230000}
 }
 ```
@@ -251,7 +251,7 @@
 | 422 | `market_closed` | 休市中（集合竞价 08:45–09:00，连续交易 09:00–次日 04:00） | `phase`、`next_open_at` |
 | 422 | `auction_limit_only` | 集合竞价时段只接受限价委托 | — |
 | 422 | `price_required` | 限价委托需要填写价格 | — |
-| 422 | `price_out_of_range` | 价格超出范围：不能超过昨收的 20 倍（4,409.00 币） | `max`、`min` |
+| 422 | `price_out_of_range` | 价格超出范围：不能超过昨收的 20 倍（4,409.00 星辉） | `max`、`min` |
 | 422 | `insufficient_cash` | 可用资金不足 | `required`、`available` |
 | 422 | `insufficient_shares` | 可卖数量不足 | `requested`、`available` |
 | 422 | `stock_not_tradable` | 这支股票已退市 | `status` |
@@ -262,9 +262,9 @@
 | 422 | `pow_required` | 需要先完成验证，重新提交即可 | — |
 | 422 | `pow_invalid` | 验证已失效，重新提交即可 | — |
 | 503 | `busy` | 当前登录的人较多，稍后重试 | `retry_after`（秒） |
-| 422 | `restructure_not_eligible` | 总资产低于 10,000 币才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
+| 422 | `restructure_not_eligible` | 总资产低于 10,000 星辉才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
 | 409 | `credit_open` | 信用账户已经开通 | — |
-| 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 币才能开通 / 穿仓后需要先申请重整 | — |
+| 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 星辉才能开通 / 穿仓后需要先申请重整 | — |
 | 422 | `credit_not_open` | 尚未开通信用账户 | — |
 | 422 | `credit_defaulted` | 信用账户已穿仓 | — |
 | 422 | `credit_limit_only` | 信用委托只接受限价 | — |
@@ -577,7 +577,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 {"id": 8890, "at": "2026-11-07T01:12:40+08:00", "trading_day": "2026-11-06",
  "kind": "flash", "category": "flash",
  "title": "热度快讯：《航海王》第 1180 集讨论量高于预期 35%",
- "body": "播出 3 小时后的 Bangumi 单集吐槽数。估值随之修正：212.30 → 231.10 币。",
+ "body": "播出 3 小时后的 Bangumi 单集吐槽数。估值随之修正：212.30 → 231.10 星辉。",
  "stock": {"id": 21, "code": "100123", "title": "航海王"}}
 ```
 `body`、`stock` 可空（`system` 类资讯没有关联股票）。`body` 是展示用的中文文本，里面的金额已经格式化，客户端不解析。
@@ -1082,7 +1082,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "dividends": 12800,
   "deposit_rate": 0.02,
   "restructure": {"count": 0, "eligible": false, "reason": "not_poor",
-                  "message": "总资产低于 10,000 币才能申请重整"},
+                  "message": "总资产低于 10,000 星辉才能申请重整"},
   "liabilities": 0, "credit_status": null
 }
 ```

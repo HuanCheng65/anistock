@@ -29,14 +29,14 @@ const picks = computed(() =>
     .slice(0, 6),
 )
 const chosen = computed(() => market.byId.get(pickId.value ?? -1) ?? picks.value[0] ?? null)
-// about 10,000 币 (cents)
+// about 10,000 星辉 (cents)
 const buyQty = computed(() => (chosen.value && chosen.value.price > 0 ? Math.floor(1_000_000 / chosen.value.price) : 0))
 session.loadRules()
 const tax = computed(() => taxBrackets(session.rules?.dividend_tax))
 const trading = computed(() => session.status?.phase === 'continuous')
 const note = computed(() => {
   if (step.value === 0) return chosen.value ? `《${chosen.value.stock.title}》 现价 ${money(chosen.value.price)}` : ''
-  if (step.value === 2) return chosen.value ? (trading.value ? `先用 1 万币试试：约 ${qty(buyQty.value)} 股` : '休市中，开盘后可以买入') : ''
+  if (step.value === 2) return chosen.value ? (trading.value ? `先用 1万星辉试试：约 ${qty(buyQty.value)} 股` : '休市中，开盘后可以买入') : ''
   return ''
 })
 const next = () => (step.value = Math.min(2, step.value + 1))

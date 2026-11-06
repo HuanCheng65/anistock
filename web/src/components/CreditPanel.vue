@@ -49,7 +49,7 @@ async function repay() {
   error.value = ''
   try {
     const paid = await credit.repay(cents)
-    done.value = `已还款 ${money(paid)} 币`
+    done.value = `已还款 ${money(paid)} 星辉`
     repaying.value = false
     amount.value = ''
   } catch (e) {

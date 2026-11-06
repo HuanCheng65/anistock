@@ -313,7 +313,7 @@ fn rejected_subscription_keeps_the_old_one() {
     let (mut e, p) = ipo_fixture(60_000);
     let frozen = e.subscribe(p, 2, 100, "2026-11-07", TS).unwrap();
     let err = e.subscribe(p, 2, 1000, "2026-11-07", TS).unwrap_err();
-    assert_eq!(err.0, "可用资金不足：认购 1,000 股需要冻结 5,011.25 币");
+    assert_eq!(err.0, "可用资金不足：认购 1,000 股需要冻结 5,011.25 星辉");
     assert_eq!(e.ipo_application(2, p).unwrap().qty, 100);
     assert_eq!(e.account(p).unwrap().cash_frozen, frozen);
     // the old application's frozen cash counts as available for the new one

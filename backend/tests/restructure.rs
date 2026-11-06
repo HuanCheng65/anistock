@@ -46,7 +46,7 @@ fn ipo_company(fx: &mut Fx) {
 fn eligibility_threshold_counts_frozen_cash() {
     assert_eq!(check(999_999, INITIAL, TH, None, DAY), Ok(()));
     assert_eq!(check(1_000_000, INITIAL, TH, None, DAY), Err(Refusal::NotPoor(1_000_000)));
-    assert_eq!(Refusal::NotPoor(1_000_000).message(), "总资产低于 10,000 币才能申请重整");
+    assert_eq!(Refusal::NotPoor(1_000_000).message(), "总资产低于 10,000 星辉才能申请重整");
 
     let mut fx = Fx::new();
     // 9,000 币 available + 2,000 币 frozen in a resting buy = 11,000 币: not eligible

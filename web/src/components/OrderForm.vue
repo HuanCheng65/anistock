@@ -170,7 +170,7 @@ const impactText = computed(() => {
   if (!x) return '盘口深度不足'
   const pctText = (x.ratio * 100).toFixed(2) + '%'
   if (!n.value) return `立即成交 · 每股约${side.value === 'buy' ? '多付' : '少收'} ${pctText}`
-  return `立即成交 · 约${side.value === 'buy' ? '多付' : '少收'} ${pctText}（${money(x.extra)} 币）`
+  return `立即成交 · 约${side.value === 'buy' ? '多付' : '少收'} ${pctText}（${money(x.extra)} 星辉）`
 })
 
 const problem = computed(() => {

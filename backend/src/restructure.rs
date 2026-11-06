@@ -33,7 +33,7 @@ impl Refusal {
             Refusal::NotPoor(cents) => {
                 let amount =
                     if cents % 100 == 0 { int_grouped(cents / 100) } else { fixed_grouped(*cents as f64 / 100.0, 2) };
-                format!("总资产低于 {amount} 币才能申请重整")
+                format!("总资产低于 {amount} 星辉才能申请重整")
             }
             Refusal::ThisSeason => "本季已经重整过一次".into(),
             Refusal::MarketClosed => "休市时不能申请".into(),

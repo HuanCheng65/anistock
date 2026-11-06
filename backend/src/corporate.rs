@@ -518,7 +518,7 @@ impl Engine {
                     Some(c.id),
                     format!("《{}》拆股：每 1 股拆为 {k} 股", c.title),
                     format!(
-                        "收盘价已连续 {n} 个交易日高于 {} 币。{}起生效，持仓数量 × {k}，价格 ÷ {k}，市值不变。",
+                        "收盘价已连续 {n} 个交易日高于 {} 星辉。{}起生效，持仓数量 × {k}，价格 ÷ {k}，市值不变。",
                         crate::pyfmt::fixed(self.corporate.split_above, 0),
                         md(&effective)
                     ),
@@ -535,7 +535,7 @@ impl Engine {
                 let (bought, spent) = (a.params.bought, a.params.spent);
                 self.save_action(a);
                 let body = if bought > 0 {
-                    format!("共回购并注销 {} 股，金额 {} 币，均价 {} 币。", crate::pyfmt::int_grouped(bought), grouped(spent), yuan(spent / bought.max(1)))
+                    format!("共回购并注销 {} 股，金额 {} 星辉，均价 {} 星辉。", crate::pyfmt::int_grouped(bought), grouped(spent), yuan(spent / bought.max(1)))
                 } else {
                     "价格一直高于回购价格上限，没有买入。".to_string()
                 };
@@ -662,7 +662,7 @@ impl Engine {
                 "rights",
                 Some(c),
                 format!("《{}》续作制作费由公司现金支付", co.title),
-                format!("制作费 {} 币，全部来自公司留存的现金，不需要配股。", grouped(budget)),
+                format!("制作费 {} 星辉，全部来自公司留存的现金，不需要配股。", grouped(budget)),
             );
             return flows;
         }
@@ -676,9 +676,9 @@ impl Engine {
             day,
             "rights",
             Some(c),
-            format!("《{}》配股：每 10 股配 {} 股，配股价 {} 币", co.title, per_ten(ratio), yuan(price)),
+            format!("《{}》配股：每 10 股配 {} 股，配股价 {} 星辉", co.title, per_ten(ratio), yuan(price)),
             format!(
-                "为续作筹集制作费 {} 币（公司可用现金 {} 币）。{}前可以认购，{}收盘时按持仓登记、缴款并发行新股。未认购的部分由制作委员会按除权参考价接手，差价补给未认购的持有人。",
+                "为续作筹集制作费 {} 星辉（公司可用现金 {} 星辉）。{}前可以认购，{}收盘时按持仓登记、缴款并发行新股。未认购的部分由制作委员会按除权参考价接手，差价补给未认购的持有人。",
                 grouped(budget),
                 grouped(usable),
                 md(&day_add(&effective, 0)),
@@ -849,9 +849,9 @@ impl Engine {
             day,
             "rights",
             Some(c),
-            format!("《{title}》配股完成，除权参考价 {} 币", yuan(terp)),
+            format!("《{title}》配股完成，除权参考价 {} 星辉", yuan(terp)),
             format!(
-                "发行 {} 股，其中玩家认购 {} 股；未认购的 {} 股由制作委员会接手，每股差价 {} 币已补给未认购的持有人。制作费 {} 币已支付。",
+                "发行 {} 股，其中玩家认购 {} 股；未认购的 {} 股由制作委员会接手，每股差价 {} 星辉已补给未认购的持有人。制作费 {} 星辉已支付。",
                 crate::pyfmt::int_grouped(issued),
                 crate::pyfmt::int_grouped(subscribed),
                 crate::pyfmt::int_grouped(lapsed),
@@ -944,9 +944,9 @@ impl Engine {
             day,
             "buyback",
             Some(c),
-            format!("《{}》回购：不超过 {} 币", co.title, grouped(idle)),
+            format!("《{}》回购：不超过 {} 星辉", co.title, grouped(idle)),
             format!(
-                "公司认为股价低于每股价值，用闲置现金在市场上回购股份并注销，价格不高于 {} 币，{}前完成。每天买入不超过过去 {} 个交易日日均成交量的 {}%，不在开盘后和收盘前 {} 分钟内买入。",
+                "公司认为股价低于每股价值，用闲置现金在市场上回购股份并注销，价格不高于 {} 星辉，{}前完成。每天买入不超过过去 {} 个交易日日均成交量的 {}%，不在开盘后和收盘前 {} 分钟内买入。",
                 yuan(cap),
                 md(&end),
                 self.corporate.buyback_adv_days,

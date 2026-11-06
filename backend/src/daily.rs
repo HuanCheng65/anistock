@@ -775,9 +775,9 @@ impl Engine {
                 &day,
                 "dividend",
                 cid,
-                format!("《{}》每股分红 {} 币", c.title, fixed(dps as f64 / 100.0, 2)),
+                format!("《{}》每股分红 {} 星辉", c.title, fixed(dps as f64 / 100.0, 2)),
                 format!(
-                    "共派发 {} 币。持有不满 1 周的部分按 20% 缴税，不满 1 季按 10%，超过 1 季免税。",
+                    "共派发 {} 星辉。持有不满 1 周的部分按 20% 缴税，不满 1 季按 10%，超过 1 季免税。",
                     fixed_grouped(paid as f64 / 100.0, 0)
                 ),
             );
@@ -810,7 +810,7 @@ impl Engine {
                 &cx.day,
                 "system",
                 None,
-                format!("财政补贴：每位玩家 {} 币", fixed_grouped(each as f64 / 100.0, 2)),
+                format!("财政补贴：每位玩家 {} 星辉", fixed_grouped(each as f64 / 100.0, 2)),
                 "本周税收的一部分按人头返还。".into(),
             );
         }
@@ -870,7 +870,7 @@ impl Engine {
         if weeks < cx.g().delist_after_weeks {
             return Ok(());
         }
-        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
+        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。")
     }
 
     /// Delisting of a series (docs/v2-series.md §9): every work finished, the last week's revenue under
@@ -914,7 +914,7 @@ impl Engine {
         if weeks < cx.g().delist_after_weeks {
             return Ok(());
         }
-        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 币向股东返还现金。")
+        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。")
     }
 
     /// Take `c` off the market at today's last price (an adult title or a promo entry, step 0): cancel its open orders, the
@@ -950,7 +950,7 @@ impl Engine {
         co.status = "delisted".into();
         co.delisted_on = Some(day.clone());
         self.mark_company(c.id);
-        let body = format!("{why}，按 {} 币每股收回全部股份。", fixed(per as f64 / 100.0, 2));
+        let body = format!("{why}，按 {} 星辉每股收回全部股份。", fixed(per as f64 / 100.0, 2));
         self.push_news(&ts, &day, "delisting", Some(c.id), format!("《{}》摘牌", c.title), body);
         Ok(())
     }
@@ -1010,15 +1010,15 @@ impl Engine {
                     &day,
                     "warning",
                     Some(id),
-                    format!("面值退市预警：《{}》已连续 {n} 个交易日收盘低于 1 币", c.title),
-                    format!("连续 {PENNY_DELIST_DAYS} 个交易日收盘低于 1 币将按每股净资产退市。"),
+                    format!("面值退市预警：《{}》已连续 {n} 个交易日收盘低于 1 星辉", c.title),
+                    format!("连续 {PENNY_DELIST_DAYS} 个交易日收盘低于 1 星辉将按每股净资产退市。"),
                 );
             } else if n >= PENNY_DELIST_DAYS {
                 self.liquidate(
                     cx,
                     &c,
                     format!("《{}》面值退市", c.title),
-                    "连续 20 个交易日收盘低于 1 币，按每股净资产 {per} 币向股东返还现金。",
+                    "连续 20 个交易日收盘低于 1 星辉，按每股净资产 {per} 星辉向股东返还现金。",
                 )?;
                 self.st.penny_days.remove(&id);
             }
@@ -1291,7 +1291,7 @@ impl Engine {
             Some(s.id),
             format!("新股认购：《{title}》（{code}）"),
             format!(
-                "{sub_start} 至 {sub_end} 开放认购，发行价 {} 币，公开发售 {} 股（超额认购 15/50/100 倍时回拨到 70%/80%/90% 的流通盘）。{listed_on} 上市，首播日 {}。",
+                "{sub_start} 至 {sub_end} 开放认购，发行价 {} 星辉，公开发售 {} 股（超额认购 15/50/100 倍时回拨到 70%/80%/90% 的流通盘）。{listed_on} 上市，首播日 {}。",
                 fixed(ipo_price as f64 / 100.0, 2),
                 int_grouped(base),
                 s.first_air

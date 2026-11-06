@@ -113,7 +113,7 @@ async function unbind(id: number) {
         <button type="button" class="btn ghost small" @click="logout">退出登录</button>
       </div>
     </section>
-    <p class="foot">游戏币与真实货币无关，不能充值或提现。作品数据来自 AniList、Bangumi、Annict 的公开统计。</p>
+    <p class="foot">星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。作品数据来自 AniList、Bangumi、Annict 的公开统计。</p>
   </main>
 </template>
 

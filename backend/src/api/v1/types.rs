@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-/// 金额，单位：分（1 币 = 100 分）。显示时除以 100。
+/// 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
 #[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[serde(transparent)]
 #[schema(value_type = i64, format = Int64)]

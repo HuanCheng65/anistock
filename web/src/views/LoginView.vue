@@ -121,7 +121,7 @@ async function submit() {
     </form>
 
     <p class="foot">
-      <template v-if="reg">注册后获得 100,000 币。</template>游戏币与真实货币无关，不能充值或提现。
+      <template v-if="reg">注册后获得 100,000 星辉。</template>星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。
       <RouterLink to="/" class="look">去看市场</RouterLink>
     </p>
   </main>

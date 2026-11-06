@@ -1317,7 +1317,7 @@ export interface components {
         };
         /**
          * Format: int64
-         * @description 金额，单位：分（1 币 = 100 分）。显示时除以 100。
+         * @description 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
          */
         Money: number;
         MyTrade: {

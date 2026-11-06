@@ -33,7 +33,7 @@ pub fn trading_day_of(st: &AppState, t: &str) -> String {
 fn restructure_reason(r: &crate::restructure::Refusal) -> (&'static str, String) {
     use crate::restructure::Refusal::*;
     match r {
-        NotPoor(c) => ("not_poor", format!("总资产低于 {} 币才能申请重整", error::coins(*c).trim_end_matches(".00"))),
+        NotPoor(c) => ("not_poor", format!("总资产低于 {} 星辉才能申请重整", error::coins(*c).trim_end_matches(".00"))),
         ThisSeason => ("this_season", "本季已经重整过一次".into()),
         MarketClosed => ("market_closed", "连续交易时段才能申请重整".into()),
         Margin => ("margin_debt", "先了结融资融券负债才能申请重整".into()),
@@ -502,7 +502,7 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
                 return Err(E::new(
                     422,
                     "price_out_of_range",
-                    format!("价格超出范围：不能超过昨收的 {} 倍（{} 币）", e.rules.sanity_mult, error::coins(hi)),
+                    format!("价格超出范围：不能超过昨收的 {} 倍（{} 星辉）", e.rules.sanity_mult, error::coins(hi)),
                 )
                 .details(json!({"max": hi, "min": lo})));
             }
@@ -510,7 +510,7 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
                 let need_cash = e.fees.buy_reserve(p, qty);
                 let avail = e.available_cash(me);
                 if avail < need_cash {
-                    return Err(E::new(422, "insufficient_cash", format!("可用资金不足：需要 {} 币", error::coins(need_cash)))
+                    return Err(E::new(422, "insufficient_cash", format!("可用资金不足：需要 {} 星辉", error::coins(need_cash)))
                         .details(json!({"required": need_cash, "available": avail})));
                 }
             }
@@ -834,7 +834,7 @@ pub async fn subscribe(
             return Err(E::new(
                 422,
                 "insufficient_cash",
-                format!("可用资金不足：认购 {} 股需要冻结 {} 币", error::group(qty), error::coins(need_cash)),
+                format!("可用资金不足：认购 {} 股需要冻结 {} 星辉", error::group(qty), error::coins(need_cash)),
             )
             .details(json!({"required": need_cash, "available": avail})));
         }
