@@ -31,6 +31,7 @@ fn main() {
     let mut grow = None;
     let mut allow_old_inputs = false;
     let mut bot_start = None;
+    let mut value_only = false;
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -51,6 +52,11 @@ fn main() {
                 continue;
             }
             "--probe-players" => probe = v.parse().expect("--probe-players"),
+            "--value-only" => {
+                value_only = true;
+                i += 1;
+                continue;
+            }
             "--allow-old-inputs" => {
                 allow_old_inputs = true;
                 i += 1;
@@ -108,8 +114,9 @@ fn main() {
         grow,
         allow_old_inputs,
         bot_start,
+        value_only,
     };
-    let bots: Vec<BotKind> = match bots_arg.as_str() {
+    let bots: Vec<BotKind> = match if value_only { "none" } else { bots_arg.as_str() } {
         "none" => vec![],
         "all" => BotKind::all().to_vec(),
         list => list.split(',').map(|b| BotKind::parse(b).unwrap_or_else(|| panic!("unknown bot {b}"))).collect(),

@@ -212,6 +212,9 @@ pub struct SimOptions {
     pub allow_old_inputs: bool,
     /// the first day the bots trade (YYYY-MM-DD; never before day `BOT_START_DAY`); None: day `BOT_START_DAY`
     pub bot_start: Option<String>,
+    /// the valuation alone: no intraday trading (no NPC orders, no bot); the daily closes still run, so the
+    /// hidden values and dividends are the same as in a full replay (they depend on the inputs, not on trading)
+    pub value_only: bool,
 }
 
 pub struct SimResult {
@@ -420,7 +423,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let band = m.sentiment_band(day);
         // the trading day, minute by minute (NPCs act inside each minute at their own times)
         let mut t = t_open;
-        let t_end = at_local(day, 23, 0);
+        let t_end = if opts.value_only { t_open } else { at_local(day, 23, 0) };
         while t < t_end {
             let next = t + 60;
             while fi < flashes.len() && flashes[fi].at < next {
