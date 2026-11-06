@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, call, errorText, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
@@ -16,7 +16,35 @@ const session = useSession()
 const account = useAccount()
 const router = useRouter()
 const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]
-const docs = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书']] as const
+const docs = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书'], ['margin_disclosure', '融资融券风险揭示书']] as const
+// ---- 注销账号 (docs/v2-account.md §9): the password, then the account is gone for good
+const closing = ref(false)
+const closePw = ref('')
+const closeErr = ref('')
+const closeForm = ref<HTMLElement | null>(null)
+watch(closing, async (v) => {
+  markEditing('close', v)
+  if (v) {
+    await nextTick()
+    closeForm.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }
+})
+async function closeAccount() {
+  busy.value = true
+  closeErr.value = ''
+  try {
+    await call(api.DELETE('/api/v1/me', { body: { password: closePw.value, confirm: true } }))
+    session.me = null
+    account.clear()
+    useCredit().clear()
+    router.replace('/')
+  } catch (e) {
+    closeErr.value = errorText(e)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function logout() {
   await session.logout()
   account.clear()
@@ -138,6 +166,17 @@ async function unbind(id: number) {
         <span>{{ session.me.username }}</span>
         <button type="button" class="btn ghost small" @click="logout">退出登录</button>
       </div>
+      <button v-if="!closing" type="button" class="linkbtn close" @click="closing = true">注销账号</button>
+      <form v-else ref="closeForm" class="confirm" role="group" aria-labelledby="close-title" @submit.prevent="closeAccount">
+        <h3 id="close-title">注销账号？</h3>
+        <p>持仓按最新价转出，资金清零，个人信息删除。注销后账号无法恢复。</p>
+        <input v-model="closePw" class="input" type="password" autocomplete="current-password" placeholder="输入密码确认" />
+        <p v-if="closeErr" class="msg error" role="alert">{{ closeErr }}</p>
+        <div class="acts">
+          <button type="submit" class="btn small" :disabled="busy || !closePw">注销账号</button>
+          <button type="button" class="btn small ghost" :disabled="busy" @click="closing = false; closePw = ''; closeErr = ''">取消</button>
+        </div>
+      </form>
     </section>
     <p class="foot">星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。作品数据来自 AniList、Bangumi、Annict 的公开统计。</p>
   </main>
@@ -163,6 +202,8 @@ async function unbind(id: number) {
 .switch[aria-checked="true"] span { transform: translateX(18px); background: var(--ground); }
 @media (prefers-reduced-motion: reduce) { .switch, .switch span { transition: none; } }
 .docs { margin-top: -6px; }
+.close { margin-top: 14px; color: var(--muted); }
+.confirm .input { height: 40px; font-size: 15px; margin-top: 4px; }
 .docrow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--hair-2); font-size: 15px; }
 .docrow:last-child { border-bottom: 0; }
 .chev { color: var(--muted); }

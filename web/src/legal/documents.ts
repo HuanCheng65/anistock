@@ -2,7 +2,9 @@
 // version of each in server/game.toml [account.documents]; raise it there when a text changes materially,
 // and every player accepts the new text again before the next order.
 
-export type DocKey = 'terms' | 'privacy' | 'disclosure'
+export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure'
+/** documents signed by typing the username */
+export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure']
 
 export type Block =
   | { p: string }
@@ -213,8 +215,52 @@ const disclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解在安易交易的风险，自愿承担交易结果。',
 }
 
-export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure }
+const marginDisclosure: LegalDoc = {
+  title: '融资融券风险揭示书',
+  updated: UPDATED,
+  intro: [
+    { p: '融资融券是借入资金买入股票（融资），或者借入股票卖出（融券）。使用融资融券，盈利和亏损都会放大，亏损可能超过投入的本金。' },
+    { p: '本揭示书是《风险揭示书》的补充。开通信用账户前，应同时阅读融资融券的交易规则。' },
+  ],
+  sections: [
+    {
+      h: '一、杠杆风险',
+      blocks: [{ ol: [
+        '融资买入的股票下跌时，亏损随融资金额放大。融券卖出的股票上涨时，亏损没有上限。',
+        '融资利息和融券费用按日计提，持有时间越长，成本越高。融资利率为政策利率加 3%，融券费率为政策利率加 5%，随政策利率调整。',
+      ] }],
+    },
+    {
+      h: '二、强制平仓风险',
+      blocks: [{ ol: [
+        '维持担保比例 =（现金 + 持仓市值）÷ 负债。日结时低于 130% 的，发出追加担保物通知；到下一次日结仍低于 130% 的，转入强制平仓。',
+        '盘中维持担保比例低于 110%，或净资产为负时，立即强制平仓。',
+        '强制平仓按规定的顺序卖出持仓、买券还券，直到维持担保比例回到 150% 以上或负债清零。平仓的成交价可能明显低于预期。',
+      ] }],
+    },
+    {
+      h: '三、穿仓风险',
+      blocks: [{ ol: [
+        '持仓卖完后仍然资不抵债的，为穿仓。穿仓后信用账户关闭，剩余负债记为穿仓欠款。',
+        '穿仓后可以申请破产重整继续游戏，但本段收益按净资产为 0 计算，排行榜的累计收益率此后一直为 −100%。',
+      ] }],
+    },
+    {
+      h: '四、交易限制',
+      blocks: [{ ol: [
+        '融券卖出只能用限价委托，价格不能低于最新成交价。融券卖出所得冻结，只能用于买券还券。',
+        '欠券期间遇到分红的，按欠券数量向出借人支付分红补偿。',
+        '融资借入的资金和冻结的融券卖出所得，不能用于新股认购。',
+        '追加担保物期间和强制平仓期间，不能新增融资融券。',
+        '单支股票的融资余额或融券余量达到上限时，暂停该股的融资买入或融券卖出。',
+      ] }],
+    },
+  ],
+  declaration: '本人已阅读并理解本揭示书的内容，了解融资融券可能造成超过本金的亏损，自愿承担交易结果。',
+}
+
+export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure }
 
 export function isDocKey(k: unknown): k is DocKey {
-  return k === 'terms' || k === 'privacy' || k === 'disclosure'
+  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure'
 }

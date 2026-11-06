@@ -138,6 +138,7 @@ async function sign() {
           </dl>
           <nav class="rows">
             <RouterLink to="/settings" class="row"><span>身份验证</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+            <RouterLink to="/assessment/risk" class="row"><span>风险测评</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
             <RouterLink to="/guide" class="row"><span>新手指南</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           </nav>
         </template>

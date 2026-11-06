@@ -121,6 +121,7 @@ async function cancel(id: number) {
           <RouterLink to="/rank"><span>排行</span><span class="num v">{{ rank ? `第 ${rank} 名` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/ipo"><span>新股认购</span><span class="v">{{ pending ? `${pending} 笔待配售` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/settings"><span>身份验证</span><span class="v">{{ me?.verification.verified ? '已完成' : '未完成' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+          <RouterLink to="/assessment/risk"><span>风险测评</span><span class="v">{{ me?.risk ? (me.risk.valid ? `${me.risk.level} ${me.risk.name}` : '已过期') : '未测评' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/guide"><span>新手指南</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/rules"><span>规则</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/settings"><span>设置</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
@@ -225,6 +226,7 @@ async function cancel(id: number) {
           <RouterLink to="/rank"><span>排行</span><span class="num v">{{ rank ? `第 ${rank} 名` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/ipo"><span>新股认购</span><span class="v">{{ pending ? `${pending} 笔待配售` : '' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/settings"><span>身份验证</span><span class="v">{{ me?.verification.verified ? '已完成' : '未完成' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+          <RouterLink to="/assessment/risk"><span>风险测评</span><span class="v">{{ me?.risk ? (me.risk.valid ? `${me.risk.level} ${me.risk.name}` : '已过期') : '未测评' }}</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/guide"><span>新手指南</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           <RouterLink to="/rules"><span>规则</span><span class="v"></span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
         </nav>

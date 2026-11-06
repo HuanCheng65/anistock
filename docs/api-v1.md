@@ -64,6 +64,9 @@
 | | `GET /api/v1/me/ledger` | 玩家 / 机器人代表 | `/api/ledger` |
 | | `POST /api/v1/me/restructure` | 玩家 | `POST /api/me/restructure`（开发中） |
 | | `POST /api/v1/me/agreements` | 玩家 | 新 |
+| | `DELETE /api/v1/me` | 玩家 | 新（注销账号） |
+| | `GET /api/v1/assessments/{risk\|margin-quiz}` | 无 | 新 |
+| | `POST /api/v1/me/assessments/{risk\|margin-quiz}` | 玩家 | 新 |
 | 排行 | `GET /api/v1/leaderboard?period=all\|week\|season` | 无 | `/api/leaderboard` |
 | 认证 | `GET /api/v1/auth/challenge?purpose=register\|login` | 无 | 新 |
 | | `POST /api/v1/auth/register` | 无 | `/api/register` |
@@ -262,6 +265,8 @@
 | 403 | `registration_closed` | 暂未开放注册 | — |
 | 403 | `agreement_required` | 签署风险揭示书后才能交易 | — |
 | 403 | `verification_required` | 完成身份验证后才能认购新股 | — |
+| 422 | `assessment_limit` | 每天最多测评 3 次，明天再试 | — |
+| 422 | `close_not_allowed` | 还清融资融券负债后才能注销 | — |
 | 422 | `ipo_quota_exceeded` | 认购金额超过认购额度 1,234.00 星辉（前 5 个交易日的日均持仓市值） | `quota`、`max_quantity` |
 | 409 | `document_outdated` | 文件已更新，刷新页面后重新阅读 | — |
 | 422 | `pow_required` | 需要先完成验证，重新提交即可 | — |
@@ -431,6 +436,18 @@ X-Act-As: qq:123456789
 - `doc`：`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书；`version` 必须是当前版本（`game.toml` 的 `[account.documents]`），否则 409 `document_outdated`。
 - 风险揭示书要用自己的用户名签署（去掉首尾空白后一致）；其他文件不需要 `signature`。
 - 200，返回 `Me`。`Me.verification` 是身份验证状态（`verified`、`method`：目前只有 `qq`，即绑定 QQ）；`Me.eligibility` 列出财政补贴、新股认购（含认购额度 `quota`）、排行榜三项资格，不符合时 `reason` 是可以直接展示的原因。门槛只看身份验证状态，不直接看绑定（`backend/src/kyc.rs`）。排行榜只列出符合排行榜资格的玩家。`Me.pending_documents` 列出还没有同意或签署的当前版本文件；不为空时，下单、新股认购、配股认购、开通信用账户返回 403 `agreement_required`。撤单、还款、重整不受影响。
+
+#### 风险测评与知识测试
+
+`GET /api/v1/assessments/risk` 返回 8 道题；`GET /api/v1/assessments/margin-quiz` 返回 10 道题和及格题数 `pass_score`（8）。题目在服务器端（`backend/src/assessment.rs`），由服务器评分。
+
+`POST /api/v1/me/assessments/{kind}`，`{"answers": [3, 1, …]}`（每题所选选项的序号）：风险测评返回 `risk`（C1–C5、名称、说明、有效期，`[account.eligibility] assessment_valid_days`）；知识测试返回 `quiz`（得分、是否通过、每题的正确答案和解释）。每种每天最多 `assessment_per_day` 次。
+
+开通信用账户（`POST /api/v1/me/credit`）在原有条件（注册天数、净资产）之外，还要求：风险测评有效且不低于 C4、通过知识测试、签署当前版本的《融资融券风险揭示书》（`doc: "margin_disclosure"`，用用户名签署）。`Me.credit_steps` 列出这三项的状态，未满足时返回 422 `credit_not_eligible`。
+
+#### `DELETE /api/v1/me`
+
+`{"password": "…", "confirm": true}`。撤销全部委托和认购，持仓按最新价转给 world 账户，现金转给 world 账户，账号变为 `closed`、不再有用户名和密码；绑定、签署记录、测评、登录记录删除，账本和成交记录以匿名形式保留。有融资融券负债时返回 422 `close_not_allowed`。204，清除 cookie。
 
 #### `POST /api/v1/auth/login`
 
