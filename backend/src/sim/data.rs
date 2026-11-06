@@ -135,18 +135,33 @@ impl SeasonData {
                 if mean < 5.0 {
                     continue;
                 }
-                // the hourly fetch a few hours after airing; the count then is the final count scaled by the
-                // hourly curve (the collector has final counts only; the live fetcher sees the real count)
-                let hours = mc.flash_delay_h;
-                let frac = fp.as_ref().and_then(|fp| fp.flash_curve.get((hours as usize).saturating_sub(1)).copied()).unwrap_or(0.2);
-                out.flashes.push(FlashObs {
-                    company_id: id,
-                    at: air + (hours * 3600.0) as i64,
-                    episode: ep.0 as f64,
-                    comments: (ep.2 as f64 * frac).round() as i64,
-                    prev: prev.clone(),
-                    hours,
-                });
+                // the live fetcher (engine/flash_fetch.py) runs every hour 08:00-03:00 (at :05) and reads each
+                // episode up to 26 hours after air. The collector keeps final counts only, so the count at hour h is
+                // the final count × the hourly curve × the early count's own error (log-normal with the fitted
+                // variance, flash_r - r_cn: how far an hour-h count lands from the episode's final); one draw per
+                // episode, shrinking with the hour, as a cumulative count's error does
+                let Some(fp) = fp.as_ref() else { continue };
+                let z = std_normal(mc.seed, id, ep.0);
+                let mut t = (air / 3600 + 1) * 3600 + 300;
+                while t - air <= 26 * 3600 {
+                    let (_, s) = crate::market::local(t);
+                    let h = (t - air) as f64 / 3600.0;
+                    let i = (h as usize).saturating_sub(1).min(fp.flash_curve.len().saturating_sub(1));
+                    if !(3 * 3600 + 300 < s && s < 8 * 3600) && fp.flash_curve.get(i).is_some_and(|c| *c > 0.0) {
+                        let var = (fp.flash_r.get(i).copied().unwrap_or(1.0) - fp.r[1]).max(0.0);
+                        let count = ep.2 as f64 * fp.flash_curve[i] * (var.sqrt() * z).exp();
+                        out.flashes.push(FlashObs {
+                            company_id: id,
+                            at: t,
+                            episode: ep.0 as f64,
+                            comments: count.round() as i64,
+                            prev: prev.clone(),
+                            hours: h,
+                        });
+                    }
+                    t += 3600;
+                }
+                let _ = mc.flash_delay_h;
                 let _ = &title;
             }
         }
@@ -163,4 +178,18 @@ impl SeasonData {
         }
         out
     }
+}
+
+/// A standard normal draw fixed by (seed, company, episode): the early comment count's error of one episode.
+fn std_normal(seed: u64, company: i64, episode: i64) -> f64 {
+    let mix = |mut x: u64| {
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    };
+    let a = mix(seed ^ mix(company as u64 ^ mix(episode as u64 ^ 0x5eed_f1a5)));
+    let b = mix(a ^ 0x9e37_79b9_7f4a_7c15);
+    let u1 = ((a >> 11) as f64 + 0.5) / (1u64 << 53) as f64;
+    let u2 = (b >> 11) as f64 / (1u64 << 53) as f64;
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
 }

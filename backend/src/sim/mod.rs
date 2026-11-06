@@ -263,6 +263,9 @@ pub struct SimOptions {
     /// the valuation alone: no intraday trading (no NPC orders, no bot); the daily closes still run, so the
     /// hidden values and dividends are the same as in a full replay (they depend on the inputs, not on trading)
     pub value_only: bool,
+    /// stop the minute loop at 23:00 as replays did before the night session was simulated (only to compare
+    /// with old results); by default the loop runs to the session's end at 04:00, like the server
+    pub no_night: bool,
     /// open every listed company at the model's value on the first day (the start world's prices come from
     /// server.seed's v1 valuation, which can be far from the filtered one; `history` does the same)
     pub open_at_value: bool,
@@ -475,6 +478,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     // published 热度快讯 (what players see): (company, at, direction)
     let mut published: Vec<(i64, i64, i8)> = Vec::new();
     let mut published_keys: HashSet<(i64, u64)> = HashSet::new();
+    let mut flash_eps: HashSet<(i64, u64)> = HashSet::new();
     let mut notices: Vec<(i64, i64, String, String)> = Vec::new();
     let reveal_days: Option<i64> = std::env::var("SIM_REVEAL_DAYS").ok().and_then(|v| v.parse().ok());
     let mut synth: Option<(crate::vfilter::SequelParams, SynthSequels)> = match std::env::var("SIM_SYNTH_SEQUELS") {
@@ -507,7 +511,16 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let band = m.sentiment_band(day);
         // the trading day, minute by minute (NPCs act inside each minute at their own times)
         let mut t = t_open;
-        let t_end = if opts.value_only { t_open } else { at_local(day, 23, 0) };
+        // continuous trading 09:00 to 04:00 the next morning (server/game.toml trading_close); the NPCs, the
+        // market maker, the bots, forced liquidation and the flashes all run through the night session
+        let t_cont = at_local(day, 9, 0);
+        let t_end = if opts.value_only {
+            t_open
+        } else if opts.no_night {
+            at_local(day, 23, 0)
+        } else {
+            at_local(day, 28, 0)
+        };
         while t < t_end {
             let next = t + 60;
             while fi < flashes.len() && flashes[fi].at < next {
@@ -519,9 +532,21 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 // overnight flashes are announced when they come out; the NPCs see them from the open
                 m.step_until(&mut e, f.at.max(m.now));
                 if let Some(out) = m.apply_flash(&mut e, cfg, f.company_id, f.episode, f.hours, f.comments, &f.prev, f.at.max(m.now)) {
-                    rec.flash(f.company_id, f.at, out.surprise);
+                    // (every hour of an episode updates the value; the statistics count the episode once)
+                    if flash_eps.insert((f.company_id, f.episode.to_bits())) {
+                        rec.flash(f.company_id, f.at, out.surprise);
+                    }
                     if out.surprise.abs() >= m.cfg.flash_news_min && published_keys.insert((f.company_id, f.episode.to_bits())) {
-                        published.push((f.company_id, f.at.max(m.now), if out.surprise > 0.0 { 1 } else { -1 }));
+                        let (at, dir) = (f.at.max(m.now), if out.surprise > 0.0 { 1 } else { -1 });
+                        published.push((f.company_id, at, dir));
+                        rec.flash_path(&e, f.company_id, at, dir, out.old_value, out.new_value);
+                        // a script reads the news within a second, before the next NPC or market-maker action
+                        // (docs/v2-api-access.md §7); the minute-driven bots see it at the minute's end
+                        if at >= t_cont && at < t_end && k >= bot_start {
+                            if let Some(b) = bot.as_mut() {
+                                b.on_flash(&mut e, f.company_id, at, dir, out.old_value, out.new_value);
+                            }
+                        }
                     }
                 }
             }
@@ -529,13 +554,14 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             m.step_until(&mut e, next);
             npc_time += tick.elapsed().as_secs_f64();
             t = next;
+            rec.flash_tick(&e, t);
             let (_, s) = local(t);
             if s == 12 * 3600 {
                 m.subscribe_ipos(&mut e, t);
             }
             // the bots start in the second week: the world starts at v1 prices, and the first days are the
             // market repricing to the new valuation (a one-off of the go-live, not a strategy's merit)
-            if s >= 9 * 3600 && s < 23 * 3600 && k >= bot_start {
+            if t >= t_cont && t < t_end && k >= bot_start {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
                     let ctx = bots::BotCtx { band, flashes: &published, notices: &notices };
@@ -550,11 +576,11 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 }
             }
             // 融资融券: forced liquidation runs once a minute in continuous trading
-            if s >= 9 * 3600 {
+            if t >= t_cont {
                 e.margin_sweep(&day_of(t), &ts_of(t));
                 e.corporate_minute(&day_of(t), &ts_of(t), s);
             }
-            if (s / 60) % opts.spread_every_min == 0 && s >= 9 * 3600 {
+            if (s / 60) % opts.spread_every_min == 0 && t >= t_cont {
                 rec.sample_spreads(&e, &m, t);
             }
         }
@@ -651,6 +677,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         let next_day = day_of(t_close);
         m.note_revisions(&e, t_close);
+        m.requote_revised(&mut e, t_close);
         m.note_closes(&mut e, t_close);
         m.designate_market_makers(&mut e, day, &ts_close);
         if opts.grow.is_some_and(|g| g.1 > 0) && k >= BOT_START_DAY {

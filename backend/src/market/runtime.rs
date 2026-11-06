@@ -261,6 +261,7 @@ impl MarketRuntime {
             self.market.post_event(e, ev, kind);
         }
         self.market.note_revisions(e, t_close);
+        self.market.requote_revised(e, t_close);
         self.market.note_closes(e, t_close);
         self.log_fresh();
         self.designate(e, t_close)?;

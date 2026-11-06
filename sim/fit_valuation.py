@@ -1472,9 +1472,16 @@ def coverage(data, prm, market):
     return inside / max(1, total), total
 
 
-def fit_flash(path: Path):
+def fit_flash(path: Path, r_cn: float):
     """Hourly curve and noise from comment timestamps: {episode_id: {"air": unix, "times": [unix...],
-    "prev_final": [counts]}}."""
+    "prev_final": [counts]}}.
+
+    The flash reads the hour-h count as an early estimate of the episode's own final count, which is what the
+    close later observes as the cn level (with noise r_cn). So its noise is r_cn plus the variance of
+    log(count_h / (curve_h × final)): how far the early count lands from the episode's own final. (Until
+    2026-11-07 this was the variance of log(count_h / (curve_h × previous episodes' mean)), which also counts the
+    episode's real departure from the previous ones, the signal itself, as noise: the flash moved the value by a
+    fraction of what it knew and the next close predictably finished the move, docs/v2-api-access.md §7.)"""
     data = json.loads(path.read_text(encoding="utf-8"))
     hours = 24
     frac = [[] for _ in range(hours)]
@@ -1490,14 +1497,13 @@ def fit_flash(path: Path):
     for h in range(hours):
         z = []
         for e in data.values():
-            prev = e.get("prev_final") or []
-            if not prev or curve[h] <= 0:
+            times = [t - e["air"] for t in e["times"] if t >= e["air"]]
+            final = sum(1 for t in times if t <= 28 * 86400)
+            cnt = sum(1 for t in times if t <= (h + 1) * 3600)
+            if final < 20 or curve[h] <= 0 or cnt <= 0:
                 continue
-            mp = sum(prev) / len(prev)
-            cnt = sum(1 for t in e["times"] if e["air"] <= t <= e["air"] + (h + 1) * 3600)
-            if mp * curve[h] >= 5 and cnt > 0:
-                z.append(math.log(cnt / (mp * curve[h])))
-        noise.append(round(st.pvariance(z), 4) if len(z) > 5 else 1.0)
+            z.append(math.log(cnt / (curve[h] * final)))
+        noise.append(round(r_cn + st.pvariance(z), 4) if len(z) > 5 else 1.0)
     return curve, noise, len([1 for f in frac[0]])
 
 
@@ -1745,10 +1751,11 @@ def main():
                     f"prior ({n_s} premiering before 2026-09-15, {n_a} after). Two stages: each market's drift, q, r "
                     f"from its own filter; then bias, p0 and rho by maximum likelihood of the joint filter.\n")
     if a.comments:
-        curve, noise, n = fit_flash(a.comments)
+        curve, noise, n = fit_flash(a.comments, res["r"]["cn"])
         res["flash_curve"], res["flash_r"] = curve, noise
         lines.append(f"## 热度快讯 hourly curve\n\n{n} episodes. Share of 28-day comments by hour 1..24: {curve}\n\n"
-                     f"Noise variance of log(count_h / (curve_h × previous mean)) by hour: {noise}\n")
+                     f"Noise variance of the hour-h count read as the cn level, r_cn + var log(count_h / (curve_h × own final)), "
+                     f"by hour: {noise}\n")
     # the IPO discount for uncertainty (vclose.rs ipo_price_v2: 1 - exp(-ipo_risk sqrt(mean p0))). Measured on the
     # v0.3.2 replay (seed 20261105, inputs 2026-07-01..11-03): over the 61 shows listed in Aug-Oct, the value
     # 28 days after listing plus dividends, relative to the model's value when the offer was priced, is 0.935

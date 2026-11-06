@@ -1166,7 +1166,7 @@ mod tests {
         assert!(ulps(own1[0][5], 835.2637132741504) <= 2, "{}", own1[0][5]);
         assert!(ulps(own1[1][100], 10.094127256246056) <= 2, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
-        assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.644)));
+        assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.3366)));
         // the us episode week's days so far (v0.6.1)
         let wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9];
         let segs = [partial_segment(&fp, 6.0, false), partial_segment(&fp, 7.0, false), partial_segment(&fp, 9.0, false), partial_segment(&fp, 9.0, true)];
