@@ -53,6 +53,8 @@ pub struct CorporateRules {
     pub rights_days: i64,
     /// a buyback needs idle cash of at least this share of the market value
     pub buyback_min: f64,
+    /// ... and the close under the value at this many closes in a row (persistent undervaluation)
+    pub buyback_under_days: i64,
     /// programme length, days
     pub buyback_days: i64,
     /// at most this share of the trailing average daily volume a day
@@ -76,6 +78,7 @@ impl Default for CorporateRules {
             rights_max_ratio: 0.3,
             rights_days: 3,
             buyback_min: 0.01,
+            buyback_under_days: 20,
             buyback_days: 91,
             buyback_adv: 0.25,
             buyback_adv_days: 20,
@@ -162,6 +165,8 @@ pub struct CorporateState {
     pub adjustments: Vec<Adjustment>,
     /// trading days in a row each listed stock has closed above the split threshold
     pub above_days: HashMap<i64, i64>,
+    /// closes in a row each listed stock has closed under its value (memory only: 0 after a restart)
+    pub under_days: HashMap<i64, i64>,
     /// each listed stock's daily volumes, latest last (the buyback's daily limit)
     pub volumes: HashMap<i64, VecDeque<i64>>,
     /// each listed stock's last 30 closes, latest last, in today's units (the buyback's published price cap)
@@ -496,6 +501,8 @@ impl Engine {
             while cl.len() > CLOSE_DAYS {
                 cl.pop_front();
             }
+            let u = self.st.corp.under_days.entry(c.id).or_insert(0);
+            *u = if c.prev_close > 0 && c.prev_close < c.fair_value { *u + 1 } else { 0 };
             let n = self.st.corp.above_days.entry(c.id).or_insert(0);
             *n = if c.prev_close > above { *n + 1 } else { 0 };
             let n = *n;
@@ -788,7 +795,8 @@ impl Engine {
             self.do_transfer(world, acct, lapsed * price, "rights_funding", day, ts, Some(c), Some(id));
             flows.injected += lapsed * price;
             self.do_add_shares(to, c, lapsed, terp, day);
-            for (h, u) in &untaken {
+            // (the world account's stock — taken over in restructurings — lapses without a payment to itself)
+            for (h, u) in untaken.iter().filter(|x| x.0 != world) {
                 self.do_transfer(world, *h, u * premium, "rights_comp", day, ts, Some(c), Some(id));
                 flows.injected += u * premium;
             }
@@ -914,7 +922,7 @@ impl Engine {
         }
         let Some(co) = self.st.companies.get(&c).cloned().filter(|x| x.status == "listed") else { return };
         let Some(acct) = self.account_of("company", c) else { return };
-        if co.prev_close <= 0 || co.prev_close >= co.fair_value {
+        if co.prev_close <= 0 || co.prev_close >= co.fair_value || self.st.corp.under_days.get(&c).copied().unwrap_or(0) < self.corporate.buyback_under_days {
             return;
         }
         let cash = self.st.accounts[&acct].cash - self.st.accounts[&acct].cash_frozen;
@@ -924,7 +932,8 @@ impl Engine {
             return;
         }
         let end = day_add(day, self.corporate.buyback_days);
-        // the published cap: 150% of the average close of the last 30 trading days (CSRC 上市公司股份回购规则);
+        // the published cap: 150% of the average close of the last 30 trading days (A-share announcements cap the price
+        // against that average);
         // management also never pays more than its own estimate of the value (not published)
         let closes = self.st.corp.closes.get(&c).filter(|v| !v.is_empty());
         let avg = closes.map_or(co.prev_close, |v| v.iter().sum::<i64>() / v.len() as i64);
@@ -1036,7 +1045,8 @@ impl Engine {
             (Some(_), Some(_)) => return,
             _ => {}
         }
-        if s.long_runner || new.air.is_empty() {
+        // (the first day AniList's next episode is known — or the first close with this code — is not a change)
+        if s.long_runner || new.air.is_empty() || (old.next_airing.is_none() && new.next_airing.is_some()) {
             return;
         }
         let Some(n) = s.episodes.filter(|n| *n > new.air.len() as i64) else { return };
