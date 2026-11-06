@@ -257,3 +257,44 @@ surprise (partial observation − base mean) is 0.626 (se 0.008) without the par
 it; after a surprise above +25% the revision is +54% without, +8.2% with (196 days), below −12.5% −20% / −2.9% (494).
 For reference, the base filter's own revision over the 7 days after a complete-week observation has slope 0.044 on
 that observation's innovation.
+
+## Joint prior: pairwise correlations (v0.6.1, `--prior-only`)
+
+The prior covariance of the three markets' log levels at the premiere had one common correlation (rho 0.534). With
+the dynamics (drift, q, r) fixed, bias, p0, the cn/jp elasticities and three pairwise correlations [us-cn, us-jp,
+cn-jp] were refitted by maximum likelihood of the joint filter (115 shows premiering inside the standard inputs with a
+point-in-time prior; docs/v2-valuation.md §3.9).
+
+| | common rho | pairwise |
+|---|---|---|
+| correlations us-cn / us-jp / cn-jp | 0.534 | 0.319 / 0.398 / 0.815 |
+| p0 us / cn / jp | 0.426 / 0.910 / 0.295 | 0.385 / 0.923 / 0.322 |
+| log-likelihood, in sample | −916.4 | −898.6 |
+| held out: fit even → odd / odd → even | −211.1 / −743.7 | −201.2 / −735.7 |
+| out of season: autumn → summer / summer → autumn | −123.5 / −904.9 | −110.0 / −913.3 |
+| 80% coverage in sample us / cn / jp | 87.0% / 84.1% / 98.2% | 88.2% / 84.0% / 97.5% |
+| 80% coverage held out, us (even → odd / odd → even) | 90.0% / 82.6% | 90.0% / 84.1% |
+
+Moments of the premiere surprises against the prior (first cn/jp value, first complete us week): variances us 0.41,
+cn 0.98, jp 0.34 (the common-rho model: 0.47, 0.93, 0.35); covariances us-cn 0.18, us-jp 0.10, cn-jp 0.39 (model
+0.33, 0.19, 0.28), i.e. correlations 0.28 / 0.26 / 0.67. Half-sample fits are noisy: even ids 0.17 / 0.24 / 0.76, odd
+0.53 / 0.69 / 0.85; the summer premieres alone give 0.46 / 0.59 / 0.91.
+
+Transmission check (`close_days` with the partial us week): on the day of a show's first cn/jp data, T = the move of the
+us level estimate caused by them; R_k = the us estimate's revision over the next k days less the drift. Slope of R_k on
+T (se), 114 shows:
+
+| | R_1 | R_3 | R_7 | R_14 |
+|---|---|---|---|---|
+| common rho, in sample | −0.18 (0.08) | −0.27 (0.11) | −0.33 (0.12) | −0.35 (0.14) |
+| pairwise, in sample | −0.11 (0.15) | +0.03 (0.20) | +0.06 (0.22) | +0.09 (0.25) |
+| common rho, fitted on the other half | −0.19 (0.07) | −0.31 (0.10) | −0.40 (0.11) | −0.43 (0.13) |
+| pairwise, fitted on the other half | −0.15 (0.11) | −0.23 (0.16) | −0.28 (0.17) | −0.33 (0.20) |
+
+The standard deviation of T falls from 0.42 to 0.26 (out of fold). The first value of a cn/jp episode is an incomplete
+count revised over the next 1–2 days (settled − first: mean +0.035 / +0.052, variance 0.060 / 0.044 for cn / jp), small
+against the prior variance; not modelled.
+
+The partial us week refitted on this filter: cuts 6.607 / 7.736, variance scale 1.64, 1.40, 1.48, 1.36, 1.34 (n = 2..6);
+held out, 80% coverage of the complete week's observation 90.8% (base) → 85.8%, 79.3%, 78.6%, 77.1%, 84.3%; forecast
+slope 0.627 (0.008) without, 0.027 (0.010) with the days so far.
