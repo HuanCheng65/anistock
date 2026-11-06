@@ -859,6 +859,18 @@ pub struct Me {
     pub risk: Option<RiskResult>,
     /// 开通信用账户还需要的步骤
     pub credit_steps: CreditSteps,
+    /// 登录后要弹出的公告：开户之后发布、还没看过的最新一条；没有时为 null
+    pub announcement: Option<Announcement>,
+}
+
+/// 运营公告
+#[derive(Serialize, ToSchema, Clone)]
+pub struct Announcement {
+    pub id: i64,
+    pub title: String,
+    /// 纯文本，空行分段
+    pub body: String,
+    pub published_at: Timestamp,
 }
 
 /// 风险测评结果

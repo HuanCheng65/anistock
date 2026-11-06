@@ -4,6 +4,7 @@ import { RouterView, useRoute } from 'vue-router'
 import BottomNav from './components/BottomNav.vue'
 import DeskHeader from './components/DeskHeader.vue'
 import AgreementBanner from './components/AgreementBanner.vue'
+import AnnouncementModal from './components/AnnouncementModal.vue'
 import MarginBanner from './components/MarginBanner.vue'
 import Toaster from './components/Toaster.vue'
 import UpdateBanner from './components/UpdateBanner.vue'
@@ -74,6 +75,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
     <component :is="Component" :key="route.path" />
   </RouterView>
   <BottomNav v-if="!bare && !route.meta.noNav" />
+  <AnnouncementModal v-if="!bare" />
   <Toaster />
   <UpdateBanner />
 </template>

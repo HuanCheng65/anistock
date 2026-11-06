@@ -64,6 +64,7 @@
 | | `GET /api/v1/me/ledger` | 玩家 / 机器人代表 | `/api/ledger` |
 | | `POST /api/v1/me/restructure` | 玩家 | `POST /api/me/restructure`（开发中） |
 | | `POST /api/v1/me/agreements` | 玩家 | 新 |
+| | `POST /api/v1/me/announcements/{id}/read` | 玩家 | 新 |
 | | `DELETE /api/v1/me` | 玩家 | 新（注销账号） |
 | | `GET /api/v1/assessments/{risk\|margin-quiz}` | 无 | 新 |
 | | `POST /api/v1/me/assessments/{risk\|margin-quiz}` | 玩家 | 新 |
@@ -437,6 +438,12 @@ X-Act-As: qq:123456789
 - `doc`：`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书；`version` 必须是当前版本（`game.toml` 的 `[account.documents]`），否则 409 `document_outdated`。
 - 风险揭示书要用自己的用户名签署（去掉首尾空白后一致）；其他文件不需要 `signature`。
 - 200，返回 `Me`。`Me.verification` 是身份验证状态（`verified`、`method`：目前只有 `qq`，即绑定 QQ）；`Me.eligibility` 列出财政补贴、新股认购（含认购额度 `quota`）、排行榜三项资格，不符合时 `reason` 是可以直接展示的原因。门槛只看身份验证状态，不直接看绑定（`backend/src/kyc.rs`）。排行榜只列出符合排行榜资格的玩家。`Me.pending_documents` 列出还没有同意或签署的当前版本文件；不为空时，下单、新股认购、配股认购、开通信用账户返回 403 `agreement_required`。撤单、还款、重整不受影响。
+
+#### `POST /api/v1/me/announcements/{id}/read`
+
+运营公告的已读标记。`Me.announcement` 是登录后要弹出的公告：开户之后发布、还没有标记已读的最新一条（`id`、`title`、`body` 纯文本空行分段、`published_at`），没有时为 `null`。标记已读后返回 `Me`，下一条未读的公告（如果有）出现在 `Me.announcement`。重复标记不报错；公告不存在时 404 `not_found`。
+
+公告由运营者在服务器上发布：`anistock announce <标题> <正文文件> [--no-popup]`（服务运行时也可以执行；`--no-popup` 只记录、不弹出）。公告和已读记录是数据库的旁表（`announcements`、`announcement_reads`，迁移 V14），不在引擎状态里。
 
 #### 风险测评与知识测试
 

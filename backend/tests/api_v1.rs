@@ -756,3 +756,37 @@ async fn credit_account_and_credit_orders() {
     assert_eq!(orders["items"][0]["credit"], "margin_buy");
     a.checked("/api/v1/me/ledger", "/api/v1/me/ledger", c).await;
 }
+
+#[tokio::test]
+async fn announcements_pop_up_once_for_existing_accounts() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    // posted before alice opened her account (TS): not for her
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    c.execute("INSERT INTO announcements(created_at, title, body, popup) VALUES ('2026-11-05T09:00:00+08:00', '更早', '零', 1)", []).unwrap();
+    let r = a.req("GET", "/api/v1/me", None, &h).await;
+    assert_eq!(r.json["announcement"], Value::Null);
+    // posted after it, as `anistock announce` writes it
+    {
+        c.execute("INSERT INTO announcements(created_at, title, body, popup) VALUES ('2026-11-05T11:00:00+08:00', '旧的', '一', 1)", []).unwrap();
+        c.execute("INSERT INTO announcements(created_at, title, body, popup) VALUES ('2026-11-05T12:00:00+08:00', '不弹', '二', 0)", []).unwrap();
+        c.execute("INSERT INTO announcements(created_at, title, body, popup) VALUES ('2026-11-05T13:00:00+08:00', '重新开服', '三\n\n四', 1)", []).unwrap();
+    }
+    let r = a.req("GET", "/api/v1/me", None, &h).await;
+    a.validate(&a.schema("GET", "/api/v1/me", 200), &r.json, "me");
+    assert_eq!(r.json["announcement"]["title"], "重新开服");
+    assert_eq!(r.json["announcement"]["body"], "三\n\n四");
+    let id = r.json["announcement"]["id"].as_i64().unwrap();
+    let r = a.req("POST", &format!("/api/v1/me/announcements/{id}/read"), None, &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/announcements/{id}/read", 200), &r.json, "read");
+    // the older unread popup comes next; reading it twice is fine
+    assert_eq!(r.json["announcement"]["title"], "旧的");
+    let old = r.json["announcement"]["id"].as_i64().unwrap();
+    a.req("POST", &format!("/api/v1/me/announcements/{old}/read"), None, &h).await;
+    let r = a.req("POST", &format!("/api/v1/me/announcements/{old}/read"), None, &h).await;
+    assert_eq!(r.json["announcement"], Value::Null);
+    err(&a.req("POST", "/api/v1/me/announcements/999/read", None, &h).await, 404, "not_found");
+    err(&a.req("POST", &format!("/api/v1/me/announcements/{id}/read"), None, &[]).await, 401, "unauthenticated");
+}

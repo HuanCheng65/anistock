@@ -130,6 +130,32 @@
         ],
         "type": "object"
       },
+      "Announcement": {
+        "description": "运营公告",
+        "properties": {
+          "body": {
+            "description": "纯文本，空行分段",
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "published_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "id",
+          "published_at",
+          "title"
+        ],
+        "type": "object"
+      },
       "AnswersRequest": {
         "description": "每题所选选项的序号（从 0 开始）",
         "properties": {
@@ -2264,6 +2290,17 @@
       },
       "Me": {
         "properties": {
+          "announcement": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Announcement",
+                "description": "登录后要弹出的公告：开户之后发布、还没看过的最新一条；没有时为 null"
+              }
+            ]
+          },
           "available_cash": {
             "$ref": "#/components/schemas/Money"
           },
@@ -2355,6 +2392,7 @@
           }
         },
         "required": [
+          "announcement",
           "available_cash",
           "cash",
           "created_at",
@@ -6101,6 +6139,49 @@
           }
         },
         "summary": "同意或签署文件",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/announcements/{id}/read": {
+      "post": {
+        "operationId": "read_announcement",
+        "parameters": [
+          {
+            "description": "公告 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "公告已读",
         "tags": [
           "account"
         ]

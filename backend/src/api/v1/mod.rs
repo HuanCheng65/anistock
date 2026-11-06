@@ -590,6 +590,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/ledger", get(account::ledger))
         .route("/me/restructure", post(account::restructure))
         .route("/me/agreements", post(account::sign))
+        .route("/me/announcements/{id}/read", post(account::read_announcement))
         .route("/me/credit", get(credit::credit).post(credit::open))
         .route("/me/credit/repay", post(credit::repay))
         .route("/stocks/{id}/margin", get(credit::stock_margin))
@@ -630,6 +631,7 @@ fn method_fallback(path: &str) -> Response {
         ["", "me", "assessments", _] | ["", "me", "password"] | ["", "bot", "password-resets"] => "POST",
         ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "agreements"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
+        ["", "me", "announcements", _, "read"] => "POST",
         _ => "GET",
     };
     error::method_not_allowed(allow).into_response()

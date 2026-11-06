@@ -346,6 +346,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/announcements/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 公告已读 */
+        post: operations["read_announcement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/assessments/{kind}": {
         parameters: {
             query?: never;
@@ -884,6 +901,15 @@ export interface components {
             id: number | null;
             /** Format: int64 */
             watchers: number | null;
+        };
+        /** @description 运营公告 */
+        Announcement: {
+            /** @description 纯文本，空行分段 */
+            body: string;
+            /** Format: int64 */
+            id: number;
+            published_at: components["schemas"]["Timestamp"];
+            title: string;
         };
         /** @description 每题所选选项的序号（从 0 开始） */
         AnswersRequest: {
@@ -1479,6 +1505,7 @@ export interface components {
             trading_day: components["schemas"]["TradingDay"];
         };
         Me: {
+            announcement: null | components["schemas"]["Announcement"];
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
             /** @description 开户时间 */
@@ -2952,6 +2979,36 @@ export interface operations {
                 "application/json": components["schemas"]["AgreementRequest"];
             };
         };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    read_announcement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 公告 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             200: {
                 headers: {

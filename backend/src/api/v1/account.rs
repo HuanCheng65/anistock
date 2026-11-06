@@ -96,6 +96,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         .query_row("SELECT COALESCE(SUM(amount),0) FROM ledger WHERE to_id=? AND reason='dividend'", [id], |r| r.get(0))
         .map_err(sql)?;
     let rate = policy_rate(c)?;
+    let announcement = announcement_for(c, id, &created_at)?;
     let (reason, message) = match &eligible {
         Ok(()) => (None, None),
         Err(e) => {
@@ -125,6 +126,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         eligibility,
         risk,
         credit_steps,
+        announcement,
     })
 }
 
@@ -142,6 +144,42 @@ pub fn eligibility_of(st: &AppState, c: &Connection, id: i64, created_at: &str) 
     let g = kyc::ipo_gate(r, verified, quota);
     let ipo = IpoEligibility { eligible: g == kyc::Gate::Open, reason: kyc::reason(&g, "认购新股"), quota: m(quota) };
     Ok((Verification { verified, method }, EligibilityState { transfer, ipo, leaderboard }))
+}
+
+/// The newest popup announcement published since the account opened that it has not dismissed.
+fn announcement_for(c: &Connection, id: i64, created_at: &str) -> R<Option<Announcement>> {
+    c.query_row(
+        "SELECT a.id, a.title, a.body, a.created_at FROM announcements a WHERE a.popup=1 AND a.created_at >= ?
+         AND NOT EXISTS (SELECT 1 FROM announcement_reads r WHERE r.account_id=? AND r.announcement_id=a.id)
+         ORDER BY a.id DESC LIMIT 1",
+        rusqlite::params![created_at, id],
+        |r| Ok(Announcement { id: r.get(0)?, title: r.get(1)?, body: r.get(2)?, published_at: ts(r.get::<_, String>(3)?) }),
+    )
+    .optional()
+    .map_err(sql)
+}
+
+/// 公告已读
+#[utoipa::path(post, path = "/api/v1/me/announcements/{id}/read", tag = "account",
+    params(("id" = i64, Path, description = "公告 id")),
+    responses((status = 200, body = Me), (status = "default", body = ErrorBody)))]
+pub async fn read_announcement(
+    State(st): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path(raw): Path<String>,
+) -> R<Json<Me>> {
+    let id = caller.player()?;
+    let ann = super::path_id(&raw, "id")?;
+    let exists = read(&st, move |c| c.query_row("SELECT EXISTS(SELECT 1 FROM announcements WHERE id=?)", [ann], |r| r.get::<_, bool>(0)).map_err(sql)).await?;
+    if !exists {
+        return Err(error::not_found());
+    }
+    super::bind::side_exec(
+        &st,
+        "INSERT OR IGNORE INTO announcement_reads(account_id, announcement_id, read_at) VALUES (?,?,?)",
+        rusqlite::params![id, ann, st.clock.ts()],
+    )?;
+    load_me(&st, id).await.map(Json)
 }
 
 /// The current documents `id` has not accepted yet.

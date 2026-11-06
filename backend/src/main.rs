@@ -17,6 +17,9 @@
 //! `anistock reset-code <username>` issues a password reset code for a player who cannot use the QQ
 //! bot (no binding): check who is asking first. The code is valid 10 minutes.
 //!
+//! `anistock announce <title> <body-file> [--no-popup]` posts an announcement, shown once to every player who
+//! opened an account before it as a popup after sign-in.
+//!
 //! `anistock surveillance [days]` prints the wash-trade report (对倒监控, src/surveil.rs) for the last
 //! `days` trading days (default 7) and exits; it only reads the game database.
 //!
@@ -80,6 +83,25 @@ fn reset_code(cfg: &Config, username: &str) {
     println!("{username}: {code} (valid until {expires}); enter it at 忘记密码 on the login page");
 }
 
+/// `anistock announce <title> <body-file> [--no-popup]`: post an announcement (shown once to each player as a
+/// popup after sign-in, docs/api-v1.md `Me.announcement`). Works while the server runs (a side table).
+fn announce(cfg: &Config, args: &[String]) {
+    let usage = || fail("usage: anistock announce <title> <body-file> [--no-popup]", 2);
+    let (Some(title), Some(file)) = (args.first(), args.get(1)) else { usage() };
+    let popup = !args.iter().any(|a| a == "--no-popup");
+    let body = std::fs::read_to_string(file).unwrap_or_else(|e| fail(format!("{file}: {e}"), 1));
+    let body = body.trim();
+    if title.trim().is_empty() || body.is_empty() {
+        usage();
+    }
+    store::migrate(&cfg.game_db).unwrap_or_else(|e| fail(format!("{}: {e}", cfg.game_db.display()), 1));
+    let c = store::connect(&cfg.game_db).unwrap_or_else(|e| fail(format!("{}: {e}", cfg.game_db.display()), 1));
+    let now = anistock::config::format_ts(&chrono::Utc::now().with_timezone(&cfg.tz));
+    c.execute("INSERT INTO announcements(created_at, title, body, popup) VALUES (?,?,?,?)", rusqlite::params![now, title.trim(), body, popup as i64])
+        .unwrap_or_else(|e| fail(format!("announce: {e}"), 1));
+    println!("announcement {} posted at {now}{}", c.last_insert_rowid(), if popup { " (popup)" } else { "" });
+}
+
 fn main() {
     // operator command (docs/ops-rebuild-replay.md): run with the server stopped
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -92,6 +114,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("reset-code") {
         let Some(name) = args.get(2) else { fail("usage: anistock reset-code <username>", 2) };
         reset_code(&cfg, name);
+        return;
+    }
+    if args.get(1).map(String::as_str) == Some("announce") {
+        announce(&cfg, &args[2..]);
         return;
     }
     if args.get(1).map(String::as_str) == Some("surveillance") {
