@@ -228,7 +228,7 @@ pub struct NewsItem {
     pub id: i64,
     pub at: Timestamp,
     pub trading_day: TradingDay,
-    /// 开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash、sequel（续作公布、新一季并入系列公司）
+    /// 开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash
     pub kind: String,
     pub category: NewsCategory,
     pub title: String,

@@ -6,20 +6,7 @@ base_params = "sim/params_recommended.toml"
 
 [overrides]
 # sizing (docs/game-design.md, "规模"): median share ~5 币, public float ~0.7x of 40 players' cash
-# phase 1: 2,500,000 × 0.648. The long tail roughly doubles a show's value; the documented sizing (docs/game-design.md
-# §4: stocks and cash of the same order, all NPC and market-maker capital calibrated at that size) is kept by scaling
-# demand so that the market's total hidden value on the switch day equals the old model's (replay, 2026-07-08:
-# old ÷ new = 0.648 over the 68 companies valued in both; cross-check 2026-10-01: 0.625). The relative values of
-# airing and finished shows still come from the new model.
-"revenue.demand_base_week" = 1620000
-# absolute revenue (docs/v2-series.md §6) once the platform size averages two seasons of the collector's history
-"revenue.platform_min_days" = 182
-# phase 1 switches (docs/v2-series.md §12): the absolute revenue rule needs 182 days of real platform history (~Dec 5)
-# and the sequel option needs the AniList relations the collector has only just started to keep: both off for now.
-# impute_tail: cn/jp post-finale days without data earn the filter's expectation (the §4.2 stopgap)
-"revenue.absolute_revenue" = 0
-"valuation.sequel_option" = 0
-"valuation.impute_tail" = 1
+"revenue.demand_base_week" = 2500000
 "company.shares" = 10000
 "company.ipo_float" = 0.25
 "company.founder_share" = 0.75

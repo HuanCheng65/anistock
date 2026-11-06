@@ -57,12 +57,6 @@ pub enum BotKind {
     /// public popularity with a delay?
     HoldHottest,
     BadPrice,
-    /// buy each stock the evening before its finale airs (a tenth of the starting cash each) and hold it to the
-    /// end: is a finished show's long tail fairly priced? (docs/v2-series.md §11)
-    FinaleHold,
-    /// buy each stock the evening before its finale and sell it 8 days after (once the finale week and the
-    /// at-finale sequel announcement are known): is the move across the finale predictable?
-    FinaleFlip,
     /// 融资融券: buy every stock equally with own cash, then keep all the available margin in financed buys
     LeverHold,
     /// 融资融券: short the five stocks priced furthest over their public value, cover at the value
@@ -88,7 +82,7 @@ pub enum BotKind {
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 32] {
+    pub fn all() -> [BotKind; 30] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -109,8 +103,6 @@ impl BotKind {
             BotKind::SpoofScare,
             BotKind::BadPrice,
             BotKind::HoldHottest,
-            BotKind::FinaleHold,
-            BotKind::FinaleFlip,
             BotKind::LeverHold,
             BotKind::ShortRich,
             BotKind::ShortDividend,
@@ -145,8 +137,6 @@ impl BotKind {
             BotKind::SpoofScare => "spoof_scare",
             BotKind::BadPrice => "bad_price",
             BotKind::HoldHottest => "hold_hottest",
-            BotKind::FinaleHold => "finale_hold",
-            BotKind::FinaleFlip => "finale_flip",
             BotKind::LeverHold => "lever_hold",
             BotKind::ShortRich => "short_rich",
             BotKind::ShortDividend => "short_dividend",
@@ -191,8 +181,6 @@ pub struct Bot {
     state: u32,
     since: i64,
     sold: Vec<i64>,
-    /// the finale bots' positions: (company, day number to sell on)
-    finale_exits: Vec<(i64, i64)>,
     pub trades_placed: u64,
     /// positions to close at a time: (company, unix seconds)
     exits: Vec<(i64, i64)>,
@@ -255,7 +243,6 @@ impl Bot {
             sold: Vec::new(),
             trades_placed: 0,
             exits: Vec::new(),
-            finale_exits: Vec::new(),
             flashes_seen: 0,
             opens: Default::default(),
             foresight: None,
@@ -765,40 +752,6 @@ impl Bot {
                 }
                 if s >= 22 * 3600 + 3000 {
                     self.state = 0;
-                }
-            }
-            BotKind::FinaleHold | BotKind::FinaleFlip => {
-                let today = crate::vclose::day_no(&day_of(t)).unwrap_or(0);
-                if s == 22 * 3600 + 1800 {
-                    // the evening before a finale: buy (the finale = the last planned episode, weekly from the
-                    // last one aired)
-                    let ids: Vec<i64> = e.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
-                    for c in ids {
-                        let air = e.air_days_of(c);
-                        let Some(eps) = e.company(c).and_then(|x| x.episodes) else { continue };
-                        let Some(&last) = air.last() else { continue };
-                        let fin = last + 7 * (eps - air.len() as i64);
-                        if fin != today + 1 || self.finale_exits.iter().any(|x| x.0 == c) {
-                            continue;
-                        }
-                        let p = e.company(c).unwrap().last_price;
-                        let lim = p * 101 / 100 + 1;
-                        let q = affordable(e, (self.start_cash / 10).min(e.available_cash(acct)), lim);
-                        if place(e, acct, c, "buy", "limit", q, Some(lim), t) {
-                            self.trades_placed += 1;
-                            self.finale_exits.push((c, if self.kind == BotKind::FinaleFlip { fin + 8 } else { i64::MAX }));
-                        }
-                    }
-                } else if s == 9 * 3600 + 1800 {
-                    let due: Vec<i64> = self.finale_exits.iter().filter(|x| x.1 <= today).map(|x| x.0).collect();
-                    for c in due {
-                        let q = e.holding(acct, c).map_or(0, |h| h.qty - h.qty_frozen);
-                        let p = e.company(c).map_or(1, |x| x.last_price);
-                        if q > 0 && place(e, acct, c, "sell", "limit", q, Some((p * 99 / 100).max(1)), t) {
-                            self.trades_placed += 1;
-                        }
-                        self.finale_exits.retain(|x| x.0 != c);
-                    }
                 }
             }
             BotKind::HoldHottest => {

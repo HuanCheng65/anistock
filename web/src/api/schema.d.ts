@@ -1201,7 +1201,7 @@ export interface components {
             category: components["schemas"]["NewsCategory"];
             /** Format: int64 */
             id: number;
-            /** @description 开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash、sequel（续作公布、新一季并入系列公司） */
+            /** @description 开放枚举：system、ipo、allotment、premiere、finale、dividend、rate、delisting、warning、vcm、flash */
             kind: string;
             stock: null | components["schemas"]["StockRef"];
             title: string;

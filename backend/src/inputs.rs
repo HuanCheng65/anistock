@@ -61,49 +61,6 @@ pub struct ShowInputs {
     /// which markets' data sources the show is mapped to (since v0.3.2)
     #[serde(default)]
     pub sources: Option<Flags>,
-    /// AniList averageScore on the day (None: not enough votes yet); the long tail's prior (phase 1)
-    #[serde(default)]
-    pub score: Option<f64>,
-    /// AniList format (TV, ONA, MOVIE, ...) (phase 1)
-    #[serde(default)]
-    pub format: Option<String>,
-    /// AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...) (phase 1: the sequel option)
-    #[serde(default)]
-    pub source: Option<String>,
-    /// itself a sequel: a PREQUEL relation to a TV/ONA/film (phase 1)
-    #[serde(default)]
-    pub prequel: bool,
-    /// in the top decile of popularity among the shows premiering within half a year of it (phase 1)
-    #[serde(default)]
-    pub top_pop: bool,
-    /// an announced sequel not yet aired (phase 1, docs/v2-series.md §5.2)
-    #[serde(default)]
-    pub sequel: Option<SequelInputs>,
-    /// the series key (engine/series.py: the smallest AniList id of the series) (phase 1, docs/v2-series.md §3)
-    #[serde(default)]
-    pub series: Option<i64>,
-    /// AniList list entries on the day (the tail prior's popularity at the finale) (phase 1)
-    #[serde(default)]
-    pub popularity: Option<f64>,
-    /// the collector has the show's relations as of the day (else "no sequel announced" is not information)
-    #[serde(default)]
-    pub relations_known: bool,
-    /// the public schedule: every main episode's air date on Bangumi (past and announced) (phase 1)
-    #[serde(default)]
-    pub schedule: Vec<String>,
-}
-
-/// An announced sequel: its AniList id, the day the relation first appeared, and its premiere day(s): the
-/// announced date, the middle of the announced month or year, or the announcement plus each of the fitted
-/// announcement-to-premiere lags (equally likely).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SequelInputs {
-    pub id: i64,
-    pub announced: String,
-    pub premieres: Vec<String>,
-    #[serde(default)]
-    pub exact: bool,
 }
 
 /// One flag per market.
@@ -126,11 +83,6 @@ struct RawInputs {
     window_start: Option<String>,
     cn_titles: BTreeMap<String, String>,
     shows: Vec<ShowInputs>,
-    /// phase 1: each market's platform size (docs/v2-series.md §6) and the number of days it averages
-    #[serde(default)]
-    platform: Option<Markets>,
-    #[serde(default)]
-    platform_days: Option<i64>,
 }
 
 /// Parsed inputs for one day. `shows` keeps the file's (model) order.
@@ -141,11 +93,6 @@ pub struct Inputs {
     pub shows: Vec<ShowInputs>,
     pub index: HashMap<i64, usize>,
     pub cn_titles: BTreeMap<i64, String>,
-    /// each market's platform size: the trailing-year mean of the day's total attention of every tracked work
-    /// airing (listed or not); None in inputs written before phase 1
-    pub platform: Option<Markets>,
-    /// the number of days `platform` averages (up to 365; fewer while the collector's history is short)
-    pub platform_days: i64,
 }
 
 impl ShowInputs {
@@ -180,15 +127,7 @@ impl Inputs {
         for (k, v) in raw.cn_titles {
             cn_titles.insert(k.parse::<i64>().map_err(|e| format!("cn_titles key {k}: {e}"))?, v);
         }
-        Ok(Inputs {
-            day: raw.day,
-            window_start: raw.window_start,
-            shows,
-            index,
-            cn_titles,
-            platform: raw.platform,
-            platform_days: raw.platform_days.unwrap_or(0),
-        })
+        Ok(Inputs { day: raw.day, window_start: raw.window_start, shows, index, cn_titles })
     }
 
     pub fn read(path: &Path) -> Result<Inputs, String> {

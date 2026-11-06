@@ -37,41 +37,6 @@ pub struct JState {
     /// equivalents, the show draws level × post now
     #[serde(default = "ones")]
     pub post: M3,
-    /// the show's long-tail prior (score and format, `vfilter::tail_mult`): follows the inputs until the finale's
-    /// week ends, then fixed (the post-finale observations are read through it)
-    #[serde(default = "one")]
-    pub tail_mult: f64,
-    /// the sequel option (docs/v2-series.md §5): the announcement hazard's log-odds shift of the show and of its
-    /// sequel (fixed at the finale's week, like `tail_mult`)
-    #[serde(default)]
-    pub seq_z: f64,
-    #[serde(default)]
-    pub seq_zs: f64,
-    /// an announced sequel: its id, the announcement day and its premiere day(s) (day numbers)
-    #[serde(default)]
-    pub sequel: Option<(i64, i64, Vec<i64>)>,
-    /// the work's first air day, episode count, long-runner flag and air days (from the inputs): the shape of a
-    /// work that is not its company's first (docs/v2-series.md §3)
-    #[serde(default)]
-    pub meta: Option<WorkMeta>,
-    /// the show's relations are collected (an announcement would be seen)
-    #[serde(default)]
-    pub watched: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkMeta {
-    pub first_air: i64,
-    pub episodes: Option<i64>,
-    pub long: bool,
-    pub air: Vec<i64>,
-    /// the public schedule: every main episode's air date (Bangumi)
-    #[serde(default)]
-    pub schedule: Vec<i64>,
-}
-
-fn one() -> f64 {
-    1.0
 }
 
 fn ones() -> M3 {
@@ -91,12 +56,6 @@ impl JState {
             acc_n: 0,
             day: day.to_string(),
             post: [1.0; 3],
-            tail_mult: 1.0,
-            seq_z: 0.0,
-            seq_zs: 0.0,
-            sequel: None,
-            meta: None,
-            watched: false,
         }
     }
     fn var(&self, m: usize) -> f64 {
@@ -186,61 +145,11 @@ impl Engine {
 
     /// The episode count to plan with: the announced one, unless the show has aired nothing for two weeks
     /// since its last episode (a whole season released at once, or a stop): then what has aired.
-    /// (A missing AniList episode marker is not a finish: when the public schedule — the episodes' air dates on
-    /// Bangumi, `schedule` — has an episode after the last one seen, the show keeps its announced count.)
-    pub(crate) fn planned_episodes(episodes: Option<i64>, aired: &[i64], today: i64, schedule: &[i64]) -> Option<i64> {
+    pub(crate) fn planned_episodes(episodes: Option<i64>, aired: &[i64], today: i64) -> Option<i64> {
         match (episodes, aired.last()) {
-            (Some(n), Some(&last)) if (aired.len() as i64) < n && today - last >= 14 => {
-                if schedule.iter().any(|d| *d > last) {
-                    episodes
-                } else {
-                    Some(aired.len() as i64)
-                }
-            }
+            (Some(n), Some(&last)) if (aired.len() as i64) < n && today - last >= 14 => Some(aired.len() as i64),
             _ => episodes,
         }
-    }
-
-    fn schedule_of(&self, work: i64) -> Vec<i64> {
-        self.st.jstate.get(&work).and_then(|j| j.meta.as_ref()).map_or(Vec::new(), |m| m.schedule.clone())
-    }
-
-    /// The works a company owns besides its first (V8 company_works), in id order.
-    pub fn works_extra(&self, company: i64) -> Vec<i64> {
-        self.st.company_works.iter().filter(|(_, c)| **c == company).map(|(w, _)| *w).collect()
-    }
-
-    /// Every work of a company: its first (the company id), then the others.
-    pub fn works_of(&self, company: i64) -> Vec<i64> {
-        let mut v = vec![company];
-        v.extend(self.works_extra(company));
-        v
-    }
-
-    fn meta_of(s: &ShowInputs) -> Option<WorkMeta> {
-        Some(WorkMeta {
-            first_air: day_no(&s.first_air)?,
-            episodes: s.episodes,
-            long: s.long_runner,
-            air: s.air_dates.iter().filter_map(|d| day_no(d)).collect(),
-            schedule: s.schedule.iter().filter_map(|d| day_no(d)).collect(),
-        })
-    }
-
-    /// A work's schedule, first air day and long-runner flag: the company's own for its first work, else from the
-    /// work's state.
-    fn work_shape(&self, c: &Company, w: i64, p: &Params) -> (Vec<i64>, i64, bool) {
-        if w == c.id {
-            return self.shape(c, p);
-        }
-        let Some(m) = self.st.jstate.get(&w).and_then(|j| j.meta.clone()) else { return self.shape(c, p) };
-        let today = self.st.jstate.get(&w).and_then(|j| day_no(&j.day)).unwrap_or(m.first_air);
-        let episodes = Self::planned_episodes(m.episodes.or(if m.long { None } else { Some(p.default_episodes) }), &m.air, today, &m.schedule);
-        let mut air = m.air.clone();
-        if air.is_empty() && !m.long {
-            air.push(m.first_air);
-        }
-        (F::schedule(&air, episodes, m.long), m.first_air, m.long)
     }
 
     fn shape(&self, c: &Company, p: &Params) -> (Vec<i64>, i64, bool) {
@@ -248,7 +157,7 @@ impl Engine {
         let first_air = day_no(&c.first_air).unwrap_or(0);
         let aired0 = self.air_days_of(c.id);
         let today = self.st.jstate.get(&c.id).and_then(|j| day_no(&j.day)).unwrap_or(first_air);
-        let episodes = Self::planned_episodes(c.episodes.or(if long { None } else { Some(p.default_episodes) }), &aired0, today, &self.schedule_of(c.id));
+        let episodes = Self::planned_episodes(c.episodes.or(if long { None } else { Some(p.default_episodes) }), &aired0, today);
         let mut aired = aired0;
         if aired.is_empty() && !long {
             // not aired yet: the first episode on its announced date, then weekly
@@ -288,83 +197,6 @@ impl Engine {
         std::array::from_fn(|i| std::array::from_fn(|j| c[i][j] + b[i] * b[j] * v))
     }
 
-    /// The absolute revenue rule in force (docs/v2-series.md §6): the platform sizes of the last close and the
-    /// scale set at the switch (state `platform_rule`: "us,cn,jp,scale"); None while the relative rule applies.
-    /// The rule the value prices from `today` (docs/v2-series.md §6): the one in force, or, before the switch, the
-    /// absolute rule from its known date on (state `platform_pending`: "us,cn,jp,scale estimate,switch day"), so
-    /// that the switch day is not a jump anyone could compute in advance.
-    pub fn value_rule(&self, today: i64) -> F::ValueRule {
-        if let Some((pl, sc)) = self.platform_rule() {
-            return Some((pl, sc, 0));
-        }
-        let v: Vec<f64> = self.state("platform_pending")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
-        (v.len() == 5).then(|| ([v[0], v[1], v[2]], v[3], (v[4] as i64 - today - 1).max(0) as usize))
-    }
-
-    pub fn platform_rule(&self) -> F::PlatformRule {
-        let v: Vec<f64> = self.state("platform_rule")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
-        (v.len() == 4).then(|| ([v[0], v[1], v[2]], v[3]))
-    }
-
-    /// The sequel option per market in attention-days discounted to today (docs/v2-series.md §5), while the show's
-    /// next season is not valued on its own (an announced sequel that has a filter state of its own carries its
-    /// value from then on).
-    #[allow(clippy::too_many_arguments)]
-    fn sequel_extra(&self, fp: &FilterParams, p: &Params, js: &JState, sched: &[i64], long: bool, first_air: i64, today: i64, rate: f64) -> Option<M3> {
-        fp.sequel.as_ref()?;
-        if long {
-            return None;
-        }
-        let fin = *sched.last()?;
-        if js.sequel.as_ref().is_some_and(|q| self.st.jstate.contains_key(&q.0)) {
-            return None;
-        }
-        let known: &[i64] = js.sequel.as_ref().map_or(&[], |q| &q.2);
-        let disc = F::discount_day(rate, p);
-        Some(std::array::from_fn(|m| {
-            if js.active[m] {
-                F::sequel_extra(fp, m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known, js.watched)
-            } else {
-                0.0
-            }
-        }))
-    }
-
-    /// The attention a show earns on today's close (docs/v2-series.md §4.2): the inputs', except for a cn/jp market
-    /// that has no real data after the finale's week (the rebuilt series has none; the real tail, collection and
-    /// record increments, is not switched on yet): there, the filter's expectation, exp(mean + var/2) × the
-    /// post-finale factor of the latest state, the same expectation the value prices. A stopgap: without it the
-    /// close would book nothing (or a modelled median) while the value priced the mean, a predictable shortfall.
-    pub fn revenue_att(&self, s: &ShowInputs) -> M3 {
-        let mut a = s.att.m3();
-        let Some(js) = self.st.jstate.get(&s.id) else { return a };
-        let (obs, src) = (Self::observed(s), Self::sources(s));
-        for m in 1..3 {
-            if src[m] && !obs[m] && js.active[m] && js.post[m] != 1.0 {
-                a[m] = (js.mean[m] + 0.5 * js.var(m)).exp() * js.post[m];
-            }
-        }
-        a
-    }
-
-    /// The show's long-tail prior from its score and format (`vfilter::tail_mult`).
-    fn tail_mult_of(fp: &FilterParams, s: &ShowInputs) -> f64 {
-        F::tail_mult(fp, s.score, s.format.as_deref() == Some("ONA"), s.popularity)
-    }
-
-    /// For each market whose expected path ends in the long tail: (its tail, the show's prior, days after the
-    /// finale's week on the path's last day), for the value beyond the horizon.
-    fn tail_ends<'a>(fp: &'a FilterParams, sched: &[i64], long: bool, today: i64, mult: f64) -> [F::TailEnd<'a>; 3] {
-        let fin = if long { None } else { sched.last().copied() };
-        std::array::from_fn(|m| match (fin, &fp.tail[m]) {
-            (Some(f), Some(tl)) => {
-                let t_last = today + fp.horizon_days as i64 - f - 7;
-                (t_last >= 0).then_some((tl, mult, t_last))
-            }
-            _ => None,
-        })
-    }
-
     fn sources(s: &ShowInputs) -> [bool; 3] {
         s.sources.as_ref().map_or([true; 3], |x| [true, x.cn, x.jp])
     }
@@ -386,63 +218,21 @@ impl Engine {
         // describes is not news) and no longer drifts
         // (finished: exactly the announced number of episodes aired; a show that keeps airing past its
         // count is not finished)
-        let schedule: Vec<i64> = s.schedule.iter().filter_map(|d| day_no(d)).collect();
-        let fin = match Self::planned_episodes(s.episodes, &sched, today, &schedule) {
+        let fin = match Self::planned_episodes(s.episodes, &sched, today) {
             Some(n) if !s.long_runner && n > 0 && sched.len() as i64 == n => Some(sched[(n - 1) as usize]),
             _ => None,
         };
         // (the profile is relative to the finale's week, bump included)
-        let after_finale = fin.is_some_and(|f| today >= f + 7);
-        // the long tail's prior: from the inputs until the finale's week ends, then the state's
-        let mult = match self.st.jstate.get(&s.id) {
-            Some(j) if after_finale => j.tail_mult,
-            _ => Self::tail_mult_of(fp, s),
-        };
-        let prev_state = self.st.jstate.get(&s.id).cloned();
-        // (the sequel hazard's inputs follow the inputs every day: unlike the tail prior they do not say how the
-        // observations are read, and "itself a sequel" may only become known once the relations are collected)
-        let (seq_z, seq_zs) = match (&prev_state, &fp.sequel) {
-            (_, Some(sp)) => {
-                let z = F::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
-                (z, if s.prequel { z } else { z + sp.beta.sequel })
-            }
-            _ => (0.0, 0.0),
-        };
-        // an announced sequel (a new SEQUEL relation not yet aired): a company notice the first time; the prequel's
-        // us attention in the announcement week and the two after is read through the measured transient
-        let sequel = s.sequel.as_ref().and_then(|q| {
-            let a = day_no(&q.announced)?;
-            Some((q.id, a, q.premieres.iter().filter_map(|d| day_no(d)).collect::<Vec<i64>>()))
-        });
-        if let Some((sid, _, pr)) = &sequel {
-            let known = prev_state.as_ref().and_then(|j| j.sequel.as_ref()).is_some_and(|x| x.0 == *sid);
-            if !known {
-                if let Some(c) = self.st.companies.get(&s.id).filter(|c| c.status == "listed").cloned() {
-                    let when = match (s.sequel.as_ref().is_some_and(|q| q.exact), pr.first()) {
-                        (true, Some(d)) => NaiveDate::from_num_days_from_ce_opt(*d as i32)
-                            .map_or(String::new(), |d| format!("续作定于 {} 年 {} 月 {} 日开播。", d.year(), d.month(), d.day())),
-                        _ => "开播时间未公布。".into(),
-                    };
-                    self.push_news(ts, day, "sequel", Some(c.id), format!("《{}》续作公布", c.title), when);
-                }
-            }
-        }
         let post: M3 = std::array::from_fn(|m| {
-            fin.map_or(1.0, |f| if today >= f + 7 { F::post_finale_factor(fp, p, m, f, today, mult) * fp.finale_bump[m] } else { 1.0 })
+            fin.map_or(1.0, |f| if today >= f + 7 { F::post_finale_factor(fp, p, m, f, today) * fp.finale_bump[m] } else { 1.0 })
         });
+        let after_finale = fin.is_some_and(|f| today >= f + 7);
         let in_finale_week = fin.is_some_and(|f| f <= today && today < f + 7);
         let mut att = s.att.m3();
         for (m, (a, f)) in att.iter_mut().zip(post).enumerate() {
             *a /= f;
             if in_finale_week {
                 *a /= fp.finale_bump[m];
-            }
-        }
-        if let (Some((_, a, _)), Some(tr)) = (&sequel, fp.sequel.as_ref().and_then(|sp| sp.transient.as_ref())) {
-            if *a <= today && today < a + 7 {
-                att[0] /= tr.week1;
-            } else if a + 7 <= today && today < a + 21 {
-                att[0] /= tr.weeks2_3;
             }
         }
         let observed = Self::observed(s);
@@ -456,12 +246,6 @@ impl Engine {
             j.mean = mean;
             j.cov = cov;
             j.active = sources;
-            j.tail_mult = mult;
-            j.seq_z = seq_z;
-            j.seq_zs = seq_zs;
-            j.sequel = sequel.clone();
-            j.meta = Self::meta_of(s);
-            j.watched = s.relations_known;
             j
         };
         let cur = self.st.jstate.get(&s.id).cloned();
@@ -499,28 +283,12 @@ impl Engine {
                         fp.cum_drift(m, from, today, prem) / days as f64
                     }
                 });
-                // after the finale's week the level is a random walk whose variance grows by the spread of
-                // show-specific tails D(t) (docs/v2-series.md §4); before it, the in-season process noise
-                let q: M3 = std::array::from_fn(|m| match (fin, &fp.tail[m]) {
-                    (Some(f), Some(tl)) if today >= f + 7 && days > 0 => {
-                        let (t0, t1) = (from - f - 7, today - f - 7);
-                        let pre = (-t0).clamp(0, days) as f64 * fp.q[m];
-                        (pre + F::tail_var(tl, t1) - F::tail_var(tl, t0.max(0))) / days as f64
-                    }
-                    _ => fp.q[m],
-                });
-                let (mean, cov) = F::kf_predict_joint(&st.mean, &st.cov, days, &drift, &q);
+                let (mean, cov) = F::kf_predict_joint(&st.mean, &st.cov, days, &drift, &fp.q);
                 JState { mean, cov, day: day.into(), ..st }
             }
         };
         st.day = day.into();
         st.post = post;
-        st.meta = Self::meta_of(s);
-        st.watched = s.relations_known;
-        st.tail_mult = mult;
-        st.seq_z = seq_z;
-        st.seq_zs = seq_zs;
-        st.sequel = sequel;
         // the observations of the day, us first
         let mut ys: Vec<(usize, f64)> = Vec::new();
         let drift_us = if after_finale {
@@ -530,12 +298,7 @@ impl Engine {
         } else {
             fp.drift_at(0, day_no(&s.first_air).map_or(0, |p| (today - p).div_euclid(7)))
         };
-        // an observation that includes the finale's week is read through the average finale bump; the bump differs
-        // by show (bigger shows record more completions), so it carries that spread as extra noise
-        let mut extra_r: Vec<f64> = Vec::new();
         if st.acc_n > 0 && (k == Some(0) || st.acc_n >= 7) {
-            let covers_finale = fin.is_some_and(|f| today - st.acc_n <= f + 6 && today - 1 >= f);
-            extra_r.push(if covers_finale { fp.finale_bump_var[0] } else { 0.0 });
             ys.push((0, F::week_observation(st.acc / st.acc_n as f64, st.acc_n, drift_us)));
             st.acc = 0.0;
             st.acc_n = 0;
@@ -559,7 +322,6 @@ impl Engine {
                 if st.last_obs[m] != Some(att[m]) {
                     st.last_obs[m] = Some(att[m]);
                     st.seen[m] = true;
-                    extra_r.push(if in_finale_week { fp.finale_bump_var[m] } else { 0.0 });
                     ys.push((m, att[m].ln()));
                 }
             } else {
@@ -571,9 +333,9 @@ impl Engine {
                 }
             }
         }
-        for ((m, y), xr) in ys.into_iter().zip(extra_r) {
+        for (m, y) in ys {
             if st.active[m] {
-                let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, m, y, fp.r[m] + xr, fp.clip);
+                let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, m, y, fp.r[m], fp.clip);
                 st.mean = mean;
                 st.cov = cov;
             }
@@ -599,26 +361,13 @@ impl Engine {
             let (sched, first_air, long) = self.shape(c, p);
             let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
                 if js.active[m] {
-                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
+                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h)
                 } else {
                     vec![0.0; h]
                 }
             });
             Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
             out.insert(c.id, path);
-            for w in self.works_extra(c.id) {
-                let Some(js) = self.st.jstate.get(&w) else { continue };
-                let (sched, first_air, long) = self.work_shape(c, w, p);
-                let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
-                    if js.active[m] {
-                        F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
-                    } else {
-                        vec![0.0; h]
-                    }
-                });
-                Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
-                out.insert(w, path);
-            }
         }
         out
     }
@@ -733,49 +482,6 @@ impl Engine {
                 sum[m][t] += level[m] * r;
             }
         }
-        // ... and, after their seasons, those shows' long tails (docs/v2-series.md §4): a season's shows not listed
-        // yet enter the market totals not only while they air but for years after, so the shares of the shows on
-        // the market are expected to be diluted by them too. Without this the totals rose at every season change,
-        // when the new shows listed with their tails: a predictable fall of every listed show's value under the
-        // relative share rule. For each season starting from 14 days before today's on: the share of its attention
-        // not listed yet × its shows' total level at the end of the season (recorded a season earlier, else the
-        // peak) × the finale bump × the expected tail factor after its finale's week (a 12-week season)
-        if fp.tail.iter().any(|t| t.is_some()) {
-            let mut seasons = Vec::new();
-            let mut s0 = prev_season_start(today + 14);
-            while s0 + 91 < today + h as i64 {
-                seasons.push(s0);
-                s0 = next_season_start(s0);
-            }
-            for s in seasons {
-                let r = fp.unlisted(today - s);
-                if r <= 0.0 {
-                    continue;
-                }
-                let mut end = None;
-                let mut p0 = s;
-                for _ in 0..4 {
-                    p0 = prev_season_start(p0 - 1);
-                    if let Some(v) = hist.get(&(p0 + 77)) {
-                        end = Some(*v);
-                        break;
-                    }
-                }
-                let level = end.unwrap_or(peak);
-                for t in 0..h {
-                    let d = today + t as i64 + 1;
-                    let k = d - (s + 91);
-                    if k < 0 {
-                        continue;
-                    }
-                    for m in 0..3 {
-                        if let Some(tl) = &fp.tail[m] {
-                            sum[m][t] += level[m] * r * fp.finale_bump[m] * F::tail_mean(tl, k, 1.0);
-                        }
-                    }
-                }
-            }
-        }
         sum
     }
 
@@ -799,32 +505,9 @@ impl Engine {
         std::array::from_fn(|m| totals[m].iter().zip(&own[m]).map(|(t, o)| t + o).collect())
     }
 
-    /// One work's part of its company's value per share (yuan): its expected revenue, its long tail and, for the
-    /// series' latest work only, the sequel option; `book` (cents) is added once, with the company's first work.
-    #[allow(clippy::too_many_arguments)]
-    fn work_value(&self, fp: &FilterParams, c: &Company, w: i64, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64, book: i64, option: bool) -> f64 {
-        let js = self.st.jstate.get(&w);
-        let (sched, first_air, long) = self.work_shape(c, w, p);
-        let mult = js.map_or(1.0, |j| j.tail_mult);
-        let tails = Self::tail_ends(fp, &sched, long, today, mult);
-        let extra = if option { js.and_then(|js| self.sequel_extra(fp, p, js, &sched, long, first_air, today, rate)) } else { None };
-        F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, long, &tails, self.value_rule(today), extra.as_ref())
-    }
-
-    /// A company's value per share (cents): the sum over its works (docs/v2-series.md §3.2). `paths`: the other
-    /// works' expected attention.
-    #[allow(clippy::too_many_arguments)]
-    fn value_of(&self, fp: &FilterParams, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64, paths: Option<&HashMap<i64, [Vec<f64>; 3]>>) -> i64 {
+    fn value_of(&self, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64) -> i64 {
         let book = self.account_of("company", c.id).map_or(0, |a| self.st.accounts[&a].cash);
-        let others: Vec<(i64, &[Vec<f64>; 3])> =
-            self.works_extra(c.id).into_iter().filter_map(|w| Some((w, paths?.get(&w)?))).collect();
-        // the sequel option belongs to the series' latest work
-        let first = |w: i64| self.work_shape(c, w, p).1;
-        let latest = others.iter().map(|(w, _)| *w).fold(c.id, |a, w| if first(w) > first(a) { w } else { a });
-        let mut v = self.work_value(fp, c, c.id, own, totals, p, rate, a_ref, today, book, latest == c.id);
-        for (w, o) in others {
-            v += self.work_value(fp, c, w, o, totals, p, rate, a_ref, today, 0, latest == w);
-        }
+        let v = F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, c.long_runner != 0);
         ((v * 100.0).round_ties_even() as i64).max(1)
     }
 
@@ -836,13 +519,13 @@ impl Engine {
         let (sched, first_air, long) = self.shape(c, p);
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {
             if js.active[m] {
-                F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, fp.horizon_days, js.tail_mult)
+                F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, fp.horizon_days)
             } else {
                 vec![0.0; fp.horizon_days]
             }
         });
         Self::fill_preair(&mut own[0], today, first_air, js.last_obs[0]);
-        Some(self.value_of(fp, c, &own, totals, p, rate, a_ref, today, None))
+        Some(self.value_of(c, &own, totals, p, rate, a_ref))
     }
 
     /// Hidden values of every listed company with a filter state (cents), and the market totals used.
@@ -853,7 +536,7 @@ impl Engine {
             // the us total over days 7..90 ahead, by group: shows premiered 30+ days ago, recent/upcoming, long-runners
             let mut g = [0.0f64; 3];
             for (id, pth) in &paths {
-                let Some(c) = self.st.companies.get(id) else { continue };
+                let c = &self.st.companies[id];
                 let fa = day_no(&c.first_air).unwrap_or(0);
                 let k = if c.long_runner != 0 { 2 } else if today - fa >= 30 { 0 } else { 1 };
                 g[k] += pth[0][6..90.min(pth[0].len())].iter().sum::<f64>();
@@ -869,9 +552,8 @@ impl Engine {
         let trace_all = std::env::var("SIM_TRACE").is_ok_and(|v| v == "all");
         let trace: Option<i64> = std::env::var("SIM_TRACE").ok().and_then(|v| v.parse().ok());
         for (id, own) in &paths {
-            // a company's first work; its other works are summed in
-            let Some(c) = self.st.companies.get(id) else { continue };
-            let v = self.value_of(fp, c, own, &totals, p, rate, a_ref, today, Some(&paths));
+            let c = &self.st.companies[id];
+            let v = self.value_of(c, own, &totals, p, rate, a_ref);
             if trace_all || trace == Some(*id) {
                 let st: Vec<String> = (0..3)
                     .map(|m| match self.st.jstate.get(id) {
@@ -1001,10 +683,9 @@ impl Engine {
         let first = day_no(&s.first_air).unwrap_or(today);
         let sched = F::schedule(&[first], episodes, long);
         let pc = Self::prior_cov_at(fp, s, today);
-        let mult = Self::tail_mult_of(fp, s);
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {
             if src[m] {
-                F::att_path(fp, p, m, pm[m], pc[m][m], today, &sched, first, long, fp.horizon_days, mult)
+                F::att_path(fp, p, m, pm[m], pc[m][m], today, &sched, first, long, fp.horizon_days)
             } else {
                 vec![0.0; fp.horizon_days]
             }
@@ -1012,18 +693,7 @@ impl Engine {
         let us_now = s.att.us;
         Self::fill_preair(&mut own[0], today, first, (us_now > 0.0).then_some(us_now));
         // (the new show is not in today's totals yet: it joins them)
-        let tails = Self::tail_ends(fp, &sched, long, today, mult);
-        // the sequel option from the prior (the show is not valued yet)
-        let extra: Option<M3> = match (&fp.sequel, sched.last()) {
-            (Some(sp), Some(&fin)) if !long => {
-                let z = F::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
-                let zs = if s.prequel { z } else { z + sp.beta.sequel };
-                let disc = F::discount_day(rate, p);
-                Some(std::array::from_fn(|m| if src[m] { F::sequel_extra(fp, m, pm[m], pc[m][m], today, fin, first, z, zs, disc, &[], s.relations_known) } else { 0.0 }))
-            }
-            _ => None,
-        };
-        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails, self.value_rule(today), extra.as_ref());
+        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long);
         let used: Vec<f64> = (0..3).filter(|m| src[*m]).map(|m| fp.p0[m]).collect();
         let sd = if used.is_empty() { 0.0 } else { (used.iter().sum::<f64>() / used.len() as f64).sqrt() };
         let discount = 1.0 - (-fp.ipo_risk * sd).exp();
@@ -1074,7 +744,7 @@ impl Engine {
         let paths = self.paths(&fp, &p, today);
         let totals = self.totals_from(&paths, &fp, today);
         let new = match paths.get(&company) {
-            Some(own) => self.value_of(&fp, &c, own, &totals, &p, rate, a_ref, today, Some(&paths)),
+            Some(own) => self.value_of(&c, own, &totals, &p, rate, a_ref),
             None => old,
         };
         self.st.companies.get_mut(&company).unwrap().fair_value = new;

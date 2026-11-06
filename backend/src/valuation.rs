@@ -25,16 +25,6 @@ pub struct Params {
     // revenue
     pub demand_base_week: f64,
     pub demand_elasticity: f64,
-    /// the absolute revenue rule starts once the platform size averages this many days (docs/v2-series.md §6)
-    pub platform_min_days: i64,
-    /// the absolute revenue rule (docs/v2-series.md §6) at all: off (0) until the platform history allows it
-    pub absolute_revenue: bool,
-    /// cn/jp post-finale days without data earn the filter's expectation (the §4.2 stopgap)
-    pub impute_tail: bool,
-    /// delisting (docs/v2-series.md §9): a finished series' weekly revenue under this share of the median airing
-    /// company's, while its chance of a sequel announcement within three years is under `delist_sequel_p`
-    pub delist_tail_share: f64,
-    pub delist_sequel_p: f64,
     // valuation
     pub equity_premium: f64,
     pub post_finale_profile: Vec<f64>,
@@ -100,11 +90,6 @@ impl Params {
             production_fee_ratio: num(cfg, "company.production_fee_ratio")?,
             demand_base_week: num(cfg, "revenue.demand_base_week")?,
             demand_elasticity: num(cfg, "revenue.demand_elasticity")?,
-            platform_min_days: int(cfg, "revenue.platform_min_days").unwrap_or(182),
-            absolute_revenue: int(cfg, "revenue.absolute_revenue").unwrap_or(0) == 1,
-            impute_tail: int(cfg, "valuation.impute_tail").unwrap_or(1) == 1,
-            delist_tail_share: num(cfg, "company.delist_tail_share").unwrap_or(0.01),
-            delist_sequel_p: num(cfg, "company.delist_sequel_p").unwrap_or(0.10),
             equity_premium: num(cfg, "valuation.equity_premium")?,
             post_finale_profile: profile,
             post_finale_tail_decay: num(cfg, "valuation.post_finale_tail_decay")?,

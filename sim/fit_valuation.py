@@ -26,7 +26,7 @@ import json
 import math
 import statistics as st
 import sys
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -133,33 +133,6 @@ def fit_finale_bump(shows):
             if a and b and c and b > 0 and c > 0:
                 r0.append(a / ((b + c) / 2))
         out[m] = round(sum(r0) / len(r0), 6) if len(r0) >= 20 else 1.0
-    return out
-
-
-def finale_bump_var(shows):
-    """Per market, the spread across shows (variance of the log) of the finale week's attention relative to the level
-    two to three weeks before it. The bump differs by show (AniList records completions, and bigger shows record
-    relatively more: in the 2026 inputs the bigger half's is 1.65, the smaller half's 1.43), so a finale-week
-    observation read through the average bump carries this much extra noise about the level. Since the long tail
-    multiplies whatever level the finale week suggests, reading it as exact made big shows' values jump at the
-    finale and fall back when the post-finale weeks came in."""
-    out = {}
-    for m in MARKETS:
-        v = []
-        for x in shows.values():
-            fin = finale_day(x)
-            if fin is None or x["aired"][0] > 0 or len(air_days(x)) < 10:
-                continue
-            idx = {d: i for i, d in enumerate(x["days"])}
-
-            def wk(lo):
-                w = [x["att"][m][idx[d]] for d in range(lo, lo + 7) if d in idx and x["obs"][m][idx[d]]]
-                return sum(w) / len(w) if len(w) >= 4 else None
-            a, b, c = wk(fin), wk(fin - 14), wk(fin - 21)
-            if a and b and c and b > 0 and c > 0:
-                v.append(math.log(a / ((b + c) / 2)))
-        mu = sum(v) / len(v) if v else 0.0
-        out[m] = round(sum((y - mu) ** 2 for y in v) / len(v), 6) if len(v) >= 20 else 0.0
     return out
 
 
@@ -342,307 +315,6 @@ def post_finale(shows, drift, weeks=6, min_shows=20):
     return prof, tail
 
 
-def transition_stats(shows, m, drift8, weeks=3):
-    """Market m's attention in weeks 0..weeks-1 after the finale's week relative to the finale week's (= level ×
-    bump at the finale, moved to the week's end with the late-season drift), over the finished shows of the
-    inputs: per week (t, mean of log ratios, variance of log ratios, n). Real data for us (observed daily); cn/jp
-    after the finale are modelled extensions in the rebuilt series (sim/reconstruct.py) and are not used."""
-    by_w = {w: [] for w in range(weeks)}
-    for x in shows.values():
-        fin = finale_day(x)
-        if fin is None or x["aired"][0] > 0:
-            continue
-        idx = {d: i for i, d in enumerate(x["days"])}
-
-        def wk(lo):
-            v = [x["att"][m][idx[d]] for d in range(lo, lo + 7) if d in idx and x["obs"][m][idx[d]]]
-            return sum(v) / len(v) if len(v) >= 4 else None
-        base = wk(fin)
-        if not base or base <= 0:
-            continue
-        for w in by_w:
-            v = wk(fin + 7 + 7 * w)
-            if v is not None and v > 0:
-                by_w[w].append(math.log(v / (base * math.exp(3.5 * drift8))))
-    out = []
-    for w in range(weeks):
-        v = by_w[w]
-        mu = sum(v) / len(v) if v else float("nan")
-        out.append((7 * w + 3, mu, sum((y - mu) ** 2 for y in v) / len(v) if v else float("nan"), len(v)))
-    return out
-
-
-def bucket(points_by_show):
-    """[(t, log mean, log variance, n)] per window position (t in days, rounded), over shows; windows with no
-    activity at all are dropped (a handful)."""
-    by = {}
-    for pts in points_by_show:
-        for t, f in pts:
-            if f > 0:
-                by.setdefault(round(t), []).append(math.log(f))
-    out = []
-    for t in sorted(by):
-        v = by[t]
-        if len(v) < 20:
-            continue
-        mu = sum(v) / len(v)
-        out.append((t, mu, sum((y - mu) ** 2 for y in v) / len(v), len(v)))
-    return out
-
-
-def tail_var_fit(stats):
-    """D(t) = a (1 - exp(-t/T)) + b t: the spread across shows of the log post-finale factor (the show-specific tail
-    the filter learns as observations come: a fast part as the show settles, then a random walk), by n-weighted
-    least squares on the per-window log variances. D(0) = 0: at the end of the finale's week the level is known."""
-    pts = [(t, v, n) for t, _, v, n in stats]
-
-    def f(x):
-        a, tt, b = math.exp(x[0]), math.exp(x[1]), math.exp(x[2])
-        return sum(n * (a * (1 - math.exp(-t / tt)) + b * t - v) ** 2 for t, v, n in pts)
-    best, _ = nelder_mead(f, [math.log(0.3), math.log(30), math.log(1e-4)], [0.5, 0.5, 1.0], iters=3000)
-    return [round(math.exp(best[0]), 6), round(math.exp(best[1]), 4), round(math.exp(best[2]), 9)]
-
-
-def tail_curve_fit(stats, t_min):
-    """The expected (mean) post-finale factor for t >= t_min: floor × yearly^(t/365) + slow excess × exp(-t/tau2) +
-    fast excess × exp(-t/tau) (a floor and an excess that decays at two speeds: the months after the finale, and the
-    years after), by n-weighted least squares on the log of each window's lognormal mean exp(log mean + log var/2)."""
-    pts = [(t, mu + 0.5 * v, n) for t, mu, v, n in stats if t >= t_min]
-
-    def par(x):
-        tau = math.exp(x[3])
-        return {"floor": math.exp(x[0]), "yearly": math.exp(-math.exp(x[1])), "excess": math.exp(x[2]), "tau": tau,
-                "excess2": math.exp(x[4]), "tau2": tau + math.exp(x[5])}
-
-    def f(x):
-        p = par(x)
-        return sum(n * (math.log(V.tail_formula(p, t, 1.0)) - lm) ** 2 for t, lm, n in pts)
-    x0 = [math.log(0.02), math.log(0.03), math.log(0.1), math.log(100), math.log(0.05), math.log(600)]
-    best, _ = nelder_mead(f, x0, [0.5] * 6, iters=6000)
-    best, _ = nelder_mead(f, best, [0.2] * 6, iters=6000)
-    p = par(best)
-    resid = {t: lm - math.log(V.tail_formula(p, t, 1.0)) for t, lm, n in pts}
-    return {k: round(v, 6) for k, v in p.items()}, resid
-
-
-def solve3(A, b):
-    A = [list(r) for r in A]
-    b = list(b)
-    for i in range(3):
-        p = max(range(i, 3), key=lambda r: abs(A[r][i]))
-        A[i], A[p], b[i], b[p] = A[p], A[i], b[p], b[i]
-        for r in range(i + 1, 3):
-            f = A[r][i] / A[i][i]
-            for c in range(i, 3):
-                A[r][c] -= f * A[i][c]
-            b[r] -= f * b[i]
-    x = [0.0] * 3
-    for i in (2, 1, 0):
-        x[i] = (b[i] - sum(A[i][c] * x[c] for c in range(i + 1, 3))) / A[i][i]
-    return x
-
-
-def tail_prior_fit(us_hist, pct, ref, tail=None):
-    """Tail level by score, format and popularity (docs/v2-series.md §4.1). Per show, the mean log residual of its us
-    factor 3-36 months after the finale against the fitted curve's median (`tail` with no prior), regressed (OLS) on
-    (score - 70)/10, ONA and the popularity fifth within its finale year (sim/long_tail_analysis.py's definition; one
-    effect per fifth, the middle one the reference: the relation is U-shaped). The multiplier scales the whole
-    post-transition curve (the effect is there from the first months on), centred to average 1 in level. Only public
-    data at the finale (the report's other covariates include future information, e.g. a sequel airing). Held out:
-    fit on even ids, R² on odd. The runtime percentile compares a show's popularity with the latest complete finale
-    year's (`pop_ref`)."""
-    rows = []
-    for mid, m, pts in us_hist:
-        if not m.get("averageScore") or mid not in pct or tail is None:
-            continue
-        res = [math.log(f) - (math.log(V.tail_formula(tail, t, 1.0)) - 0.5 * V.tail_var(tail, round(t)))
-               for t, f in pts if 75 <= t <= 1100 and f > 0]
-        if len(res) < 3:
-            continue
-        k = min(4, int(pct[mid] * 5))
-        x = [1.0, (m["averageScore"] - 70) / 10, 1.0 if m["format"] == "ONA" else 0.0] + \
-            [1.0 if k == j else 0.0 for j in (0, 1, 3, 4)]
-        rows.append((mid, x, sum(res) / len(res)))
-
-    def ols(rs):
-        n = len(rs[0][1])
-        A = [[sum(x[i] * x[j] for _, x, _ in rs) for j in range(n)] for i in range(n)]
-        b = [sum(x[i] * y for _, x, y in rs) for i in range(n)]
-        return solve_n(A, b)
-
-    def r2(beta, rs):
-        ys = [y for _, _, y in rs]
-        mu = sum(ys) / len(ys)
-        res = sum((y - sum(b * v for b, v in zip(beta, x))) ** 2 for _, x, y in rs)
-        return 1 - res / sum((y - mu) ** 2 for y in ys), res
-
-    beta = ols(rows)
-    r2_in, res = r2(beta, rows)
-    odd = [r for r in rows if r[0] % 2 == 1]
-    r2_out = r2(ols([r for r in rows if r[0] % 2 == 0]), odd)[0] if odd and len(odd) < len(rows) else float("nan")
-    n = len(rows)
-    sd = math.sqrt(res / (n - len(beta)))
-    c = math.log(sum(math.exp(sum(b * v for b, v in zip(beta[1:], x[1:]))) for _, x, _ in rows) / n)
-    years = [y for y, v in ref.items() if len(v) >= 100]
-    y = max(years)
-    fifth = [round(beta[3], 6), round(beta[4], 6), 0.0, round(beta[5], 6), round(beta[6], 6)]
-    return {"score": round(beta[1], 6), "ona": round(beta[2], 6), "pop_fifth": fifth, "center": round(c, 6),
-            "score_ref": 70.0, "pop_ref_year": y, "pop_ref": ref[y]}, n, r2_in, r2_out, sd
-
-
-def solve_n(A, b):
-    n = len(b)
-    M = [list(r) + [b[i]] for i, r in enumerate(A)]
-    for i in range(n):
-        p = max(range(i, n), key=lambda r: abs(M[r][i]))
-        M[i], M[p] = M[p], M[i]
-        for r in range(n):
-            if r != i and M[r][i]:
-                f = M[r][i] / M[i][i]
-                for c in range(i, n + 1):
-                    M[r][c] -= f * M[i][c]
-    return [M[i][n] / M[i][i] for i in range(n)]
-
-
-def tail_coverage(us_hist, tail, months=(12, 24, 36)):
-    """§11 hold-out check: share of shows whose us factor near 12/24/36 months after the finale falls in the
-    model's central 80% interval for a show whose level at the finale is known: log f ~ N(log mean(t) - D(t)/2,
-    D(t)) (the score prior aside)."""
-    out = {}
-    for mo in months:
-        t0 = mo * 30.44 - 7
-        inside = total = 0
-        for mid, m, pts in us_hist:
-            near = [(abs(t - t0), t, f) for t, f in pts if abs(t - t0) <= 10 and f > 0]
-            if not near:
-                continue
-            _, t, f = min(near)
-            d = V.tail_var(tail, t)
-            med = math.log(V.tail_formula(tail, t, 1.0)) - 0.5 * d
-            total += 1
-            inside += abs(math.log(f) - med) <= Z80 * math.sqrt(d)
-        out[mo] = (inside / total if total else None, total)
-    return out
-
-
-def cn_conversion(shows):
-    """cn: the in-season mean of the game's cn attention (episode comments, rebuilt weekly) relative to the finale
-    week's, over the finished shows of the inputs (geometric mean): the collection tail, measured against the
-    season's mean (sim/calibration/long_tail_sequel.md), is put in units of the level at the finale with it."""
-    v = []
-    for x in shows.values():
-        fin = finale_day(x)
-        if fin is None or x["aired"][0] > 0 or not x["src"]["cn"]:
-            continue
-        idx = {d: i for i, d in enumerate(x["days"])}
-        prem = air_days(x)[0]
-        ins = [x["att"]["cn"][idx[d]] for d in range(prem, fin + 7) if d in idx and x["obs"]["cn"][idx[d]]]
-        fw = [x["att"]["cn"][idx[d]] for d in range(fin, fin + 7) if d in idx and x["obs"]["cn"][idx[d]]]
-        if len(ins) >= 28 and len(fw) >= 4 and sum(fw) > 0 and sum(ins) > 0:
-            v.append(math.log((sum(ins) / len(ins)) / (sum(fw) / len(fw))))
-    return math.exp(sum(v) / len(v)), len(v)
-
-
-def tail_text(u):
-    v = u["var"]
-    return (f"transition {u['trans']}; then {u['floor']:.4f} × {u['yearly']:.4f}^(t/365) + {u['excess2']:.4f} × "
-            f"exp(−t/{u['tau2']:.0f}) + {u['excess']:.4f} × exp(−t/{u['tau']:.0f}); spread D(t) = {v[0]:.3f}(1−e^(−t/"
-            f"{v[1]:.0f})) + {v[2] * 365:.4f}·t/365.")
-
-
-def tail_table(lines, st_, tail, t_min):
-    lines.append("| t (days after finale+7) | n | median factor | log var | expected (data) | expected (model) |\n"
-                 "|---|---|---|---|---|---|")
-    for t, mu, v, n in st_:
-        model = f"{V.tail_formula(tail, t, 1.0):.4f}" if t >= t_min else "(transition)"
-        lines.append(f"| {t} | {n} | {math.exp(mu):.4f} | {v:.3f} | {math.exp(mu + 0.5 * v):.4f} | {model} |")
-
-
-def fit_tail(hist_path, shows, drift8, bump, lines):
-    """The long tail after the finale (docs/v2-series.md §4), per market: a weekly transition, then floor ×
-    yearly^(t/365) + slow excess × exp(-t/tau2) + fast excess × exp(-t/tau) (the expected factor relative to the level at the finale × the finale bump,
-    t days after the finale's week), the spread D(t) of the show-specific tail, and the score/format prior. us: the
-    first weeks from the inputs (observed), then the history backfill deflated by the platform index; cn: Bangumi
-    collection comments in the history backfill (the collection proxy); jp: no post-finale data, the us shape."""
-    from sim.tail_history import History
-    hist = History(str(hist_path))
-    out = {}
-    us_tr = [s for s in transition_stats(shows, "us", drift8["us"], weeks=3) if s[3] >= 10]
-    us_hist = hist.us_tail(bump["us"])
-    us_st = us_tr + bucket(pts for _, _, pts in us_hist)
-    curve, _ = tail_curve_fit(us_st, t_min=21)
-    out["us"] = {"trans": [round(math.exp(mu + 0.5 * v), 6) for t, mu, v, n in us_tr], **curve,
-                 "var": tail_var_fit(us_st)}
-    lines.append("## Long tail (docs/v2-series.md §4)\n")
-    lines.append(f"Expected attention t days after the finale's week = level at the finale × finale bump × factor(t): "
-                 f"weekly transition, then floor × yearly^(t/365) + slow excess × exp(−t/τ2) + fast excess × exp(−t/τ), the floor and the slow excess scaled by the score "
-                 f"prior. The filter reads post-finale observations through the median factor (expected × exp(−D(t)/2)), "
-                 f"the level a random walk whose variance grows by D(t), the spread of show-specific tails.\n")
-    lines.append(f"us: {len(us_hist)} finished shows of the history backfill (TV/ONA 2018–2025; windows before any "
-                 f"sign of a sequel; deflated attention / (mean of the 4 weeks before the finale's week × finale bump "
-                 f"{bump['us']:.3f})); weeks 0–2 from the inputs ({[s[3] for s in us_tr]} shows).\n")
-    tail_table(lines, us_st, out["us"], 21)
-    u = out["us"]
-    lines.append(f"\nus: {tail_text(u)}\n")
-    # the data report's simple form, relative to the in-season mean (medians): 0.025 + 0.14 e^(-t/7 months)
-    ins_us = hist_in_season_ratio(hist, bump["us"])
-    lines.append(f"Cross-check (data report: median ≈ 0.025 + 0.14·e^(−t/7 months) of the in-season mean; here the "
-                 f"median factor × level·bump / in-season mean = × {ins_us:.3f}): " + ", ".join(
-                     f"{mo} m: {0.025 + 0.14 * math.exp(-mo / 7):.3f} vs "
-                     f"{V.tail_formula(u, mo * 30.44, 1.0) * math.exp(-0.5 * V.tail_var(u, mo * 30.44)) * ins_us:.3f}"
-                     for mo in (1, 3, 6, 12, 24, 36, 60, 96)) + ".\n")
-    conv, nconv = cn_conversion(shows)
-    wins = [(0, 7), (7, 14), (14, 21), (21, 28), (28, 56), (56, 90), (90, 150), (150, 240), (240, 400), (400, 600),
-            (600, 900), (900, 1300), (1300, 1800), (1800, 2600)]
-    cn_hist = hist.cn_collection_vs_season(wins)
-    cn_st = [(t, mu + math.log(conv / bump["cn"]), v, n) for t, mu, v, n in bucket(pts for _, pts in cn_hist)]
-    curve_cn, _ = tail_curve_fit(cn_st, t_min=28)
-    out["cn"] = {"trans": [round(math.exp(mu + 0.5 * v), 6) for t, mu, v, n in cn_st if t < 28], **curve_cn,
-                 "var": tail_var_fit(cn_st)}
-    c = out["cn"]
-    lines.append(f"\ncn: {len(cn_hist)} shows with Bangumi subject (collection) comments; the collection rate relative "
-                 f"to the season's mean (incl. the two weeks after the finale) × {conv:.3f} (the game's cn attention: "
-                 f"in-season mean / finale week, {nconv} shows of the inputs) ÷ finale bump {bump['cn']:.3f}.\n")
-    tail_table(lines, cn_st, c, 28)
-    lines.append(f"\ncn: {tail_text(c)}\n")
-    out["jp"] = dict(out["us"])
-    out["jp_source"] = "us"
-    lines.append("jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; "
-                 "the Annict watch-record history is not collected yet): **the us shape, flagged**.\n")
-    pct, ref = hist.popularity_percentiles()
-    prior, n, r2, r2_out, sd = tail_prior_fit(us_hist, pct, ref, out["us"])
-    out["prior"] = prior
-    f5 = prior["pop_fifth"]
-    lines.append(f"Tail level prior (us, mean log residual 3–36 months after the finale against the curve, {n} shows): "
-                 f"{prior['score']:.3f}·(score−70)/10 + {prior['ona']:.3f}·ONA + popularity fifth within the finale "
-                 f"year {f5} (the middle fifth the reference) − {prior['center']:.3f} (R² {r2:.3f}, held out "
-                 f"{r2_out:.3f}; residual sd {sd:.2f}). The relation with popularity is U-shaped, so one effect per "
-                 f"fifth. Popularity is compared with the {prior['pop_ref_year']} finales (`pop_ref`). Scales the whole "
-                 f"post-transition curve, all markets. The data report's −1.035 for a linear percentile is a different "
-                 f"normalisation (relative to the in-season mean, sequels included, a 'sequel aired' covariate).\n")
-    even = [h for h in us_hist if h[0] % 2 == 0]
-    odd = [h for h in us_hist if h[0] % 2 == 1]
-    ev_st = us_tr + bucket(pts for _, _, pts in even)
-    ev = {**tail_curve_fit(ev_st, 21)[0], "var": tail_var_fit(ev_st), "trans": out["us"]["trans"]}
-    cov = tail_coverage(odd, ev)
-    cov_in = tail_coverage(us_hist, out["us"])
-    lines.append("Hold-out (§11): share of us factors inside the 80% interval (fit on even AniList ids, tested on "
-                 "odd; in sample in brackets): " + ", ".join(
-                     f"{mo} months {c_[0]:.1%} of {c_[1]} ({cov_in[mo][0]:.1%})" for mo, c_ in cov.items()) + ".\n")
-    return out
-
-
-def hist_in_season_ratio(hist, bump):
-    """Level at the finale × bump relative to the in-season mean (us, history backfill, geometric mean)."""
-    v = []
-    for mid, m, s, e in hist.finished_shows():
-        ref = hist.window_att(mid, max(s, e - timedelta(days=28)), e - timedelta(days=1))
-        ins = hist.window_att(mid, s, e)
-        if ref > 0 and ins > 0:
-            v.append(math.log(ref * bump / ins))
-    return math.exp(sum(v) / len(v))
-
-
 def season_listing(inputs_dir: Path, lo=-60, hi=30):
     """How a season's shows arrive in the market: u[j] for j = lo..hi days relative to the season's start
     (1 Jan/Apr/Jul/Oct), the share of the season's pre-air attention (point-in-time us estimate at the
@@ -738,12 +410,10 @@ def joint_P(stage1, x):
     # get their own elasticity (a show that is big on AniList is relatively smaller in China and Japan)
     return {"drift": [stage1[m][0] for m in MARKETS], "q": [stage1[m][1] for m in MARKETS],
             "r": [stage1[m][2] for m in MARKETS], "b": list(x[0:3]), "p0": [math.exp(v) for v in x[3:6]],
-            "rho": math.tanh(x[6]), "beta": [x[9] if len(x) > 9 else 1.0, x[7], x[8]]}
+            "rho": math.tanh(x[6]), "beta": [1.0, x[7], x[8]]}
 
 
 def fit_joint(data, stage1):
-    # (beta_us stays 1: fitting it with the dynamics fixed gave 0.95, held out 0.98, log-likelihood +0.3 — no evidence
-    # that the us pre-air estimate overstates big shows; a 10th parameter x[9] would free it)
     x0 = [stage1[m][4] for m in MARKETS] + [math.log(stage1[m][3]) for m in MARKETS] + [math.atanh(0.5), 1.0, 1.0]
     steps = [0.3, 0.3, 0.3, 0.5, 0.5, 0.5, 0.5, 0.2, 0.2]
     best, nll = nelder_mead(lambda x: -sum(joint_filter(p, o, d, joint_P(stage1, x))[0] for p, o, d in data),
@@ -910,7 +580,6 @@ def main():
     ap.add_argument("--comments", type=Path)
     ap.add_argument("--gaussian", action="store_true", help="no outlier component (a plain Kalman filter)")
     ap.add_argument("--clip", type=float, default=4.0)
-    ap.add_argument("--history", type=Path, help="history backfill DB (sim/history_backfill.py): fit the long tail")
     a = ap.parse_args()
     global GAUSSIAN, CLIP
     GAUSSIAN, CLIP = a.gaussian, a.clip
@@ -925,7 +594,6 @@ def main():
                      "v0.3.0 and gave no better held-out coverage, so the simpler model is used.\n")
     BUMP.update(fit_finale_bump(shows))
     res["finale_bump"] = dict(BUMP)
-    res["finale_bump_var"] = finale_bump_var(shows)
     lines.append(f"Finale week: attention relative to the level two to three weeks before it: {BUMP}.\n")
     # stage 1: each market's own dynamics (drift, q, r) by maximum likelihood of its own filter
     st1 = fit_stage1(shows, curve_us)
@@ -984,9 +652,6 @@ def main():
     lines.append(f"## After the finale\n\nAttention by week after the finale week, relative to the level at its end "
                  f"(us observed, cn/jp the rebuilt series the revenue uses): {pf}; then ×{pt} a week. The game's "
                  f"`[valuation] post_finale_profile` (measured on AniList in v1) was [0.40, 0.30, 0.22, 0.16, 0.14], ×0.78.\n")
-    if a.history:
-        res["tail"] = fit_tail(a.history, shows, {m: res["drift_by_week"][m][2] for m in MARKETS},
-                               res["finale_bump"], lines)
     u, seasons = season_listing(a.inputs)
     if u:
         res["season_listing"] = {"from_day": -60, "u": u, "seasons": seasons}
