@@ -193,6 +193,12 @@ def observations(x, m, curve_us):
         v = x["att"][m][i]
         if v <= 0 or not x["obs"][m][i]:
             continue
+        if m != "us":
+            # cn/jp: a new value of the weekly series. Compared as reported, before the finale bump: the finale's
+            # week starts on its own calendar, and last week's value read again through the bump is not news
+            if prev is not None and v == prev:
+                continue
+            prev = v
         if fin is not None and fin <= d < fin + 7:
             v = v / BUMP[m]   # the finale's week, read through its fitted bump (as the server does)
         if m == "us":
@@ -207,9 +213,6 @@ def observations(x, m, curve_us):
             acc += math.log(v / c)
             acc_n += 1
         else:
-            if prev is not None and v == prev:
-                continue
-            prev = v
             out.append((d, math.log(v), 1))
     return (math.log(prior) if prior > 0 else None), out
 

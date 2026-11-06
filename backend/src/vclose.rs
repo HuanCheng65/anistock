@@ -25,8 +25,14 @@ pub struct JState {
     pub active: [bool; 3],
     /// a positive observation has arrived
     pub seen: [bool; 3],
-    /// the last raw value (cn/jp weekly series: an update happens when it changes)
+    /// us: the last value (the pre-air level carried until the premiere); cn/jp: the last value as read (after the
+    /// finale bump / post-finale factor), kept for states saved before `last_raw` existed
     pub last_obs: [Option<f64>; 3],
+    /// cn/jp: the last value as the inputs report it. The weekly series is observed when this changes; the factor
+    /// it is read through (the finale bump, the post-finale profile) changes on its own calendar, and a value read
+    /// again through a new factor is not news
+    #[serde(default)]
+    pub last_raw: [Option<f64>; 3],
     /// days the market reported zero (cn: a week without comments)
     pub zero_days: [i64; 3],
     /// us: this episode week's daily log values so far (sum, count), observed together when it ends
@@ -37,6 +43,10 @@ pub struct JState {
     /// equivalents, the show draws level × post now
     #[serde(default = "ones")]
     pub post: M3,
+    /// from the day before the finale's week ends: each market's expected attention on the day after `day`, the
+    /// value's own path (`att_path`, one day ahead). What a post-finale cn/jp day without data earns (`revenue_att`)
+    #[serde(default)]
+    pub next: Option<M3>,
     /// the show's long-tail prior (score and format, `vfilter::tail_mult`): follows the inputs until the finale's
     /// week ends, then fixed (the post-finale observations are read through it)
     #[serde(default = "one")]
@@ -86,11 +96,13 @@ impl JState {
             active: [false; 3],
             seen: [false; 3],
             last_obs: [None; 3],
+            last_raw: [None; 3],
             zero_days: [0; 3],
             acc: 0.0,
             acc_n: 0,
             day: day.to_string(),
             post: [1.0; 3],
+            next: None,
             tail_mult: 1.0,
             seq_z: 0.0,
             seq_zs: 0.0,
@@ -332,16 +344,24 @@ impl Engine {
 
     /// The attention a show earns on today's close (docs/v2-series.md §4.2): the inputs', except for a cn/jp market
     /// that has no real data after the finale's week (the rebuilt series has none; the real tail, collection and
-    /// record increments, is not switched on yet): there, the filter's expectation, exp(mean + var/2) × the
-    /// post-finale factor of the latest state, the same expectation the value prices. A stopgap: without it the
+    /// record increments, is not switched on yet): there, the filter's expectation for today as of the latest state
+    /// (yesterday's close), `next`: the same expectation the value priced for today. A stopgap: without it the
     /// close would book nothing (or a modelled median) while the value priced the mean, a predictable shortfall.
+    /// (It used to be exp(mean + var/2) × the post-finale factor of the state's own day, one day behind: while the
+    /// expected tail falls, by a whole transition step at each of its week boundaries, the close booked more than
+    /// the value expected, a predictable surplus for whoever held a show after its finale.)
     pub fn revenue_att(&self, s: &ShowInputs) -> M3 {
         let mut a = s.att.m3();
         let Some(js) = self.st.jstate.get(&s.id) else { return a };
         let (obs, src) = (Self::observed(s), Self::sources(s));
         for m in 1..3 {
-            if src[m] && !obs[m] && js.active[m] && js.post[m] != 1.0 {
-                a[m] = (js.mean[m] + 0.5 * js.var(m)).exp() * js.post[m];
+            if src[m] && !obs[m] && js.active[m] {
+                match js.next {
+                    Some(n) => a[m] = n[m],
+                    // a state saved before `next` existed
+                    None if js.post[m] != 1.0 => a[m] = (js.mean[m] + 0.5 * js.var(m)).exp() * js.post[m],
+                    None => {}
+                }
             }
         }
         a
@@ -431,7 +451,8 @@ impl Engine {
             fin.map_or(1.0, |f| if today >= f + 7 { F::post_finale_factor(fp, p, m, f, today, mult) * fp.finale_bump[m] } else { 1.0 })
         });
         let in_finale_week = fin.is_some_and(|f| f <= today && today < f + 7);
-        let mut att = s.att.m3();
+        let raw = s.att.m3();
+        let mut att = raw;
         for (m, (a, f)) in att.iter_mut().zip(post).enumerate() {
             *a /= f;
             if in_finale_week {
@@ -556,7 +577,13 @@ impl Engine {
                     // markets imply (its mean and covariance kept moving with them)
                     st.active[m] = true;
                 }
-                if st.last_obs[m] != Some(att[m]) {
+                // a new value of the weekly series (states saved before `last_raw`: compared as read)
+                let fresh_value = match st.last_raw[m] {
+                    Some(r) => r != raw[m],
+                    None => st.last_obs[m] != Some(att[m]),
+                };
+                st.last_raw[m] = Some(raw[m]);
+                if fresh_value {
                     st.last_obs[m] = Some(att[m]);
                     st.seen[m] = true;
                     extra_r.push(if in_finale_week { fp.finale_bump_var[m] } else { 0.0 });
@@ -585,6 +612,22 @@ impl Engine {
             } else if !st.active[m] && st.zero_days[m] == 0 {
                 // newly mapped to its data source: in, at the level the other markets imply
                 st.active[m] = true;
+            }
+        }
+        st.next = None;
+        if fin.is_some_and(|f| today + 1 >= f + 7) {
+            // tomorrow's expected attention on the value's own path (with the work's shape as the values see it)
+            let cid = self.st.company_works.get(&s.id).copied().unwrap_or(s.id);
+            if let Some(c) = self.st.companies.get(&cid).cloned() {
+                self.st.jstate.insert(s.id, st.clone());
+                let (sched, first_air, long) = self.work_shape(&c, s.id, p);
+                st.next = Some(std::array::from_fn(|m| {
+                    if st.active[m] {
+                        F::att_path(fp, p, m, st.mean[m], st.var(m), today, &sched, first_air, long, 1, st.tail_mult)[0]
+                    } else {
+                        0.0
+                    }
+                }));
             }
         }
         self.save_jstate(s.id, st, ts);
@@ -894,6 +937,37 @@ impl Engine {
                 fc_lines.push_str(&serde_json::json!({"d": today, "id": id, "v": v, "book": book, "shares": c.shares,
                     "own": own_h, "tot": tot_h, "dd": dd_h}).to_string());
                 fc_lines.push('\n');
+            }
+            if let Ok(vt) = std::env::var("SIM_VTRACE") {
+                // diagnostic: expected revenue (yuan/day, company total) for the next 14 days from the value's own
+                // paths, the company's book and works' state
+                let mut ws: Vec<(i64, &[Vec<f64>; 3])> = vec![(*id, own)];
+                for w in self.works_extra(*id) {
+                    if let Some(o) = paths.get(&w) {
+                        ws.push((w, o));
+                    }
+                }
+                let mut er = vec![0.0f64; 14];
+                let mut own0 = [0.0f64; 3];
+                for (_, o) in &ws {
+                    for (j, x) in er.iter_mut().enumerate() {
+                        let tt = [totals[0][j], totals[1][j], totals[2][j]];
+                        let oo = [o[0][j], o[1][j], o[2][j]];
+                        *x += crate::valuation::demand_day(tt[0], a_ref, p) * crate::valuation::blended_share(&oo, &tt, &p.market_weights).0;
+                    }
+                    for m in 0..3 {
+                        own0[m] += o[m][0];
+                    }
+                }
+                let book = self.account_of("company", *id).map_or(0, |a| self.st.accounts[&a].cash);
+                let js = self.st.jstate.get(id);
+                let line = serde_json::json!({"d": today, "id": id, "v": v, "book": book, "shares": c.shares, "fa": c.first_air,
+                    "er": er, "own0": own0, "tot0": [totals[0][0], totals[1][0], totals[2][0]],
+                    "mean": js.map(|s| s.mean), "post": js.map(|s| s.post), "nw": ws.len()});
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(vt) {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{line}");
+                }
             }
             vals.insert(*id, v);
         }
