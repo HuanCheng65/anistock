@@ -178,7 +178,7 @@ transfer_active_days = 28      # 财政补贴: a trade in this many days
 ipo_mv_days = 5                # 新股认购: quota = mean holdings value over this many closed trading days
 ipo_quota_ratio = 1.0          #   × this (A-share 市值配售)
 rank_min_days = 0              # 排行榜: registered at least this many days (身份验证 already keeps alts off)
-rank_min_trades = 10           # 排行榜: trades so far
+rank_min_trades = 1            # 排行榜: trades so far (1 = has traded at all; 身份验证 already keeps alts off)
 credit_min_level = 4           # 融资融券: 风险测评 C4 积极型 or above (and the knowledge test, the margin disclosure)
 assessment_valid_days = 90     # a 风险测评 counts about a season
 assessment_per_day = 3         # 风险测评 / knowledge tests a day, each

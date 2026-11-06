@@ -439,7 +439,7 @@ async fn verification_gates_transfers_ipo_and_leaderboard() {
     assert_eq!(me["verification"], json!({"verified": true, "method": "qq"}));
     // registered today: too new for 财政补贴; 排行榜 waits for trades, not days
     assert_eq!(me["eligibility"]["transfer"]["reason"], "注册满 7 天后才能领取财政补贴");
-    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "成交满 10 笔后才能进入排行，还差 10 笔");
+    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "完成第一笔成交后才能进入排行");
     assert_eq!(me["eligibility"]["ipo"]["quota"], 0);
     assert!(me["eligibility"]["ipo"]["reason"].as_str().unwrap().starts_with("认购额度按前 5 个交易日的日均持仓市值计算"));
     a.validate(&a.schema("GET", "/api/v1/me", 200), &me, "me");

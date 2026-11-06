@@ -45,7 +45,7 @@ impl Default for Rules {
             ipo_mv_days: 5,
             ipo_quota_ratio: 1.0,
             rank_min_days: 0,
-            rank_min_trades: 10,
+            rank_min_trades: 1,
             credit_min_level: 4,
             assessment_valid_days: 90,
             assessment_per_day: 3,
@@ -176,6 +176,7 @@ pub fn reason(g: &Gate, what: &str) -> Option<String> {
         Gate::NotVerified => format!("完成身份验证后才能{what}"),
         Gate::TooNew { days } => format!("注册满 {days} 天后才能{what}"),
         Gate::Inactive { days } => format!("过去 {days} 天有成交才能{what}"),
+        Gate::FewTrades { need: 1, .. } => format!("完成第一笔成交后才能{what}"),
         Gate::FewTrades { need, have } => format!("成交满 {need} 笔后才能{what}，还差 {} 笔", need - have),
         Gate::NoQuota { days } => format!("认购额度按前 {days} 个交易日的日均持仓市值计算，持有股票后才能{what}"),
     })
@@ -216,8 +217,12 @@ mod tests {
         assert_eq!(transfer_gate(&c, &r, 1, true, old, today).unwrap(), Gate::Inactive { days: 28 });
         c.execute("INSERT INTO trades(buyer_id, seller_id, day) VALUES (9, 1, '2026-11-10')", []).unwrap();
         assert_eq!(transfer_gate(&c, &r, 1, true, old, today).unwrap(), Gate::Open);
+        assert_eq!(rank_gate(&c, &r, 1, true, old, today).unwrap(), Gate::Open);
+        assert_eq!(rank_gate(&c, &r, 2, true, old, today).unwrap(), Gate::FewTrades { need: 1, have: 0 });
+        let r = Rules { rank_min_trades: 10, ..Rules::default() };
         assert_eq!(rank_gate(&c, &r, 1, true, old, today).unwrap(), Gate::FewTrades { need: 10, have: 1 });
         assert_eq!(reason(&Gate::FewTrades { need: 10, have: 1 }, "进入排行").unwrap(), "成交满 10 笔后才能进入排行，还差 9 笔");
+        assert_eq!(reason(&Gate::FewTrades { need: 1, have: 0 }, "进入排行").unwrap(), "完成第一笔成交后才能进入排行");
         for _ in 0..9 {
             c.execute("INSERT INTO trades(buyer_id, seller_id, day) VALUES (1, 9, '2026-10-01')", []).unwrap();
         }
