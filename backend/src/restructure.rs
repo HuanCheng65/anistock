@@ -134,6 +134,7 @@ impl Engine {
         for cid in apps {
             self.do_withdraw(cid, account_id);
         }
+        self.rights_withdraw_all(account_id);
 
         // 2. every holding to the world account at the last price (a transfer, not orders: no fees, no trades)
         let mut sold = 0;

@@ -101,7 +101,7 @@ impl NewsCategory {
     pub fn of(kind: &str) -> NewsCategory {
         match kind {
             "flash" | "vcm" => NewsCategory::Flash,
-            "premiere" | "finale" => NewsCategory::Airing,
+            "premiere" | "finale" | "delay" | "hiatus" => NewsCategory::Airing,
             "dividend" | "rate" => NewsCategory::Close,
             _ => NewsCategory::Notice,
         }
@@ -119,8 +119,8 @@ impl NewsCategory {
     pub fn kinds(self) -> &'static [&'static str] {
         match self {
             NewsCategory::Flash => &["flash", "vcm"],
-            NewsCategory::Notice => &["system", "ipo", "allotment", "delisting", "warning"],
-            NewsCategory::Airing => &["premiere", "finale"],
+            NewsCategory::Notice => &["system", "ipo", "allotment", "delisting", "warning", "sequel", "split", "rights", "buyback"],
+            NewsCategory::Airing => &["premiere", "finale", "delay", "hiatus"],
             NewsCategory::Close => &["dividend", "rate"],
         }
     }
@@ -666,6 +666,74 @@ pub struct Candle {
 #[derive(Serialize, ToSchema)]
 pub struct CandlesResponse {
     pub items: Vec<Candle>,
+    /// 复权方式：`forward`（前复权，默认：拆股、配股之前的价格和成交量按之后的复权因子换算）或 `none`
+    pub adjust: String,
+    /// 区间内的除权日（拆股、配股生效的第一个交易日）
+    pub ex_days: Vec<ExDay>,
+}
+
+/// 一次除权：这一天起按新的股数交易
+#[derive(Serialize, ToSchema)]
+pub struct ExDay {
+    pub trading_day: TradingDay,
+    /// split | rights
+    pub kind: String,
+    /// 这一天之前的价格 × 它（前复权）
+    pub price_factor: f64,
+}
+
+// ---------------------------------------------------------------- corporate actions (docs/v2-corporate.md)
+
+/// 公司资本政策的一次行动：拆股、配股或回购
+#[derive(Serialize, ToSchema)]
+pub struct CorporateAction {
+    pub id: i64,
+    /// split | rights | buyback
+    pub kind: String,
+    /// pending（已公告、未生效）| active（回购进行中）| done | cancelled
+    pub status: String,
+    /// 公告的交易日
+    pub announced: TradingDay,
+    /// 拆股：按新股数交易的第一天；配股：登记、缴款、发股的交易日（认购截止）；回购：最后一天
+    pub effective: TradingDay,
+    /// 拆股：每 1 股拆为几股
+    pub split_ratio: Option<i64>,
+    /// 配股：每股配几股（每 10 股配 x 股的 x ÷ 10）
+    pub rights_ratio: Option<f64>,
+    pub rights_price: Option<Money>,
+    /// 配股：要筹集的续作制作费
+    pub rights_budget: Option<Money>,
+    /// 配股完成后：除权参考价、发行股数、玩家认购股数
+    pub rights_terp: Option<Money>,
+    pub rights_issued: Option<i64>,
+    pub rights_subscribed: Option<i64>,
+    /// 回购：资金上限、价格上限、已花费、已回购股数
+    pub buyback_budget: Option<Money>,
+    pub buyback_cap: Option<Money>,
+    pub buyback_spent: Option<Money>,
+    pub buyback_bought: Option<i64>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CorporateActionsResponse {
+    pub items: Vec<CorporateAction>,
+}
+
+/// 正在认购期的配股，以及调用者的配股权和认购
+#[derive(Serialize, ToSchema)]
+pub struct RightsOffer {
+    pub action: Option<CorporateAction>,
+    /// 按当前持仓可以认购的股数（登记日按登记时的持仓重新计算）；未登录为 0
+    pub entitlement: i64,
+    /// 已认购的股数和冻结的资金
+    pub subscribed: i64,
+    pub frozen: Money,
+}
+
+/// 认购配股（设定数量，幂等；0 等于撤回）
+#[derive(Deserialize, ToSchema)]
+pub struct RightsRequest {
+    pub quantity: i64,
 }
 
 #[derive(Serialize, ToSchema)]

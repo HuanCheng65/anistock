@@ -61,7 +61,7 @@ fn yoyo_database_is_baselined_not_migrated() {
     // V1 is baselined (not run); the later migrations run, after a backup
     assert_eq!(
         store::migrate(&path).unwrap(),
-        ["V2__valuation_state", "V3__valuation_joint", "V4__player_restructure", "V5__bindings", "V6__player_days", "V7__margin", "V8__company_works"]
+        ["V2__valuation_state", "V3__valuation_joint", "V4__player_restructure", "V5__bindings", "V6__player_days", "V7__margin", "V8__company_works", "V9__corporate"]
             .map(String::from)
             .to_vec()
     );

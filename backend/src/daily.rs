@@ -226,6 +226,10 @@ impl Engine {
         let d = cx.d;
         // 融资融券: open credit orders end before the close (crate::margin)
         self.margin_pre_close(&ts);
+        // buybacks: orders end, today's repurchased shares are cancelled (crate::corporate)
+        if !cx.cfg.economy_v1 {
+            self.corporate_pre_close(&ts);
+        }
 
         // 0. adult titles are not traded here: buy out any listed one at today's last price and close
         //    any open subscription with full refunds
@@ -420,6 +424,7 @@ impl Engine {
         let week_ago = iso(d - Duration::days(7));
         let total_week_rev: i64 =
             self.st.company_days.values().filter(|r| r.day.as_str() > week_ago.as_str()).map(|r| r.revenue).sum();
+        let mut announced: Vec<(i64, i64, i64)> = Vec::new();
         let v2 = if cx.cfg.economy_v1 {
             None
         } else {
@@ -429,10 +434,20 @@ impl Engine {
             if let Some(msg) = crate::vclose::inputs_schema_problem(&fp, cx.inp) {
                 eprintln!("valuation: {msg}");
             }
-            for c in &cx.companies {
+            for c in cx.companies.clone() {
                 for w in self.works_of(c.id) {
                     if let Some(s) = cx.inp.show(w) {
+                        let before = self.valuation_state(w).cloned();
                         self.valuation_step(&fp, &p, s, &day, &ts);
+                        // news from the public schedule (docs/v2-corporate.md §2.2–2.3)
+                        self.schedule_news(&c, s, before.as_ref(), &cx.inp.cn_titles, &day, &ts);
+                        // a sequel announced today: its production cost (docs/v2-corporate.md §3.3)
+                        let was = before.as_ref().and_then(|j| j.sequel.as_ref()).map(|q| q.0);
+                        if let Some(q) = self.valuation_state(w).and_then(|j| j.sequel.as_ref()).map(|q| q.0) {
+                            if was != Some(q) {
+                                announced.push((c.id, w, q));
+                            }
+                        }
                     }
                 }
             }
@@ -451,6 +466,14 @@ impl Engine {
                 if let Some(v) = vals.get(id) {
                     self.st.companies.get_mut(id).unwrap().fair_value = *v;
                     self.mark_company(*id);
+                }
+            }
+            if !announced.is_empty() {
+                let vc = crate::corporate::ValueCtx { fp: &fp, p: &p, totals: &totals, today, rate, a_ref };
+                for (c, w, q) in &announced {
+                    let f = self.corporate_on_sequel(*c, *w, *q, &day, &ts, &vc);
+                    cx.sum.exported += f.exported;
+                    cx.sum.injected += f.injected;
                 }
             }
             cx.vtotals = Some(totals);
@@ -504,6 +527,14 @@ impl Engine {
         }
         if !cx.cfg.economy_v1 {
             self.penny_rule(cx, &listed_now)?;
+            // company capital policy: rights issues, splits, buybacks (crate::corporate)
+            let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+            let today = crate::vclose::day_no(&day).ok_or("bad day")?;
+            let totals = cx.vtotals.clone();
+            let vc = totals.as_ref().map(|t| crate::corporate::ValueCtx { fp: &fp, p: &p, totals: t, today, rate, a_ref });
+            let f = self.corporate_close(&day, &ts, sunday, vc.as_ref())?;
+            cx.sum.exported += f.exported;
+            cx.sum.injected += f.injected;
         }
 
         // refresh titles
@@ -874,6 +905,7 @@ impl Engine {
         let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
         let per = self.st.companies[&c.id].last_price;
         self.margin_on_delist(c.id, per, &day, &ts);
+        self.corporate_on_delist(c.id, &ts);
         for (h, qty, kind) in self.holders(c.id) {
             if h != acct && kind != "committee" {
                 self.do_transfer(cx.world, h, per * qty, "delisting", &day, &ts, Some(c.id), None);
@@ -912,6 +944,7 @@ impl Engine {
         let holders = self.holders(c.id);
         let per = floordiv(cash, c.shares);
         self.margin_on_delist(c.id, per, &day, &ts);
+        self.corporate_on_delist(c.id, &ts);
         for (h, qty, kind) in holders {
             let amt = per * qty;
             if h != acct {

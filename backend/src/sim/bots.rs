@@ -11,6 +11,10 @@ use crate::market::{day_of, local, ts_of};
 #[path = "margin_bots.rs"]
 pub mod margin;
 
+/// corporate action bots (docs/v2-corporate.md §6)
+#[path = "corporate_bots.rs"]
+pub mod corporate;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BotKind {
     /// buy every listed stock equally on day one, hold (the baseline)
@@ -85,10 +89,19 @@ pub enum BotKind {
     SentimentTimer,
     /// buy each new show the evening before its premiere, sell the evening after
     PremiereRush,
+    /// corporate actions (docs/v2-corporate.md §6), each on top of a cap-weighted market portfolio: buy after
+    /// each buyback announcement and hold four weeks
+    BuybackFollow,
+    /// sell a stock when its rights issue is announced, buy it back after the issue
+    RightsSell,
+    /// buy a stock above the split threshold ahead of the split announcement, sell after the split
+    SplitBuy,
+    /// buy after each delay notice, sell a day later
+    DelayFade,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 32] {
+    pub fn all() -> [BotKind; 36] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -122,6 +135,10 @@ impl BotKind {
             BotKind::Contrarian1,
             BotKind::SentimentTimer,
             BotKind::PremiereRush,
+            BotKind::BuybackFollow,
+            BotKind::RightsSell,
+            BotKind::SplitBuy,
+            BotKind::DelayFade,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -158,6 +175,10 @@ impl BotKind {
             BotKind::Contrarian1 => "contrarian_1",
             BotKind::SentimentTimer => "sentiment_timer",
             BotKind::PremiereRush => "premiere_rush",
+            BotKind::BuybackFollow => "buyback_follow",
+            BotKind::RightsSell => "rights_sell",
+            BotKind::SplitBuy => "split_buy",
+            BotKind::DelayFade => "delay_fade",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -180,6 +201,9 @@ pub struct BotCtx<'a> {
     pub band: Option<i8>,
     /// published 热度快讯 so far: (company, unix seconds, direction)
     pub flashes: &'a [(i64, i64, i8)],
+    /// published company notices of corporate actions and schedule changes so far: (company, unix seconds, news
+    /// kind, title) (docs/v2-corporate.md)
+    pub notices: &'a [(i64, i64, String, String)],
 }
 
 pub struct Bot {
@@ -204,6 +228,12 @@ pub struct Bot {
     pub foresight: Option<std::sync::Arc<std::collections::HashMap<(i64, String), (i64, i64)>>>,
     /// drawdown, liabilities, margin calls (sampled by the 融资融券 bots)
     pub mstats: margin::MStats,
+    /// corporate bots: notices looked at, event positions, rights_sell's buy-backs (company, at, budget), stocks
+    /// already traded
+    notices_seen: usize,
+    corp_exits: Vec<corporate::CorpExit>,
+    corp_rebuy: Vec<(i64, i64, i64)>,
+    corp_done: std::collections::HashSet<i64>,
 }
 
 fn place(e: &mut Engine, acct: i64, c: i64, side: &str, kind: &str, qty: i64, price: Option<i64>, t: i64) -> bool {
@@ -260,6 +290,19 @@ impl Bot {
             opens: Default::default(),
             foresight: None,
             mstats: Default::default(),
+            notices_seen: 0,
+            corp_exits: Vec::new(),
+            corp_rebuy: Vec::new(),
+            corp_done: Default::default(),
+        }
+    }
+
+    /// A split or ex-rights day (crate::corporate): rescale the remembered prices of `company`.
+    pub fn on_adjust(&mut self, company: i64, price_factor: f64) {
+        if let Some(v) = self.opens.get_mut(&company) {
+            for p in v.iter_mut() {
+                *p = ((*p as f64) * price_factor).round() as i64;
+            }
         }
     }
 
@@ -316,6 +359,7 @@ impl Bot {
         }
         match self.kind {
             BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
+            BotKind::BuybackFollow | BotKind::RightsSell | BotKind::SplitBuy | BotKind::DelayFade => self.corp_minute(e, t, ctx),
             BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
                 if !self.exits.is_empty() {
                     self.run_exits(e, t);

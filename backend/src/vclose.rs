@@ -57,6 +57,10 @@ pub struct JState {
     /// the show's relations are collected (an announcement would be seen)
     #[serde(default)]
     pub watched: bool,
+    /// the announced sequel (its id) whose production cost the company has paid (docs/v2-corporate.md §3.3): it
+    /// counts in full from then on, before that net of its cost
+    #[serde(default)]
+    pub sequel_paid: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -68,6 +72,71 @@ pub struct WorkMeta {
     /// the public schedule: every main episode's air date (Bangumi)
     #[serde(default)]
     pub schedule: Vec<i64>,
+    /// AniList's next episode: (number, air day) (docs/v2-corporate.md §2.2)
+    #[serde(default)]
+    pub next_airing: Option<(i64, i64)>,
+    /// production halted (AniList HIATUS): the day the remaining episodes are valued to resume (§2.3)
+    #[serde(default)]
+    pub hiatus: Option<i64>,
+}
+
+impl WorkMeta {
+    /// The air days of the episodes still to air after `aired` (sorted air days so far; a show that has not aired
+    /// starts from its first air day) up to `episodes`: the public schedule's dates after the last one aired, then
+    /// weekly; AniList's date for the next episode moves it and every later one (a delay pushes the rest); a halt
+    /// moves them to its resume day at the earliest (docs/v2-corporate.md §2.2–2.3).
+    pub fn upcoming(&self, aired: &[i64], episodes: Option<i64>) -> Vec<i64> {
+        let Some(n) = episodes else { return Vec::new() };
+        let Some(&last) = aired.last() else { return Vec::new() };
+        let left = (n - aired.len() as i64).max(0) as usize;
+        let mut out: Vec<i64> = self.schedule.iter().copied().filter(|d| *d > last).take(left).collect();
+        while out.len() < left {
+            let prev = out.last().copied().unwrap_or(last);
+            out.push(prev + 7);
+        }
+        if let (Some((ep, day)), Some(first)) = (self.next_airing, out.first().copied()) {
+            // (within a day: the two sources date a late-night broadcast differently)
+            if ep == aired.len() as i64 + 1 && (day - first).abs() > 1 && day > last {
+                let shift = day - first;
+                for d in &mut out {
+                    *d += shift;
+                }
+            }
+        }
+        if let (Some(resume), Some(first)) = (self.hiatus, out.first().copied()) {
+            if resume > first {
+                let shift = resume - first;
+                for d in &mut out {
+                    *d += shift;
+                }
+            }
+        }
+        out
+    }
+
+    /// The schedule to plan with: the episodes aired, then `upcoming` (long-runners: what has aired).
+    pub fn planned(&self, aired: &[i64], episodes: Option<i64>, long: bool) -> Vec<i64> {
+        let mut out = aired.to_vec();
+        out.sort_unstable();
+        if long || out.is_empty() {
+            return out;
+        }
+        let up = self.upcoming(&out, episodes);
+        out.extend(up);
+        out
+    }
+
+    /// The public schedule for `planned_episodes`: a halted show keeps its announced count.
+    pub fn schedule_hold(&self) -> Vec<i64> {
+        let mut v = self.schedule.clone();
+        if let Some(r) = self.hiatus {
+            v.push(r.max(v.last().copied().unwrap_or(r)) + 1);
+        }
+        if let Some((_, d)) = self.next_airing {
+            v.push(d);
+        }
+        v
+    }
 }
 
 fn one() -> f64 {
@@ -97,6 +166,7 @@ impl JState {
             sequel: None,
             meta: None,
             watched: false,
+            sequel_paid: None,
         }
     }
     fn var(&self, m: usize) -> f64 {
@@ -202,7 +272,25 @@ impl Engine {
     }
 
     fn schedule_of(&self, work: i64) -> Vec<i64> {
-        self.st.jstate.get(&work).and_then(|j| j.meta.as_ref()).map_or(Vec::new(), |m| m.schedule.clone())
+        self.st.jstate.get(&work).and_then(|j| j.meta.as_ref()).map_or(Vec::new(), |m| m.schedule_hold())
+    }
+
+    fn meta_or_empty(&self, work: i64) -> WorkMeta {
+        self.st.jstate.get(&work).and_then(|j| j.meta.clone()).unwrap_or(WorkMeta {
+            first_air: 0,
+            episodes: None,
+            long: false,
+            air: Vec::new(),
+            schedule: Vec::new(),
+            next_airing: None,
+            hiatus: None,
+        })
+    }
+
+    /// Shares outstanding: issued shares less those the company holds itself (bought back, not yet cancelled).
+    pub fn outstanding(&self, c: &Company) -> i64 {
+        let own = self.account_of("company", c.id).map_or(0, |a| self.st.holdings.get(&(a, c.id)).map_or(0, |h| h.qty));
+        (c.shares - own).max(1)
     }
 
     /// The works a company owns besides its first (V8 company_works), in id order.
@@ -224,6 +312,8 @@ impl Engine {
             long: s.long_runner,
             air: s.air_dates.iter().filter_map(|d| day_no(d)).collect(),
             schedule: s.schedule.iter().filter_map(|d| day_no(d)).collect(),
+            next_airing: s.next_airing.as_ref().and_then(|n| Some((n.episode, day_no(&n.date)?))),
+            hiatus: None,
         })
     }
 
@@ -235,12 +325,12 @@ impl Engine {
         }
         let Some(m) = self.st.jstate.get(&w).and_then(|j| j.meta.clone()) else { return self.shape(c, p) };
         let today = self.st.jstate.get(&w).and_then(|j| day_no(&j.day)).unwrap_or(m.first_air);
-        let episodes = Self::planned_episodes(m.episodes.or(if m.long { None } else { Some(p.default_episodes) }), &m.air, today, &m.schedule);
+        let episodes = Self::planned_episodes(m.episodes.or(if m.long { None } else { Some(p.default_episodes) }), &m.air, today, &m.schedule_hold());
         let mut air = m.air.clone();
         if air.is_empty() && !m.long {
             air.push(m.first_air);
         }
-        (F::schedule(&air, episodes, m.long), m.first_air, m.long)
+        (m.planned(&air, episodes, m.long), m.first_air, m.long)
     }
 
     fn shape(&self, c: &Company, p: &Params) -> (Vec<i64>, i64, bool) {
@@ -251,10 +341,10 @@ impl Engine {
         let episodes = Self::planned_episodes(c.episodes.or(if long { None } else { Some(p.default_episodes) }), &aired0, today, &self.schedule_of(c.id));
         let mut aired = aired0;
         if aired.is_empty() && !long {
-            // not aired yet: the first episode on its announced date, then weekly
+            // not aired yet: the first episode on its announced date, then the public schedule (else weekly)
             aired.push(first_air);
         }
-        (F::schedule(&aired, episodes, long), first_air, long)
+        (self.meta_or_empty(c.id).planned(&aired, episodes, long), first_air, long)
     }
 
     /// The prior log levels of a show's three markets (point-in-time, frozen at the premiere by the inputs):
@@ -323,7 +413,8 @@ impl Engine {
         let disc = F::discount_day(rate, p);
         Some(std::array::from_fn(|m| {
             if js.active[m] {
-                F::sequel_extra(fp, m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known, js.watched)
+                let paid = js.sequel.as_ref().is_some_and(|q| js.sequel_paid == Some(q.0));
+                F::sequel_extra_paid(fp, m, js.mean[m], js.var(m), today, fin, first_air, js.seq_z, js.seq_zs, disc, known, js.watched, paid)
             } else {
                 0.0
             }
@@ -386,7 +477,13 @@ impl Engine {
         // describes is not news) and no longer drifts
         // (finished: exactly the announced number of episodes aired; a show that keeps airing past its
         // count is not finished)
-        let schedule: Vec<i64> = s.schedule.iter().filter_map(|d| day_no(d)).collect();
+        // the public schedule; a halt (AniList HIATUS) keeps the day its remaining episodes are valued to resume
+        let prev_hiatus = self.st.jstate.get(&s.id).and_then(|j| j.meta.as_ref()).and_then(|m| m.hiatus);
+        let mut meta_today = Self::meta_of(s);
+        if let Some(m) = meta_today.as_mut() {
+            m.hiatus = s.hiatus.then(|| prev_hiatus.unwrap_or(today + fp.hiatus_lag));
+        }
+        let schedule: Vec<i64> = meta_today.as_ref().map_or_else(|| s.schedule.iter().filter_map(|d| day_no(d)).collect(), |m| m.schedule_hold());
         let fin = match Self::planned_episodes(s.episodes, &sched, today, &schedule) {
             Some(n) if !s.long_runner && n > 0 && sched.len() as i64 == n => Some(sched[(n - 1) as usize]),
             _ => None,
@@ -460,7 +557,7 @@ impl Engine {
             j.seq_z = seq_z;
             j.seq_zs = seq_zs;
             j.sequel = sequel.clone();
-            j.meta = Self::meta_of(s);
+            j.meta = meta_today.clone();
             j.watched = s.relations_known;
             j
         };
@@ -515,7 +612,7 @@ impl Engine {
         };
         st.day = day.into();
         st.post = post;
-        st.meta = Self::meta_of(s);
+        st.meta = meta_today.clone();
         st.watched = s.relations_known;
         st.tail_mult = mult;
         st.seq_z = seq_z;
@@ -808,7 +905,7 @@ impl Engine {
         let mult = js.map_or(1.0, |j| j.tail_mult);
         let tails = Self::tail_ends(fp, &sched, long, today, mult);
         let extra = if option { js.and_then(|js| self.sequel_extra(fp, p, js, &sched, long, first_air, today, rate)) } else { None };
-        F::value_from_paths(own, totals, &p.market_weights, a_ref, p, c.shares, book, rate, long, &tails, self.value_rule(today), extra.as_ref())
+        F::value_from_paths(own, totals, &p.market_weights, a_ref, p, self.outstanding(c), book, rate, long, &tails, self.value_rule(today), extra.as_ref())
     }
 
     /// A company's value per share (cents): the sum over its works (docs/v2-series.md §3.2). `paths`: the other
@@ -843,6 +940,51 @@ impl Engine {
         });
         Self::fill_preair(&mut own[0], today, first_air, js.last_obs[0]);
         Some(self.value_of(fp, c, &own, totals, p, rate, a_ref, today, None))
+    }
+
+    /// A company's hidden value (cents) with every work's expected path (the close's totals): for a corporate action
+    /// taken at the close (docs/v2-corporate.md §3).
+    pub(crate) fn company_value_full(&self, vc: &crate::corporate::ValueCtx, id: i64) -> Option<i64> {
+        let (fp, p, today) = (vc.fp, vc.p, vc.today);
+        let c = self.st.companies.get(&id)?;
+        let h = fp.horizon_days;
+        let mut paths: HashMap<i64, [Vec<f64>; 3]> = HashMap::new();
+        for w in self.works_of(id) {
+            let Some(js) = self.st.jstate.get(&w) else { continue };
+            let (sched, first_air, long) = self.work_shape(c, w, p);
+            let mut path: [Vec<f64>; 3] = std::array::from_fn(|m| {
+                if js.active[m] {
+                    F::att_path(fp, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult)
+                } else {
+                    vec![0.0; h]
+                }
+            });
+            Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
+            paths.insert(w, path);
+        }
+        let own = paths.get(&id)?.clone();
+        Some(self.value_of(fp, c, &own, vc.totals, p, vc.rate, vc.a_ref, today, Some(&paths)))
+    }
+
+    /// Run `f` with the work's announced sequel counted as paid for (or not), then restore the state.
+    pub(crate) fn with_sequel_paid<T>(&mut self, work: i64, paid: Option<i64>, f: impl FnOnce(&Engine) -> T) -> T {
+        let old = self.st.jstate.get(&work).map(|j| j.sequel_paid);
+        if let Some(j) = self.st.jstate.get_mut(&work) {
+            j.sequel_paid = paid;
+        }
+        let r = f(self);
+        if let (Some(j), Some(o)) = (self.st.jstate.get_mut(&work), old) {
+            j.sequel_paid = o;
+        }
+        r
+    }
+
+    /// The company has paid the production cost of the work's announced sequel (docs/v2-corporate.md §3.3).
+    pub(crate) fn set_sequel_paid(&mut self, work: i64, paid: Option<i64>, ts: &str) {
+        if let Some(mut j) = self.st.jstate.get(&work).cloned() {
+            j.sequel_paid = paid;
+            self.save_jstate(work, j, ts);
+        }
     }
 
     /// Hidden values of every listed company with a filter state (cents), and the market totals used.
@@ -999,7 +1141,7 @@ impl Engine {
         let long = s.long_runner;
         let episodes = s.episodes.or(if long { None } else { Some(p.default_episodes) });
         let first = day_no(&s.first_air).unwrap_or(today);
-        let sched = F::schedule(&[first], episodes, long);
+        let sched = Self::meta_of(s).map_or_else(|| F::schedule(&[first], episodes, long), |m| m.planned(&[first], episodes, long));
         let pc = Self::prior_cov_at(fp, s, today);
         let mult = Self::tail_mult_of(fp, s);
         let mut own: [Vec<f64>; 3] = std::array::from_fn(|m| {

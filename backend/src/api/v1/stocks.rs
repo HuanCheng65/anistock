@@ -461,6 +461,26 @@ pub async fn book(State(st): State<Arc<AppState>>, Path(raw): Path<String>, RawQ
     .map(Json)
 }
 
+/// A stock's price adjustments (V9): (first day in new terms, price factor, volume factor, action kind), by day.
+fn price_adjustments(c: &Connection, id: i64) -> R<Vec<(String, f64, f64, Option<String>)>> {
+    let has: bool = c
+        .query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_adjustments'", [], |_| Ok(()))
+        .optional()
+        .map_err(sql)?
+        .is_some();
+    if !has {
+        return Ok(Vec::new());
+    }
+    let mut s = c
+        .prepare_cached(
+            "SELECT p.day, p.price_factor, p.qty_factor, a.kind FROM price_adjustments p LEFT JOIN corporate_actions a ON a.id = p.action_id
+             WHERE p.company_id=? ORDER BY p.day",
+        )
+        .map_err(sql)?;
+    let rows = s.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(sql)?;
+    rows.collect::<Result<_, _>>().map_err(sql)
+}
+
 fn exists(c: &Connection, id: i64) -> R<()> {
     c.query_row("SELECT 1 FROM companies WHERE id=?", [id], |_| Ok(()))
         .optional()
@@ -506,7 +526,8 @@ pub async fn trades(State(st): State<Arc<AppState>>, Path(raw): Path<String>, Ra
 #[utoipa::path(get, path = "/api/v1/stocks/{id}/candles", tag = "stocks",
     params(("id" = i64, Path, description = "股票 id"),
         ("from" = Option<String>, Query, description = "交易日，含"), ("to" = Option<String>, Query, description = "交易日，含"),
-        ("interval" = Option<String>, Query, description = "只支持 1d")),
+        ("interval" = Option<String>, Query, description = "只支持 1d"),
+        ("adjust" = Option<String>, Query, description = "forward（默认，前复权）或 none")),
     responses((status = 200, body = CandlesResponse), (status = "default", body = ErrorBody)))]
 pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, RawQuery(q): RawQuery) -> R<Json<CandlesResponse>> {
     let id = super::path_id(&raw, "id")?;
@@ -516,6 +537,11 @@ pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, R
     }
     let from = q.day("from")?.unwrap_or_else(|| "0000-01-01".into());
     let to = q.day("to")?.unwrap_or_else(|| "9999-12-31".into());
+    let forward = match q.get("adjust") {
+        None | Some("forward") => true,
+        Some("none") => false,
+        Some(_) => return Err(error::invalid(vec![error::not_allowed("adjust")])),
+    };
     let today = st.clock.today();
     read(&st, move |c| {
         exists(c, id)?;
@@ -566,7 +592,33 @@ pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, R
                 }
             }
         }
-        Ok(CandlesResponse { items })
+        // 前复权 (docs/v2-corporate.md §5): bars before each split / ex-rights day × its factor
+        let adj = price_adjustments(c, id)?;
+        if forward && !adj.is_empty() {
+            for k in items.iter_mut() {
+                let (mut pf, mut qf) = (1.0, 1.0);
+                for (d, p, q, _) in &adj {
+                    if d.as_str() > k.trading_day.0.as_str() {
+                        pf *= p;
+                        qf *= q;
+                    }
+                }
+                if pf != 1.0 || qf != 1.0 {
+                    let f = |x: Money| m(((x.0 as f64) * pf).round() as i64);
+                    k.open = f(k.open);
+                    k.high = f(k.high);
+                    k.low = f(k.low);
+                    k.close = f(k.close);
+                    k.volume = ((k.volume as f64) * qf).round() as i64;
+                }
+            }
+        }
+        let ex_days = adj
+            .into_iter()
+            .filter(|(d, ..)| d.as_str() >= from.as_str() && d.as_str() <= to.as_str())
+            .map(|(d, p, q, kind)| ExDay { trading_day: day(d), kind: if q != 1.0 { kind.unwrap_or_else(|| "split".into()) } else { kind.unwrap_or_else(|| "rights".into()) }, price_factor: r6(p) })
+            .collect();
+        Ok(CandlesResponse { items, adjust: if forward { "forward".into() } else { "none".into() }, ex_days })
     })
     .await
     .map(Json)

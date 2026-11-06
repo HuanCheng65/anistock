@@ -91,6 +91,20 @@ pub struct ShowInputs {
     /// the public schedule: every main episode's air date on Bangumi (past and announced) (phase 1)
     #[serde(default)]
     pub schedule: Vec<String>,
+    /// AniList status HIATUS on the day: production halted (docs/v2-corporate.md §2.3)
+    #[serde(default)]
+    pub hiatus: bool,
+    /// AniList's next episode on the day: its number and air day (docs/v2-corporate.md §2.2)
+    #[serde(default)]
+    pub next_airing: Option<NextAiring>,
+}
+
+/// AniList `nextAiringEpisode`: the episode number and its air day (local date of `airingAt`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NextAiring {
+    pub episode: i64,
+    pub date: String,
 }
 
 /// An announced sequel: its AniList id, the day the relation first appeared, and its premiere day(s): the

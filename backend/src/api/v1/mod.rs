@@ -10,6 +10,7 @@
 
 pub mod account;
 pub mod bind;
+pub mod corporate;
 pub mod credit;
 pub mod error;
 pub mod events;
@@ -541,6 +542,9 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/stocks/{id}/candles", get(stocks::candles))
         .route("/stocks/{id}/intraday", get(stocks::intraday))
         .route("/stocks/{id}/cover", get(stocks::cover))
+        .route("/stocks/{id}/corporate-actions", get(corporate::actions))
+        .route("/stocks/{id}/rights", get(corporate::rights))
+        .route("/stocks/{id}/rights/subscription", put(corporate::subscribe).delete(corporate::unsubscribe))
         .route("/news", get(market::news))
         .route("/news/{id}", get(market::news_one))
         .route("/ipos", get(stocks::ipos))
@@ -584,7 +588,7 @@ fn method_fallback(path: &str) -> Response {
     let allow = match segs.as_slice() {
         ["", "me", "orders"] => "GET, POST",
         ["", "me", "orders", _] => "GET, DELETE",
-        ["", "ipos", _, "subscription"] => "PUT, DELETE",
+        ["", "ipos", _, "subscription"] | ["", "stocks", _, "rights", "subscription"] => "PUT, DELETE",
         ["", "auth", _] | ["", "me", "restructure"] | ["", "me", "bind-codes"] | ["", "bot", "bindings"] => "POST",
         ["", "me", "bindings", _] | ["", "bot", "bindings", _, _] => "DELETE",
         _ => "GET",
