@@ -1225,7 +1225,7 @@ pub struct Binding {
     pub id: i64,
     pub platform: String,
     pub external_id: String,
-    /// 打码后的号码
+    /// 打码后的 openid（显示用）
     pub display_name: String,
     pub scopes: Vec<String>,
     pub created_at: Timestamp,

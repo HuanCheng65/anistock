@@ -487,7 +487,7 @@
             "$ref": "#/components/schemas/Timestamp"
           },
           "display_name": {
-            "description": "打码后的号码",
+            "description": "打码后的 openid（显示用）",
             "type": "string"
           },
           "external_id": {
@@ -5141,7 +5141,7 @@
     },
     "securitySchemes": {
       "bot": {
-        "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<QQ号> 代表已绑定的玩家",
+        "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家",
         "scheme": "bearer",
         "type": "http"
       }
@@ -5448,7 +5448,7 @@
             }
           },
           {
-            "description": "QQ 号",
+            "description": "私聊消息里发送者的 openid",
             "in": "path",
             "name": "external_id",
             "required": true,

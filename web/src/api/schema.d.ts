@@ -973,7 +973,7 @@ export interface components {
         };
         Binding: {
             created_at: components["schemas"]["Timestamp"];
-            /** @description 打码后的号码 */
+            /** @description 打码后的 openid（显示用） */
             display_name: string;
             external_id: string;
             /** Format: int64 */
@@ -2513,7 +2513,7 @@ export interface operations {
             path: {
                 /** @description qq */
                 platform: string;
-                /** @description QQ 号 */
+                /** @description 私聊消息里发送者的 openid */
                 external_id: string;
             };
             cookie?: never;

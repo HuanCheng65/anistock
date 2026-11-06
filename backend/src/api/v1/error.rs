@@ -90,7 +90,7 @@ pub fn forbidden(scope: &str) -> E {
     E::new(403, "forbidden", "没有权限").details(json!({"required_scope": scope}))
 }
 pub fn not_bound() -> E {
-    E::new(403, "not_bound", "这个 QQ 号还没有绑定账号")
+    E::new(403, "not_bound", "这个 QQ 还没有绑定账号")
 }
 pub fn not_found() -> E {
     E::new(404, "not_found", "没有这个接口")
@@ -127,7 +127,7 @@ pub fn order_finished(status: &str) -> E {
     E::new(409, "order_finished", "委托已结束，无法撤单").details(json!({"status": status}))
 }
 pub fn already_bound(side: &str) -> E {
-    let msg = if side == "qq" { "这个 QQ 号已经绑定了账号" } else { "这个账号已经绑定了 QQ 号，先解绑再绑定" };
+    let msg = if side == "qq" { "这个 QQ 已经绑定了另一个账号" } else { "这个账号已经绑定了其他 QQ，先解除绑定再绑定" };
     E::new(409, "already_bound", msg).details(json!({"side": side}))
 }
 pub fn bad_invite() -> E {
@@ -201,7 +201,7 @@ pub fn label(field: &str) -> &'static str {
         "new_password" => "新密码",
         "scopes" => "权限",
         "platform" => "平台",
-        "external_id" => "QQ 号",
+        "external_id" => "QQ 标识",
         "trading_day" | "from" | "to" | "listed_since" => "交易日",
         "limit" => "条数",
         "before" | "after" => "翻页位置",

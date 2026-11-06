@@ -84,7 +84,7 @@ pub fn document() -> Value {
     if let Some(Value::Object(c)) = doc.get_mut("components") {
         c.insert(
             "securitySchemes".into(),
-            serde_json::json!({"bot": {"type": "http", "scheme": "bearer", "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<QQ号> 代表已绑定的玩家"}}),
+            serde_json::json!({"bot": {"type": "http", "scheme": "bearer", "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家"}}),
         );
     }
     doc

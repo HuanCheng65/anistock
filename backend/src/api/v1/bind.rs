@@ -249,7 +249,7 @@ pub async fn redeem(
 
 /// 机器人解除绑定（群里 /解绑）
 #[utoipa::path(delete, path = "/api/v1/bot/bindings/{platform}/{external_id}", tag = "bot",
-    params(("platform" = String, Path, description = "qq"), ("external_id" = String, Path, description = "QQ 号")),
+    params(("platform" = String, Path, description = "qq"), ("external_id" = String, Path, description = "私聊消息里发送者的 openid")),
     responses((status = 204, description = "已解除"), (status = "default", body = ErrorBody)),
     security(("bot" = [])))]
 pub async fn bot_remove(
