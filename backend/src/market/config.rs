@@ -108,12 +108,13 @@ pub struct MarketConfig {
     /// market maker's cash after the float migration, 币
     pub mm_cash: f64,
     /// stock lent to the market maker by the rights holders (committee), share of the company's shares, on
-    /// top of `mm_target_frac` of the float (the issuer lending stock to its designated market maker)
+    /// top of `mm_target_frac` of the float (the issuer lending stock to its designated market maker); also
+    /// the most it sells short, borrowing from the lending pool, once its inventory is gone (0: never)
     pub mm_loan_frac: f64,
     /// designated-market-maker obligation: a quote unit is at least this many 币 (level k quotes k units)
     pub mm_quote_min: f64,
-    /// quote size skew by inventory: at inventory x (-1..1 around the target) bids are (1 - s x) and offers
-    /// (1 + s x) times the size
+    /// quote size skew by inventory: at x = (position - target) / target (at most 1; -1 at zero inventory and
+    /// below that on the short side) bids are (1 - s x) and offers (1 + s x) times the size
     pub mm_size_skew: f64,
     /// half-spread widening per quote unit of recent adverse markout (what its fills lost by the next
     /// requote, EWMA over `mm_vol_half_life_min`)

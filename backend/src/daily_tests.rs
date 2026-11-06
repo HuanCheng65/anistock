@@ -371,3 +371,58 @@ fn penny_stocks_are_warned_then_delisted() {
     e.penny_rule(&mut cx, &[1]).unwrap();
     assert_eq!(e.st.penny_days[&1], 0);
 }
+
+fn show_with_sources(cn: bool, jp: bool) -> crate::inputs::ShowInputs {
+    serde_json::from_value(serde_json::json!({
+        "id": 1, "title_ja": "テスト", "title_en": null, "studio": null, "first_air": "2026-07-01", "episodes": 12,
+        "episodes_known": true, "long_runner": false, "popularity_end": 0, "aired": 5, "has_real_data": true,
+        "att": {"us": 1.0, "cn": 1.0, "jp": 1.0}, "expected": {"us": 1.0, "cn": 1.0, "jp": 1.0},
+        "sources": {"us": true, "cn": cn, "jp": jp}
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_newly_mapped_market_posts_one_notice() {
+    let (mut e, sink) = Engine::in_memory(Fees::default(), Rules::default());
+    e.insert_company(company(1, "listed", 1000, "2026-07-01", "2026-06-10"));
+    let c = e.company(1).unwrap().clone();
+    let notices = |sink: &crate::store::persist::MemorySink| -> Vec<(String, String, String, Option<i64>)> {
+        sink.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|ch| match ch {
+                Change::NewsInsert(n) => Some((n.kind.clone(), n.title.clone(), n.body.clone().unwrap_or_default(), n.company_id)),
+                _ => None,
+            })
+            .collect()
+    };
+    // first sighting: recorded, no notice (a running game does not announce every show at once)
+    e.note_new_sources(TS, DAY, &c, &show_with_sources(true, false));
+    e.commit();
+    assert!(notices(&sink).is_empty());
+    assert_eq!(e.state("sources:1"), Some("110"));
+    // unchanged: nothing
+    e.note_new_sources(TS, DAY, &c, &show_with_sources(true, false));
+    e.commit();
+    assert!(notices(&sink).is_empty());
+    // the Japanese source is mapped: one notice
+    e.note_new_sources(TS, "2026-11-09", &c, &show_with_sources(true, true));
+    e.commit();
+    assert_eq!(
+        notices(&sink),
+        vec![("system".to_string(), "《テスト》接入日本市场数据".to_string(), "日本市场的热度数据从今天起计入营收和估值。".to_string(), Some(1))]
+    );
+    // the next closes: no repeat
+    e.note_new_sources(TS, "2026-11-10", &c, &show_with_sources(true, true));
+    e.commit();
+    assert_eq!(notices(&sink).len(), 1);
+    // inputs without the flags (before v0.3.2) change nothing
+    let mut old = show_with_sources(true, true);
+    old.sources = None;
+    e.note_new_sources(TS, "2026-11-11", &c, &old);
+    e.commit();
+    assert_eq!(notices(&sink).len(), 1);
+    assert_eq!(e.state("sources:1"), Some("111"));
+}

@@ -86,7 +86,8 @@ mm_target_frac = 0.2           # market maker keeps 20% of the float (§8)
 # price (not the hidden value), stock lent by the rights holders, a minimum quote size, size skew by inventory,
 # wider and smaller around scheduled information
 mm_anchor_to_price = 1.0
-mm_loan_frac = 0.2             # rights holders lend 20% of the shares to the market maker
+mm_loan_frac = 0.2             # rights holders lend 20% of the shares to the market maker; also the most it
+                               # sells short from the lending pool once its inventory is gone
 mm_cash = 50000.0
 mm_rate = 20.0
 mm_base_spread = 0.006

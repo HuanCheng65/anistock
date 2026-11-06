@@ -20,14 +20,18 @@ impl Market {
         (h % 10_000) as f64 / 10_000.0 < frac
     }
 
-    fn credit_order(&mut self, engine: &mut Engine, acct: i64, c: i64, mode: Mode, qty: i64, price: i64, t: i64) {
+    /// A credit order (continuous trading only), counted under `label`.
+    pub(super) fn credit_order(&mut self, engine: &mut Engine, label: &str, acct: i64, c: i64, mode: Mode, qty: i64, price: i64, t: i64) {
         if qty <= 0 {
             return;
         }
         let (day, ts) = (day_of(t), ts_of(t));
+        if engine.state("auction_day") != Some(day.as_str()) {
+            engine.open_market(&day, &ts);
+        }
         let req = NewOrder { account_id: acct, company_id: c, side: mode.side().as_str(), kind: "limit", qty, price: Some(price), day: &day, ts: &ts, match_: true };
         let r = engine.place_credit(&req, mode);
-        *self.stats.orders.entry("value_short".to_string()).or_default() += 1;
+        *self.stats.orders.entry(label.to_string()).or_default() += 1;
         if r.is_err() {
             self.stats.rejected += 1;
         }
@@ -49,7 +53,7 @@ impl Market {
                 let limit = Self::clamp_price(engine, &engine.rules.clone(), c, (p as f64 * (a.aggression * m).exp()).min(belief), t);
                 let cash = engine.available_cash(a.account) + engine.short_of(a.account, c).map_or(0, |s| s.proceeds);
                 let q = owed.min(cash / engine.fees.buy_reserve(limit, 1).max(1));
-                self.credit_order(engine, a.account, c, Mode::BuyReturn, q, limit, t);
+                self.credit_order(engine, "value_short", a.account, c, Mode::BuyReturn, q, limit, t);
             }
             return true;
         }
@@ -77,7 +81,7 @@ impl Market {
         let budget = wealth * r.npc_short_size * conviction;
         let q = ((budget / p as f64) as i64).min(engine.lendable(c)).min(by_margin).min(by_conc);
         // at or above the last trade (the short-sale price rule): it rests and waits for buyers
-        self.credit_order(engine, a.account, c, Mode::ShortSell, q, p, t);
+        self.credit_order(engine, "value_short", a.account, c, Mode::ShortSell, q, p, t);
         true
     }
 }
