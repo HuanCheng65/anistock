@@ -881,6 +881,8 @@ pub struct RiskResult {
 /// 开通信用账户的前置步骤（注册天数、净资产在开通时检查）
 #[derive(Serialize, ToSchema, Clone)]
 pub struct CreditSteps {
+    /// 完成了身份验证（服务器不要求身份验证时恒为 true）
+    pub verified: bool,
     /// 风险测评有效且不低于 `min_level`
     pub risk_ok: bool,
     pub min_level: String,

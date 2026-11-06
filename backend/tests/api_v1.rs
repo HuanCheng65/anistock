@@ -437,9 +437,9 @@ async fn verification_gates_transfers_ipo_and_leaderboard() {
     .unwrap();
     let me = a.get("/api/v1/me", Some(&ck)).await.json;
     assert_eq!(me["verification"], json!({"verified": true, "method": "qq"}));
-    // registered today: too new for 财政补贴 and 排行榜
+    // registered today: too new for 财政补贴; 排行榜 waits for trades, not days
     assert_eq!(me["eligibility"]["transfer"]["reason"], "注册满 7 天后才能领取财政补贴");
-    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "注册满 14 天后才能进入排行");
+    assert_eq!(me["eligibility"]["leaderboard"]["reason"], "成交满 10 笔后才能进入排行，还差 10 笔");
     assert_eq!(me["eligibility"]["ipo"]["quota"], 0);
     assert!(me["eligibility"]["ipo"]["reason"].as_str().unwrap().starts_with("认购额度按前 5 个交易日的日均持仓市值计算"));
     a.validate(&a.schema("GET", "/api/v1/me", 200), &me, "me");
@@ -472,6 +472,13 @@ async fn assessments_and_opening_credit() {
     assert_eq!(r.json["risk"]["name"], "稳健型");
     let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
     err(&r, 422, "credit_not_eligible");
+    assert_eq!(r.json["message"], "完成身份验证后才能开通");
+    let id = a.get("/api/v1/me", Some(&ck)).await.json["id"].as_i64().unwrap();
+    rusqlite::Connection::open(&a.st.cfg.game_db)
+        .unwrap()
+        .execute("INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', 'OPENID2', 'read:account', ?)", rusqlite::params![id, TS])
+        .unwrap();
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
     assert_eq!(r.json["message"], "风险测评为 C4 及以上才能开通");
     a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await;
     let r = a.req("POST", "/api/v1/me/assessments/risk", Some(json!({"answers": [3, 3, 3, 3, 3, 3, 3, 3]})), &h).await;
@@ -488,11 +495,11 @@ async fn assessments_and_opening_credit() {
     assert_eq!(r.json["message"], "签署《融资融券风险揭示书》后才能开通");
     a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "margin_disclosure", "version": 1, "signature": "erin"})), &h).await;
     let me = a.get("/api/v1/me", Some(&ck)).await.json;
-    assert_eq!(me["credit_steps"], json!({"risk_ok": true, "min_level": "C4", "quiz_passed": true, "disclosure_signed": true, "disclosure_version": 1}));
-    // the engine's own checks remain: registered today
+    assert_eq!(me["credit_steps"], json!({"verified": true, "risk_ok": true, "min_level": "C4", "quiz_passed": true, "disclosure_signed": true, "disclosure_version": 1}));
+    // registered today and verified: no waiting period
     let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
-    err(&r, 422, "credit_not_eligible");
-    assert!(r.json["message"].as_str().unwrap().contains("14 天"), "{}", r.json);
+    assert_eq!(r.status, 200, "{}", r.json);
+    assert_eq!(r.json["credit"]["opened"], true);
 }
 
 #[tokio::test]
@@ -708,9 +715,14 @@ async fn credit_account_and_credit_orders() {
     let c = Some(ck.as_str());
     let cr = a.checked("/api/v1/me/credit", "/api/v1/me/credit", c).await;
     assert_eq!(cr["credit"]["opened"], false);
-    assert_eq!(cr["credit"]["can_open"], false, "registered today");
-    err(&a.req("POST", "/api/v1/me/credit", None, &h).await, 422, "credit_not_eligible");
-    a.st.actor.call(|ctx| ctx.engine.margin.min_days = 0).await.unwrap();
+    let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
+    err(&r, 422, "credit_not_eligible");
+    assert_eq!(r.json["message"], "完成身份验证后才能开通");
+    let id = a.get("/api/v1/me", c).await.json["id"].as_i64().unwrap();
+    rusqlite::Connection::open(&a.st.cfg.game_db)
+        .unwrap()
+        .execute("INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', 'OPENID3', 'read:account', ?)", rusqlite::params![id, TS])
+        .unwrap();
     let r = a.req("POST", "/api/v1/me/credit", None, &h).await;
     assert_eq!(r.status, 200, "{}", r.json);
     a.validate(&a.schema("POST", "/api/v1/me/credit", 200), &r.json, "open");

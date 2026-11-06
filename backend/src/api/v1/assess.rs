@@ -85,7 +85,9 @@ pub fn risk_of(st: &AppState, c: &Connection, id: i64) -> R<Option<RiskResult>> 
 }
 
 /// What opening credit still needs (on top of the engine's own checks: days and net assets).
+/// 身份验证 stands in for a waiting period against throwaway accounts (docs/v2-account.md §6).
 pub fn credit_steps(st: &AppState, c: &Connection, id: i64) -> R<CreditSteps> {
+    let verified = !st.cfg.eligibility.require_kyc || crate::kyc::method(c, id).map_err(sql)?.is_some();
     let risk = risk_of(st, c, id)?;
     let min = st.cfg.eligibility.credit_min_level;
     let risk_ok = risk.as_ref().is_some_and(|r| r.valid && r.level[1..].parse::<i64>().unwrap_or(0) >= min);
@@ -99,12 +101,14 @@ pub fn credit_steps(st: &AppState, c: &Connection, id: i64) -> R<CreditSteps> {
             |r| r.get(0),
         )
         .map_err(sql)?;
-    Ok(CreditSteps { risk_ok, min_level: format!("C{min}"), quiz_passed, disclosure_signed, disclosure_version: st.cfg.margin_disclosure })
+    Ok(CreditSteps { verified, risk_ok, min_level: format!("C{min}"), quiz_passed, disclosure_signed, disclosure_version: st.cfg.margin_disclosure })
 }
 
 /// The first unmet step, as a `credit_not_eligible` error.
 pub fn credit_refusal(s: &CreditSteps) -> Option<E> {
-    let msg = if !s.risk_ok {
+    let msg = if !s.verified {
+        "完成身份验证后才能开通".to_string()
+    } else if !s.risk_ok {
         format!("风险测评为 {} 及以上才能开通", s.min_level)
     } else if !s.quiz_passed {
         "通过融资融券知识测试后才能开通".to_string()

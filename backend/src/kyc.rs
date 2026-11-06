@@ -44,7 +44,7 @@ impl Default for Rules {
             transfer_active_days: 28,
             ipo_mv_days: 5,
             ipo_quota_ratio: 1.0,
-            rank_min_days: 14,
+            rank_min_days: 0,
             rank_min_trades: 10,
             credit_min_level: 4,
             assessment_valid_days: 90,

@@ -25,11 +25,12 @@ const c = computed(() => credit.account)
 const rate = (v: number) => share(v, 2)
 const low = computed(() => c.value?.maintenance_ratio != null && c.value.maintenance_ratio < c.value.call_ratio)
 const owed = computed(() => (c.value ? c.value.debt + c.value.interest : 0))
-// 风险测评, the knowledge test, the margin disclosure (docs/v2-account.md §6); days and net assets: can_open
+// 身份验证, 风险测评, the knowledge test, the margin disclosure (docs/v2-account.md §6); days and net assets: can_open
 const steps = computed(() => {
   const s = props.me.credit_steps
   const r = props.me.risk
   return [
+    { k: 'kyc', to: '/settings', label: '身份验证', ok: s.verified, v: s.verified ? '已完成' : '未完成' },
     { k: 'risk', to: '/assessment/risk', label: `风险测评 ${s.min_level} 及以上`, ok: s.risk_ok, v: r ? (r.valid ? `${r.level} ${r.name}` : '已过期') : '未测评' },
     { k: 'quiz', to: '/assessment/margin-quiz', label: '融资融券知识测试', ok: s.quiz_passed, v: s.quiz_passed ? '已通过' : '未通过' },
     { k: 'sign', to: '/legal/margin_disclosure?sign=1', label: '融资融券风险揭示书', ok: s.disclosure_signed, v: s.disclosure_signed ? '已签署' : '未签署' },

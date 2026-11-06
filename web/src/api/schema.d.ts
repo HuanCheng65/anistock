@@ -1186,6 +1186,8 @@ export interface components {
             quiz_passed: boolean;
             /** @description 风险测评有效且不低于 `min_level` */
             risk_ok: boolean;
+            /** @description 完成了身份验证（服务器不要求身份验证时恒为 true） */
+            verified: boolean;
         };
         DividendPaid: {
             per_share: components["schemas"]["Money"];

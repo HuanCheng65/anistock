@@ -44,7 +44,7 @@ pub const DEFAULTED: &str = "defaulted";
 #[serde(default)]
 pub struct MarginRules {
     pub enabled: bool,
-    /// days since registration before a player may open credit
+    /// days since registration before a player may open credit (0: 身份验证 guards against throwaway accounts instead)
     pub min_days: i64,
     /// net assets at least this share of the starting cash
     pub min_assets: f64,
@@ -78,7 +78,7 @@ impl Default for MarginRules {
     fn default() -> MarginRules {
         MarginRules {
             enabled: true,
-            min_days: 14,
+            min_days: 0,
             min_assets: 0.5,
             listed_days: 5,
             haircut: 0.7,

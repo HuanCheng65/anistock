@@ -1187,6 +1187,10 @@
           "risk_ok": {
             "description": "风险测评有效且不低于 `min_level`",
             "type": "boolean"
+          },
+          "verified": {
+            "description": "完成了身份验证（服务器不要求身份验证时恒为 true）",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1194,7 +1198,8 @@
           "disclosure_version",
           "min_level",
           "quiz_passed",
-          "risk_ok"
+          "risk_ok",
+          "verified"
         ],
         "type": "object"
       },

@@ -177,7 +177,7 @@ transfer_min_days = 7          # 财政补贴: registered at least this many day
 transfer_active_days = 28      # 财政补贴: a trade in this many days
 ipo_mv_days = 5                # 新股认购: quota = mean holdings value over this many closed trading days
 ipo_quota_ratio = 1.0          #   × this (A-share 市值配售)
-rank_min_days = 14             # 排行榜: registered at least this many days
+rank_min_days = 0              # 排行榜: registered at least this many days (身份验证 already keeps alts off)
 rank_min_trades = 10           # 排行榜: trades so far
 credit_min_level = 4           # 融资融券: 风险测评 C4 积极型 or above (and the knowledge test, the margin disclosure)
 assessment_valid_days = 90     # a 风险测评 counts about a season
@@ -200,8 +200,8 @@ big_move_window_min = 30
 [margin]
 # 融资融券 (docs/v2-margin.md §11). These are the defaults in backend/src/margin.rs; change a value here to override it.
 enabled = true
-min_days = 14             # days since registration before credit can be opened (A-share: 6 months; open
-                          # registration needs a wait against throwaway accounts, docs/v2-account.md §6)
+min_days = 0              # days since registration before credit can be opened (A-share: 6 months). 0: opening
+                          # needs 身份验证 instead, which keeps throwaway accounts out (docs/v2-account.md §6)
 min_assets = 0.5          # net assets at least this share of initial_cash
 listed_days = 5           # a stock is marginable this many days after listing
 haircut = 0.7             # collateral value of a marginable stock (折算率)
