@@ -211,7 +211,8 @@ impl FilterParams {
             let mut lags = sp.lag_days.clone();
             lags.sort_unstable();
             if !lags.is_empty() {
-                fp.hiatus_lag = lags[lags.len() / 2];
+                let n = lags.len();
+                fp.hiatus_lag = if n % 2 == 1 { lags[n / 2] } else { (lags[n / 2 - 1] + lags[n / 2]) / 2 };
             }
             if sequel_on {
                 fp.sequel = Some(sp);

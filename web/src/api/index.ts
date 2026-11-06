@@ -43,6 +43,9 @@ export type WsServerMessage = S['WsServerMessage']
 export type ErrorBody = S['ErrorBody']
 export type CreditAccount = S['CreditAccount']
 export type StockMargin = S['StockMargin']
+export type RightsOffer = S['RightsOffer']
+export type CorporateAction = S['CorporateAction']
+export type ExDay = S['ExDay']
 
 /** A non-2xx answer: the server's `{code, message, details}`; `message` is shown as is. */
 export class ApiError extends Error {

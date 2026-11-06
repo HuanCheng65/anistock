@@ -5,7 +5,8 @@ import { ref } from 'vue'
 import { onLive } from '../live'
 import {
   api, ApiError, call,
-  type AuctionIndication, type BookLevel, type Candle, type IntradayPoint, type NewsItem, type PublicTrade, type StockDetail,
+  type AuctionIndication, type BookLevel, type Candle, type ExDay, type IntradayPoint, type NewsItem, type PublicTrade, type RightsOffer,
+  type StockDetail,
 } from '../api'
 import { tradingDayOf } from '../format'
 
@@ -22,6 +23,11 @@ export const useStock = defineStore('stock', () => {
   const news = ref<Record<number, NewsItem[]>>({})
   const candles = ref<Record<number, Candle[]>>({})
   const intraday = ref<Record<number, IntradayPoint[]>>({})
+  // corporate actions (docs/v2-corporate.md): split / ex-rights days of the K-line, the open rights issue
+  const exDays = ref<Record<number, ExDay[]>>({})
+  const rights = ref<Record<number, RightsOffer | null>>({})
+  /** K-lines forward-adjusted (前复权, default) or as traded */
+  const adjust = ref<'forward' | 'none'>('forward')
   const error = ref<Record<number, string>>({})
   const candleAt: Record<number, number> = {}
   const newsAt: Record<number, number> = {}
@@ -45,7 +51,17 @@ export const useStock = defineStore('stock', () => {
     const jobs: Promise<unknown>[] = []
     if (force || !candles.value[id] || now - (candleAt[id] ?? 0) > 30000) {
       candleAt[id] = now
-      jobs.push(call(api.GET('/api/v1/stocks/{id}/candles', { params: { path: { id } } })).then((r) => (candles.value[id] = r.items)))
+      jobs.push(
+        call(api.GET('/api/v1/stocks/{id}/candles', { params: { path: { id }, query: { adjust: adjust.value } } })).then((r) => {
+          candles.value[id] = r.items
+          exDays.value[id] = r.ex_days
+        }),
+      )
+      jobs.push(
+        call(api.GET('/api/v1/stocks/{id}/rights', { params: { path: { id } } }))
+          .then((r) => (rights.value[id] = r.action ? r : null))
+          .catch(() => {}),
+      )
     }
     if (force || !news.value[id] || now - (newsAt[id] ?? 0) > 60000) {
       newsAt[id] = now
@@ -109,5 +125,5 @@ export const useStock = defineStore('stock', () => {
     }
   })
 
-  return { detail, book, trades, news, candles, intraday, error, refresh, refreshIntraday }
+  return { detail, book, trades, news, candles, intraday, exDays, rights, adjust, error, refresh, refreshIntraday }
 })

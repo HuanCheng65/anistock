@@ -83,6 +83,54 @@ pub fn parse_ts(s: &str) -> i64 {
 /// Day index (0 = the first simulated day) on which the bots start trading.
 pub const BOT_START_DAY: usize = 7;
 
+/// `SIM_SYNTH_SEQUELS=1` (docs/v2-corporate.md §6, a labelled synthetic test): the replay has no relations data,
+/// so no sequel is ever announced and no rights issue happens. With this set (and the sequel option on), every show
+/// counts as watched and, at its finale, draws when its sequel is announced from the fitted hazard model itself (the
+/// model the option prices): in this synthetic world the option is unbiased by construction, and the announcements
+/// exercise the production cost, the rights issues and the bots. The sequel itself never airs in the replay.
+#[derive(Default)]
+pub struct SynthSequels {
+    fin: HashMap<i64, i64>,
+    ann: HashMap<i64, Option<i64>>,
+}
+
+impl SynthSequels {
+    fn apply(&mut self, inp: &mut Inputs, sp: &crate::vfilter::SequelParams, seed: u64) {
+        let Some(today) = crate::vclose::day_no(&inp.day) else { return };
+        let fmt = |d: i64| chrono::NaiveDate::from_num_days_from_ce_opt(d as i32).map(|x| x.format("%Y-%m-%d").to_string()).unwrap_or_default();
+        for s in &mut inp.shows {
+            s.relations_known = true;
+            if !self.fin.contains_key(&s.id) && !s.long_runner && s.episodes_known && s.episodes.is_some_and(|n| n > 0 && s.aired >= n) {
+                self.fin.insert(s.id, today);
+                let z = crate::vfilter::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(&(seed, s.id, 0x5e9u32), &mut h);
+                let u = (std::hash::Hasher::finish(&h) >> 11) as f64 / (1u64 << 53) as f64;
+                let mut acc = 0.0;
+                let mut when = None;
+                for (t, p) in crate::vfilter::announce_schedule(sp, z, 0) {
+                    acc += p;
+                    if u < acc {
+                        when = Some(today + t);
+                        break;
+                    }
+                }
+                self.ann.insert(s.id, when);
+            }
+            if let Some(Some(a)) = self.ann.get(&s.id) {
+                if *a <= today {
+                    s.sequel = Some(crate::inputs::SequelInputs {
+                        id: 900_000_000 + s.id,
+                        announced: fmt(*a),
+                        premieres: sp.lag_days.iter().map(|l| fmt(a + l)).collect(),
+                        exact: false,
+                    });
+                }
+            }
+        }
+    }
+}
+
 /// `SIM_REVEAL_DAYS=n` (docs/v2-corporate.md §6): the replay's schedules come from one late snapshot, so every
 /// break is known from the first day and no delay is ever announced. With this set, each show's schedule on a
 /// day shows its real dates only up to n days ahead and weekly after the last of them, so a real break appears
@@ -293,6 +341,13 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut published_keys: HashSet<(i64, u64)> = HashSet::new();
     let mut notices: Vec<(i64, i64, String, String)> = Vec::new();
     let reveal_days: Option<i64> = std::env::var("SIM_REVEAL_DAYS").ok().and_then(|v| v.parse().ok());
+    let mut synth: Option<(crate::vfilter::SequelParams, SynthSequels)> = match std::env::var("SIM_SYNTH_SEQUELS") {
+        Ok(v) if v == "1" => {
+            let fp = crate::vfilter::FilterParams::load(cfg)?;
+            Some((fp.sequel.clone().ok_or("SIM_SYNTH_SEQUELS needs valuation.sequel_option = 1")?, SynthSequels::default()))
+        }
+        _ => None,
+    };
     let mut news_seen = tap.0.lock().unwrap().news.len();
     let mut adj_seen = e.price_adjustments().len();
     let mut npc_time = 0.0f64;
@@ -304,6 +359,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let mut inp = load(day)?;
         if let Some(n) = reveal_days {
             reveal_schedules(&mut inp, n);
+        }
+        if let Some((sp, st)) = synth.as_mut() {
+            st.apply(&mut inp, sp, opts.market.seed);
         }
         m.set_heat(&e, &prev, params.market_weights);
         let t_open = at_local(day, 8, 45);

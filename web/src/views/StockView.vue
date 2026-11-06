@@ -6,6 +6,7 @@ import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
 import IpoOffer from '../components/IpoOffer.vue'
+import RightsOffer from '../components/RightsOffer.vue'
 import KChart, { type Period } from '../components/KChart.vue'
 import OrderBook from '../components/OrderBook.vue'
 import OrderForm from '../components/OrderForm.vue'
@@ -145,6 +146,13 @@ const audience = computed(() => {
 })
 const pos = computed(() => (session.me ? (account.positions ?? []).find((x) => x.stock.id === id.value) ?? null : null))
 const subscribing = computed(() => s.value?.status === 'subscribing')
+const rights = computed(() => store.rights[id.value] ?? null)
+const exDays = computed(() => store.exDays[id.value] ?? [])
+async function setAdjust(v: 'forward' | 'none') {
+  if (store.adjust === v) return
+  store.adjust = v
+  await store.refresh(id.value, true).catch(() => {})
+}
 // the cooling-off ends at `until`: count down every second, and drop the banner when it ends
 const nowMs = ref(Date.now())
 const clockTimer = window.setInterval(() => (nowMs.value = Date.now()), 1000)
@@ -253,6 +261,10 @@ function back() {
                 <span><i class="dash"></i>播出</span>
                 <span><i class="dia"></i>分红</span>
               </span>
+              <span v-if="exDays.length && period !== 'intraday'" class="adj" role="group" aria-label="复权">
+                <button type="button" :class="{ on: store.adjust === 'forward' }" :aria-pressed="store.adjust === 'forward'" @click="setAdjust('forward')">前复权</button>
+                <button type="button" :class="{ on: store.adjust === 'none' }" :aria-pressed="store.adjust === 'none'" @click="setAdjust('none')">不复权</button>
+              </span>
             </Tabs>
             <KChart :candles="store.candles[id] ?? []" :period="period" :intraday="store.intraday[id]" :prev-close="q.prev_close"
                     :episodes="s.episode_days" :dividends="s.dividends" :wide="desk" :live="liveChart" />
@@ -262,6 +274,11 @@ function back() {
           <section v-if="!subscribing" class="term booksec phone-only">
             <OrderBook :bids="book.bids" :asks="book.asks" layout="split" @pick="onPick" />
             <TradeTape :trades="tape" :limit="5" class="tape" />
+          </section>
+
+          <section v-if="rights" class="sec gutter">
+            <h2 class="h2">配股认购</h2>
+            <RightsOffer :stock-id="id" :offer="rights" @changed="refresh" />
           </section>
 
           <section v-if="subscribing && s.ipo" class="sec gutter ipo phone-only">
@@ -395,6 +412,11 @@ function back() {
 .legend span { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
 .dash { width: 12px; border-top: 1px dashed var(--accent); display: inline-block; }
 .dia { width: 7px; height: 7px; background: var(--ink); transform: rotate(45deg); display: inline-block; }
+.adj { display: inline-flex; margin-left: 14px; padding-bottom: 10px; }
+.adj button { font-size: 12px; color: var(--ink-2); background: none; border: 1px solid var(--hair); padding: 2px 8px; cursor: pointer; }
+.adj button + button { border-left: 0; }
+.adj button.on { color: var(--ink); border-color: var(--ink); }
+.adj button.on + button { border-left: 1px solid var(--hair); }
 
 .booksec { margin: 4px var(--gutter) 0; padding: 12px; }
 .tape { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--t-line); }

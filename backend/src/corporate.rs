@@ -164,6 +164,8 @@ pub struct CorporateState {
     pub above_days: HashMap<i64, i64>,
     /// each listed stock's daily volumes, latest last (the buyback's daily limit)
     pub volumes: HashMap<i64, VecDeque<i64>>,
+    /// each listed stock's last 30 closes, latest last, in today's units (the buyback's published price cap)
+    pub closes: HashMap<i64, VecDeque<i64>>,
     pub last_id: i64,
     /// buyback: the last 10-minute slot each programme acted in (memory only)
     slot: HashMap<i64, i64>,
@@ -268,6 +270,10 @@ pub fn load(conn: &Connection, split_above_cents: i64, adv_days: usize) -> rusql
             if v.len() < adv_days {
                 v.push_front((vol as f64 * qf).round() as i64);
             }
+            let cl = s.closes.entry(c).or_default();
+            if cl.len() < CLOSE_DAYS {
+                cl.push_front((close as f64 * pf).round() as i64);
+            }
             if done.contains(&c) {
                 continue;
             }
@@ -292,6 +298,9 @@ impl CorporateState {
         f
     }
 }
+
+/// Trading days in the average a buyback's price cap is set from.
+const CLOSE_DAYS: usize = 30;
 
 fn day_add(day: &str, n: i64) -> String {
     NaiveDate::parse_from_str(day, "%Y-%m-%d").map(|d| (d + Duration::days(n)).format("%Y-%m-%d").to_string()).unwrap_or_default()
@@ -482,6 +491,11 @@ impl Engine {
             while v.len() > self.corporate.buyback_adv_days {
                 v.pop_front();
             }
+            let cl = self.st.corp.closes.entry(c.id).or_default();
+            cl.push_back(c.prev_close);
+            while cl.len() > CLOSE_DAYS {
+                cl.pop_front();
+            }
             let n = self.st.corp.above_days.entry(c.id).or_insert(0);
             *n = if c.prev_close > above { *n + 1 } else { 0 };
             let n = *n;
@@ -593,6 +607,11 @@ impl Engine {
         if let Some(v) = self.st.corp.volumes.get_mut(&c) {
             for x in v.iter_mut() {
                 *x *= k;
+            }
+        }
+        if let Some(v) = self.st.corp.closes.get_mut(&c) {
+            for x in v.iter_mut() {
+                *x = div(*x);
             }
         }
         let eff = a.effective.clone();
@@ -806,6 +825,11 @@ impl Engine {
             }
         }
         self.record_adjustment(c, &day_add(day, 1), terp as f64 / close as f64, 1.0, id);
+        if let Some(v) = self.st.corp.closes.get_mut(&c) {
+            for x in v.iter_mut() {
+                *x = ((*x as f64) * terp as f64 / close as f64).round() as i64;
+            }
+        }
         a.status = "done".into();
         a.params.terp = terp;
         a.params.issued = issued;
@@ -900,7 +924,11 @@ impl Engine {
             return;
         }
         let end = day_add(day, self.corporate.buyback_days);
-        let cap = co.fair_value;
+        // the published cap: 150% of the average close of the last 30 trading days (CSRC 上市公司股份回购规则);
+        // management also never pays more than its own estimate of the value (not published)
+        let closes = self.st.corp.closes.get(&c).filter(|v| !v.is_empty());
+        let avg = closes.map_or(co.prev_close, |v| v.iter().sum::<i64>() / v.len() as i64);
+        let cap = avg * 3 / 2;
         self.new_action(c, "buyback", day, &end, "active", Params { budget: idle, cap, ..Default::default() });
         self.push_news(
             ts,
@@ -909,7 +937,7 @@ impl Engine {
             Some(c),
             format!("《{}》回购：不超过 {} 币", co.title, grouped(idle)),
             format!(
-                "公司用闲置现金在市场上回购股份并注销，价格不高于 {} 币，{}前完成。每天买入不超过过去 {} 个交易日日均成交量的 {}%，不在开盘后和收盘前 {} 分钟内买入。",
+                "公司认为股价低于每股价值，用闲置现金在市场上回购股份并注销，价格不高于 {} 币，{}前完成。每天买入不超过过去 {} 个交易日日均成交量的 {}%，不在开盘后和收盘前 {} 分钟内买入。",
                 yuan(cap),
                 md(&end),
                 self.corporate.buyback_adv_days,
