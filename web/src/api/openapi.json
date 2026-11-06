@@ -1001,6 +1001,24 @@
         ],
         "type": "object"
       },
+      "EpisodeComments": {
+        "description": "Bangumi 单集吐槽数（采集器最新快照）",
+        "properties": {
+          "comments": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "episode": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "comments",
+          "episode"
+        ],
+        "type": "object"
+      },
       "EpisodeDay": {
         "properties": {
           "episode": {
@@ -2979,6 +2997,10 @@
           "dividend_per_share": {
             "$ref": "#/components/schemas/Money"
           },
+          "earnings_per_share": {
+            "$ref": "#/components/schemas/Money",
+            "description": "每股收益 = 营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本（与 `Ratios.pe_ttm` 同一口径，四舍五入到分）"
+          },
           "episodes_aired": {
             "format": "int64",
             "type": "integer"
@@ -2994,6 +3016,7 @@
         "required": [
           "by_market",
           "dividend_per_share",
+          "earnings_per_share",
           "episodes_aired",
           "revenue",
           "week_start"
@@ -3224,6 +3247,39 @@
         ],
         "type": "object"
       },
+      "ScheduledEpisode": {
+        "description": "一集的播出：已播的日期是实际播出的交易日；未播的日期来自公开排期（Bangumi、AniList 下一集），没有公开日期时为 null",
+        "properties": {
+          "aired": {
+            "type": "boolean"
+          },
+          "date": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "delayed": {
+            "description": "晚于 Bangumi 原定日期，或有这一集的延期公告",
+            "type": "boolean"
+          },
+          "episode": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "aired",
+          "date",
+          "delayed",
+          "episode"
+        ],
+        "type": "object"
+      },
       "SearchHit": {
         "properties": {
           "change": {
@@ -3300,6 +3356,45 @@
           "hot"
         ],
         "type": "string"
+      },
+      "Sequel": {
+        "description": "续作",
+        "properties": {
+          "announced": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "premiere": {
+            "description": "公布的开播时间，精度按公布的：`2027-01-10`、`2027-01` 或 `2027`；dated 时一定是完整日期",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "开放枚举：unknown（还没有作品关系数据）、none（未公布）、announced（已公布，未定档）、dated（定档）",
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "announced",
+          "premiere",
+          "status",
+          "title"
+        ],
+        "type": "object"
       },
       "StockDetail": {
         "properties": {
@@ -3420,6 +3515,9 @@
           "trading_day": {
             "$ref": "#/components/schemas/TradingDay"
           },
+          "trailing_4w": {
+            "$ref": "#/components/schemas/Trailing4w"
+          },
           "vcm": {
             "$ref": "#/components/schemas/Vcm"
           }
@@ -3449,6 +3547,7 @@
           "title_en",
           "title_ja",
           "trading_day",
+          "trailing_4w",
           "vcm"
         ],
         "type": "object"
@@ -3458,6 +3557,10 @@
           "eligible": {
             "description": "是否融资融券标的",
             "type": "boolean"
+          },
+          "financed": {
+            "$ref": "#/components/schemas/Money",
+            "description": "融资余额：全部账户在这支股票上未还的融资本金"
           },
           "financing_rate": {
             "format": "double",
@@ -3487,16 +3590,23 @@
               "string",
               "null"
             ]
+          },
+          "shorted": {
+            "description": "融券余量：全部账户在这支股票上的欠券股数",
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
           "eligible",
+          "financed",
           "financing_rate",
           "financing_room",
           "haircut",
           "lendable",
           "lending_rate",
-          "reason"
+          "reason",
+          "shorted"
         ],
         "type": "object"
       },
@@ -3642,6 +3752,24 @@
         "format": "date",
         "type": "string"
       },
+      "Trailing4w": {
+        "description": "近 4 周（28 天，与 `Ratios` 的窗口同一切法）的实际合计，不年化",
+        "properties": {
+          "dividends_per_share": {
+            "$ref": "#/components/schemas/Money",
+            "description": "每股分红合计"
+          },
+          "earnings_per_share": {
+            "$ref": "#/components/schemas/Money",
+            "description": "每股收益合计"
+          }
+        },
+        "required": [
+          "dividends_per_share",
+          "earnings_per_share"
+        ],
+        "type": "object"
+      },
       "UserRef": {
         "properties": {
           "id": {
@@ -3704,6 +3832,91 @@
           "high",
           "low",
           "until"
+        ],
+        "type": "object"
+      },
+      "Work": {
+        "properties": {
+          "discussion": {
+            "description": "已播各集的讨论（最多最近 26 集）",
+            "items": {
+              "$ref": "#/components/schemas/EpisodeComments"
+            },
+            "type": "array"
+          },
+          "episodes": {
+            "description": "总集数，未知或长篇为 null",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "episodes_aired": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_air": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "id": {
+            "description": "AniList 作品 id（第一部就是股票 id）",
+            "format": "int64",
+            "type": "integer"
+          },
+          "is_long_runner": {
+            "type": "boolean"
+          },
+          "schedule": {
+            "description": "一季的全部集数（长篇只有最近 8 集和下一集）",
+            "items": {
+              "$ref": "#/components/schemas/ScheduledEpisode"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "开放枚举：upcoming（未开播）、airing、finished、halted（暂停播出）",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discussion",
+          "episodes",
+          "episodes_aired",
+          "first_air",
+          "id",
+          "is_long_runner",
+          "schedule",
+          "status",
+          "title"
+        ],
+        "type": "object"
+      },
+      "WorksResponse": {
+        "properties": {
+          "sequel": {
+            "$ref": "#/components/schemas/Sequel"
+          },
+          "works": {
+            "items": {
+              "$ref": "#/components/schemas/Work"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sequel",
+          "works"
         ],
         "type": "object"
       },
@@ -6488,6 +6701,49 @@
           }
         },
         "summary": "公开成交，游标分页",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/works": {
+      "get": {
+        "operationId": "works",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorksResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "一支股票名下的作品：播出排期、单集讨论、续作",
         "tags": [
           "stocks"
         ]

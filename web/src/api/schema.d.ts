@@ -706,6 +706,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stocks/{id}/works": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 一支股票名下的作品：播出排期、单集讨论、续作 */
+        get: operations["works"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -989,6 +1006,13 @@ export interface components {
             max_holding_days: number | null;
             /** Format: double */
             rate: number;
+        };
+        /** @description Bangumi 单集吐槽数（采集器最新快照） */
+        EpisodeComments: {
+            /** Format: int64 */
+            comments: number;
+            /** Format: int64 */
+            episode: number;
         };
         EpisodeDay: {
             /** Format: int64 */
@@ -1529,6 +1553,8 @@ export interface components {
         RevenueWeek: {
             by_market: components["schemas"]["ByMarket"];
             dividend_per_share: components["schemas"]["Money"];
+            /** @description 每股收益 = 营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本（与 `Ratios.pe_ttm` 同一口径，四舍五入到分） */
+            earnings_per_share: components["schemas"]["Money"];
             /** Format: int64 */
             episodes_aired: number;
             revenue: components["schemas"]["Money"];
@@ -1607,6 +1633,15 @@ export interface components {
             /** Format: int64 */
             window_minutes: number;
         };
+        /** @description 一集的播出：已播的日期是实际播出的交易日；未播的日期来自公开排期（Bangumi、AniList 下一集），没有公开日期时为 null */
+        ScheduledEpisode: {
+            aired: boolean;
+            date: null | components["schemas"]["TradingDay"];
+            /** @description 晚于 Bangumi 原定日期，或有这一集的延期公告 */
+            delayed: boolean;
+            /** Format: int64 */
+            episode: number;
+        };
         SearchHit: {
             /** Format: double */
             change: number;
@@ -1632,6 +1667,15 @@ export interface components {
          * @enum {string}
          */
         Sentiment: "cold" | "neutral" | "hot";
+        /** @description 续作 */
+        Sequel: {
+            announced: null | components["schemas"]["TradingDay"];
+            /** @description 公布的开播时间，精度按公布的：`2027-01-10`、`2027-01` 或 `2027`；dated 时一定是完整日期 */
+            premiere: string | null;
+            /** @description 开放枚举：unknown（还没有作品关系数据）、none（未公布）、announced（已公布，未定档）、dated（定档） */
+            status: string;
+            title: string | null;
+        };
         StockDetail: {
             audiences: components["schemas"]["Audiences"];
             cover_url: string;
@@ -1664,11 +1708,14 @@ export interface components {
             title_en: string | null;
             title_ja: string | null;
             trading_day: components["schemas"]["TradingDay"];
+            trailing_4w: components["schemas"]["Trailing4w"];
             vcm: components["schemas"]["Vcm"];
         };
         StockMargin: {
             /** @description 是否融资融券标的 */
             eligible: boolean;
+            /** @description 融资余额：全部账户在这支股票上未还的融资本金 */
+            financed: components["schemas"]["Money"];
             /** Format: double */
             financing_rate: number;
             /** @description 剩余融资额度 */
@@ -1687,6 +1734,11 @@ export interface components {
             lending_rate: number;
             /** @description 开放枚举：new_listing、penny、delisting、not_listed；是标的时为 null */
             reason: string | null;
+            /**
+             * Format: int64
+             * @description 融券余量：全部账户在这支股票上的欠券股数
+             */
+            shorted: number;
         };
         StockQuote: {
             /** Format: double */
@@ -1733,6 +1785,13 @@ export interface components {
          * @description 交易日 `YYYY-MM-DD`（04:00 换日）。
          */
         TradingDay: string;
+        /** @description 近 4 周（28 天，与 `Ratios` 的窗口同一切法）的实际合计，不年化 */
+        Trailing4w: {
+            /** @description 每股分红合计 */
+            dividends_per_share: components["schemas"]["Money"];
+            /** @description 每股收益合计 */
+            earnings_per_share: components["schemas"]["Money"];
+        };
         UserRef: {
             /** Format: int64 */
             id: number;
@@ -1745,6 +1804,33 @@ export interface components {
             high: null | components["schemas"]["Money"];
             low: null | components["schemas"]["Money"];
             until: null | components["schemas"]["Timestamp"];
+        };
+        Work: {
+            /** @description 已播各集的讨论（最多最近 26 集） */
+            discussion: components["schemas"]["EpisodeComments"][];
+            /**
+             * Format: int64
+             * @description 总集数，未知或长篇为 null
+             */
+            episodes: number | null;
+            /** Format: int64 */
+            episodes_aired: number;
+            first_air: null | components["schemas"]["TradingDay"];
+            /**
+             * Format: int64
+             * @description AniList 作品 id（第一部就是股票 id）
+             */
+            id: number;
+            is_long_runner: boolean;
+            /** @description 一季的全部集数（长篇只有最近 8 集和下一集） */
+            schedule: components["schemas"]["ScheduledEpisode"][];
+            /** @description 开放枚举：upcoming（未开播）、airing、finished、halted（暂停播出） */
+            status: string;
+            title: string;
+        };
+        WorksResponse: {
+            sequel: components["schemas"]["Sequel"];
+            works: components["schemas"]["Work"][];
         };
         /** @description 客户端→服务器的消息（每帧一个 JSON 对象，最大 16 KB） */
         WsClientMessage: {
@@ -3313,6 +3399,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PublicTradePage"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    works: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorksResponse"];
                 };
             };
             default: {

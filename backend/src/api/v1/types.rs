@@ -534,7 +534,18 @@ pub struct RevenueWeek {
     pub revenue: Money,
     pub by_market: ByMarket,
     pub dividend_per_share: Money,
+    /// 每股收益 = 营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本（与 `Ratios.pe_ttm` 同一口径，四舍五入到分）
+    pub earnings_per_share: Money,
     pub episodes_aired: i64,
+}
+
+/// 近 4 周（28 天，与 `Ratios` 的窗口同一切法）的实际合计，不年化
+#[derive(Serialize, ToSchema)]
+pub struct Trailing4w {
+    /// 每股收益合计
+    pub earnings_per_share: Money,
+    /// 每股分红合计
+    pub dividends_per_share: Money,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -632,6 +643,7 @@ pub struct StockDetail {
     pub vcm: Vcm,
     pub ratios: Ratios,
     pub revenue_weeks: Vec<RevenueWeek>,
+    pub trailing_4w: Trailing4w,
     pub episode_days: Vec<EpisodeDay>,
     pub next_episode: Option<NextEpisode>,
     pub dividends: Vec<DividendPaid>,
@@ -1042,3 +1054,60 @@ pub struct Health {
 
 /// Arbitrary JSON (event payloads).
 pub type Json = Value;
+
+// ---------------------------------------------------------------- works (§4.2.10)
+
+/// 一集的播出：已播的日期是实际播出的交易日；未播的日期来自公开排期（Bangumi、AniList 下一集），没有公开日期时为 null
+#[derive(Serialize, ToSchema)]
+pub struct ScheduledEpisode {
+    pub episode: i64,
+    #[schema(format = Date)]
+    pub date: Option<TradingDay>,
+    pub aired: bool,
+    /// 晚于 Bangumi 原定日期，或有这一集的延期公告
+    pub delayed: bool,
+}
+
+/// Bangumi 单集吐槽数（采集器最新快照）
+#[derive(Serialize, ToSchema)]
+pub struct EpisodeComments {
+    pub episode: i64,
+    pub comments: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct Work {
+    /// AniList 作品 id（第一部就是股票 id）
+    pub id: i64,
+    pub title: String,
+    #[schema(format = Date)]
+    pub first_air: Option<TradingDay>,
+    /// 总集数，未知或长篇为 null
+    pub episodes: Option<i64>,
+    pub episodes_aired: i64,
+    pub is_long_runner: bool,
+    /// 开放枚举：upcoming（未开播）、airing、finished、halted（暂停播出）
+    pub status: String,
+    /// 一季的全部集数（长篇只有最近 8 集和下一集）
+    pub schedule: Vec<ScheduledEpisode>,
+    /// 已播各集的讨论（最多最近 26 集）
+    pub discussion: Vec<EpisodeComments>,
+}
+
+/// 续作
+#[derive(Serialize, ToSchema)]
+pub struct Sequel {
+    /// 开放枚举：unknown（还没有作品关系数据）、none（未公布）、announced（已公布，未定档）、dated（定档）
+    pub status: String,
+    pub title: Option<String>,
+    /// 公布的开播时间，精度按公布的：`2027-01-10`、`2027-01` 或 `2027`；dated 时一定是完整日期
+    pub premiere: Option<String>,
+    #[schema(format = Date)]
+    pub announced: Option<TradingDay>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct WorksResponse {
+    pub works: Vec<Work>,
+    pub sequel: Sequel,
+}

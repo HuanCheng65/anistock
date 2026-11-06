@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BottomNav from '../components/BottomNav.vue'
 import Cover from '../components/Cover.vue'
@@ -10,15 +10,20 @@ import RightsOffer from '../components/RightsOffer.vue'
 import KChart, { type Period } from '../components/KChart.vue'
 import OrderBook from '../components/OrderBook.vue'
 import OrderForm from '../components/OrderForm.vue'
-import RevenueBars from '../components/RevenueBars.vue'
+import BizPanel from '../components/stock/BizPanel.vue'
+import HoldersPanel from '../components/stock/HoldersPanel.vue'
+import NoticePanel from '../components/stock/NoticePanel.vue'
+import PositionStrip from '../components/stock/PositionStrip.vue'
+import WorksPanel from '../components/stock/WorksPanel.vue'
 import Tabs from '../components/Tabs.vue'
 import TradeTape from '../components/TradeTape.vue'
 import ListSidebar from '../components/ListSidebar.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
 import { useStockNav } from '../composables/useStockNav'
-import { big, bigMoney, dir, hm, money, pct, qty, share, shortDay, signed, weekdayTime } from '../format'
+import { bigMoney, dir, hm, money, pct, qty, share, signed, weekdayTime } from '../format'
 import { useAccount } from '../stores/account'
+import { useCredit } from '../stores/credit'
 import { markEditing } from '../version'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
@@ -33,6 +38,7 @@ const market = useMarket()
 const prefs = usePrefs()
 const session = useSession()
 const account = useAccount()
+const credit = useCredit()
 const desk = useMedia(DESK)
 const wide = useMedia('(min-width: 1180px)')
 const drawer = ref(false)
@@ -47,7 +53,11 @@ const { refresh } = usePoll(async () => {
   if (period.value === 'intraday') await store.refreshIntraday(id.value)
 }, 5000, 20000)
 // the player's position and open orders here (the order form and the 持仓 block)
-usePoll(() => (session.me ? Promise.all([account.refreshPositions(), account.refreshOrders()]) : null), 15000, 60000)
+usePoll(() => (session.me ? Promise.all([
+  account.refreshPositions(), account.refreshOrders(),
+  // financing owed and shares owed here (持仓), only with a credit account
+  session.me.credit_status != null ? credit.refresh().catch(() => {}) : null,
+]) : null), 15000, 60000)
 watch(sheet, (v) => markEditing('order-sheet', !!v))
 onBeforeUnmount(() => markEditing('order-sheet', false))
 useTopic(computed(() => (Number.isFinite(id.value) ? `stock:${id.value}` : null)))
@@ -90,8 +100,8 @@ const stats = computed(() => {
   ]
   return desk.value
     ? [...base, { k: '昨收', v: money(x.prev_close), c: '', n: null }, ...tail,
-       { k: '市盈率(动)', v: s.value?.ratios.pe_dynamic != null ? s.value.ratios.pe_dynamic.toFixed(1) : '–', c: '', n: null },
-       { k: '股息率(动)', v: s.value?.ratios.dividend_yield_dynamic != null ? share(s.value.ratios.dividend_yield_dynamic, 1) : '–', c: '', n: null }]
+       { k: '市盈率(TTM)', v: s.value?.ratios.pe_ttm != null ? s.value.ratios.pe_ttm.toFixed(1) : '–', c: '', n: null },
+       { k: '股息率(TTM)', v: s.value?.ratios.dividend_yield_ttm != null ? share(s.value.ratios.dividend_yield_ttm, 1) : '–', c: '', n: null }]
     : [...base, ...tail]
 })
 const periods = [
@@ -102,50 +112,64 @@ const periods = [
 ]
 const periodModel = computed({ get: () => period.value as string, set: (v: string) => (period.value = v as Period) })
 
-const holders = computed(() => {
-  const h = s.value?.holders
-  const total = s.value?.shares || 1
-  if (!h) return null
-  return [
-    { k: '制作委员会', v: h.committee / total, c: 'var(--hold-committee)' },
-    { k: '做市商', v: h.market_maker / total, c: 'var(--hold-mm)' },
-    { k: 'NPC', v: h.npc.total / total, c: 'var(--hold-npc)' },
-    { k: '玩家', v: h.player / total, c: 'var(--hold-player)' },
-    { k: '其他', v: h.other / total, c: 'var(--hold-unissued)' },
-    { k: '待发行', v: h.unissued / total, c: 'var(--hold-unissued)' },
-  ].filter((x) => x.v > 0 || x.k === '玩家')
-})
-const ratios = computed(() => {
-  const r = s.value?.ratios
-  return [
-    { k: '市盈率(动)', v: r?.pe_dynamic != null ? r.pe_dynamic.toFixed(1) : '–' },
-    { k: '市盈率(TTM)', v: r?.pe_ttm != null ? r.pe_ttm.toFixed(1) : '–' },
-    { k: '股息率(动)', v: r?.dividend_yield_dynamic != null ? share(r.dividend_yield_dynamic, 1) : '–' },
-    { k: '股息率(TTM)', v: r?.dividend_yield_ttm != null ? share(r.dividend_yield_ttm, 1) : '–' },
-    { k: '市净率', v: r?.pb != null ? r.pb.toFixed(2) : '–' },
-  ]
-})
-const events = computed(() => {
-  const out: { d: string; t: string; key: string }[] = []
-  for (const n of store.news[id.value] ?? []) out.push({ d: n.trading_day, t: n.title, key: 'n' + n.id })
-  for (const e of s.value?.episode_days ?? []) out.push({ d: e.trading_day, t: e.episode === 1 && !s.value?.is_long_runner ? '首播' : `第 ${e.episode} 集播出`, key: 'e' + e.episode })
-  for (const d of s.value?.dividends ?? []) out.push({ d: d.trading_day, t: `分红每股 ${money(d.per_share)}`, key: 'd' + d.trading_day })
-  return out.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0)).slice(0, 8)
-})
-// public audience numbers (collector snapshots); a source without data is left out
-const audience = computed(() => {
-  const a = s.value?.audiences
-  if (!a) return []
-  const out: { k: string; v: string }[] = []
-  if (a.bangumi?.score != null) out.push({ k: 'Bangumi 评分', v: a.bangumi.score.toFixed(1) })
-  if (a.bangumi?.collection) out.push({ k: 'Bangumi 在看', v: big(a.bangumi.collection.doing) })
-  if (a.anilist?.score != null) out.push({ k: 'AniList 评分', v: String(a.anilist.score) })
-  if (a.anilist?.popularity != null) out.push({ k: 'AniList 人气', v: big(a.anilist.popularity) })
-  if (a.annict?.watchers != null) out.push({ k: 'Annict 观看', v: big(a.annict.watchers) })
-  return out
-})
 const pos = computed(() => (session.me ? (account.positions ?? []).find((x) => x.stock.id === id.value) ?? null : null))
 const subscribing = computed(() => s.value?.status === 'subscribing')
+
+// ---- the lower half: 经营 / 作品 / 公告 / 股东, the last one chosen remembered for the session
+type Lower = 'biz' | 'works' | 'notices' | 'holders'
+const lowerTabs: { key: Lower; label: string }[] = [
+  { key: 'biz', label: '经营' },
+  { key: 'works', label: '作品' },
+  { key: 'notices', label: '公告' },
+  { key: 'holders', label: '股东' },
+]
+const TAB_KEY = 'stock.tab'
+function savedTab(): Lower | null {
+  try {
+    const v = sessionStorage.getItem(TAB_KEY)
+    return lowerTabs.some((t) => t.key === v) ? (v as Lower) : null
+  } catch {
+    return null
+  }
+}
+const chosen = ref<Lower | null>(savedTab())
+// before a choice: a stock still in subscription has no revenue yet, so it opens on its schedule
+const tab = computed<Lower>(() => chosen.value ?? (subscribing.value ? 'works' : 'biz'))
+const tabModel = computed({ get: () => tab.value as string, set: (v: string) => (chosen.value = v as Lower) })
+const lower = ref<HTMLElement | null>(null)
+const tabbar = ref<HTMLElement | null>(null)
+// switching while the tab bar is stuck keeps it where it is: the new panel starts right under it
+watch(tab, async (t) => {
+  try {
+    sessionStorage.setItem(TAB_KEY, t)
+  } catch { /* private mode */ }
+  const bar = tabbar.value
+  const sec = lower.value
+  if (!bar || !sec) return
+  const stick = parseFloat(getComputedStyle(bar).top) || 0
+  const stuck = bar.getBoundingClientRect().top <= stick + 1 && sec.getBoundingClientRect().top < stick
+  await nextTick()
+  if (stuck) window.scrollTo({ top: window.scrollY + sec.getBoundingClientRect().top - stick })
+}, { flush: 'pre' })
+const worksFailed = ref(false)
+function loadWorks(force = false) {
+  worksFailed.value = false
+  store.refreshWorks(id.value, force).catch(() => (worksFailed.value = true))
+}
+usePoll(() => {
+  if (!Number.isFinite(id.value)) return null
+  if (tab.value === 'works') loadWorks()
+  if (tab.value === 'holders') return credit.loadMargin(id.value).catch(() => {})
+  return null
+}, 60000)
+watch([tab, id], () => {
+  if (tab.value === 'works' && !store.works[id.value]) loadWorks()
+  if (tab.value === 'holders' && !credit.margins[id.value]) credit.loadMargin(id.value).catch(() => {})
+})
+const works = computed(() => store.works[id.value] ?? null)
+const margin = computed(() => credit.margins[id.value] ?? null)
+const notices = computed(() => store.news[id.value] ?? null)
+const creditAcct = computed(() => (session.me?.credit_status != null ? credit.account : null))
 const rights = computed(() => store.rights[id.value] ?? null)
 const exDays = computed(() => store.exDays[id.value] ?? [])
 async function setAdjust(v: 'forward' | 'none') {
@@ -286,53 +310,19 @@ function back() {
             <IpoOffer :ipo="s.ipo" :episodes="s.episodes" compact @changed="refresh" />
           </section>
 
-          <div class="cols">
-            <section class="sec gutter">
-              <h2 class="h2">营收</h2>
-              <RevenueBars v-if="s.revenue_weeks.length" :weeks="s.revenue_weeks" :h="desk ? 110 : 96" />
-              <p v-else class="muted small">暂无营收</p>
-              <dl class="facts ratios">
-                <div v-for="r in ratios" :key="r.k"><dt>{{ r.k }}</dt><dd>{{ r.v }}</dd></div>
-              </dl>
-            </section>
-            <section class="sec gutter events">
-              <h2 class="h2">动态</h2>
-              <div v-for="e in events" :key="e.key" class="ev">
-                <span class="num d">{{ shortDay(e.d, session.status?.trading_day) }}</span>
-                <span>{{ e.t }}</span>
-              </div>
-              <p v-if="!events.length" class="muted small">暂无动态</p>
-            </section>
-          </div>
+          <PositionStrip :pos="pos" :credit="creditAcct" :stock-id="id" />
 
-          <div class="cols">
-            <section v-if="holders" class="sec gutter">
-              <h2 class="h2">股东</h2>
-              <div class="hbar" role="img" :aria-label="holders.map((h) => `${h.k} ${share(h.v)}`).join('，')">
-                <span v-for="h in holders" :key="h.k" :style="{ flex: Math.max(h.v, 0.0001), background: h.c }"></span>
-              </div>
-              <div class="hleg">
-                <span v-for="h in holders" :key="h.k">{{ h.k }} <span class="num ink">{{ share(h.v) }}</span></span>
-              </div>
-            </section>
-            <section v-if="audience.length" class="sec gutter">
-              <h2 class="h2">观众</h2>
-              <dl class="facts">
-                <div v-for="x in audience" :key="x.k"><dt>{{ x.k }}</dt><dd>{{ x.v }}</dd></div>
-              </dl>
-            </section>
-            <section v-if="pos" class="sec gutter">
-              <h2 class="h2">持仓</h2>
-              <dl class="facts">
-                <div><dt>数量</dt><dd>{{ qty(pos.quantity) }}</dd></div>
-                <div><dt>成本</dt><dd>{{ money(pos.average_cost) }}</dd></div>
-                <div><dt>市值</dt><dd>{{ money(pos.value) }}</dd></div>
-                <div><dt>盈亏</dt><dd :class="dir(pos.pnl)">{{ signed(pos.pnl) }}</dd></div>
-                <div><dt>盈亏比例</dt><dd :class="dir(pos.pnl)">{{ pct(pos.pnl_ratio) }}</dd></div>
-                <div><dt>累计分红</dt><dd>{{ money(pos.dividends) }}</dd></div>
-              </dl>
-            </section>
-          </div>
+          <section ref="lower" class="lower" aria-label="资料">
+            <div ref="tabbar" class="tabbar">
+              <Tabs v-model="tabModel" :items="lowerTabs" label="资料" ids="stk" class="ltabs" />
+            </div>
+            <div :id="`stk-panel-${tab}`" :key="tab" class="panel gutter" role="tabpanel" :aria-labelledby="`stk-tab-${tab}`" tabindex="0">
+              <BizPanel v-if="tab === 'biz'" :s="s" :today="session.status?.trading_day" :desk="desk" />
+              <WorksPanel v-else-if="tab === 'works'" :s="s" :works="works" :failed="worksFailed" :today="session.status?.trading_day" @retry="loadWorks(true)" />
+              <NoticePanel v-else-if="tab === 'notices'" :items="notices" :more="!!store.newsMore[id]" :today="session.status?.trading_day" :load="() => store.moreNews(id)" :title="s.stock.title" />
+              <HoldersPanel v-else :s="s" :margin="margin" />
+            </div>
+          </section>
         </template>
         <div v-else class="gutter" style="padding-top: 18px">
           <div class="skel" style="height: 134px"></div>
@@ -422,16 +412,17 @@ function back() {
 .tape { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--t-line); }
 
 .sec { border-top: 1px solid var(--rule); padding-top: 14px; padding-bottom: 14px; display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
-.cols .sec + .sec { margin-top: 0; }
-.ratios { border-top: 1px solid var(--hair); margin-top: 4px; }
-.events { gap: 0; }
-.events .h2 { margin-bottom: 6px; }
-.ev { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hair-2); font-size: 14px; line-height: 1.45; }
-.ev .d { flex: none; width: 44px; font-size: 12px; color: var(--muted); padding-top: 2px; }
-.small { font-size: 13px; }
-.hbar { display: flex; height: 10px; gap: 2px; }
-.hleg { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); }
-.ink { color: var(--ink); }
+.pos + .lower, .sec + .lower { margin-top: 0; }
+
+/* the lower half: tabs stay at the top of the screen while their panel scrolls */
+.lower { margin-top: 18px; --stick: 0px; }
+.tabbar { position: sticky; top: var(--stick); z-index: 6; background: var(--ground); border-top: 1px solid var(--rule); padding: 0 var(--gutter); }
+.ltabs { gap: 26px; border-bottom-color: var(--hair); }
+.ltabs :deep(button) { font-size: 16px; padding: 12px 0 11px; }
+.panel { padding-top: 16px; padding-bottom: 24px; min-height: calc(100vh - 120px); animation: panel-in var(--dur-2) var(--ease-out); }
+.panel:focus-visible { outline: none; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .panel { animation: none; } }
 
 .tradebar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 10px;
@@ -477,9 +468,8 @@ function back() {
   .stats dd { font-size: 14px; }
   .chartsec { border-top: 0; padding-top: 8px; }
   .legend.desk-only { display: inline-flex !important; }
-  .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--rule); margin-top: 6px; }
-  .cols .sec { border-top: 0; margin-top: 0; padding-top: 16px; padding-bottom: 16px; }
-  .cols .sec:first-child { border-right: 1px solid var(--hair); }
+  .lower { --stick: var(--desk-header-h); margin-top: 10px; }
+  .panel { padding-top: 20px; min-height: calc(100vh - var(--desk-header-h) - 52px); }
 }
 @media (min-width: 1180px) {
   .frame { grid-template-columns: 248px minmax(0, 1fr) 340px; }

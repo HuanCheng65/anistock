@@ -75,6 +75,13 @@
   --desk-header-h: 56px;
   --container: 1360px;
 
+  /* motion: short, ease-out (things arrive and settle); reduced motion turns transitions off */
+  --dur-1: 120ms;             /* colour, opacity of a hovered or selected element */
+  --dur-2: 220ms;             /* a moving indicator, a panel or a value arriving */
+  --dur-3: 320ms;             /* larger layout changes */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1);
+
   color-scheme: light;
 }
 

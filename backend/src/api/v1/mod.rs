@@ -20,6 +20,7 @@ pub mod ratelimit;
 pub mod search;
 pub mod stocks;
 pub mod types;
+pub mod works;
 pub mod ws;
 
 use std::collections::HashMap;
@@ -542,6 +543,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/stocks/{id}/candles", get(stocks::candles))
         .route("/stocks/{id}/intraday", get(stocks::intraday))
         .route("/stocks/{id}/cover", get(stocks::cover))
+        .route("/stocks/{id}/works", get(works::works))
         .route("/stocks/{id}/corporate-actions", get(corporate::actions))
         .route("/stocks/{id}/rights", get(corporate::rights))
         .route("/stocks/{id}/rights/subscription", put(corporate::subscribe).delete(corporate::unsubscribe))
