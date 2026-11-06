@@ -88,3 +88,8 @@ print("prior_cov_pw", repr(V.prior_cov([0.385, 0.923, 0.322], [0.3185, 0.3983, 0
 # the us drift by heat class (v0.6.1): classes, and a class's path (its offset from week 4 on)
 print("hc", V.heat_class(fp, 6.0), V.heat_class(fp, 7.0), V.heat_class(fp, 8.0), repr(V.for_class(fp, 2)["drift_by_week"]["us"]), V.for_class(fp, None) is fp)
 print("hc_path", repr(V.att_path(V.for_class(fp, 2), p, "us", 8.1, 0.05, today, s1, today - 30, False, 60)[59]))
+# the run-up before the finale (v0.6.1): factors around s3's finale, and its path in the weeks before and after
+f3 = s3[-1]
+print("ru", [V.runup(fp, m, f3, t) for m in ("us", "jp", "cn") for t in (f3 - 15, f3 - 8, f3 - 7, f3 - 1, f3)], V.runup(fp, "us", None, f3 - 3))
+o3r = V.att_path(fp, p, "jp", 2.0, 0.1, today, s3, today + 10, False, 120)
+print("ru_path", f3 - today, repr(o3r[f3 - 4 - today - 1]), repr(o3r[f3 - 10 - today - 1]), repr(o3r[f3 + 2 - today - 1]))

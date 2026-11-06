@@ -895,15 +895,17 @@ def close_days(x, cal, partial=None, drift_heat=None):
             ys, seg, heat, prem_wk = [], None, None, False
         att = [x["att"][m][i] for m in MARKETS]
         obs = [x["obs"][m][i] for m in MARKETS]
+        raw = att
+        att = [att[m] / V.runup(cal, MARKETS[m], fin, d) for m in range(3)]
         if att[0] > 0 and obs[0]:
             v = att[0] / bump[0] if in_fin else att[0]
             ys.append(math.log(v / (cu[k] if (k is not None and k < 7) else 1.0)))
         for m in (1, 2):
             if not x["src"][MARKETS[m]] or not obs[m] or att[m] <= 0:
                 continue
-            if prev_raw[m] is not None and att[m] == prev_raw[m]:
+            if prev_raw[m] is not None and raw[m] == prev_raw[m]:
                 continue
-            prev_raw[m] = att[m]
+            prev_raw[m] = raw[m]
             v = att[m] / bump[m] if in_fin else att[m]
             mean, cov, _, _ = V.kf_update_joint_robust(mean, cov, m, math.log(v), r[m] + (bvar[m] if in_fin else 0.0),
                                                        op[m], orr[m], CLIP)
@@ -1177,6 +1179,134 @@ def history_heat_drift(db_path: Path):
     return res
 
 
+def _excess(la):
+    """Log attention of weeks -3..-1 and 0 (the finale's) relative to the level of weeks -6..-4 (centred on -5), less
+    that level's own drift (weeks -7 -> -4) over the distance: {j: excess}."""
+    base = (la[4] - la[7]) / 3
+    ref = (la[4] + la[5] + la[6]) / 3
+    return {j: la[j] - ref - base * (5 - j) for j in (3, 2, 1, 0)}
+
+
+def history_runup(db_path: Path):
+    """The us run-up before the finale on the AniList history (2018-2025, finished JP TV/ONA series of 10-28 episodes,
+    us attention = 2 * daily list adds + trending): weekly attention aligned on the last episode's air day (week 0 =
+    the finale's week, week -j the j-th before it), `_excess` per show, per season the mean; across seasons the mean,
+    its season-clustered se, the median, and even / odd years."""
+    import sqlite3
+    from collections import defaultdict
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    trend = defaultdict(dict)
+    for mid, day, tr, pop in db.execute("SELECT media_id, day, trending, popularity FROM trends"):
+        trend[mid][date.fromisoformat(day)] = (tr or 0, pop or 0)
+
+    def fd(d):
+        return date(d["year"], d["month"], d["day"]) if d and d.get("year") and d.get("month") and d.get("day") else None
+
+    def week_att(mid, a):
+        t = trend[mid]
+        rows = [(a + timedelta(days=k), t.get(a + timedelta(days=k))) for k in range(8)]
+        rows = [(d, r) for d, r in rows if r is not None]
+        if len(rows) < 6:
+            return None
+        wk = [r for d, r in rows if d < a + timedelta(days=7)]
+        tr = sum(r[0] for r in wk) / max(1, len(wk))
+        adds = max(0.0, (rows[-1][1][1] - rows[0][1][1]) / max(1, (rows[-1][0] - rows[0][0]).days))
+        x = 2 * adds + tr
+        return x if x > 0 else None
+    seasons = defaultdict(list)
+    for mid, raw in db.execute("SELECT id, data FROM media WHERE in_scope=1"):
+        m = json.loads(raw)
+        s_, e_ = fd(m.get("startDate")), fd(m.get("endDate"))
+        if not s_ or not e_ or m.get("status") != "FINISHED" or m.get("format") not in ("TV", "ONA"):
+            continue
+        if m.get("countryOfOrigin") != "JP" or not m.get("episodes") or not (10 <= m["episodes"] <= 28) or not (2018 <= s_.year <= 2025):
+            continue
+        if (e_ - s_).days < 63:
+            continue
+        att = {j: week_att(mid, e_ - timedelta(days=7 * j)) for j in range(8)}
+        if any(v is None for v in att.values()):
+            continue
+        seasons[(s_.year, (s_.month - 1) // 3)].append(_excess({j: math.log(v) for j, v in att.items()}))
+    per = {k: {j: sum(e[j] for e in v) / len(v) for j in (3, 2, 1, 0)} for k, v in seasons.items() if len(v) >= 8}
+
+    def summ(keys):
+        out = {}
+        for j in (3, 2, 1, 0):
+            z = sorted(per[k][j] for k in keys)
+            mu = sum(z) / len(z)
+            se = (sum((x - mu) ** 2 for x in z) / (len(z) - 1)) ** .5 / len(z) ** .5
+            out[f"week-{j}"] = {"mean": round(mu, 4), "se": round(se, 4), "median": round(z[len(z) // 2], 4)}
+        return out
+    ks = sorted(per)
+    return {"seasons": len(ks), "shows": sum(len(seasons[k]) for k in ks), "all": summ(ks),
+            "even_years": summ([k for k in ks if k[0] % 2 == 0]), "odd_years": summ([k for k in ks if k[0] % 2 == 1]),
+            "by_season_week-1": {f"{k[0]}Q{k[1] + 1}": round(per[k][1], 3) for k in ks}}
+
+
+def calibration_runup(shows):
+    """cn/jp run-up on the calibration seasons: the weekly series' value in week -j (read on its 6th day), `_excess`
+    per finished show; mean and se over shows (per market)."""
+    out = {}
+    for m in ("cn", "jp", "us"):
+        ex = []
+        for x in shows.values():
+            fin = finale_day(x)
+            if fin is None or x["aired"][0] > 0 or not x["src"][m] or len(air_days(x)) < 10:
+                continue
+            idx = {d: i for i, d in enumerate(x["days"])}
+            la = {}
+            for j in range(8):
+                if m == "us":
+                    v = [x["att"][m][idx[d]] for d in range(fin - 7 * j, fin - 7 * j + 7) if d in idx and x["obs"][m][idx[d]]]
+                    v = sum(v) / len(v) if len(v) >= 6 else 0
+                else:
+                    d = fin - 7 * j + 5
+                    v = x["att"][m][idx[d]] if d in idx and x["obs"][m][idx[d]] else 0
+                if v <= 0:
+                    break
+                la[j] = math.log(v)
+            if len(la) == 8:
+                ex.append(_excess(la))
+        res = {}
+        for j in (3, 2, 1, 0):
+            z = [e[j] for e in ex]
+            mu = sum(z) / len(z) if z else 0.0
+            se = ((sum((v - mu) ** 2 for v in z) / (len(z) - 1)) ** .5 / len(z) ** .5) if len(z) > 2 else float("nan")
+            res[f"week-{j}"] = {"mean": round(mu, 4), "se": round(se, 4)}
+        out[m] = {"shows": len(ex), **res}
+    return out
+
+
+def fit_runup(shows, history):
+    """v0.6.1 (docs/v2-valuation.md §3.11): attention in the weeks before the finale's week relative to the level. us
+    from the history (the season median of week -j, which a single bad season cannot move; only the weeks whose
+    excess the history separates from zero), cn/jp from the calibration seasons where they separate from zero."""
+    hh = history_runup(history)
+    cc = calibration_runup(shows)
+    res = {"us": [], "cn": [], "jp": []}
+    for j in (1, 2, 3):
+        a = hh["all"][f"week-{j}"]
+        res["us"].append(round(math.exp(a["median"]), 6) if a["median"] > 2 * a["se"] or (j == 1 and hh["odd_years"][f"week-{j}"]["mean"] > 2 * hh["odd_years"][f"week-{j}"]["se"] and hh["even_years"][f"week-{j}"]["median"] > 0) else 1.0)
+        for m in ("cn", "jp"):
+            # a run-up: the week before the finale's clearly above the level (cn's excess is flat over weeks -3..0,
+            # about -0.15: the reference weeks sit high, not a rise before the finale)
+            c, c1 = cc[m][f"week-{j}"], cc[m]["week-1"]
+            res[m].append(round(math.exp(c["mean"]), 6) if c1["mean"] > 2 * c1["se"] and c["mean"] > 2 * c["se"] else 1.0)
+    for m in res:
+        while res[m] and res[m][-1] == 1.0:
+            res[m].pop()
+    return res, {"history": hh, "calibration": cc}
+
+
+def rebase_finale_bump(cal, runup):
+    """The finale bump is fitted against weeks -2 and -3 (`fit_finale_bump`); with the run-up read out of those weeks
+    the level is lower by their mean run-up, so the bump relative to the level is that much larger."""
+    for m in MARKETS:
+        r = runup.get(m) or []
+        r2, r3 = (r[1] if len(r) > 1 else 1.0), (r[2] if len(r) > 2 else 1.0)
+        cal["finale_bump"][m] = round(cal["finale_bump"][m] * (r2 + r3) / 2, 6)
+
+
 def fit_drift_heat(shows, cal, history=None):
     """v0.6.1 (docs/v2-valuation.md §3.10): the us in-season drift by heat class. A show's class is the tercile of
     its us log level estimate DRIFT_WEEKS[0] weeks after the premiere (known then; fixed after); from then on its us
@@ -1416,6 +1546,9 @@ def main():
     ap.add_argument("--partial-only", action="store_true",
                     help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
                          "write that key back")
+    ap.add_argument("--runup-only", action="store_true",
+                    help="fit only the run-up before the finale (`runup`; us from --history) with the rest of --out fixed, "
+                         "and write that key back (then refit --heat-only and --partial-only)")
     ap.add_argument("--heat-only", action="store_true",
                     help="fit only the us drift by heat class (`drift_heat`) with the rest of --out fixed, and write that "
                          "key back (then refit --partial-only)")
@@ -1432,6 +1565,18 @@ def main():
             r = fit_outlier(shows, cal, m)
             cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
             print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.runup_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        BUMP.update(cal["finale_bump"])
+        if cal.get("runup"):
+            sys.exit("--runup-only: the file already has a run-up (the finale bump was rebased on it); start from one without")
+        cal["runup"], info = fit_runup(shows, a.history)
+        info["finale_bump_before"] = dict(cal["finale_bump"])
+        rebase_finale_bump(cal, cal["runup"])
+        cal.setdefault("fit", {})["runup"] = info
+        print(json.dumps(cal["runup"]), json.dumps(info, indent=1))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.heat_only:

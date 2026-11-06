@@ -586,6 +586,18 @@ impl Engine {
             fin.map_or(1.0, |f| if today >= f + 7 { F::post_finale_factor(fp, p, m, f, today, mult) * fp.finale_bump[m] } else { 1.0 })
         });
         let in_finale_week = fin.is_some_and(|f| f <= today && today < f + 7);
+        // the planned finale (the expected path's: the announced count, else the default, on the public schedule):
+        // the weeks before it are read through the run-up, as the finale's week through its bump
+        let planned_fin = if s.long_runner || fin.is_some() {
+            fin
+        } else {
+            let eps = Self::planned_episodes(s.episodes.or(Some(p.default_episodes)), &sched, today, &schedule);
+            let mut aired = sched.clone();
+            if aired.is_empty() {
+                aired.extend(day_no(&s.first_air));
+            }
+            meta_today.as_ref().and_then(|mt| mt.planned(&aired, eps, false).last().copied())
+        };
         let raw = s.att.m3();
         let mut att = raw;
         for (m, (a, f)) in att.iter_mut().zip(post).enumerate() {
@@ -593,6 +605,7 @@ impl Engine {
             if in_finale_week {
                 *a /= fp.finale_bump[m];
             }
+            *a /= fp.runup(m, planned_fin, today);
         }
         if let (Some((_, a, _)), Some(tr)) = (&sequel, fp.sequel.as_ref().and_then(|sp| sp.transient.as_ref())) {
             if *a <= today && today < a + 7 {

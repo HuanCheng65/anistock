@@ -410,8 +410,19 @@ def att_path(fp: dict, p: dict, m: str, mean: float, var: float, today: int, sch
         je = t - base
         cd += drift_at(fp, m, (t - 1 - first_air) // 7) if t - 1 >= base else 0.0
         bump = finale_bump(fp, m) if (final is not None and final <= t < final + 7) else 1.0
-        out.append(math.exp(mean + cd + 0.5 * (var + q * je)) * curve(fp, m, k) * bump)
+        out.append(math.exp(mean + cd + 0.5 * (var + q * je)) * curve(fp, m, k) * bump * runup(fp, m, final, t))
     return out
+
+
+def runup(fp: dict, m: str, final: int | None, t: int) -> float:
+    """v0.6.1 (docs/v2-valuation.md §3.11): market m's attention on day t relative to the level in the weeks before the
+    finale's week (`runup[m][j - 1]` for week j = 1, 2, .. before it, the week starting 7j days before the last
+    episode's air day; viewers catch up before the finale). 1 elsewhere, and without the table."""
+    r = fp.get("runup", {}).get(m)
+    if not r or final is None or t >= final:
+        return 1.0
+    j = (final - 1 - t) // 7 + 1
+    return r[j - 1] if j <= len(r) else 1.0
 
 
 def finale_bump(fp: dict, m: str) -> float:
