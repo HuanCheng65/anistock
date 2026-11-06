@@ -48,7 +48,10 @@ File format (JSON, one object):
         observed        {"us","cn","jp"}  whether the market reported on D (cn/jp: a value in the rebuilt weekly
                         series, 0 included; false = no data, not zero) (since v0.3.2)
         sources         {"us","cn","jp"}  whether the show is mapped to the market's data source (Bangumi, Annict
-                        in sim/matches.json); an unmapped market earns nothing (since v0.3.2)
+                        in sim/matches.json); an unmapped market earns nothing (since v0.3.2). Point in time
+                        (v0.6.1): a source counts from the first day the collector had the mapped Bangumi subject /
+                        Annict work (`source_dates`), so a history regenerated later agrees with what the daily
+                        close saw on each day
         att             {"us","cn","jp"}  realised attention on D per market (revenue shares, demand index)
         score           AniList averageScore on D (null: not enough votes yet); the long tail's prior (phase 1)
         format          AniList format (TV, ONA, MOVIE, ...) (phase 1)
@@ -359,6 +362,44 @@ def window_start_of(cfg) -> date:
     return date.fromisoformat(cfg.params["window"]["start"])
 
 
+def source_dates(db_path: Path) -> dict[int, dict[str, date | None]]:
+    """AniList id -> {"cn", "jp"}: the first day the collector had data for the show's mapped Bangumi subject /
+    Annict work (its `works` row or its first snapshot, whichever is earlier), None if it never did or the show
+    is not mapped. An Annict work matched through its MAL id also needs the AniList media's MAL id (its first
+    snapshot), since the match is only possible from then on."""
+    matches = E.effective_matches(db_path)
+    seen: dict[tuple[str, str], date] = {}
+    if db_path.exists():
+        db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            rows = []
+            if "works" in tables:
+                rows += db.execute("SELECT source, external_id, MIN(first_seen) FROM works GROUP BY 1, 2").fetchall()
+            if "snapshots" in tables:
+                rows += db.execute("SELECT source, external_id, MIN(day) FROM snapshots GROUP BY 1, 2").fetchall()
+        finally:
+            db.close()
+        for src, ext, d in rows:
+            if d:
+                k, v = (src, str(ext)), date.fromisoformat(d[:10])
+                seen[k] = min(seen.get(k, v), v)
+    out = {}
+    for aid, r in matches.items():
+        cn = seen.get(("bgm", str(r["bgm"]))) if r.get("bgm") else None
+        jp = seen.get(("annict", str(r["annict"]))) if r.get("annict") else None
+        if jp is not None and r.get("annict_via") == "mal_id":
+            mal = seen.get(("anilist", str(aid)))
+            jp = max(jp, mal) if mal else None
+        out[int(aid)] = {"cn": cn, "jp": jp}
+    return out
+
+
+def sources_on(dates: dict[int, dict[str, date | None]], d: date) -> dict[int, dict[str, bool]]:
+    """The `sources` flags on day D from `source_dates`."""
+    return {i: {m: v is not None and v <= d for m, v in x.items()} for i, x in dates.items()}
+
+
 def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
     """Load the model's data and build the inputs for `day` (what the CLI writes)."""
     if cfg is None:
@@ -369,7 +410,7 @@ def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
     shows, _ = E.load_shows(cfg.collector_db, cfg.params, start, d,
                             upcoming_days=cfg.game["ipo_subscription_days"] + 1)
     return build(shows, load_markets(), E.load_audiences(cfg.collector_db), E.load_cn_titles(cfg.collector_db),
-                 d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), E.mapped_sources(cfg.collector_db),
+                 d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), sources_on(source_dates(cfg.collector_db), d),
                  load_relations(cfg.collector_db), load_schedules(cfg.collector_db), load_airing(cfg.collector_db))
 
 

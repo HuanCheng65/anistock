@@ -12,6 +12,8 @@ revenue rows). After a model change that history no longer matches the live part
 1. seeds a scratch start world on the window's first day (`server.seed --until`, the same seed path, with the
    game's own demand reference `a_ref` copied in);
 2. runs the current model's integrated replay from there to the day before launch (`anistock replay-history`:
+   the valuation first replays `--warmup-days` of inputs before the window, so shows already on air start
+   from what their observations up to then say, not from their pre-air prior;
    the real engine, the real daily close, the NPC market; each day's close reads only that day's inputs file
    from data/derived/inputs or $ANISTOCK_INPUTS_DIR, so nothing later leaks into earlier days);
 3. per stock, scales the new price path (and the IPO price) so its last replay close equals the current last
@@ -108,6 +110,37 @@ def backup(db: Path) -> Path:
     return dest
 
 
+def warm_inputs(work: Path, src: Path, collector: Path, window_start: str, until: str, warmup: int) -> Path:
+    """The replay's inputs directory: the game's own files for the window (linked, every day required), plus
+    `warmup` days before the window written here by engine/daily_inputs.py (same code, same point-in-time rules,
+    window start moved back so the shows already on air are in them). The replay bootstraps the valuation over
+    every file up to its start, so a show that premiered before the window starts from the filter state its
+    observations up to then give, as the server's own valuation rebuild does (it reads 120 days), instead of
+    from its pre-air prior (which made the first weeks of the history a slide)."""
+    out = work / "inputs"
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+    d, end = date.fromisoformat(window_start), date.fromisoformat(until)
+    missing = []
+    while d <= end:
+        f = src / f"{d.isoformat()}.json"
+        if f.exists():
+            (out / f.name).symlink_to(f.resolve())
+        else:
+            missing.append(d.isoformat())
+        d += timedelta(days=1)
+    if missing:
+        sys.exit(f"daily inputs missing in {src}: {missing[0]}..{missing[-1]} ({len(missing)} days); regenerate them first")
+    if warmup > 0:
+        a = date.fromisoformat(window_start) - timedelta(days=warmup)
+        b = date.fromisoformat(window_start) - timedelta(days=1)
+        print(f"writing {warmup} days of warm-up inputs ({a}..{b}) ...", flush=True)
+        env = dict(os.environ, ANISTOCK_INPUTS_DIR=str(out), ANISTOCK_DB=str(collector))
+        subprocess.run([sys.executable, "engine/daily_inputs.py", "--from", a.isoformat(), "--day", b.isoformat(),
+                        "--window-start", a.isoformat(), "--force"], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL)
+    return out
+
+
 def default_bin() -> Path:
     # production: deploy/binary.sh installs the release binary to bin/anistock; development: the cargo build
     for p in (ROOT / "bin" / "anistock", ROOT / "backend" / "target" / "release" / "anistock"):
@@ -127,6 +160,8 @@ def main() -> None:
                     help="collector database (default $ANISTOCK_DB, else data/anistock.db)")
     ap.add_argument("--bin", type=Path, default=None, help="the server binary (default bin/anistock, else the cargo release build)")
     ap.add_argument("--work", type=Path, default=None, help="scratch directory (default: a new temporary directory, removed afterwards)")
+    ap.add_argument("--warmup-days", type=int, default=120,
+                    help="days of valuation history before the window (inputs generated here) for the shows already on air")
     ap.add_argument("--history", type=Path, default=None, help="reuse a replay-history JSON from an earlier run (skips steps 1-2)")
     args = ap.parse_args()
 
@@ -188,7 +223,8 @@ def main() -> None:
             w.commit()
             w.close()
             exe = args.bin or default_bin()
-            cmd = [str(exe), "replay-history", "--world", str(start_db), "--inputs", str(args.inputs),
+            inputs = warm_inputs(work, args.inputs, args.collector, window_start, until, args.warmup_days)
+            cmd = [str(exe), "replay-history", "--world", str(start_db), "--inputs", str(inputs),
                    "--until", until, "--out", str(hist_path)]
             if args.collector.exists():
                 cmd += ["--collector", str(args.collector)]
