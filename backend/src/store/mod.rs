@@ -221,6 +221,8 @@ pub struct Snapshot {
     pub player_returns: BTreeMap<i64, PlayerReturn>,
     /// 融资融券 (migration V7; empty for older databases)
     pub margin: crate::margin::MarginState,
+    /// corporate actions (migration V10; empty for older databases)
+    pub corp: crate::corporate::CorporateState,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -397,6 +399,10 @@ pub fn load(conn: &Connection) -> DbResult<Snapshot> {
         s.player_returns.insert(p.account_id, p);
     }
     s.margin = crate::margin::load(conn)?;
+    {
+        let r = crate::corporate::CorporateRules::default();
+        s.corp = crate::corporate::load(conn, (r.split_above * 100.0).round() as i64, r.buyback_adv_days)?;
+    }
     s.max_order_id = max_id(conn, "orders")?;
     s.max_trade_id = max_id(conn, "trades")?;
     s.max_ledger_id = max_id(conn, "ledger")?;

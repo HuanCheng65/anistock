@@ -1402,6 +1402,36 @@ impl Engine {
 
     // ------------------------------------------------------------ invariants
 
+    /// A k-for-1 split (crate::corporate): every short position in the stock owes k times the shares, and every
+    /// financing contract's bought shares (融资买入证券数量, V8) are k times as many (the amounts are unchanged).
+    pub(crate) fn margin_on_split(&mut self, company_id: i64, k: i64) {
+        let debts: Vec<(i64, i64)> = self.st.margin.debts.keys().filter(|key| key.1 == company_id).copied().collect();
+        for key in debts {
+            if let Some(d) = self.st.margin.debts.get_mut(&key) {
+                d.qty *= k;
+            }
+            self.emit_debt(key);
+        }
+        let keys: Vec<(i64, i64)> =
+            self.st.margin.shorts.values().filter(|s| s.company_id == company_id).map(|s| (s.account_id, s.company_id)).collect();
+        for key in keys {
+            if let Some(s) = self.st.margin.shorts.get_mut(&key) {
+                s.qty *= k;
+            }
+            self.emit_short(key);
+        }
+    }
+
+    /// Owed to the lender and not yet paid (a rights issue's compensation that free cash did not cover): paid
+    /// with the lending fees.
+    pub(crate) fn margin_add_fee(&mut self, account_id: i64, company_id: i64, amount: i64) {
+        let key = (account_id, company_id);
+        if let Some(s) = self.st.margin.shorts.get_mut(&key) {
+            s.fee += amount;
+            self.emit_short(key);
+        }
+    }
+
     pub(crate) fn margin_invariants(&self) -> Result<(), String> {
         let mut locked: HashMap<i64, i64> = HashMap::new();
         for s in self.st.margin.shorts.values() {

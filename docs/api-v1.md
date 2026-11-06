@@ -42,6 +42,10 @@
 | | `GET /api/v1/stocks/{id}/candles` | 无 | `/api/stocks/{id}/candles` |
 | | `GET /api/v1/stocks/{id}/intraday` | 无 | `/api/stocks/{id}/intraday` |
 | | `GET /api/v1/stocks/{id}/cover` | 无 | `/api/covers/{id}` |
+| | `GET /api/v1/stocks/{id}/corporate-actions` | 无 | 新（拆股、配股、回购） |
+| | `GET /api/v1/stocks/{id}/rights` | 可选 | 新（认购期的配股） |
+| | `PUT /api/v1/stocks/{id}/rights/subscription` | 玩家 | 新 |
+| | `DELETE /api/v1/stocks/{id}/rights/subscription` | 玩家 | 新 |
 | 资讯 | `GET /api/v1/news` | 无 | `/api/news`、`/api/stocks/{id}` 的 `news` |
 | | `GET /api/v1/news/{id}` | 无 | 新 |
 | 新股 | `GET /api/v1/ipos` | 可选 | `/api/ipos` + `/api/v2/listings` |
@@ -167,7 +171,7 @@
 | `OrderStatus` | `open`、`filled`、`cancelled` | 开放（以后可能有 `expired`） |
 | `StockStatus` | `subscribing`、`listed`、`delisted` | 开放 |
 | `IpoStatus` | `upcoming`（认购未开始）、`open`（认购中）、`allotted`（已配售、未上市）、`listed`（已上市）、`cancelled`（取消发行） | 开放 |
-| `NewsKind` | `system`、`ipo`、`allotment`、`premiere`、`finale`、`dividend`、`rate`、`delisting`、`warning`、`vcm`、`flash` | 开放 |
+| `NewsKind` | `system`、`ipo`、`allotment`、`premiere`、`finale`、`dividend`、`rate`、`delisting`、`warning`、`vcm`、`flash`、`sequel`、`delay`、`hiatus`、`split`、`rights`、`buyback` | 开放 |
 | `NewsCategory` | `flash`（快讯）、`notice`（公告）、`airing`（放送）、`close`（日结） | 封闭 |
 | `LedgerReason` | 见 §4.5.8 | 开放 |
 | `HolderKind` | `player`、`npc`、`market_maker`、`committee`、`unissued` | 开放 |
@@ -181,8 +185,8 @@
 | category | 标签 | kinds |
 |---|---|---|
 | `flash` | 快讯 | `flash`、`vcm` |
-| `notice` | 公告 | `system`、`ipo`、`allotment`、`delisting`、`warning`，以及任何未知的新 kind |
-| `airing` | 放送 | `premiere`、`finale` |
+| `notice` | 公告 | `system`、`ipo`、`allotment`、`delisting`、`warning`、`sequel`、`split`、`rights`、`buyback`，以及任何未知的新 kind |
+| `airing` | 放送 | `premiere`、`finale`、`delay`、`hiatus` |
 | `close` | 日结 | `dividend`、`rate` |
 
 ### 2.8 空值
@@ -876,7 +880,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 
 #### 4.2.4 `GET /api/v1/stocks/{id}/candles`
 
-参数：`from`、`to`（交易日，可选，默认全部）。
+参数：`from`、`to`（交易日，可选，默认全部）；`adjust`：`forward`（默认，前复权）或 `none`（不复权）。
 
 ```json
 {
@@ -885,9 +889,12 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
      "source": "live", "is_partial": false},
     {"trading_day": "2026-11-06", "open": 22045, "high": 22200, "low": 21990, "close": 22100, "volume": 85,
      "source": "live", "is_partial": true}
-  ]
+  ],
+  "adjust": "forward",
+  "ex_days": [{"trading_day": "2026-10-20", "kind": "split", "price_factor": 0.5}]
 }
 ```
+- 前复权（docs/v2-corporate.md §5）：每个除权日（拆股、配股后按新股数交易的第一天）之前的开高低收 × `price_factor`，成交量按拆股比例相乘；最新价格不变。`ex_days` 是区间内的除权日。分红不复权。
 - 本交易日有成交而还没日结时，最后一根是 `is_partial: true`（旧 `live: true`）。旧字段 `time` 改 `trading_day`，`replay` 布尔改成 `source` 枚举。
 - 只有日线。参数 `interval` 预留，v1 只接受 `1d`。
 
@@ -905,6 +912,30 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 - `minute` 是分钟起点的完整时间戳（旧值 `2026-11-06T21:05` 没有秒和时区）。夜盘跨过午夜时，同一个交易日里会出现第二天日期的分钟，这正是要带时区和交易日的原因。
 - `prev_close` 让分时图不用再请求一次行情就能画基准线。
 - 只有有成交的分钟出现。
+
+#### 4.2.7 `GET /api/v1/stocks/{id}/corporate-actions`
+
+公司资本政策（docs/v2-corporate.md §3）的每次行动，新的在前。
+
+```json
+{"items": [
+  {"id": 3, "kind": "rights", "status": "pending", "announced": "2026-11-05", "effective": "2026-11-08",
+   "split_ratio": null, "rights_ratio": 0.3, "rights_price": 800, "rights_budget": 500000,
+   "rights_terp": null, "rights_issued": null, "rights_subscribed": null,
+   "buyback_budget": null, "buyback_cap": null, "buyback_spent": null, "buyback_bought": null}
+]}
+```
+- `kind`：`split`（拆股）、`rights`（配股）、`buyback`（回购）。`status`：`pending`（已公告、未生效）、`active`（回购进行中）、`done`、`cancelled`。
+- `effective`：拆股是按新股数交易的第一天；配股是认购截止、登记、缴款、发股的交易日（它的日结时完成）；回购是最后一天。
+- 只适用于某一种的字段，其他种类为 `null`；配股的结果（除权参考价、发行股数、玩家认购股数）在完成后才有值。
+
+#### 4.2.8 `GET /api/v1/stocks/{id}/rights`
+
+认购期的配股：`{"action": CorporateAction | null, "entitlement": 30, "subscribed": 30, "frozen": 24000}`。没有登录时 `entitlement`、`subscribed` 为 0。`entitlement` 按当前持仓计算，登记时按登记时的持仓重新计算，认购超出的部分退回。
+
+#### 4.2.9 `PUT /api/v1/stocks/{id}/rights/subscription`、`DELETE …`
+
+请求 `{"quantity": 30}`：设定认购数量（幂等，0 等于撤回），冻结 数量 × 配股价。返回同 4.2.8。错误：`rights_not_open`（没有认购期的配股，422）、`rights_rejected`（超过配股权或资金不足，422）。`DELETE` 撤回，没有配股时也返回 200。
 
 #### 4.2.6 `GET /api/v1/stocks/{id}/cover`
 

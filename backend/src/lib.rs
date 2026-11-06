@@ -5,6 +5,7 @@
 //! `docs/v2-architecture.md`.
 
 pub mod config;
+pub mod corporate;
 pub mod daily;
 pub mod engine;
 pub mod exchange;

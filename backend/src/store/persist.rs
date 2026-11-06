@@ -105,6 +105,10 @@ pub enum Change {
     PlayerDayReplace(PlayerDay),
     /// 融资融券 rows (crate::margin)
     Margin(crate::margin::MarginChange),
+    /// corporate actions (crate::corporate, V10)
+    Corporate(crate::corporate::CorporateChange),
+    /// `INSERT OR REPLACE INTO lots` (a split rescales a lot's quantity and cost)
+    LotReplace(Lot),
     StateSet {
         key: String,
         value: String,
@@ -399,6 +403,11 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 .execute(params![n.id, n.ts, n.day, n.kind, n.company_id, n.title, n.body])?;
         }
         Change::Margin(m) => crate::margin::apply(conn, m)?,
+        Change::Corporate(m) => crate::corporate::apply(conn, m)?,
+        Change::LotReplace(l) => {
+            conn.prepare_cached("INSERT OR REPLACE INTO lots(id, account_id, company_id, qty, cost, acquired_on) VALUES (?,?,?,?,?,?)")?
+                .execute(params![l.id, l.account_id, l.company_id, l.qty, l.cost, l.acquired_on])?;
+        }
         Change::StateSet { key, value } => {
             conn.prepare_cached(
                 "INSERT INTO state(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

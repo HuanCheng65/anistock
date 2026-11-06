@@ -545,6 +545,17 @@
       },
       "CandlesResponse": {
         "properties": {
+          "adjust": {
+            "description": "复权方式：`forward`（前复权，默认：拆股、配股之前的价格和成交量按之后的复权因子换算）或 `none`",
+            "type": "string"
+          },
+          "ex_days": {
+            "description": "区间内的除权日（拆股、配股生效的第一个交易日）",
+            "items": {
+              "$ref": "#/components/schemas/ExDay"
+            },
+            "type": "array"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/Candle"
@@ -553,6 +564,8 @@
           }
         },
         "required": [
+          "adjust",
+          "ex_days",
           "items"
         ],
         "type": "object"
@@ -571,6 +584,164 @@
         "required": [
           "oversubscribed",
           "public_share"
+        ],
+        "type": "object"
+      },
+      "CorporateAction": {
+        "description": "公司资本政策的一次行动：拆股、配股或回购",
+        "properties": {
+          "announced": {
+            "$ref": "#/components/schemas/TradingDay",
+            "description": "公告的交易日"
+          },
+          "buyback_bought": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "buyback_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "回购：资金上限、价格上限、已花费、已回购股数"
+              }
+            ]
+          },
+          "buyback_cap": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "buyback_spent": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "effective": {
+            "$ref": "#/components/schemas/TradingDay",
+            "description": "拆股：按新股数交易的第一天；配股：登记、缴款、发股的交易日（认购截止）；回购：最后一天"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "split | rights | buyback",
+            "type": "string"
+          },
+          "rights_budget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "配股：要筹集的续作制作费"
+              }
+            ]
+          },
+          "rights_issued": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rights_price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money"
+              }
+            ]
+          },
+          "rights_ratio": {
+            "description": "配股：每股配几股（每 10 股配 x 股的 x ÷ 10）",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rights_subscribed": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rights_terp": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "配股完成后：除权参考价、发行股数、玩家认购股数"
+              }
+            ]
+          },
+          "split_ratio": {
+            "description": "拆股：每 1 股拆为几股",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "pending（已公告、未生效）| active（回购进行中）| done | cancelled",
+            "type": "string"
+          }
+        },
+        "required": [
+          "announced",
+          "buyback_bought",
+          "buyback_budget",
+          "buyback_cap",
+          "buyback_spent",
+          "effective",
+          "id",
+          "kind",
+          "rights_budget",
+          "rights_issued",
+          "rights_price",
+          "rights_ratio",
+          "rights_subscribed",
+          "rights_terp",
+          "split_ratio",
+          "status"
+        ],
+        "type": "object"
+      },
+      "CorporateActionsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CorporateAction"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -917,6 +1088,29 @@
           "news_id",
           "seq",
           "stock",
+          "trading_day"
+        ],
+        "type": "object"
+      },
+      "ExDay": {
+        "description": "一次除权：这一天起按新的股数交易",
+        "properties": {
+          "kind": {
+            "description": "split | rights",
+            "type": "string"
+          },
+          "price_factor": {
+            "description": "这一天之前的价格 × 它（前复权）",
+            "format": "double",
+            "type": "number"
+          },
+          "trading_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          }
+        },
+        "required": [
+          "kind",
+          "price_factor",
           "trading_day"
         ],
         "type": "object"
@@ -2803,6 +2997,54 @@
           "episodes_aired",
           "revenue",
           "week_start"
+        ],
+        "type": "object"
+      },
+      "RightsOffer": {
+        "description": "正在认购期的配股，以及调用者的配股权和认购",
+        "properties": {
+          "action": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CorporateAction"
+              }
+            ]
+          },
+          "entitlement": {
+            "description": "按当前持仓可以认购的股数（登记日按登记时的持仓重新计算）；未登录为 0",
+            "format": "int64",
+            "type": "integer"
+          },
+          "frozen": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "subscribed": {
+            "description": "已认购的股数和冻结的资金",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "entitlement",
+          "frozen",
+          "subscribed"
+        ],
+        "type": "object"
+      },
+      "RightsRequest": {
+        "description": "认购配股（设定数量，幂等；0 等于撤回）",
+        "properties": {
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "quantity"
         ],
         "type": "object"
       },
@@ -5827,6 +6069,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "forward（默认，前复权）或 none",
+            "in": "query",
+            "name": "adjust",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -5852,6 +6103,49 @@
           }
         },
         "summary": "日 K 线",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/corporate-actions": {
+      "get": {
+        "operationId": "actions",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorporateActionsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "公司资本政策：拆股、配股、回购（新的在前）",
         "tags": [
           "stocks"
         ]
@@ -5986,6 +6280,143 @@
           }
         },
         "summary": "融资融券条件",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/rights": {
+      "get": {
+        "operationId": "rights",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsOffer"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "正在认购期的配股（登录时带调用者的配股权和认购）",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
+    "/api/v1/stocks/{id}/rights/subscription": {
+      "delete": {
+        "operationId": "unsubscribe",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsOffer"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "撤回配股认购（幂等）",
+        "tags": [
+          "stocks"
+        ]
+      },
+      "put": {
+        "operationId": "subscribe",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RightsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RightsOffer"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "认购配股（设定数量，幂等；0 等于撤回）",
         "tags": [
           "stocks"
         ]

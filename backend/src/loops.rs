@@ -28,7 +28,17 @@ async fn margin_loop(st: Arc<AppState>) {
             continue;
         }
         let (day, ts) = (st.clock.today(), st.clock.ts());
-        if st.actor.call(move |ctx| ctx.engine.margin_sweep(&day, &ts)).await.is_err() {
+        let secs = chrono::Timelike::num_seconds_from_midnight(&st.clock.now().time()) as i64;
+        if st
+            .actor
+            .call(move |ctx| {
+                ctx.engine.margin_sweep(&day, &ts);
+                // the buyback desk (crate::corporate)
+                ctx.engine.corporate_minute(&day, &ts, secs);
+            })
+            .await
+            .is_err()
+        {
             return;
         }
     }

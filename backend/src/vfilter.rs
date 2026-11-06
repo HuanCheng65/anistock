@@ -180,6 +180,12 @@ pub struct FilterParams {
     pub sequel: Option<SequelParams>,
     /// long-runners' weekly level factor (`[valuation] long_runner_decay`; their filter's drift)
     pub long_runner_decay: f64,
+    /// a sequel season's production cost as a share of its value (docs/v2-corporate.md §3.3: `ipo_float` ×
+    /// `production_fee_ratio`, set with the sequel option; 0: the option is gross of cost, as in phase 1)
+    pub sequel_cost: f64,
+    /// days until a halted show (AniList HIATUS) resumes, for its value: the median announcement-to-premiere lag of
+    /// sequel.json (docs/v2-corporate.md §2.3)
+    pub hiatus_lag: i64,
 }
 
 impl FilterParams {
@@ -199,9 +205,21 @@ impl FilterParams {
         // relations the collector has only just started to keep)
         let sq = path.with_file_name("sequel.json");
         let sequel_on = cfg.param("valuation.sequel_option").and_then(|v| v.as_integer()).unwrap_or(0) == 1;
-        if sequel_on && sq.exists() {
+        if sq.exists() {
             let t = std::fs::read_to_string(&sq).map_err(|e| format!("{}: {e}", sq.display()))?;
-            fp.sequel = Some(serde_json::from_str(&t).map_err(|e| format!("{}: {e}", sq.display()))?);
+            let sp: SequelParams = serde_json::from_str(&t).map_err(|e| format!("{}: {e}", sq.display()))?;
+            let mut lags = sp.lag_days.clone();
+            lags.sort_unstable();
+            if !lags.is_empty() {
+                let n = lags.len();
+                fp.hiatus_lag = if n % 2 == 1 { lags[n / 2] } else { (lags[n / 2 - 1] + lags[n / 2]) / 2 };
+            }
+            if sequel_on {
+                fp.sequel = Some(sp);
+                // each season costs the studio the share of its value the first season's IPO paid for it
+                let num = |k: &str| cfg.param(k).and_then(|v| v.as_float().or(v.as_integer().map(|i| i as f64)));
+                fp.sequel_cost = num("company.ipo_float").unwrap_or(0.25) * num("company.production_fee_ratio").unwrap_or(0.8);
+            }
         }
         if let Some(d) = cfg.param("valuation.long_runner_decay").and_then(|v| v.as_float()) {
             fp.long_runner_decay = d;
@@ -291,6 +309,8 @@ impl FilterParams {
             flash_min_expected: r.flash_min_expected.unwrap_or(5.0),
             ipo_risk: r.ipo_risk.unwrap_or(0.25),
             long_runner_decay: 1.0,
+            sequel_cost: 0.0,
+            hiatus_lag: 290,
             rho: r.rho.unwrap_or(0.0),
             prior_from_us: r.prior.as_deref() == Some("us"),
             preair_growth: r.preair_growth,
@@ -737,10 +757,17 @@ pub fn finale_level(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64
 /// The sequel option of market `m` in attention-days discounted to today (Python `sequel_extra`).
 #[allow(clippy::too_many_arguments)]
 pub fn sequel_extra(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64, fin: i64, first_air: i64, z: f64, zs: f64, disc: f64, known: &[i64], watched: bool) -> f64 {
+    sequel_extra_paid(fp, m, mean, var, today, fin, first_air, z, zs, disc, known, watched, false)
+}
+
+/// `sequel_extra`, net of each season's production cost (`fp.sequel_cost`) except an announced season whose cost is
+/// `paid` (docs/v2-corporate.md §3.3).
+#[allow(clippy::too_many_arguments)]
+pub fn sequel_extra_paid(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64, fin: i64, first_air: i64, z: f64, zs: f64, disc: f64, known: &[i64], watched: bool, paid: bool) -> f64 {
     let Some(sp) = &fp.sequel else { return 0.0 };
     let lvl = finale_level(fp, m, mean, var, today, fin, first_air) / sp.season_to_finale.m3()[m];
     let k: Vec<i64> = known.iter().map(|d| d - fin).collect();
-    lvl * sequel_multiple(fp, m, z, zs, today - fin, disc, &k, watched)
+    lvl * sequel_multiple_paid(fp, m, z, zs, today - fin, disc, &k, watched, paid)
 }
 
 fn option_factor(sp: &SequelParams, z: f64, t_now: i64, disc: f64, t_from: i64) -> f64 {
@@ -759,18 +786,27 @@ fn option_factor(sp: &SequelParams, z: f64, t_now: i64, disc: f64, t_from: i64) 
 
 /// Python `sequel_multiple`: the sequel option in attention-days per unit of in-season mean attention, today.
 pub fn sequel_multiple(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now: i64, disc: f64, known: &[i64], watched: bool) -> f64 {
+    sequel_multiple_paid(fp, m, z, zs, t_now, disc, known, watched, false)
+}
+
+/// `sequel_multiple` net of production costs (docs/v2-corporate.md §3.3): every season not yet paid for counts
+/// (1 − cost) of its value (its cost is paid when it is announced, the same share of its value then); an announced
+/// season whose cost is `paid` counts in full. With `fp.sequel_cost` = 0 this is the phase-1 formula.
+#[allow(clippy::too_many_arguments)]
+pub fn sequel_multiple_paid(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now: i64, disc: f64, known: &[i64], watched: bool, paid: bool) -> f64 {
     let Some(sp) = &fp.sequel else { return 0.0 };
     let w = season_value(fp, m, disc);
+    let net = w * (1.0 - fp.sequel_cost);
     let a_s = option_factor(sp, zs, 0, disc, 0) * disc.powf(SEASON_DAYS as f64);
-    let own = if a_s < 1.0 { a_s * w / (1.0 - a_s) } else { 0.0 };
+    let own = if a_s < 1.0 { a_s * net / (1.0 - a_s) } else { 0.0 };
     if !known.is_empty() {
         let mut acc = 0.0;
         for d in known {
             acc += disc.powf((d - t_now).max(0) as f64) * gap_ratio(sp, *d as f64);
         }
-        return acc / known.len() as f64 * (w + own);
+        return acc / known.len() as f64 * (if paid { w } else { net } + own);
     }
-    option_factor(sp, z, t_now, disc, if watched { t_now } else { t_now.min(0) }) * (w + own)
+    option_factor(sp, z, t_now, disc, if watched { t_now } else { t_now.min(0) }) * (net + own)
 }
 
 /// A path that ends in the long tail: its market's tail, the show's prior, days after the finale's week on the
@@ -989,6 +1025,22 @@ mod tests {
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
         assert!(close(e6, 3944.0482601881704), "{e6}");
+        // net of production costs (docs/v2-corporate.md §3.3): an announced season paid for gains exactly its cost
+        // share; before the announcement every season counts (1 − cost)
+        {
+            let mut fc = fp.clone();
+            fc.sequel_cost = 0.2;
+            let known = [today + 200, today + 300];
+            let gross = sequel_extra_paid(&fp, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &known, true, false);
+            let unpaid = sequel_extra_paid(&fc, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &known, true, false);
+            let paid = sequel_extra_paid(&fc, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &known, true, true);
+            assert!(paid > unpaid && gross > paid);
+            let w_part = (paid - unpaid) / 0.2;
+            // the own option (later seasons) is net in both; what is paid is the announced season's 20%
+            assert!(w_part < gross && w_part > 0.5 * gross, "{w_part} {gross}");
+            let opt = sequel_extra_paid(&fc, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], true, false);
+            assert!(close(opt, e4 * 0.8), "{opt} {e4}");
+        }
         // the joint filter (v0.3.2)
         let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
         let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];

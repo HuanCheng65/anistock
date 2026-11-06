@@ -125,6 +125,8 @@ pub(crate) struct State {
     pub player_returns: BTreeMap<i64, PlayerReturn>,
     /// 融资融券: credit accounts, debts, short positions, credit order tags (crate::margin)
     pub margin: crate::margin::MarginState,
+    /// corporate actions (crate::corporate)
+    pub corp: crate::corporate::CorporateState,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -137,6 +139,8 @@ pub struct Engine {
     pub rules: Rules,
     /// `[margin]` of game.toml (crate::margin)
     pub margin: crate::margin::MarginRules,
+    /// `[corporate]` of game.toml (crate::corporate)
+    pub corporate: crate::corporate::CorporateRules,
     pub(crate) st: State,
 
     pub(crate) out: Vec<Change>,
@@ -174,6 +178,7 @@ impl Engine {
             fees,
             rules,
             margin: crate::margin::MarginRules::default(),
+            corporate: crate::corporate::CorporateRules::default(),
             st: State::from_snapshot_parts(&s),
             out: Vec::new(),
             dirty_accounts: BTreeSet::new(),
@@ -1280,6 +1285,7 @@ impl State {
             company_works: s.company_works.clone(),
             player_returns: s.player_returns.clone(),
             margin: s.margin.clone(),
+            corp: s.corp.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,
             last_ledger_id: s.max_ledger_id,

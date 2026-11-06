@@ -83,6 +83,68 @@ pub fn parse_ts(s: &str) -> i64 {
 /// Day index (0 = the first simulated day) on which the bots start trading.
 pub const BOT_START_DAY: usize = 7;
 
+/// `SIM_SYNTH_SEQUELS=1` (docs/v2-corporate.md §6, a labelled synthetic test): the replay has no relations data,
+/// so no sequel is ever announced and no rights issue happens. With this set (and the sequel option on), every show
+/// counts as watched and, at its finale, draws when its sequel is announced from the fitted hazard model itself (the
+/// model the option prices): in this synthetic world the option is unbiased by construction, and the announcements
+/// exercise the production cost, the rights issues and the bots. The sequel itself never airs in the replay.
+#[derive(Default)]
+pub struct SynthSequels {
+    fin: HashMap<i64, i64>,
+    ann: HashMap<i64, Option<i64>>,
+}
+
+impl SynthSequels {
+    fn apply(&mut self, inp: &mut Inputs, sp: &crate::vfilter::SequelParams, seed: u64) {
+        let Some(today) = crate::vclose::day_no(&inp.day) else { return };
+        let fmt = |d: i64| chrono::NaiveDate::from_num_days_from_ce_opt(d as i32).map(|x| x.format("%Y-%m-%d").to_string()).unwrap_or_default();
+        for s in &mut inp.shows {
+            s.relations_known = true;
+            if !self.fin.contains_key(&s.id) && !s.long_runner && s.episodes_known && s.episodes.is_some_and(|n| n > 0 && s.aired >= n) {
+                self.fin.insert(s.id, today);
+                let z = crate::vfilter::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(&(seed, s.id, 0x5e9u32), &mut h);
+                let u = (std::hash::Hasher::finish(&h) >> 11) as f64 / (1u64 << 53) as f64;
+                let mut acc = 0.0;
+                let mut when = None;
+                for (t, p) in crate::vfilter::announce_schedule(sp, z, 0) {
+                    acc += p;
+                    if u < acc {
+                        when = Some(today + t);
+                        break;
+                    }
+                }
+                self.ann.insert(s.id, when);
+            }
+            if let Some(Some(a)) = self.ann.get(&s.id) {
+                if *a <= today {
+                    s.sequel = Some(crate::inputs::SequelInputs {
+                        id: 900_000_000 + s.id,
+                        announced: fmt(*a),
+                        premieres: sp.lag_days.iter().map(|l| fmt(a + l)).collect(),
+                        exact: false,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// `SIM_REVEAL_DAYS=n` (docs/v2-corporate.md §6): the replay's schedules come from one late snapshot, so every
+/// break is known from the first day and no delay is ever announced. With this set, each show's schedule on a
+/// day shows its real dates only up to n days ahead and weekly after the last of them, so a real break appears
+/// n days before it, as a delay notice, the way a broadcaster announces it.
+pub fn reveal_schedules(inp: &mut Inputs, n: i64) {
+    let Some(today) = crate::vclose::day_no(&inp.day) else { return };
+    for s in &mut inp.shows {
+        let days: Vec<i64> = s.schedule.iter().filter_map(|d| crate::vclose::day_no(d)).collect();
+        let Some(k) = days.iter().rposition(|d| *d <= today + n) else { continue };
+        let fmt = |d: i64| chrono::NaiveDate::from_num_days_from_ce_opt(d as i32).map(|x| x.format("%Y-%m-%d").to_string()).unwrap_or_default();
+        s.schedule = days.iter().enumerate().map(|(i, d)| if i <= k { fmt(*d) } else { fmt(days[k] + 7 * (i - k) as i64) }).collect();
+    }
+}
+
 #[derive(Clone)]
 pub struct SimOptions {
     pub world_db: PathBuf,
@@ -127,6 +189,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let tap = TapSink::default();
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
     e.margin = cfg.margin.clone();
+    e.corporate = cfg.corporate.clone();
     let params = Params::from_config(cfg)?;
     let last_closed = e.state("last_closed").ok_or("world has no last_closed")?.to_string();
 
@@ -276,13 +339,30 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     // published 热度快讯 (what players see): (company, at, direction)
     let mut published: Vec<(i64, i64, i8)> = Vec::new();
     let mut published_keys: HashSet<(i64, u64)> = HashSet::new();
+    let mut notices: Vec<(i64, i64, String, String)> = Vec::new();
+    let reveal_days: Option<i64> = std::env::var("SIM_REVEAL_DAYS").ok().and_then(|v| v.parse().ok());
+    let mut synth: Option<(crate::vfilter::SequelParams, SynthSequels)> = match std::env::var("SIM_SYNTH_SEQUELS") {
+        Ok(v) if v == "1" => {
+            let fp = crate::vfilter::FilterParams::load(cfg)?;
+            Some((fp.sequel.clone().ok_or("SIM_SYNTH_SEQUELS needs valuation.sequel_option = 1")?, SynthSequels::default()))
+        }
+        _ => None,
+    };
+    let mut news_seen = tap.0.lock().unwrap().news.len();
+    let mut adj_seen = e.price_adjustments().len();
     let mut npc_time = 0.0f64;
     if let Some(b) = &bot {
         rec.watch_account(b.account);
     }
 
     for (k, day) in days.iter().enumerate() {
-        let inp = load(day)?;
+        let mut inp = load(day)?;
+        if let Some(n) = reveal_days {
+            reveal_schedules(&mut inp, n);
+        }
+        if let Some((sp, st)) = synth.as_mut() {
+            st.apply(&mut inp, sp, opts.market.seed);
+        }
         m.set_heat(&e, &prev, params.market_weights);
         let t_open = at_local(day, 8, 45);
         m.refresh_universe(&e, t_open);
@@ -322,7 +402,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             if s >= 9 * 3600 && s < 23 * 3600 && k >= BOT_START_DAY {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
-                    let ctx = bots::BotCtx { band, flashes: &published };
+                    let ctx = bots::BotCtx { band, flashes: &published, notices: &notices };
                     b.on_minute(&mut e, t, &heat, &ctx);
                 }
                 if let Some(p) = probe.as_mut() {
@@ -336,6 +416,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             // 融资融券: forced liquidation runs once a minute in continuous trading
             if s >= 9 * 3600 {
                 e.margin_sweep(&day_of(t), &ts_of(t));
+                e.corporate_minute(&day_of(t), &ts_of(t), s);
             }
             if (s / 60) % opts.spread_every_min == 0 && s >= 9 * 3600 {
                 rec.sample_spreads(&e, &m, t);
@@ -352,6 +433,27 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             crate::daily::CloseOutcome::Skipped => return Err(format!("close {day} skipped")),
         }
         e.check_invariants().map_err(|err| format!("after {day}: {err}"))?;
+        // company notices of the close (docs/v2-corporate.md), and the bot's price memory after splits / ex-rights
+        {
+            let tp = tap.0.lock().unwrap();
+            while news_seen < tp.news.len() {
+                let n = &tp.news[news_seen];
+                news_seen += 1;
+                let kind = n["kind"].as_str().unwrap_or("");
+                if matches!(kind, "split" | "rights" | "buyback" | "delay" | "hiatus" | "sequel") {
+                    if let Some(c) = n["company_id"].as_i64() {
+                        notices.push((c, t_close, kind.to_string(), n["title"].as_str().unwrap_or("").to_string()));
+                    }
+                }
+            }
+        }
+        while adj_seen < e.price_adjustments().len() {
+            let a = e.price_adjustments()[adj_seen].clone();
+            adj_seen += 1;
+            if let Some(b) = bot.as_mut() {
+                b.on_adjust(a.company_id, a.price_factor);
+            }
+        }
         // events from the close: premiere, finale, delisting warning
         for s in &inp.shows {
             let Some(c) = e.company(s.id) else { continue };

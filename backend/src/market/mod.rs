@@ -177,6 +177,8 @@ pub struct Market {
     sell_above: f64,
     committee_frac: f64,
     ipo_float: f64,
+    /// price adjustments (splits, ex-rights: crate::corporate) already applied to the price memory
+    adj_seen: Option<usize>,
 }
 
 impl Market {
@@ -213,6 +215,7 @@ impl Market {
             sell_above: game.npc.committee_sell_above,
             committee_frac: game.npc.committee_sell_frac,
             ipo_float,
+            adj_seen: None,
         }
     }
 
@@ -802,6 +805,9 @@ impl Market {
 
     /// New listings join some watch lists (∝ heat); every listed stock gets its market maker scheduled.
     pub fn refresh_universe(&mut self, engine: &Engine, now: i64) {
+        if self.adj_seen.is_none() {
+            self.adj_seen = Some(engine.price_adjustments().len());
+        }
         let listed: Vec<i64> = engine.companies().filter(|c| c.status == "listed").map(|c| c.id).collect();
         let avg_watch = (self.cfg.watch_min + self.cfg.watch_max) as f64 / 2.0;
         let n_listed = listed.len().max(1) as f64;
@@ -1274,7 +1280,16 @@ impl Market {
             let room = self.cfg.max_position_frac * wealth - held as f64 * p;
             let budget = (engine.available_cash(a.account) as f64 * frac).min(room);
             let mlim = Self::clamp_price(engine, &rules, c, p * 1.015, t);
-            let q = self.affordable(budget, if market { mlim } else { limit });
+            let at = if market { mlim } else { limit };
+            let mut q = self.affordable(budget, at);
+            // a retail agent stands for many small investors: their money demand does not depend on the nominal
+            // price, so the whole-share remainder is bought with that probability (stochastic rounding). Without
+            // it a share above a small order's size is never bought, and a stock split would release a burst of
+            // retail demand on a known day (docs/v2-corporate.md §3.2)
+            let rest = budget / (at.max(1) as f64 * (1.0 + self.fees_commission) + 1.0) - q as f64;
+            if rest > 0.0 && self.rng.range(0.0, 1.0) < rest && self.affordable(engine.available_cash(a.account) as f64, at) > q {
+                q += 1;
+            }
             if market {
                 self.place(engine, "retail", a.account, c, "buy", "limit", q, Some(mlim), t);
             } else {
@@ -1737,9 +1752,35 @@ impl Market {
         (agents, mms)
     }
 
+    /// Corporate actions (crate::corporate): rescale each stock's price memory (price samples, the last public
+    /// value, the market maker's last prices) by the adjustments recorded since the last call, so that a split or
+    /// an ex-rights day is not read as a price move or a revision.
+    pub fn apply_adjustments(&mut self, engine: &Engine) {
+        let adj = engine.price_adjustments();
+        let mut seen = self.adj_seen.unwrap_or(adj.len());
+        while seen < adj.len() {
+            let (c, f) = (adj[seen].company_id, adj[seen].price_factor);
+            seen += 1;
+            if let Some(h) = self.hist.get_mut(&c) {
+                for x in h.iter_mut() {
+                    x.1 = ((x.1 as f64) * f).round() as i64;
+                }
+            }
+            if let Some(v) = self.last_fair.get_mut(&c) {
+                *v = ((*v as f64) * f).round() as i64;
+            }
+            if let Some(m) = self.mms.get_mut(&c) {
+                m.last_p *= f;
+                m.last_quote_p *= f;
+            }
+        }
+        self.adj_seen = Some(seen);
+    }
+
     /// Large revisions of the public value become internal events: they wake up news agents and raise the
     /// stock's activity for a few hours (no news row; the reason is already public).
     pub fn note_revisions(&mut self, engine: &Engine, t: i64) {
+        self.apply_adjustments(engine);
         let min = self.cfg.revision_min;
         let mut evs = Vec::new();
         for c in engine.companies().filter(|c| c.status == "listed" && c.fair_value > 0) {

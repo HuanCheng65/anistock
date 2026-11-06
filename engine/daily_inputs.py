@@ -62,7 +62,11 @@ File format (JSON, one object):
         relations_known the collector has the show's AniList relations as of D; without them "no sequel announced
                         yet" is not information and the sequel option is not updated as time passes (phase 1)
         schedule        ["YYYY-MM-DD", ...] every main episode's air date on Bangumi (the public schedule); a show
-                        whose schedule has an episode after the last one AniList recorded is not finished (phase 1)
+                        whose schedule has an episode after the last one AniList recorded is not finished (phase 1);
+                        the valuation dates the episodes still to air by it (docs/v2-corporate.md §2.2)
+        hiatus          AniList status HIATUS on D (production halted; omitted when false) (docs/v2-corporate.md §2.3)
+        next_airing     AniList nextAiringEpisode on D: {"episode", "date" (Japanese broadcast date)}; omitted
+                        without one (docs/v2-corporate.md §2.2)
         series          the series key (engine/series.py: SEQUEL/PREQUEL among TV/ONA/films, plus sim/series.json;
                         the smallest AniList id in the series); a new season of a listed series joins its company
                         instead of listing (phase 1)
@@ -82,7 +86,7 @@ import os
 import sqlite3
 import sys
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -195,6 +199,43 @@ def load_schedules(db_path: Path) -> dict[int, list[tuple[date, list[str]]]]:
     return out
 
 
+JST = timezone(timedelta(hours=9))
+
+
+def load_airing(db_path: Path) -> dict[int, list[tuple[date, str | None, dict | None]]]:
+    """AniList's status and next episode per daily media snapshot (docs/v2-corporate.md §2.2–2.3):
+    {id: [(day, status, {"episode": n, "date": "YYYY-MM-DD"} or None)]}, oldest first. The next episode's day is the
+    Japanese broadcast date of `airingAt`."""
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    out: dict[int, list] = {}
+    try:
+        for mid, d, data in db.execute(
+                "SELECT external_id, day, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day"):
+            m = json.loads(data)
+            nx = m.get("nextAiringEpisode") or None
+            if nx and nx.get("airingAt") and nx.get("episode"):
+                nx = {"episode": int(nx["episode"]),
+                      "date": datetime.fromtimestamp(nx["airingAt"], JST).date().isoformat()}
+            else:
+                nx = None
+            out.setdefault(int(mid), []).append((date.fromisoformat(d), m.get("status"), nx))
+    except sqlite3.Error:
+        pass
+    finally:
+        db.close()
+    return out
+
+
+def airing_on(airing: dict, sid: int, day: date) -> dict:
+    """The show's AniList status and next episode as of `day` (the latest snapshot taken by then; nothing before the
+    first snapshot: a halt or a date is news only from when it is seen)."""
+    snaps = [a for a in airing.get(sid) or [] if a[0] <= day]
+    if not snaps:
+        return {}
+    _, status, nx = snaps[-1]
+    return {**({"hiatus": True} if status == "HIATUS" else {}), **({"next_airing": nx} if nx else {})}
+
+
 def schedule_on(sched: dict, sid: int, day: date) -> list[str]:
     """The show's public schedule as of `day`: the latest snapshot taken by then, else the earliest (the dates of a
     season's episodes are published at its start; the replay's collector copy only has a late snapshot)."""
@@ -245,13 +286,14 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
 
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
           window_start: date, aud_dated: dict | None = None, sources: dict | None = None,
-          relations: dict | None = None, schedules: dict | None = None) -> dict:
+          relations: dict | None = None, schedules: dict | None = None, airing: dict | None = None) -> dict:
     """The inputs dict for `day` from already-loaded model objects (no I/O)."""
     rv, val = p["revenue"], p["valuation"]
     aud_dated = aud_dated or {}
     sources = sources or {}
     relations = relations or {}
     schedules = schedules or {}
+    airing = airing or {}
     from engine import valuation as V
     lags = V.filter_params(p).get("sequel", {}).get("lag_days", [])
     from engine.series import load_exceptions, series_keys
@@ -287,6 +329,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "top_pop": top_decile(shows, s),
             "popularity": E.at(s, s.popularity, day, None),
             "schedule": schedule_on(schedules, s.id, day),
+            **airing_on(airing, s.id, day),
             "series": keys[s.id],
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
@@ -327,7 +370,7 @@ def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
                             upcoming_days=cfg.game["ipo_subscription_days"] + 1)
     return build(shows, load_markets(), E.load_audiences(cfg.collector_db), E.load_cn_titles(cfg.collector_db),
                  d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), E.mapped_sources(cfg.collector_db),
-                 load_relations(cfg.collector_db), load_schedules(cfg.collector_db))
+                 load_relations(cfg.collector_db), load_schedules(cfg.collector_db), load_airing(cfg.collector_db))
 
 
 def dumps(inputs: dict) -> str:
@@ -377,6 +420,8 @@ class ShowInputs:
     popularity: float | None = None        # phase 1
     relations_known: bool = False          # phase 1
     schedule: list = field(default_factory=list)   # phase 1
+    hiatus: bool = False                   # docs/v2-corporate.md
+    next_airing: dict | None = None       # docs/v2-corporate.md
 
 
 @dataclass(frozen=True)

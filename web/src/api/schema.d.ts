@@ -586,6 +586,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stocks/{id}/corporate-actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 公司资本政策：拆股、配股、回购（新的在前） */
+        get: operations["actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/stocks/{id}/cover": {
         parameters: {
             query?: never;
@@ -632,6 +649,41 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stocks/{id}/rights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 正在认购期的配股（登录时带调用者的配股权和认购） */
+        get: operations["rights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stocks/{id}/rights/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 认购配股（设定数量，幂等；0 等于撤回） */
+        put: operations["subscribe"];
+        post?: never;
+        /** 撤回配股认购（幂等） */
+        delete: operations["unsubscribe"];
         options?: never;
         head?: never;
         patch?: never;
@@ -798,6 +850,10 @@ export interface components {
          */
         CandleSource: "live" | "replay";
         CandlesResponse: {
+            /** @description 复权方式：`forward`（前复权，默认：拆股、配股之前的价格和成交量按之后的复权因子换算）或 `none` */
+            adjust: string;
+            /** @description 区间内的除权日（拆股、配股生效的第一个交易日） */
+            ex_days: components["schemas"]["ExDay"][];
             items: components["schemas"]["Candle"][];
         };
         ClawbackBand: {
@@ -805,6 +861,44 @@ export interface components {
             oversubscribed: number;
             /** Format: double */
             public_share: number;
+        };
+        /** @description 公司资本政策的一次行动：拆股、配股或回购 */
+        CorporateAction: {
+            /** @description 公告的交易日 */
+            announced: components["schemas"]["TradingDay"];
+            /** Format: int64 */
+            buyback_bought: number | null;
+            buyback_budget: null | components["schemas"]["Money"];
+            buyback_cap: null | components["schemas"]["Money"];
+            buyback_spent: null | components["schemas"]["Money"];
+            /** @description 拆股：按新股数交易的第一天；配股：登记、缴款、发股的交易日（认购截止）；回购：最后一天 */
+            effective: components["schemas"]["TradingDay"];
+            /** Format: int64 */
+            id: number;
+            /** @description split | rights | buyback */
+            kind: string;
+            rights_budget: null | components["schemas"]["Money"];
+            /** Format: int64 */
+            rights_issued: number | null;
+            rights_price: null | components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 配股：每股配几股（每 10 股配 x 股的 x ÷ 10）
+             */
+            rights_ratio: number | null;
+            /** Format: int64 */
+            rights_subscribed: number | null;
+            rights_terp: null | components["schemas"]["Money"];
+            /**
+             * Format: int64
+             * @description 拆股：每 1 股拆为几股
+             */
+            split_ratio: number | null;
+            /** @description pending（已公告、未生效）| active（回购进行中）| done | cancelled */
+            status: string;
+        };
+        CorporateActionsResponse: {
+            items: components["schemas"]["CorporateAction"][];
         };
         CreditAccount: {
             /** @description 可用保证金 */
@@ -925,6 +1019,17 @@ export interface components {
             /** Format: int64 */
             seq: number;
             stock: null | components["schemas"]["StockRef"];
+            trading_day: components["schemas"]["TradingDay"];
+        };
+        /** @description 一次除权：这一天起按新的股数交易 */
+        ExDay: {
+            /** @description split | rights */
+            kind: string;
+            /**
+             * Format: double
+             * @description 这一天之前的价格 × 它（前复权）
+             */
+            price_factor: number;
             trading_day: components["schemas"]["TradingDay"];
         };
         /** @description One rejected field of an `invalid_request`. */
@@ -1429,6 +1534,26 @@ export interface components {
             revenue: components["schemas"]["Money"];
             /** Format: date */
             week_start: string;
+        };
+        /** @description 正在认购期的配股，以及调用者的配股权和认购 */
+        RightsOffer: {
+            action: null | components["schemas"]["CorporateAction"];
+            /**
+             * Format: int64
+             * @description 按当前持仓可以认购的股数（登记日按登记时的持仓重新计算）；未登录为 0
+             */
+            entitlement: number;
+            frozen: components["schemas"]["Money"];
+            /**
+             * Format: int64
+             * @description 已认购的股数和冻结的资金
+             */
+            subscribed: number;
+        };
+        /** @description 认购配股（设定数量，幂等；0 等于撤回） */
+        RightsRequest: {
+            /** Format: int64 */
+            quantity: number;
         };
         Rules: {
             dividend_tax: components["schemas"]["DividendTaxBand"][];
@@ -2915,6 +3040,8 @@ export interface operations {
                 to?: string;
                 /** @description 只支持 1d */
                 interval?: string;
+                /** @description forward（默认，前复权）或 none */
+                adjust?: string;
             };
             header?: never;
             path: {
@@ -2931,6 +3058,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CandlesResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    actions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CorporateActionsResponse"];
                 };
             };
             default: {
@@ -3025,6 +3182,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StockMargin"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    rights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RightsOffer"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    subscribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RightsRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RightsOffer"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    unsubscribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RightsOffer"];
                 };
             };
             default: {

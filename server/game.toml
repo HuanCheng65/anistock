@@ -167,3 +167,22 @@ concentration = 1.0       # one stock's financing + short value at most this mul
 npc_short_frac = 0.3      # share of value agents that may sell short
 npc_short_extra = 0.10    # extra mispricing a value agent needs before shorting (beyond its buy threshold)
 npc_short_size = 0.10     # one short position at most this share of the agent's wealth
+
+[corporate]
+# Company capital policy (docs/v2-corporate.md §3; Rust server only). Every key not listed keeps its default in
+# backend/src/corporate.rs.
+enabled = true
+split_above = 100.0          # 币: a close above this ...
+split_days = 5               # ... this many trading days in a row announces a split (one share above a small order)
+split_ratios = [2, 3, 4, 5, 10]  # k-for-1, the post-split price closest to the market's median close
+split_lead_days = 7          # announcement to the first day in new units
+rights_price = 0.8           # rights price: the announcement day's close x this
+rights_max_ratio = 0.3       # at most 3 new shares per 10
+rights_days = 3              # subscription days; the record, payment and issue at the last one's close
+buyback_min = 0.01           # idle cash at least this share of the market value ...
+buyback_under_days = 20      # ... and the close under the value this many closes in a row
+buyback_days = 91            # programme length
+buyback_adv = 0.25           # a day at most this share of the average daily volume (SEC Rule 10b-18)
+buyback_adv_days = 20
+buyback_every_min = 10
+buyback_quiet_min = 30       # no buying this long after the open and before the close
