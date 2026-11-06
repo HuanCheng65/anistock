@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
 import BackButton from '../components/BackButton.vue'
+import { KYC_UNLOCKS } from '../kyc'
 import { useSession } from '../stores/session'
 const session = useSession()
 </script>
@@ -51,6 +52,15 @@ const session = useSession()
     </section>
 
     <section class="sec">
+      <h2>身份验证</h2>
+      <p>注册后就能买卖股票。一些功能为了防止小号刷好处，要求先完成身份验证：在 QQ 里私聊机器人绑定账号，一个 QQ 只能绑定一个账号。</p>
+      <dl class="unlocks">
+        <div v-for="[k, v] in KYC_UNLOCKS" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></div>
+      </dl>
+      <RouterLink v-if="session.me && !session.me.verification.verified" to="/settings" class="btn small">去验证</RouterLink>
+    </section>
+
+    <section class="sec">
       <h2>想玩得更深</h2>
       <ul>
         <li>看股票页的<b>营收</b>：三个市场分开画，哪部番在中国火、在欧美冷，一目了然。</li>
@@ -78,5 +88,9 @@ const session = useSession()
 }
 .steps h2 { font-family: var(--font-serif); font-size: 17px; font-weight: 900; margin-bottom: 4px; }
 .steps p { color: var(--ink-2); font-size: 14px; line-height: 1.7; }
+.sec > p { color: var(--ink-2); font-size: 14px; line-height: 1.7; }
+.unlocks { margin: 10px 0 12px; border-top: 1px solid var(--hair-2); }
+.unlocks div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hair-2); font-size: 14px; }
+.unlocks dd { margin: 0; font-size: 12px; color: var(--muted); text-align: right; }
 .cta { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px var(--gutter); }
 </style>

@@ -5,6 +5,7 @@ import { api, call, errorText, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
 import { hm } from '../format'
+import { KYC_UNLOCKS } from '../kyc'
 import { useAccount } from '../stores/account'
 import { useCredit } from '../stores/credit'
 import { usePrefs, type Theme } from '../stores/prefs'
@@ -149,7 +150,7 @@ async function unbind(id: number) {
         </div>
         <div v-if="confirmId === binding.id" class="confirm" role="group" aria-labelledby="unbind-title">
           <h3 id="unbind-title">解除 QQ 绑定？</h3>
-          <p>身份验证随之取消，不能领取财政补贴、认购新股或进入排行，机器人也无法查看这个账号。</p>
+          <p>身份验证随之取消，不能领取财政补贴、认购新股、进入排行或开通融资融券，也不能通过机器人找回密码。</p>
           <div class="acts">
             <button type="button" class="btn small" :disabled="busy" @click="unbind(binding.id)">解除绑定</button>
             <button type="button" class="btn small ghost" :disabled="busy" @click="confirmId = null">取消</button>
@@ -157,7 +158,11 @@ async function unbind(id: number) {
         </div>
       </template>
       <template v-else>
-        <p class="hint">绑定 QQ 完成身份验证：在 QQ 里私聊<a v-if="bot" :href="bot" target="_blank" rel="noopener">机器人</a><template v-else>机器人</template>，发送“/安易 绑定 绑定码”。完成后也可以通过机器人找回密码。</p>
+        <p class="hint">买卖股票不需要身份验证。以下功能需要先完成：</p>
+        <dl class="unlocks">
+          <div v-for="[k, v] in KYC_UNLOCKS" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></div>
+        </dl>
+        <p class="hint">一个 QQ 只能验证一个账号。在 QQ 里私聊<a v-if="bot" :href="bot" target="_blank" rel="noopener">机器人</a><template v-else>机器人</template>，发送“/安易 绑定 绑定码”。</p>
         <div v-if="code" class="code">
           <span class="num big">{{ code.code }}</span>
           <span class="muted">{{ hm(code.expires_at) }} 前有效</span>
@@ -223,6 +228,9 @@ async function unbind(id: number) {
 .acct { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
 .hint { font-size: 13px; color: var(--ink-2); line-height: 1.6; margin: 0 0 10px; }
 .hint a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.unlocks { margin: 0 0 12px; border-top: 1px solid var(--hair-2); }
+.unlocks div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hair-2); font-size: 14px; }
+.unlocks dd { margin: 0; font-size: 12px; color: var(--muted); text-align: right; }
 .code { display: flex; align-items: baseline; gap: 12px; margin: 4px 0 12px; }
 .code .big { font-size: 28px; font-weight: 600; letter-spacing: 0.08em; }
 .code .muted { font-size: 12px; }

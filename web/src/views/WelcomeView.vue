@@ -137,8 +137,8 @@ async function sign() {
             <div><dt>初始资金</dt><dd>{{ money(session.me?.initial_cash, 0) }}</dd></div>
           </dl>
           <nav class="rows">
-            <RouterLink to="/settings" class="row"><span>身份验证</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
-            <RouterLink to="/assessment/risk" class="row"><span>风险测评</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+            <RouterLink to="/settings" class="row"><span>身份验证</span><span class="v">补贴、新股、排行、两融</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
+            <RouterLink to="/assessment/risk" class="row"><span>风险测评</span><span class="v">开通两融需要</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
             <RouterLink to="/guide" class="row"><span>新手指南</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           </nav>
         </template>
@@ -184,6 +184,7 @@ h1 { font-size: 30px; font-weight: 900; line-height: 1.25; }
 .sig { padding-top: 4px; }
 .rows { border-top: 1px solid var(--rule); }
 .row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--hair-2); font-size: 15px; }
+.row .v { margin-left: auto; margin-right: 6px; font-size: 12px; color: var(--muted); }
 .chev { color: var(--muted); }
 .receipt { border-top: 1px solid var(--rule); margin-bottom: 18px; }
 .receipt dd { font-size: 14px; }
