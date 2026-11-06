@@ -519,9 +519,9 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 | 字段 | 可空 | 定义（沿用 `v2.rs` 的口径） |
 |---|---|---|
 | `pe_ttm` | 是 | 市盈率（TTM）= 价格 / EPS，EPS = 近 365 天营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本（`pe`） |
-| `pe_dynamic` | 是 | 市盈率（动）：近 28 天营收年化（`pe_dyn`）；列表和行情条显示这个 |
+| `pe_dynamic` | 是 | 市盈率（动）：近 28 天营收年化（`pe_dyn`）。番剧的收入集中在播出的三个月，年化会把播出期的高峰当成全年，严重低估市盈率；界面不再展示，列表和行情条改用 `pe_ttm` |
 | `dividend_yield_ttm` | 是 | 股息率（TTM）= 近 365 天每股分红 / 价格（`dividend_yield`） |
-| `dividend_yield_dynamic` | 是 | 股息率（动）= 近 28 天已派分红的均值 × 52 / 价格（`dividend_yield_dyn`） |
+| `dividend_yield_dynamic` | 是 | 股息率（动）= 近 28 天已派分红的均值 × 52 / 价格（`dividend_yield_dyn`）。同上，季播作品会严重夸大，界面不再展示 |
 | `pb` | 是 | 市净率 = 价格 / 每股净资产 |
 | `book_value_per_share` | 是 | Money，公司现金 / 股本（原在 `/api/stocks/{id}` 的 `book_value_ps`） |
 

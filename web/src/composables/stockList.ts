@@ -22,8 +22,8 @@ export const SORTS: { key: SortKey; label: string }[] = [
   { key: 'change', label: '涨跌幅' },
   { key: 'turnover', label: '成交额' },
   { key: 'cap', label: '市值' },
-  { key: 'pe', label: '市盈率(动)' },
-  { key: 'dy', label: '股息率(动)' },
+  { key: 'pe', label: '市盈率(TTM)' },
+  { key: 'dy', label: '股息率(TTM)' },
   { key: 'rev', label: '本周营收' },
   { key: 'eps', label: '集数' },
 ]
@@ -34,8 +34,8 @@ export function sortValue(s: Quote, k: SortKey): number | null {
     case 'change': return s.change
     case 'turnover': return s.turnover
     case 'cap': return s.market_cap
-    case 'pe': return s.ratios.pe_dynamic
-    case 'dy': return s.ratios.dividend_yield_dynamic
+    case 'pe': return s.ratios.pe_ttm
+    case 'dy': return s.ratios.dividend_yield_ttm
     case 'rev': return s.week_revenue
     case 'eps': return s.episodes_aired
   }
