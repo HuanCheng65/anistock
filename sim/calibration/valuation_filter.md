@@ -8,6 +8,8 @@ Joint filter (v0.3.2): one state per show, the three markets' log levels. Prior 
 
 Plain Kalman filter (`--gaussian`, no outlier component): the outlier mixture was also fitted in v0.3.0 and gave no better held-out coverage, so the simpler model is used.
 
+Outlier component (v0.6.0, `--outlier-only`, a profile fit with drift, q and r above fixed; standard inputs 2026-07-01 to 2026-11-03, new format): with probability `outlier_p` an observation carries extra noise `outlier_r`, and the update uses r + P(outlier | y) × outlier_r (`kf_update_joint_robust`). It is fitted per market because a one-episode spike (178789 無職転生 III, cn weekly values 73 → 256 → 78) moved the Gaussian filter's level almost all the way and the following week's value only partly back; the finale week's extra noise then carried the spike into the long tail. Log-likelihood of each market's own filter, Gaussian → mixture: us 32.8 → 41.3 (outlier_p 0.029, outlier_r 0.061; 958 observations), cn −124.4 → −111.9 (0.013, 0.254; 1,662), jp −524.5 → +8.7 (0.0017, 12.07; 1,576: a few gross Annict glitches). Coverage was the v0.3.0 criterion; the likelihood (and the single spikes it reads as level changes) is the reason to use it now.
+
 Finale week: attention relative to the level two to three weeks before it: {'us': 1.507413, 'cn': 1.118205, 'jp': 0.966828}.
 
 ## us

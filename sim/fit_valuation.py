@@ -814,6 +814,26 @@ def fit_stage1(shows, curve_us, keep=lambda sid, prem: True):
     return out
 
 
+def fit_outlier(shows, cal, m):
+    """Market m's outlier component by maximum likelihood of its own filter (a profile fit: drift, q and r fixed at
+    the calibration `cal`). The weekly cn/jp series and the us week average have occasional one-episode spikes
+    and data glitches that a Gaussian filter reads as level changes; the mixture reads them mostly as noise."""
+    global GAUSSIAN
+    GAUSSIAN = False
+    dyn = []
+    for sid, x in sorted(shows.items()):
+        prior, obs = observations(x, m, cal["curve_us"])
+        if obs and len(obs) >= 3 and x["src"][m]:
+            dyn.append((None, obs, air_days(x)[0]))
+    dr, q, r = tuple(cal["drift_by_week"][m]), cal["q"][m], cal["r"][m]
+    prm = lambda pi, ro: (dr, q, r, 0.5, 0.0, pi, ro)
+    ll0 = total_ll(dyn, prm(0.0, 1.0))
+    best, val = nelder_mead(lambda x: -total_ll(dyn, prm(1 / (1 + math.exp(-x[0])), math.exp(x[1]))),
+                            [-3.0, math.log(0.5)], [1.0, 1.0], iters=400)
+    return {"market": m, "shows": len(dyn), "observations": sum(len(o) for _, o, _ in dyn), "loglik_gaussian": ll0,
+            "loglik_mixture": -val, "outlier_p": 1 / (1 + math.exp(-best[0])), "outlier_r": math.exp(best[1])}
+
+
 def total_ll(data, prm):
     return sum(run_filter(prior, obs, prem, prm)[0] for prior, obs, prem in data)
 
@@ -914,10 +934,21 @@ def main():
     ap.add_argument("--gaussian", action="store_true", help="no outlier component (a plain Kalman filter)")
     ap.add_argument("--clip", type=float, default=4.0)
     ap.add_argument("--history", type=Path, help="history backfill DB (sim/history_backfill.py): fit the long tail")
+    ap.add_argument("--outlier-only", action="store_true",
+                    help="fit only each market's outlier component (outlier_p, outlier_r) with the rest of --out fixed, "
+                         "and write those two keys back")
     a = ap.parse_args()
     global GAUSSIAN, CLIP
     GAUSSIAN, CLIP = a.gaussian, a.clip
     shows = load(a.inputs)
+    if a.outlier_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        for m in MARKETS:
+            r = fit_outlier(shows, cal, m)
+            cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
+            print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
     curve_us = fit_curve(shows)
     res = {"curve_us": curve_us, "drift": {}, "q": {}, "r": {}, "p0": {}, "prior_bias": {}, "outlier_p": {},
            "outlier_r": {}, "fit": {}}
@@ -996,6 +1027,14 @@ def main():
         lines.append(f"## Arrival of a season's shows\n\nShare of a season's pre-air attention not yet listed, by days "
                      f"from the season start (−30, −14, 0, +14, +30): {[u[k + 60] for k in (-30, -14, 0, 14, 30)]} "
                      f"(seasons: {seasons}).\n")
+    if GAUSSIAN:
+        # the outlier component on top of the Gaussian dynamics (v0.6.0; the same as --outlier-only)
+        for m in MARKETS:
+            o = fit_outlier(shows, res, m)
+            res["outlier_p"][m], res["outlier_r"][m] = round(o["outlier_p"], 6), round(o["outlier_r"], 6)
+            lines.append(f"Outlier component, {m}: outlier_p {o['outlier_p']:.4f}, outlier_r {o['outlier_r']:.4f} (log-likelihood "
+                         f"{o['loglik_gaussian']:.1f} Gaussian, {o['loglik_mixture']:.1f} mixture).\n")
+        GAUSSIAN = True
     res["rho"] = round(P["rho"], 6)
     res["prior_beta"] = {m: round(P["beta"][k], 6) for k, m in enumerate(MARKETS)}
     res["prior"] = "us"

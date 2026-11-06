@@ -233,6 +233,25 @@ def kf_update_joint(mean: list[float], cov: list[list[float]], m: int, y: float,
     return m2, c2, ll, s
 
 
+def kf_update_joint_robust(mean: list[float], cov: list[list[float]], m: int, y: float, r: float, pi: float,
+                           r_out: float, clip: float) -> tuple[list[float], list[list[float]], float, float]:
+    """`kf_update_joint` with outlier-prone observations, as `robust_update`: with probability `pi` an observation
+    of market m carries extra noise `r_out` (a one-episode spike, a data glitch); the update uses r + P(outlier |
+    y) * r_out, so a single spike is read mostly as noise, not as a level change. pi = 0 is `kf_update_joint`.
+    Returns (mean, cov, log-likelihood of y under the mixture, innovation variance)."""
+    if pi <= 0.0:
+        return kf_update_joint(mean, cov, m, y, r, clip)
+    v = y - mean[m]
+    s1 = cov[m][m] + r
+    s2 = s1 + r_out
+    l1 = (1.0 - pi) * math.exp(-0.5 * v * v / s1) / math.sqrt(2.0 * math.pi * s1)
+    l2 = pi * math.exp(-0.5 * v * v / s2) / math.sqrt(2.0 * math.pi * s2)
+    tot = l1 + l2
+    w_out = l2 / tot if tot > 0 else 1.0
+    m2, c2, _, s = kf_update_joint(mean, cov, m, y, r + w_out * r_out, clip)
+    return m2, c2, (math.log(tot) if tot > 0 else -1e9), s
+
+
 DRIFT_WEEKS = (4, 8)   # the in-season fade changes speed after these weeks since the premiere
 
 

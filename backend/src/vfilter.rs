@@ -408,6 +408,28 @@ pub fn kf_update_joint(mean: &M3, cov: &Cov, m: usize, y: f64, r: f64, clip: f64
     (m2, c2, ll, s)
 }
 
+/// `kf_update_joint` with outlier-prone observations (Python `kf_update_joint_robust`): with probability `pi` an
+/// observation of market m carries extra noise `r_out` (a one-episode spike, a data glitch). The noise used is
+/// the one expected given the innovation, r + P(outlier | y) × r_out, as in `robust_update`; a single spike is
+/// read mostly as noise instead of a level change. `pi` = 0 is exactly `kf_update_joint`. Returns (mean, cov,
+/// log-likelihood of y under the mixture, innovation variance).
+#[allow(clippy::too_many_arguments)]
+pub fn kf_update_joint_robust(mean: &M3, cov: &Cov, m: usize, y: f64, r: f64, pi: f64, r_out: f64, clip: f64) -> (M3, Cov, f64, f64) {
+    if pi <= 0.0 {
+        return kf_update_joint(mean, cov, m, y, r, clip);
+    }
+    let v = y - mean[m];
+    let s1 = cov[m][m] + r;
+    let s2 = s1 + r_out;
+    let tau = std::f64::consts::PI * 2.0;
+    let l1 = (1.0 - pi) * (-0.5 * v * v / s1).exp() / (tau * s1).sqrt();
+    let l2 = pi * (-0.5 * v * v / s2).exp() / (tau * s2).sqrt();
+    let tot = l1 + l2;
+    let w_out = if tot > 0.0 { l2 / tot } else { 1.0 };
+    let (m2, c2, _, s) = kf_update_joint(mean, cov, m, y, r + w_out * r_out, clip);
+    (m2, c2, if tot > 0.0 { tot.ln() } else { -1e9 }, s)
+}
+
 /// An observation that averages `n` daily log values describes the level about (n-1)/2 days ago: moved to
 /// today with the drift (Python `week_observation`).
 pub fn week_observation(y_mean: f64, n: i64, drift: f64) -> f64 {
@@ -945,6 +967,31 @@ pub fn flash_observation(fp: &FilterParams, hours: f64, comments: i64, prev_fina
 mod tests {
     use super::*;
 
+    /// 178789 (無職転生 III) in the replay: its cn weekly values 73 → 256 → 78 around episode 13. With the fitted
+    /// outlier component the spike moves the level about 40% as much, and the week after leaves it closer to
+    /// where the series actually is.
+    #[test]
+    fn a_one_episode_spike_is_mostly_noise() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let cfg = Config::load_from(&root, |_| None).unwrap();
+        let fp = FilterParams::load(&cfg).unwrap();
+        assert!(fp.outlier_p[1] > 0.0, "cn outlier component fitted");
+        let run = |pi: f64| {
+            let (mut mean, mut cov) = ([8.0, 73f64.ln(), 4.7], prior_cov(&[0.02, 0.02, 0.02], fp.rho));
+            let mut path = Vec::new();
+            for y in [73f64, 73.0, 256.0, 78.0] {
+                let (m2, c2) = kf_predict_joint(&mean, &cov, 7, &[0.0; 3], &fp.q);
+                (mean, cov, _, _) = kf_update_joint_robust(&m2, &c2, 1, y.ln(), fp.r[1], pi, fp.outlier_r[1], fp.clip);
+                path.push(mean[1]);
+            }
+            path
+        };
+        let (plain, robust) = (run(0.0), run(fp.outlier_p[1]));
+        let jump = |p: &[f64]| p[2] - p[1];
+        assert!(jump(&robust) < 0.5 * jump(&plain), "{plain:?} {robust:?}");
+        assert!((robust[3] - 75f64.ln()).abs() < (plain[3] - 75f64.ln()).abs(), "{plain:?} {robust:?}");
+    }
+
     /// The same case through engine/valuation.py (values printed by Python, bit for bit).
     #[test]
     fn matches_python() {
@@ -1058,5 +1105,14 @@ mod tests {
             assert!(ulps(c3[i / 3][i % 3], *w) <= 2, "kf_update_joint cov {i}: {}", c3[i / 3][i % 3]);
         }
         assert!(ulps(ll, -1.3133207190690046) <= 2 && ulps(sv, 1.1396) <= 2, "{ll} {sv}");
+        // the outlier-prone update (v0.6.0), and pi = 0 = the plain update
+        let (mr, cr, llr, svr) = kf_update_joint_robust(&m, &c2, 1, -1.5, 0.0235, 0.013, 0.2537, 4.0);
+        let want_mr = [1.596498416403882, -1.563356045081464, -1.5519205960983624];
+        for i in 0..3 {
+            assert!(ulps(mr[i], want_mr[i]) <= 2, "kf_update_joint_robust mean {i}: {}", mr[i]);
+        }
+        assert!(ulps(cr[1][1], 0.027776909866191524) <= 2 && ulps(cr[0][2], 0.14499161367249325) <= 2, "{cr:?}");
+        assert!(ulps(llr, -3.84792943485109) <= 2 && ulps(svr, 1.1534801002462083) <= 2, "{llr} {svr}");
+        assert_eq!(kf_update_joint_robust(&m, &c2, 1, -1.5, 0.0235, 0.0, 0.2537, 4.0), kf_update_joint(&m, &c2, 1, -1.5, 0.0235, 4.0));
     }
 }

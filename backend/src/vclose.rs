@@ -717,7 +717,9 @@ impl Engine {
         }
         for ((m, y), xr) in ys.into_iter().zip(extra_r) {
             if st.active[m] {
-                let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, m, y, fp.r[m] + xr, fp.clip);
+                // outlier-prone (a one-episode spike is mostly noise, not a level change): the fitted mixture
+                let (mean, cov, _, _) =
+                    F::kf_update_joint_robust(&st.mean, &st.cov, m, y, fp.r[m] + xr, fp.outlier_p[m], fp.outlier_r[m], fp.clip);
                 st.mean = mean;
                 st.cov = cov;
             }
@@ -1207,7 +1209,7 @@ impl Engine {
         for (id, mut st) in part {
             let long = self.st.companies.get(&id).is_some_and(|c| c.long_runner != 0);
             let y = F::week_observation(st.acc / st.acc_n as f64, st.acc_n, fp.drift_for(0, long));
-            let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, 0, y, fp.r[0], fp.clip);
+            let (mean, cov, _, _) = F::kf_update_joint_robust(&st.mean, &st.cov, 0, y, fp.r[0], fp.outlier_p[0], fp.outlier_r[0], fp.clip);
             st.mean = mean;
             st.cov = cov;
             st.acc = 0.0;
