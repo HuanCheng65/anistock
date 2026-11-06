@@ -256,19 +256,6 @@ def week_observation(y_mean: float, n: int, drift: float) -> float:
     return y_mean + drift * (n - 1) / 2.0
 
 
-def partial_observation(fp: dict, y_mean: float, n: int, drift: float) -> tuple[float, float] | None:
-    """The first n days of a us episode week as an observation of the level today: their average log attention, less
-    the fitted mean of (n days' average - the week's) (`partial_us`, sim/fit_valuation.py `fit_partial_week`), moved to
-    today with the drift; and its extra noise variance beyond the full week's r. None without the fit (or n < 1).
-    The close observes the days so far on top of the state without them and drops that again the next day, so the
-    week's news is priced as it arrives and the complete week replaces it (docs/v2-valuation.md §3.2)."""
-    pu = fp.get("partial_us")
-    if n < 1 or not pu:
-        return None
-    mu, var = pu[min(n, len(pu)) - 1]
-    return week_observation(y_mean - mu, n, drift), var
-
-
 def schedule(air_days: list[int], episodes: int | None, long_runner: bool) -> list[int]:
     """Air days (day numbers) of every episode: the ones known so far, then weekly until `episodes`."""
     out = sorted(air_days)

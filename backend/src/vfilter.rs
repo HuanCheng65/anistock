@@ -94,9 +94,6 @@ struct RawParams {
     /// phase 1: the long tail after the finale, per market, and the tail-level prior (docs/v2-series.md §4)
     #[serde(default)]
     tail: Option<RawTail>,
-    /// the us episode week day by day: mean and variance of (first n days' average − the week's), n = 1..7
-    #[serde(default)]
-    partial_us: Vec<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -183,9 +180,6 @@ pub struct FilterParams {
     pub sequel: Option<SequelParams>,
     /// long-runners' weekly level factor (`[valuation] long_runner_decay`; their filter's drift)
     pub long_runner_decay: f64,
-    /// the us episode week day by day (`partial_observation`): per n = 1..7 days, the mean and variance of the
-    /// first n days' average log attention less the full week's (empty: the week is observed only when complete)
-    pub partial_us: Vec<[f64; 2]>,
 }
 
 impl FilterParams {
@@ -310,7 +304,6 @@ impl FilterParams {
             tail_prior: r.tail.as_ref().and_then(|t| t.prior.clone()),
             tail: r.tail.map_or([None, None, None], |t| [t.us, t.cn, t.jp]),
             sequel: None,
-            partial_us: r.partial_us,
         })
     }
 }
@@ -399,17 +392,6 @@ pub fn kf_update_joint(mean: &M3, cov: &Cov, m: usize, y: f64, r: f64, clip: f64
 /// today with the drift (Python `week_observation`).
 pub fn week_observation(y_mean: f64, n: i64, drift: f64) -> f64 {
     y_mean + drift * (n - 1) as f64 / 2.0
-}
-
-/// The first `n` days of a us episode week as an observation of the level today (Python `partial_observation`):
-/// their average log attention, less the fitted mean of (n days' average − the week's), moved to today with the
-/// drift; and its extra noise variance beyond the full week's `r`. None without the fit (or n < 1).
-pub fn partial_observation(fp: &FilterParams, y_mean: f64, n: i64, drift: f64) -> Option<(f64, f64)> {
-    if n < 1 || fp.partial_us.is_empty() {
-        return None;
-    }
-    let [mu, var] = fp.partial_us[(n as usize).min(fp.partial_us.len()) - 1];
-    Some((week_observation(y_mean - mu, n, drift), var))
 }
 
 /// Every episode's air day (day numbers): the known ones, then weekly until `episodes`.
@@ -1007,9 +989,6 @@ mod tests {
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
         assert!(close(e6, 3944.0482601881704), "{e6}");
-        // the us episode week observed day by day
-        assert_eq!(partial_observation(&fp, 7.3, 3, -0.004), Some((7.270578, 0.04953)));
-        assert_eq!(partial_observation(&fp, 7.3, 7, -0.004), Some((7.288, 0.0)));
         // the joint filter (v0.3.2)
         let c = prior_cov(&[0.35, 1.08, 0.86], 0.48);
         let want_c = [0.35, 0.2951121820596364, 0.26334464110742783, 0.2951121820596364, 1.08, 0.4625964980412195, 0.2633446411074279, 0.46259649804121955, 0.86];
