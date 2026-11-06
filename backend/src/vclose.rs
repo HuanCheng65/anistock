@@ -43,8 +43,8 @@ pub struct JState {
     /// equivalents, the show draws level × post now
     #[serde(default = "ones")]
     pub post: M3,
-    /// from the day before the finale's week ends: each market's expected attention on the day after `day`, the
-    /// value's own path (`att_path`, one day ahead). What a post-finale cn/jp day without data earns (`revenue_att`)
+    /// each market's expected attention on the day after `day`, the value's own path (`att_path`, one day ahead):
+    /// what a cn/jp day without data earns (`revenue_att`)
     #[serde(default)]
     pub next: Option<M3>,
     /// the state without the current us episode week's days so far (`partial_observation`): the close observes
@@ -348,18 +348,26 @@ impl Engine {
     }
 
     /// The attention a show earns on today's close (docs/v2-series.md §4.2): the inputs', except for a cn/jp market
-    /// that has no real data after the finale's week (the rebuilt series has none; the real tail, collection and
-    /// record increments, is not switched on yet): there, the filter's expectation for today as of the latest state
-    /// (yesterday's close), `next`: the same expectation the value priced for today. A stopgap: without it the
-    /// close would book nothing (or a modelled median) while the value priced the mean, a predictable shortfall.
-    /// (It used to be exp(mean + var/2) × the post-finale factor of the state's own day, one day behind: while the
-    /// expected tail falls, by a whole transition step at each of its week boundaries, the close booked more than
-    /// the value expected, a predictable surplus for whoever held a show after its finale.)
+    /// of the show's (mapped and active) that has no data today: there, the filter's expectation for today as of the
+    /// latest state (yesterday's close), `next`: the same expectation the value priced for today. Missing is not zero
+    /// (docs/v2-valuation.md §3.7): after the finale's week the rebuilt series has no data at all (the real tail,
+    /// collection and record increments, is not switched on yet), and in season cn/jp report late (the first week,
+    /// gaps in Annict's schedule). Booking nothing there while the value, and the market totals every share is
+    /// divided by, priced the expectation was a predictable shortfall for that show and a predictable surplus for
+    /// every other: on the standard replay 2-11% of the expected cn total and 4-12% of the jp total sat on such days,
+    /// and the realised totals ran that much under the expected ones.
+    /// (The post-finale imputation used to be exp(mean + var/2) × the post-finale factor of the state's own day, one
+    /// day behind: while the expected tail falls, by a whole transition step at each of its week boundaries, the
+    /// close booked more than the value expected, a predictable surplus for whoever held a show after its finale.)
     pub fn revenue_att(&self, s: &ShowInputs) -> M3 {
         let mut a = s.att.m3();
         let Some(js) = self.st.jstate.get(&s.id) else { return a };
         let (obs, src) = (Self::observed(s), Self::sources(s));
         for m in 1..3 {
+            // (inputs without the `observed` flags do not say whether a zero is missing: there, after the finale only)
+            if s.observed.is_none() && js.post[m] == 1.0 {
+                continue;
+            }
             if src[m] && !obs[m] && js.active[m] {
                 match js.next {
                     Some(n) => a[m] = n[m],
@@ -639,9 +647,9 @@ impl Engine {
                 st.cov = cov;
             }
         }
+        // tomorrow's expected attention on the value's own path (with the work's shape as the values see it)
         st.next = None;
-        if fin.is_some_and(|f| today + 1 >= f + 7) {
-            // tomorrow's expected attention on the value's own path (with the work's shape as the values see it)
+        {
             let cid = self.st.company_works.get(&s.id).copied().unwrap_or(s.id);
             if let Some(c) = self.st.companies.get(&cid).cloned() {
                 self.st.jstate.insert(s.id, st.clone());
