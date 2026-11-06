@@ -226,7 +226,7 @@ v1.0 公开前的准备（`docs/roadmap.md`「公开前：开放注册、去掉�
 | `surveillance_flags` | `day, a, b, trade_id, reason` |
 | `accounts` 增加 | `onboarded_at`、`confirm_orders` |
 
-文件版本号放在 `[account.documents]`：`terms = 1`、`privacy = 1`、`disclosure = 1`、`margin_disclosure = 1`。正文是 `web/src/legal/` 下的 Markdown，随前端发布。有实质修改时版本号加 1，用户下次登录时重新确认。
+文件版本号放在 `[account.documents]`：`terms = 1`、`privacy = 1`、`disclosure = 1`、`margin_disclosure = 1`。正文在 `web/src/legal/documents.ts`，随前端发布。有实质修改时要改两处：`[account.documents]` 的版本号加 1，同时改 `documents.ts` 里的更新日期（`UPDATED`）。用户下次登录时重新确认。
 
 ### 10.2 接口
 
