@@ -1,13 +1,14 @@
 """Backfill Bangumi's weekly collection counts from the official archive (github.com/bangumi/Archive releases),
 for the heat index's cn market (docs/v3-futures.md §3.6).
 
-    uv run sim/backfill_bgm_archive.py [--since 2025-06-01]
+    uv run sim/backfill_bgm_archive.py [--since 2025-11-01] [--jobs 3]
 
 Each weekly dump (Tuesday ~21:00 UTC, Wednesday 05:00 Asia/Shanghai) carries every subject's `favorite` counts
 (wish, done, doing, on_hold, dropped) and score. For every dump not read yet: download it (the .7z when there is
 one, else the .zip) into a temporary file, stream subject.jsonlines out of it, keep the subjects mapped to an AniList
-show (engine/economy.py effective_matches), and delete the download. The shared server's disk is nearly full: one
-archive at a time, nothing kept but the counts.
+show (engine/economy.py effective_matches), and delete the download. The shared server's disk is nearly full: at
+most --jobs archives at a time, nothing kept but the counts. GitHub is reached through the proxy (HTTPS_PROXY), about
+4 MB/s a connection, so a few downloads run side by side; a dropped transfer resumes where it stopped.
 
 Writes data/derived/heat_backfill.db, table bgm_weekly(subject_id, at, wish, done, doing, on_hold, dropped, score):
 `at` is the dump's UTC time. The archive has no stated license: only these aggregate counts are kept and used.
@@ -24,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,9 +58,34 @@ def subjects(path: Path, kind: str):
         raise RuntimeError(f"{cmd[0]} exited with {p.returncode}")
 
 
+def read_dump(at: str, urls: dict[str, str], wanted: set[int]) -> tuple[str, list[tuple], str]:
+    kind = "7z" if "7z" in urls else "zip"
+    t0 = time.monotonic()
+    with tempfile.TemporaryDirectory(dir=OUT.parent) as tmp:
+        path = Path(tmp) / f"dump.{kind}"
+        for attempt in range(8):
+            r = subprocess.run(["curl", "-sSL", "--retry", "5", "--retry-all-errors", "-C", "-", "-o", str(path), urls[kind]])
+            if r.returncode == 0:
+                break
+            time.sleep(5 * (attempt + 1))
+        else:
+            raise RuntimeError(f"{at}: download failed")
+        size = path.stat().st_size
+        rows = []
+        for line in subjects(path, kind):
+            if '"type":2' not in line and '"type": 2' not in line:
+                continue
+            d = json.loads(line)
+            if d.get("id") in wanted:
+                f = d.get("favorite") or {}
+                rows.append((d["id"], at, f.get("wish"), f.get("done"), f.get("doing"), f.get("on_hold"), f.get("dropped"), d.get("score")))
+    return at, rows, f"{kind}, {size / 1e6:.0f} MB, {time.monotonic() - t0:.0f}s"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--since", default="2025-06-01")
+    ap.add_argument("--since", default="2025-11-01")
+    ap.add_argument("--jobs", type=int, default=3)
     args = ap.parse_args()
     from engine import economy as E
     col = Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db"))
@@ -71,27 +98,24 @@ def main() -> None:
     db.execute("CREATE TABLE IF NOT EXISTS bgm_dumps (at TEXT PRIMARY KEY, subjects INTEGER NOT NULL)")
     have = {r[0] for r in db.execute("SELECT at FROM bgm_dumps")}
     todo = sorted((at, urls) for at, urls in assets().items() if at[:10] >= args.since and at not in have)
-    print(f"{len(wanted)} mapped Bangumi subjects; {len(todo)} dumps to read, {len(have)} read before")
-    for at, urls in todo:
-        kind = "7z" if "7z" in urls else "zip"
-        t0 = time.monotonic()
-        with tempfile.TemporaryDirectory(dir=OUT.parent) as tmp:
-            path = Path(tmp) / f"dump.{kind}"
-            subprocess.run(["curl", "-sSL", "--retry", "3", "-o", str(path), urls[kind]], check=True)
-            size = path.stat().st_size
-            rows = []
-            for line in subjects(path, kind):
-                if '"type":2' not in line and '"type": 2' not in line:
-                    continue
-                d = json.loads(line)
-                if d.get("id") in wanted:
-                    f = d.get("favorite") or {}
-                    rows.append((d["id"], at, f.get("wish"), f.get("done"), f.get("doing"), f.get("on_hold"), f.get("dropped"), d.get("score")))
-        with db:
-            db.executemany("INSERT OR IGNORE INTO bgm_weekly VALUES (?,?,?,?,?,?,?,?)", rows)
-            db.execute("INSERT INTO bgm_dumps VALUES (?,?)", (at, len(rows)))
-        print(f"  {at}: {len(rows)} subjects ({kind}, {size / 1e6:.0f} MB, {time.monotonic() - t0:.0f}s)", flush=True)
-    print("done")
+    print(f"{len(wanted)} mapped Bangumi subjects; {len(todo)} dumps to read, {len(have)} read before", flush=True)
+    failed = 0
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futs = [pool.submit(read_dump, at, urls, wanted) for at, urls in todo]
+        for f in as_completed(futs):
+            try:
+                at, rows, note = f.result()
+            except Exception as e:
+                failed += 1
+                print(f"  failed: {e}", flush=True)
+                continue
+            with db:
+                db.executemany("INSERT OR IGNORE INTO bgm_weekly VALUES (?,?,?,?,?,?,?,?)", rows)
+                db.execute("INSERT INTO bgm_dumps VALUES (?,?)", (at, len(rows)))
+            print(f"  {at}: {len(rows)} subjects ({note})", flush=True)
+    print("done" + (f", {failed} failed: run again to retry them" if failed else ""), flush=True)
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
