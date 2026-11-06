@@ -177,6 +177,8 @@ def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
             prem = [first + timedelta(days=lag) for lag in lags]
         else:
             prem = [max(start, day + timedelta(days=1))]
+        if not prem:    # no date and no fitted lags (the sequel option is off): nothing to say about when
+            continue
         cands.append((min(prem), {"id": n["id"], "announced": first.isoformat(), "premieres": [d.isoformat() for d in prem],
                                   "exact": prec == "day"}))
     cands.sort(key=lambda c: (c[0], c[1]["id"]))
