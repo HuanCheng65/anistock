@@ -32,6 +32,7 @@ fn main() {
     let mut allow_old_inputs = false;
     let mut bot_start = None;
     let mut value_only = false;
+    let mut open_at_value = false;
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -54,6 +55,11 @@ fn main() {
             "--probe-players" => probe = v.parse().expect("--probe-players"),
             "--value-only" => {
                 value_only = true;
+                i += 1;
+                continue;
+            }
+            "--open-at-value" => {
+                open_at_value = true;
                 i += 1;
                 continue;
             }
@@ -87,6 +93,8 @@ fn main() {
     }
     let inputs = inputs.expect("--inputs");
     let world = world.expect("--world");
+    // a world fresh from `server.seed --until` has only v1's schema (replay-history migrates it the same way)
+    anistock::store::migrate(&world).unwrap_or_else(|e| panic!("migrate {}: {e}", world.display()));
     let bot_start = bot_start.map(|v| {
         if v != "auto" {
             return v;
@@ -115,6 +123,7 @@ fn main() {
         allow_old_inputs,
         bot_start,
         value_only,
+        open_at_value,
         history: false,
     };
     let bots: Vec<BotKind> = match if value_only { "none" } else { bots_arg.as_str() } {

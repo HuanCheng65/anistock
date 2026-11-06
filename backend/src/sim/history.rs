@@ -89,6 +89,7 @@ pub fn cli(args: &[String]) {
         allow_old_inputs: false,
         bot_start: None,
         value_only: false,
+        open_at_value: false,
         history: true,
     };
     let t0 = std::time::Instant::now();

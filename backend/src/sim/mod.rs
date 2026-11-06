@@ -263,6 +263,9 @@ pub struct SimOptions {
     /// the valuation alone: no intraday trading (no NPC orders, no bot); the daily closes still run, so the
     /// hidden values and dividends are the same as in a full replay (they depend on the inputs, not on trading)
     pub value_only: bool,
+    /// open every listed company at the model's value on the first day (the start world's prices come from
+    /// server.seed's v1 valuation, which can be far from the filtered one; `history` does the same)
+    pub open_at_value: bool,
     /// Rebuilding the pre-launch history (`replay_history`, docs/ops-rebuild-replay.md): no corporate actions (there
     /// were none before the market opened), every listed company starts at the model's own value (like
     /// server/seed.py's opening price), and the result keeps what the closes wrote (`SimResult::history`).
@@ -293,7 +296,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
     e.margin = cfg.margin.clone();
     e.corporate = cfg.corporate.clone();
-    if opts.history {
+    // value-only: nothing trades, so the price stays where the world left it and every capital-policy rule that
+    // reads it (splits above 100, buybacks below value) would fire on a stale price
+    if opts.history || opts.value_only {
         e.corporate.enabled = false;
     }
     let params = Params::from_config(cfg)?;
@@ -334,7 +339,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         let history: Vec<Inputs> = hist.iter().map(|d| load(d)).collect::<Result<_, _>>()?;
         e.valuation_bootstrap(cfg, &history, &ts_of(at_local(&days[0], 7, 0)))?;
     }
-    if opts.history {
+    if opts.history || opts.open_at_value {
         // the start world's prices come from the old replay: open at the model's value instead, so the path is the
         // model's from the first day (prices converge on values slowly, a mispriced start would linger for weeks)
         let ids: Vec<i64> = e.st.companies.values().filter(|c| c.status == "listed" && c.fair_value > 0).map(|c| c.id).collect();
@@ -349,10 +354,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         e.commit();
         let values = e.companies().filter(|c| c.status == "listed").map(|c| ((c.id, last_closed.clone()), c.fair_value)).collect();
-        let mut tp = tap.0.lock().unwrap();
-        let h = tp.history.as_mut().unwrap();
-        h.start_scale = scale;
-        h.values = values;
+        if let Some(h) = tap.0.lock().unwrap().history.as_mut() {
+            h.start_scale = scale;
+            h.values = values;
+        }
     }
 
     // ---- the NPC market
