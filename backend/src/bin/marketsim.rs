@@ -2,11 +2,13 @@
 //!
 //!     marketsim --world WORLD.db --inputs DIR --out DIR [--collector anistock.db] [--days N]
 //!               [--set key=value ...] [--margin key=value ...] [--bots all|none|name,name] [--threshold PTS]
-//!               [--probe | --probe-players N] [--grow N_VALUE,DAYS,CASH_SCALE]
+//!               [--probe | --probe-players N] [--grow N_VALUE,DAYS,CASH_SCALE] [--bot-start auto|YYYY-MM-DD]
 //!
 //! WORLD.db: a launched game DB (read only). The baseline run has no bots; each bot strategy runs in its
 //! own season replay (same seed) on its own thread. Writes DIR/metrics.json, DIR/bots.json, DIR/report.html.
 //! --probe adds the liquidity probe (src/sim/probe.rs) to the baseline run: metrics.json "probe".
+//! --bot-start: the bots (benchmarks included) start trading that day instead of the replay's second week; `auto` =
+//! two weeks after the first premiere wave in the inputs (`sim::premiere_wave`).
 
 use std::path::PathBuf;
 
@@ -28,6 +30,7 @@ fn main() {
     let mut probe = 0usize;
     let mut grow = None;
     let mut allow_old_inputs = false;
+    let mut bot_start = None;
     let mut i = 0;
     while i < args.len() {
         let v = args.get(i + 1).cloned().unwrap_or_default();
@@ -41,6 +44,7 @@ fn main() {
             "--margin" => margin_sets.push(v),
             "--bots" => bots_arg = v,
             "--threshold" => threshold = v.parse().expect("--threshold"),
+            "--bot-start" => bot_start = Some(v),
             "--probe" => {
                 probe = 20;
                 i += 1;
@@ -75,9 +79,24 @@ fn main() {
     for kv in &sets {
         market.set(kv).unwrap_or_else(|e| panic!("--set {kv}: {e}"));
     }
+    let inputs = inputs.expect("--inputs");
+    let world = world.expect("--world");
+    let bot_start = bot_start.map(|v| {
+        if v != "auto" {
+            return v;
+        }
+        let last: String = {
+            let conn = rusqlite::Connection::open_with_flags(&world, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).expect("world");
+            conn.query_row("SELECT value FROM state WHERE key = 'last_closed'", [], |r| r.get(0)).expect("last_closed")
+        };
+        let first = chrono::NaiveDate::parse_from_str(&last, "%Y-%m-%d").expect("last_closed date").succ_opt().unwrap().to_string();
+        let (a, b, start) = anistock::sim::premiere_wave(&inputs, &first).expect("--bot-start auto");
+        eprintln!("first premiere wave {a}..{b}: bots start {start}");
+        start
+    });
     let base = SimOptions {
-        world_db: world.expect("--world"),
-        inputs_dir: inputs.expect("--inputs"),
+        world_db: world,
+        inputs_dir: inputs,
         collector_db: collector,
         max_days: days,
         market: market.clone(),
@@ -88,6 +107,7 @@ fn main() {
         probe: 0,
         grow,
         allow_old_inputs,
+        bot_start,
     };
     let bots: Vec<BotKind> = match bots_arg.as_str() {
         "none" => vec![],

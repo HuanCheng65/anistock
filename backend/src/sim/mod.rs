@@ -80,8 +80,50 @@ pub fn parse_ts(s: &str) -> i64 {
     at_local(&s[..10], n(11, 2), n(14, 2)) + n(17, 2)
 }
 
-/// Day index (0 = the first simulated day) on which the bots start trading.
+/// Day index (0 = the first simulated day) on which the bots start trading (the earliest: `SimOptions::bot_start`
+/// can only move it later).
 pub const BOT_START_DAY: usize = 7;
+
+/// A premiere wave ends at the first gap of more than this many days between consecutive premieres.
+pub const WAVE_GAP_DAYS: i64 = 3;
+/// The bots' later start (`--bot-start auto`): this many days after the first premiere wave's last premiere.
+pub const AFTER_WAVE_DAYS: i64 = 14;
+
+/// The replay's first premiere wave, from the inputs alone: the premieres (`first_air`) of every show in the inputs
+/// from two weeks before the first replayed day (`first_day`) on, in order, up to the first gap of more than
+/// `WAVE_GAP_DAYS`; returns (first premiere, last premiere, last premiere + `AFTER_WAVE_DAYS`). A replay that starts
+/// inside a season's premiere weeks lets a buy-and-hold strategy build its position while the new shows' first data
+/// revise their values, so where the replay starts decides its entry price (docs/v2-series.md, v0.6.1 gate); starting
+/// the bots after the wave measures what a strategy can repeat rather than where the replay happens to start.
+pub fn premiere_wave(inputs_dir: &std::path::Path, first_day: &str) -> Result<(String, String, String), String> {
+    let first = crate::vclose::day_no(first_day).ok_or("bad first day")?;
+    let mut prem: Vec<i64> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut files: Vec<_> = std::fs::read_dir(inputs_dir).map_err(|e| e.to_string())?.filter_map(|f| f.ok()).map(|f| f.path()).collect();
+    files.sort();
+    for f in files.iter().filter(|f| f.extension().is_some_and(|x| x == "json")) {
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(f).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        for s in v["shows"].as_array().into_iter().flatten() {
+            let (Some(id), Some(fa)) = (s["id"].as_i64(), s["first_air"].as_str()) else { continue };
+            if seen.insert(id) {
+                if let Some(d) = crate::vclose::day_no(fa).filter(|&d| d >= first - 14) {
+                    prem.push(d);
+                }
+            }
+        }
+    }
+    prem.sort_unstable();
+    let Some(&p0) = prem.first() else { return Err("no premieres in the inputs".into()) };
+    let mut last = p0;
+    for &d in &prem[1..] {
+        if d - last > WAVE_GAP_DAYS {
+            break;
+        }
+        last = d;
+    }
+    let fmt = |d: i64| chrono::NaiveDate::from_num_days_from_ce_opt(d as i32).map(|x| x.format("%Y-%m-%d").to_string()).unwrap_or_default();
+    Ok((fmt(p0), fmt(last), fmt(last + AFTER_WAVE_DAYS)))
+}
 
 /// `SIM_SYNTH_SEQUELS=1` (docs/v2-corporate.md §6, a labelled synthetic test): the replay has no relations data,
 /// so no sequel is ever announced and no rights issue happens. With this set (and the sequel option on), every show
@@ -168,6 +210,8 @@ pub struct SimOptions {
     pub grow: Option<(usize, usize, f64)>,
     /// replay inputs written before v0.3.2 (no point-in-time prior): a degraded valuation, for comparisons only
     pub allow_old_inputs: bool,
+    /// the first day the bots trade (YYYY-MM-DD; never before day `BOT_START_DAY`); None: day `BOT_START_DAY`
+    pub bot_start: Option<String>,
 }
 
 pub struct SimResult {
@@ -252,6 +296,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     if opts.grow.is_some_and(|g| g.1 == 0) {
         grown_cash += grow_step(&mut m, &mut e, 0, &last_closed, &ts0);
     }
+    let bot_start = opts.bot_start.as_deref().map_or(BOT_START_DAY, |d| {
+        days.iter().position(|x| x.as_str() >= d).unwrap_or(days.len()).max(BOT_START_DAY)
+    });
     let data = data::SeasonData::load(cfg, &opts.market, opts.collector_db.as_deref(), &e, &days);
     m.set_air_times(data.air.clone());
     m.refresh_universe(&e, t0);
@@ -401,7 +448,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             }
             // the bots start in the second week: the world starts at v1 prices, and the first days are the
             // market repricing to the new valuation (a one-off of the go-live, not a strategy's merit)
-            if s >= 9 * 3600 && s < 23 * 3600 && k >= BOT_START_DAY {
+            if s >= 9 * 3600 && s < 23 * 3600 && k >= bot_start {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
                     let ctx = bots::BotCtx { band, flashes: &published, notices: &notices };
@@ -664,6 +711,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     });
     metrics["capital"] = capital;
     metrics["grown_cash"] = serde_json::json!(grown_cash as f64 / 100.0);
+    metrics["bot_start"] = serde_json::json!(days.get(bot_start));
     metrics["mm_counterparty_markout"] =
         serde_json::json!(mm_counterparty.iter().map(|(k, v)| (k.clone(), *v as f64 / 100.0)).collect::<std::collections::BTreeMap<_, _>>());
     if let Some(p) = &probe {
