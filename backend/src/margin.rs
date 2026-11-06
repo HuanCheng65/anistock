@@ -153,6 +153,8 @@ pub struct Debt {
     pub principal: i64,
     pub interest: i64,
     pub opened_on: String,
+    /// shares bought with this financing still held (融资买入证券数量; V8). Every sale of the stock reduces it.
+    pub qty: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -164,6 +166,8 @@ pub struct Short {
     pub proceeds: i64,
     pub fee: i64,
     pub opened_on: String,
+    /// 融券卖出金额 of the shares sold and still owed (net of fees; V8): reduced pro rata as they are returned
+    pub amount: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -210,19 +214,19 @@ pub fn apply(conn: &Connection, c: &MarginChange) -> rusqlite::Result<()> {
         }
         MarginChange::Debt(d) => {
             conn.prepare_cached(
-                "INSERT OR REPLACE INTO margin_debts(account_id, company_id, principal, interest, opened_on) VALUES (?,?,?,?,?)",
+                "INSERT OR REPLACE INTO margin_debts(account_id, company_id, principal, interest, opened_on, qty) VALUES (?,?,?,?,?,?)",
             )?
-            .execute(params![d.account_id, d.company_id, d.principal, d.interest, d.opened_on])?;
+            .execute(params![d.account_id, d.company_id, d.principal, d.interest, d.opened_on, d.qty])?;
         }
         MarginChange::DebtDelete(a, c) => {
             conn.prepare_cached("DELETE FROM margin_debts WHERE account_id=? AND company_id=?")?.execute([a, c])?;
         }
         MarginChange::Short(s) => {
             conn.prepare_cached(
-                "INSERT OR REPLACE INTO short_positions(account_id, company_id, lender_id, qty, proceeds, fee, opened_on)
-                 VALUES (?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO short_positions(account_id, company_id, lender_id, qty, proceeds, fee, opened_on, amount)
+                 VALUES (?,?,?,?,?,?,?,?)",
             )?
-            .execute(params![s.account_id, s.company_id, s.lender_id, s.qty, s.proceeds, s.fee, s.opened_on])?;
+            .execute(params![s.account_id, s.company_id, s.lender_id, s.qty, s.proceeds, s.fee, s.opened_on, s.amount])?;
         }
         MarginChange::ShortDelete(a, c) => {
             conn.prepare_cached("DELETE FROM short_positions WHERE account_id=? AND company_id=?")?.execute([a, c])?;
@@ -245,6 +249,8 @@ pub fn load(conn: &Connection) -> rusqlite::Result<MarginState> {
     if !table_exists(conn, "credit_accounts")? {
         return Ok(s);
     }
+    // V8 added the financed quantity and the short-sale amount (the collateral formula)
+    let v8 = conn.prepare("SELECT qty FROM margin_debts LIMIT 0").is_ok();
     for r in conn
         .prepare("SELECT account_id, opened_at, status, call_day, bad_debt FROM credit_accounts")?
         .query_map([], |r| {
@@ -255,16 +261,19 @@ pub fn load(conn: &Connection) -> rusqlite::Result<MarginState> {
         s.credit.insert(r.account_id, r);
     }
     for r in conn
-        .prepare("SELECT account_id, company_id, principal, interest, opened_on FROM margin_debts")?
+        .prepare(&format!("SELECT account_id, company_id, principal, interest, opened_on, {} FROM margin_debts", if v8 { "qty" } else { "0" }))?
         .query_map([], |r| {
-            Ok(Debt { account_id: r.get(0)?, company_id: r.get(1)?, principal: r.get(2)?, interest: r.get(3)?, opened_on: r.get(4)? })
+            Ok(Debt { account_id: r.get(0)?, company_id: r.get(1)?, principal: r.get(2)?, interest: r.get(3)?, opened_on: r.get(4)?, qty: r.get(5)? })
         })?
     {
         let r = r?;
         s.debts.insert((r.account_id, r.company_id), r);
     }
     for r in conn
-        .prepare("SELECT account_id, company_id, lender_id, qty, proceeds, fee, opened_on FROM short_positions")?
+        .prepare(&format!(
+            "SELECT account_id, company_id, lender_id, qty, proceeds, fee, opened_on, {} FROM short_positions",
+            if v8 { "amount" } else { "proceeds" }
+        ))?
         .query_map([], |r| {
             Ok(Short {
                 account_id: r.get(0)?,
@@ -274,6 +283,7 @@ pub fn load(conn: &Connection) -> rusqlite::Result<MarginState> {
                 proceeds: r.get(4)?,
                 fee: r.get(5)?,
                 opened_on: r.get(6)?,
+                amount: r.get(7)?,
             })
         })?
     {
@@ -503,35 +513,64 @@ impl Engine {
         }
     }
 
+    /// Financed shares of (account, company) as the formula counts them: what the debt bought, at most what is
+    /// held (borrowed shares not yet sold excluded).
+    fn financed_qty(&self, account_id: i64, company_id: i64, unsold: i64) -> i64 {
+        let held = self.holding_qty(account_id, company_id) - unsold;
+        self.st.margin.debts.get(&(account_id, company_id)).map_or(0, |d| d.qty).clamp(0, held.max(0))
+    }
+
     /// The account's credit numbers on trading day `day` (haircuts depend on it).
+    ///
+    /// 保证金可用余额 by the exchanges' formula (上交所、深交所《融资融券交易实施细则》):
+    ///
+    ///   现金 + Σ 充抵保证金证券市值 × 折算率
+    ///   + Σ (融资买入证券市值 − 融资买入金额) × 折算率
+    ///   + Σ (融券卖出金额 − 融券卖出证券市值) × 折算率
+    ///   − Σ 融券卖出金额 − Σ 融资买入金额 × 融资保证金比例 − Σ 融券卖出证券市值 × 融券保证金比例
+    ///   − 利息及费用
+    ///
+    /// where a loss in either floating term counts in full (折算率 100%). Financed shares are the debt's `qty`;
+    /// the rest of a holding is ordinary collateral. A resting margin buy has drawn its loan into the order:
+    /// the frozen cash is in 现金 and the loan in 融资买入金额 with no shares yet, a loss that cancels the cash.
+    /// A resting short sale's borrowed shares are not collateral; they are owed (the requirement) with
+    /// nothing sold yet. With cash C and nothing else, at most C can be financed or sold short.
     pub fn credit_numbers(&self, account_id: i64, day: &str) -> CreditNumbers {
         let mut n = CreditNumbers { cash: self.account(account_id).map_or(0, |a| a.cash), ..Default::default() };
         let pending = self.open_credit_orders(account_id);
-        // collateral: cash at 100%, stock at its haircut; a pending margin buy's frozen loan counts as the
-        // stock it will buy, a pending short sale's borrowed shares as the cash they will fetch
-        let mut coll = n.cash as f64;
+        let unsold = |c: i64| -> i64 { pending.iter().filter(|o| o.1 == Mode::ShortSell && o.2 == c).map(|o| o.3).sum() };
+        let m = self.margin.margin_ratio;
+        let floating = |x: f64, h: f64| if x > 0.0 { x * h } else { x };
+        let mut avail = n.cash as f64;
         for h in self.holdings_of(account_id) {
             let p = self.last_price(h.company_id);
             n.stock_value += h.qty * p;
-            let unsold: i64 = pending.iter().filter(|o| o.1 == Mode::ShortSell && o.2 == h.company_id).map(|o| o.3).sum();
-            coll += ((h.qty - unsold) * p) as f64 * self.haircut_of(h.company_id, day) + (unsold * p) as f64;
-        }
-        for o in pending.iter().filter(|o| o.1 == Mode::MarginBuy) {
-            coll -= o.4 as f64 * (1.0 - self.haircut_of(o.2, day));
+            let u = unsold(h.company_id);
+            let own = h.qty - u - self.financed_qty(account_id, h.company_id, u);
+            avail += (own * p) as f64 * self.haircut_of(h.company_id, day);
         }
         for d in self.debts_of(account_id) {
             n.debt_principal += d.principal;
             n.debt_interest += d.interest;
+            let p = self.last_price(d.company_id);
+            let fq = self.financed_qty(account_id, d.company_id, unsold(d.company_id));
+            avail += floating((fq * p - d.principal) as f64, self.haircut_of(d.company_id, day));
+            avail -= m * d.principal as f64;
         }
         for s in self.shorts_of(account_id) {
-            n.short_value += s.qty * self.last_price(s.company_id);
+            let p = self.last_price(s.company_id);
+            n.short_value += s.qty * p;
             n.short_fees += s.fee;
             n.locked += s.proceeds;
+            let sold = s.qty - unsold(s.company_id);
+            avail += floating((s.amount - sold * p) as f64, self.haircut_of(s.company_id, day));
+            avail -= s.amount as f64;
+            avail -= m * (s.qty * p) as f64;
         }
         n.bad_debt = self.credit(account_id).map_or(0, |c| c.bad_debt);
         n.liabilities = n.debt_principal + n.debt_interest + n.short_value + n.short_fees + n.bad_debt;
-        let req = self.margin.margin_ratio * (n.debt_principal + n.debt_interest + n.short_value) as f64;
-        n.available_margin = (coll - n.liabilities as f64 - req).floor() as i64;
+        avail -= (n.debt_interest + n.short_fees + n.bad_debt) as f64;
+        n.available_margin = avail.floor() as i64;
         n
     }
 
@@ -691,8 +730,11 @@ impl Engine {
                 if self.exposure(acct, cid) + need > (self.margin.concentration * numbers.net() as f64) as i64 {
                     return Err(err("单支股票的融资融券不能超过净资产"));
                 }
-                let after = numbers.available_margin as f64 + self.margin.haircut * (p * qty) as f64
-                    - (1.0 + self.margin.margin_ratio) * need as f64;
+                // the new contract: shares worth qty × last price against `need` borrowed (a gain at the haircut,
+                // a loss in full), plus the margin on `need`
+                let fresh = (qty * last - need) as f64;
+                let fresh = if fresh > 0.0 { fresh * self.haircut_of(cid, req.day) } else { fresh };
+                let after = numbers.available_margin as f64 + fresh - self.margin.margin_ratio * need as f64;
                 if after < 0.0 {
                     return Err(err("可用保证金不足"));
                 }
@@ -704,6 +746,7 @@ impl Engine {
                     principal: 0,
                     interest: 0,
                     opened_on: req.day.to_string(),
+                    qty: 0,
                 });
                 d.principal += need;
                 self.emit_debt((acct, cid));
@@ -738,6 +781,7 @@ impl Engine {
                     proceeds: 0,
                     fee: 0,
                     opened_on: req.day.to_string(),
+                    amount: 0,
                 });
                 s.qty += qty;
                 self.emit_short((acct, cid));
@@ -811,6 +855,19 @@ impl Engine {
     /// Hook: a trade settled (`fill`), before either order is closed. `seller_net`: what the seller received
     /// after commission and stamp duty.
     pub(crate) fn margin_on_fill(&mut self, buy_id: i64, sell_id: i64, q: i64, tp: i64, seller_net: i64, day: &str, ts: &str) {
+        if !self.st.margin.debts.is_empty() {
+            // any sale of a stock bought on margin: the financed shares go first
+            let key = {
+                let o = &self.st.orders[&sell_id];
+                (o.account_id, o.company_id)
+            };
+            if let Some(d) = self.st.margin.debts.get_mut(&key) {
+                if d.qty > 0 {
+                    d.qty -= q.min(d.qty);
+                    self.emit_debt(key);
+                }
+            }
+        }
         if self.st.margin.orders.is_empty() {
             return;
         }
@@ -821,6 +878,7 @@ impl Engine {
                     self.add_cash(acct, 0, seller_net);
                     if let Some(s) = self.st.margin.shorts.get_mut(&(acct, cid)) {
                         s.proceeds += seller_net;
+                        s.amount += seller_net;
                     }
                     self.emit_short((acct, cid));
                 }
@@ -833,7 +891,20 @@ impl Engine {
         }
         if let Some(mo) = self.st.margin.orders.get(&buy_id).cloned() {
             let (acct, cid) = { let o = &self.st.orders[&buy_id]; (o.account_id, o.company_id) };
+            if mo.mode == Mode::MarginBuy {
+                if let Some(d) = self.st.margin.debts.get_mut(&(acct, cid)) {
+                    d.qty += q;
+                    self.emit_debt((acct, cid));
+                }
+            }
             if mo.mode == Mode::BuyReturn {
+                // the returned shares' part of 融券卖出金额 goes, pro rata
+                let sold = self.short_qty(acct, cid) - self.unsold(acct, cid);
+                if let Some(s) = self.st.margin.shorts.get_mut(&(acct, cid)) {
+                    if sold > 0 {
+                        s.amount -= (s.amount as i128 * q.min(sold) as i128 / sold as i128) as i64;
+                    }
+                }
                 let lender = self.short_of(acct, cid).map(|s| s.lender_id);
                 if let Some(lender) = lender {
                     self.do_remove_shares(acct, cid, q, 0).unwrap_or_else(|e| panic!("buy_return {buy_id}: {e}"));
@@ -900,6 +971,7 @@ impl Engine {
             self.add_cash(acct, 0, -s.proceeds);
             self.st.margin.shorts.get_mut(&(acct, cid)).unwrap().proceeds = 0;
         }
+        self.st.margin.shorts.get_mut(&(acct, cid)).unwrap().amount = 0;
         self.pay_fee(acct, cid, day, ts);
         self.emit_short((acct, cid));
     }
@@ -1027,6 +1099,7 @@ impl Engine {
             let s = self.st.margin.shorts.get_mut(&key).unwrap();
             let owed = s.qty * per;
             s.qty = 0;
+            s.amount = 0;
             let unlock = s.proceeds;
             s.proceeds = 0;
             self.add_cash(acct, 0, -unlock);

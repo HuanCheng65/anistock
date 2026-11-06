@@ -112,7 +112,8 @@ const maxQty = computed(() => {
   switch (mode.value) {
     case 'margin_buy': {
       if (!(p > 0) || !c || !sm.value) return 0
-      const byMargin = Math.floor(c.available_margin / (per * (1 + c.margin_ratio) - sm.value.haircut * p))
+      // each share: 保证金比例 × the loan, plus the loan over the share's value (commission) counted in full
+      const byMargin = Math.floor(c.available_margin / (per * c.margin_ratio + Math.max(0, per - last.value)))
       return Math.max(0, Math.min(byMargin, Math.floor(sm.value.financing_room / per)))
     }
     case 'short_sell': {
