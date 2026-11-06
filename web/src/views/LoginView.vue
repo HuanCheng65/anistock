@@ -5,19 +5,18 @@ import { ApiError } from '../api'
 import BrandMark from '../components/BrandMark.vue'
 import Tabs from '../components/Tabs.vue'
 import { powSupported, solve, type PowSolution } from '../pow'
-import { usePrefs } from '../stores/prefs'
 import { useSession } from '../stores/session'
 
 type Purpose = 'register' | 'login'
 
 const session = useSession()
-const prefs = usePrefs()
 const router = useRouter()
 const route = useRoute()
 const mode = ref<Purpose>(route.query.invite ? 'register' : 'login')
 const username = ref('')
 const password = ref('')
 const invite = ref(typeof route.query.invite === 'string' ? route.query.invite : '')
+const agreed = ref(false)
 const busy = ref(false)
 const error = ref('')
 // open / invite / closed, from the server; unknown until the first challenge arrives
@@ -73,6 +72,7 @@ async function submit() {
   if (name.length < 2 || name.length > 20) return (error.value = '用户名需为 2–20 个字符')
   if (password.value.length < 6) return (error.value = '密码至少 6 位')
   if (reg.value && needInvite.value && !invite.value.trim()) return (error.value = '填写邀请码，可以向社团管理员索取')
+  if (reg.value && !agreed.value) return (error.value = '需要同意《用户协议》和《隐私政策》')
   busy.value = true
   try {
     try {
@@ -83,7 +83,9 @@ async function submit() {
       else throw e
     }
     const next = typeof route.query.next === 'string' ? route.query.next : '/'
-    if (!prefs.onboarded) router.replace({ name: 'welcome', query: { next } })
+    // a new account opens with the account-opening flow; a sign-in only when a document awaits
+    if (reg.value) router.replace({ name: 'welcome', query: { next, new: '1' } })
+    else if (session.me?.pending_documents.length) router.replace({ name: 'welcome', query: { next } })
     else router.replace(next)
   } catch (e) {
     if (e instanceof Unsupported) error.value = '当前浏览器无法完成验证，在系统浏览器中打开后重试'
@@ -115,6 +117,10 @@ async function submit() {
       <label v-if="reg && needInvite" class="field">邀请码
         <input class="input" v-model="invite" autocomplete="off" />
       </label>
+      <label v-if="reg && !closed" class="agree">
+        <input v-model="agreed" type="checkbox" />
+        <span>已阅读并同意<a href="/legal/terms" target="_blank" rel="noopener">《用户协议》</a>和<a href="/legal/privacy" target="_blank" rel="noopener">《隐私政策》</a></span>
+      </label>
       <p v-if="closed" class="msg">暂未开放注册</p>
       <p v-if="error" class="msg error" role="alert">{{ error }}</p>
       <button class="btn block" :disabled="busy || closed">{{ busy ? (reg ? '注册中…' : '登录中…') : reg ? '注册' : '登录' }}</button>
@@ -136,6 +142,9 @@ async function submit() {
 .form { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; }
 .form .btn { height: 48px; font-size: 16px; margin-top: 4px; }
 .foot { margin: auto 0 28px; padding-top: 28px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.agree { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.agree input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }
+.agree a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
 .look { margin-left: 4px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
 @media (min-width: 1024px) { .brand { padding-top: 120px; } }
 </style>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { api, call, errorText, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
+import Icon from '../components/Icon.vue'
 import { hm } from '../format'
 import { useAccount } from '../stores/account'
 import { useCredit } from '../stores/credit'
@@ -15,6 +16,7 @@ const session = useSession()
 const account = useAccount()
 const router = useRouter()
 const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]
+const docs = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书']] as const
 async function logout() {
   await session.logout()
   account.clear()
@@ -97,7 +99,7 @@ async function unbind(id: number) {
         </div>
       </template>
       <template v-else>
-        <p class="hint">在社团群里发送“/绑定 绑定码”，机器人即可查看你的资产和持仓。</p>
+        <p class="hint">在 QQ 里向机器人发送“/绑定 绑定码”，机器人即可查看你的资产和持仓。</p>
         <div v-if="code" class="code">
           <span class="num big">{{ code.code }}</span>
           <span class="muted">{{ hm(code.expires_at) }} 前有效</span>
@@ -105,6 +107,23 @@ async function unbind(id: number) {
         <button type="button" class="btn small" :disabled="busy" @click="makeCode">{{ code ? '重新生成' : '生成绑定码' }}</button>
       </template>
       <p v-if="msg" class="msg" :class="msg.kind === 'error' ? 'error' : 'ok'" role="status">{{ msg.text }}</p>
+    </section>
+    <section v-if="session.me" class="sec">
+      <h2>交易</h2>
+      <div class="acct">
+        <span id="confirm-orders">下单前确认</span>
+        <button type="button" role="switch" class="switch" :aria-checked="prefs.confirmOrders" aria-labelledby="confirm-orders"
+          @click="prefs.confirmOrders = !prefs.confirmOrders"><span></span></button>
+      </div>
+    </section>
+    <section class="sec">
+      <h2>协议</h2>
+      <nav class="docs">
+        <RouterLink v-for="[k, l] in docs" :key="k" :to="`/legal/${k}`" class="docrow">
+          <span>{{ l }}</span>
+          <Icon name="chevron" :size="16" class="chev" />
+        </RouterLink>
+      </nav>
     </section>
     <section v-if="session.me" class="sec">
       <h2>账号</h2>
@@ -131,4 +150,13 @@ async function unbind(id: number) {
 .confirm h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .confirm p { margin: 0; font-size: 13px; color: var(--ink-2); }
 .acts { display: flex; gap: 8px; margin-top: 6px; }
+.switch { position: relative; width: 44px; height: 26px; flex: none; padding: 0; border: 1px solid var(--base-line); background: var(--field-bg); transition: background-color 0.2s ease; }
+.switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: var(--muted); transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1), background-color 0.2s ease; }
+.switch[aria-checked="true"] { background: var(--ink); border-color: var(--ink); }
+.switch[aria-checked="true"] span { transform: translateX(18px); background: var(--ground); }
+@media (prefers-reduced-motion: reduce) { .switch, .switch span { transition: none; } }
+.docs { margin-top: -6px; }
+.docrow { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--hair-2); font-size: 15px; }
+.docrow:last-child { border-bottom: 0; }
+.chev { color: var(--muted); }
 </style>

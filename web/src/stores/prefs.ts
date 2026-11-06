@@ -44,8 +44,10 @@ export function applyTheme(t: Theme) {
 export const usePrefs = defineStore('prefs', () => {
   const watchlist = ref<number[]>(load('aniex.watchlist', []))
   const theme = ref<Theme>(load('aniex.theme', 'system'))
-  const onboarded = ref<boolean>(load('aniex.onboarded', false))
   const sideCollapsed = ref<boolean>(load('aniex.sideCollapsed', false))
+  // 下单前确认: a summary to confirm before an order is sent (on unless the player turns it off)
+  const confirmOrders = ref<boolean>(load('aniex.confirmOrders', true))
+  watch(confirmOrders, (v) => save('aniex.confirmOrders', v))
   // the list the player opened a stock from (股票 page filter + sort, 自选, 持仓), for the detail sidebar
   const context = ref<StockContext | null>(loadSession('aniex.context'))
   watch(sideCollapsed, (v) => save('aniex.sideCollapsed', v))
@@ -62,7 +64,6 @@ export const usePrefs = defineStore('prefs', () => {
     save('aniex.theme', v)
     applyTheme(v)
   }, { immediate: true })
-  watch(onboarded, (v) => save('aniex.onboarded', v))
 
   const watching = (id: number) => watchlist.value.includes(id)
   function toggle(id: number) {
@@ -70,5 +71,5 @@ export const usePrefs = defineStore('prefs', () => {
     if (i >= 0) watchlist.value.splice(i, 1)
     else watchlist.value.unshift(id)
   }
-  return { watchlist, theme, onboarded, sideCollapsed, context, watching, toggle }
+  return { watchlist, theme, confirmOrders, sideCollapsed, context, watching, toggle }
 })

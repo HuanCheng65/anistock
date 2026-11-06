@@ -63,6 +63,7 @@
 | | `GET /api/v1/me/trades` | 玩家 / 机器人代表 | `/api/trades` |
 | | `GET /api/v1/me/ledger` | 玩家 / 机器人代表 | `/api/ledger` |
 | | `POST /api/v1/me/restructure` | 玩家 | `POST /api/me/restructure`（开发中） |
+| | `POST /api/v1/me/agreements` | 玩家 | 新 |
 | 排行 | `GET /api/v1/leaderboard?period=all\|week\|season` | 无 | `/api/leaderboard` |
 | 认证 | `GET /api/v1/auth/challenge?purpose=register\|login` | 无 | 新 |
 | | `POST /api/v1/auth/register` | 无 | `/api/register` |
@@ -259,6 +260,8 @@
 | 422 | `ipo_closed` | 认购已截止，无法撤回 | — |
 | 422 | `bad_invite` | 邀请码不正确，可以向社团管理员索取 | — |
 | 403 | `registration_closed` | 暂未开放注册 | — |
+| 403 | `agreement_required` | 签署风险揭示书后才能交易 | — |
+| 409 | `document_outdated` | 文件已更新，刷新页面后重新阅读 | — |
 | 422 | `pow_required` | 需要先完成验证，重新提交即可 | — |
 | 422 | `pow_invalid` | 验证已失效，重新提交即可 | — |
 | 503 | `busy` | 当前登录的人较多，稍后重试 | `retry_after`（秒） |
@@ -412,9 +415,20 @@ X-Act-As: qq:123456789
 ```json
 {"username": "alice", "password": "secret123", "invite": "CLUB2026", "pow": {"challenge": {…}, "number": 417}}
 ```
-- `username`：去掉首尾空白后 2–20 个字符；`password`：至少 6 位；`invite`：邀请注册模式下必填；`pow`：题目不为 `null` 时必填。
+- `username`：去掉首尾空白后 2–20 个字符；`password`：至少 6 位；`invite`：邀请注册模式下必填；`pow`：题目不为 `null` 时必填；`agree`：必须为 `true`（同意《用户协议》和《隐私政策》，记为当前版本的签署记录）。
 - 201，设置 cookie，返回 `Me`（§4.5.1）。
 - 错误：`invalid_request`、`registration_closed`、`bad_invite`、`pow_required`、`pow_invalid`、`username_taken`、`busy`、`rate_limited`。
+
+#### `POST /api/v1/me/agreements`
+
+同意或签署一份文件（`docs/v2-account.md` §7）：
+
+```json
+{"doc": "disclosure", "version": 1, "signature": "alice"}
+```
+- `doc`：`terms` 用户协议、`privacy` 隐私政策、`disclosure` 风险揭示书；`version` 必须是当前版本（`game.toml` 的 `[account.documents]`），否则 409 `document_outdated`。
+- 风险揭示书要用自己的用户名签署（去掉首尾空白后一致）；其他文件不需要 `signature`。
+- 200，返回 `Me`。`Me.pending_documents` 列出还没有同意或签署的当前版本文件；不为空时，下单、新股认购、配股认购、开通信用账户返回 403 `agreement_required`。撤单、还款、重整不受影响。
 
 #### `POST /api/v1/auth/login`
 

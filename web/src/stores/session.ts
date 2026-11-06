@@ -57,7 +57,7 @@ export const useSession = defineStore('session', () => {
   }
 
   async function register(username: string, password: string, invite: string, pow: PowSolution | null) {
-    me.value = await call(api.POST('/api/v1/auth/register', { body: { username, password, invite: invite || null, pow } }))
+    me.value = await call(api.POST('/api/v1/auth/register', { body: { username, password, invite: invite || null, pow, agree: true } }))
     checked.value = true
   }
 
