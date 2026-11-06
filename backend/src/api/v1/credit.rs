@@ -114,6 +114,10 @@ pub struct StockMargin {
     pub lendable: i64,
     /// 剩余融资额度
     pub financing_room: Money,
+    /// 融资余额：全部账户在这支股票上未还的融资本金
+    pub financed: Money,
+    /// 融券余量：全部账户在这支股票上的欠券股数
+    pub shorted: i64,
     pub financing_rate: f64,
     pub lending_rate: f64,
 }
@@ -314,12 +318,17 @@ pub async fn stock_margin(State(st): State<Arc<AppState>>, Path(raw): Path<Strin
             return Err(error::stock_not_found(id));
         }
         let s = e.stock_margin(id, &day);
+        let mg = &e.st.margin;
+        let financed: i64 = mg.debts.values().filter(|d| d.company_id == id).map(|d| d.principal).sum();
+        let shorted: i64 = mg.shorts.values().filter(|x| x.company_id == id).map(|x| x.qty).sum();
         Ok(StockMargin {
             eligible: s.eligible,
             reason: s.reason.map(str::to_string),
             haircut: s.haircut,
             lendable: s.lendable,
             financing_room: m(s.financing_room),
+            financed: m(financed),
+            shorted,
             financing_rate: r6(e.financing_rate()),
             lending_rate: r6(e.lending_rate()),
         })

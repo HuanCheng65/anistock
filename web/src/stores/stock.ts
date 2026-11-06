@@ -6,9 +6,15 @@ import { onLive } from '../live'
 import {
   api, ApiError, call,
   type AuctionIndication, type BookLevel, type Candle, type ExDay, type IntradayPoint, type NewsItem, type PublicTrade, type RightsOffer,
-  type StockDetail,
+  type StockDetail, type WorksResponse,
 } from '../api'
 import { tradingDayOf } from '../format'
+
+/** The stock page's 公告: company notices, airing news, dividends and flashes; not 冷静期 or rate news. */
+export const NOTICE_KINDS = [
+  'flash', 'premiere', 'finale', 'delay', 'hiatus', 'dividend', 'sequel', 'split', 'rights', 'buyback',
+  'delisting', 'warning', 'ipo', 'allotment',
+].join(',')
 
 export interface Book {
   bids: BookLevel[]
@@ -21,6 +27,9 @@ export const useStock = defineStore('stock', () => {
   const book = ref<Record<number, Book>>({})
   const trades = ref<Record<number, PublicTrade[]>>({})
   const news = ref<Record<number, NewsItem[]>>({})
+  /** the cursor of the next older page of `news` (null: no more) */
+  const newsMore = ref<Record<number, string | null>>({})
+  const works = ref<Record<number, WorksResponse>>({})
   const candles = ref<Record<number, Candle[]>>({})
   const intraday = ref<Record<number, IntradayPoint[]>>({})
   // corporate actions (docs/v2-corporate.md): split / ex-rights days of the K-line, the open rights issue
@@ -31,6 +40,7 @@ export const useStock = defineStore('stock', () => {
   const error = ref<Record<number, string>>({})
   const candleAt: Record<number, number> = {}
   const newsAt: Record<number, number> = {}
+  const worksAt: Record<number, number> = {}
 
   async function refresh(id: number, force = false) {
     try {
@@ -66,12 +76,35 @@ export const useStock = defineStore('stock', () => {
     if (force || !news.value[id] || now - (newsAt[id] ?? 0) > 60000) {
       newsAt[id] = now
       jobs.push(
-        call(api.GET('/api/v1/news', { params: { query: { stock_id: id, limit: 20 } } }))
-          .then((r) => (news.value[id] = r.items))
+        call(api.GET('/api/v1/news', { params: { query: { stock_id: id, kind: NOTICE_KINDS, limit: 30 } } }))
+          .then((r) => {
+            // keep older pages already loaded: merge the fresh first page in front
+            const fresh = new Set(r.items.map((n) => n.id))
+            const old = (news.value[id] ?? []).filter((n) => !fresh.has(n.id) && n.id < (r.items.at(-1)?.id ?? Infinity))
+            news.value[id] = [...r.items, ...old]
+            if (!old.length) newsMore.value[id] = r.has_more ? r.next_cursor : null
+          })
           .catch(() => {}),
       )
     }
     await Promise.all(jobs)
+  }
+
+  async function moreNews(id: number) {
+    const before = newsMore.value[id]
+    if (!before) return
+    const r = await call(api.GET('/api/v1/news', { params: { query: { stock_id: id, kind: NOTICE_KINDS, limit: 30, before } } }))
+    const have = new Set((news.value[id] ?? []).map((n) => n.id))
+    news.value[id] = [...(news.value[id] ?? []), ...r.items.filter((n) => !have.has(n.id))]
+    newsMore.value[id] = r.has_more ? r.next_cursor : null
+  }
+
+  /** works, schedule and sequel (changes at most daily: refreshed every 5 minutes while shown) */
+  async function refreshWorks(id: number, force = false) {
+    const now = Date.now()
+    if (!force && works.value[id] && now - (worksAt[id] ?? 0) < 300_000) return
+    worksAt[id] = now
+    works.value[id] = await call(api.GET('/api/v1/stocks/{id}/works', { params: { path: { id } } }))
   }
 
   async function refreshIntraday(id: number) {
@@ -125,5 +158,8 @@ export const useStock = defineStore('stock', () => {
     }
   })
 
-  return { detail, book, trades, news, candles, intraday, exDays, rights, adjust, error, refresh, refreshIntraday }
+  return {
+    detail, book, trades, news, newsMore, works, candles, intraday, exDays, rights, adjust, error,
+    refresh, refreshIntraday, moreNews, refreshWorks,
+  }
 })

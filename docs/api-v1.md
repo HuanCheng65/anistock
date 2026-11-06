@@ -42,6 +42,7 @@
 | | `GET /api/v1/stocks/{id}/candles` | 无 | `/api/stocks/{id}/candles` |
 | | `GET /api/v1/stocks/{id}/intraday` | 无 | `/api/stocks/{id}/intraday` |
 | | `GET /api/v1/stocks/{id}/cover` | 无 | `/api/covers/{id}` |
+| | `GET /api/v1/stocks/{id}/works` | 无 | 新（作品、播出排期、单集讨论、续作） |
 | | `GET /api/v1/stocks/{id}/corporate-actions` | 无 | 新（拆股、配股、回购） |
 | | `GET /api/v1/stocks/{id}/rights` | 可选 | 新（认购期的配股） |
 | | `PUT /api/v1/stocks/{id}/rights/subscription` | 玩家 | 新 |
@@ -826,8 +827,9 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
              "pb": 2.7, "book_value_per_share": 8165},
   "revenue_weeks": [
     {"week_start": "2026-10-26", "revenue": 1905000, "by_market": {"us": 820000, "cn": 610000, "jp": 475000},
-     "dividend_per_share": 160, "episodes_aired": 1149}
+     "dividend_per_share": 160, "earnings_per_share": 179, "episodes_aired": 1149}
   ],
+  "trailing_4w": {"earnings_per_share": 702, "dividends_per_share": 640},
   "episode_days": [{"episode": 1149, "trading_day": "2026-11-02"}],
   "next_episode": {"episode": 1151, "airs_at": "2026-11-08T09:30:00+08:00"},
   "dividends": [{"trading_day": "2026-11-02", "per_share": 160}],
@@ -850,6 +852,8 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 
 - `quote.open_reference`：今日开盘参考价（集合竞价价或昨收），VCM 后续档位的锚（旧 `open_ref`）。
 - `revenue_weeks`：按周（周一起）汇总，`week_start` 是该周第一天（旧 `weeks[].week`，`us/cn/jp` 收进 `by_market`，`dividend_ps` 改 `dividend_per_share`，`aired` 改 `episodes_aired`）。
+- `revenue_weeks[].earnings_per_share`：这一周的每股收益 = 营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本，四舍五入到分；运营成本率和税率取服务器配置（`company.operating_cost_ratio`、`company.corp_tax`），和 `Ratios.pe_ttm` 同一口径。股本用当前股数（拆股后的历史周按新股数计，和前复权 K 线一致）。
+- `trailing_4w`：近 28 天（与 `Ratios` 同样按 `day > 今天 − 28` 切）的实际合计：每股收益、每股分红。不年化。
 - `episode_days`：每集首次出现在数据里的交易日（旧 profile 的 `episodes: [{n, day}]`，改名避免和总集数 `episodes` 冲突）。
 - `holders`：**口径统一**。旧 `/api/stocks/{id}` 按账户类型原样输出（`company`、`mm`、`npc`…），profile 把 `company` 叫 `unissued`、其余全算 `npc`。v1 固定为：`player`（玩家）、`committee`（制作委员会）、`unissued`（公司账户里未发行的）、`market_maker`（做市商 `mm`）、`npc`（NPC 市场的四类主体，`by_style` 按名字前缀的主体类型分；v1 NPC 的 `noise` 账户计入 `npc.total` 但不进 `by_style`）、`other`（世界账户、央行、政府：破产重整和下架收购会把股票卖给世界账户）。各项之和等于 `shares`。NPC 分类型的持股由正在开发的 NPC 市场提供；在那之前 `by_style` 为 null。
 - `audiences`：对应来源没有数据时该键为 null（不再省略）。旧的 `anilist.next_episode`（含 Unix 秒 `airingAt`）删除，用顶层 `next_episode`；`anilist.cover` 删除，用 `cover_url`。`bangumi.name_cn` 删除（就是 `title`）。
@@ -936,6 +940,27 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 #### 4.2.9 `PUT /api/v1/stocks/{id}/rights/subscription`、`DELETE …`
 
 请求 `{"quantity": 30}`：设定认购数量（幂等，0 等于撤回），冻结 数量 × 配股价。返回同 4.2.8。错误：`rights_not_open`（没有认购期的配股，422）、`rights_rejected`（超过配股权或资金不足，422）。`DELETE` 撤回，没有配股时也返回 200。
+
+#### 4.2.10 `GET /api/v1/stocks/{id}/works`
+
+股票名下的作品（docs/v2-series.md §3：一个系列一家公司）、各作品的播出排期和单集讨论，以及续作。个股页“作品”栏用；变化以天计，客户端几分钟刷新一次即可。
+
+```json
+{"works": [
+  {"id": 195516, "title": "药屋少女的呢喃 第三季", "first_air": "2026-10-01", "episodes": 12, "episodes_aired": 5,
+   "is_long_runner": false, "status": "airing",
+   "schedule": [{"episode": 5, "date": "2026-10-29", "aired": true, "delayed": false},
+                {"episode": 6, "date": "2026-11-06", "aired": false, "delayed": true},
+                {"episode": 12, "date": null, "aired": false, "delayed": false}],
+   "discussion": [{"episode": 1, "comments": 89}, {"episode": 5, "comments": 55}]}
+ ],
+ "sequel": {"status": "announced", "title": "無職転生 IV", "premiere": "2027-07", "announced": "2026-10-20"}}
+```
+- `works`：第一部（`id` 等于股票 id）在前，之后是并入的作品（`company_works`）。`title`：第一部是股票名，其余取 Bangumi 中文名，没有时取 AniList 原名。
+- `status`：`upcoming`（未开播）、`airing`、`finished`、`halted`（AniList HIATUS，暂停播出）。长篇连载不会是 `finished`（两个篇章之间的空档不算完结）。
+- `schedule`：一季的每一集；长篇只有最近 8 集和已公布的下一集。已播的 `date` 是实际播出的交易日；未播的 `date` 只来自公开排期（Bangumi 各集日期，和 AniList 下一集的时间不一致时按 AniList 顺延），**没有公开日期时为 null**——估值内部对未定日期的每周外推、对停播的恢复日假设都不在这里出现。`delayed`：晚于 Bangumi 原定日期超过 1 天（深夜档的日期写法差一天不算），或有这一集的延期公告。
+- `discussion`：Bangumi 单集吐槽数（采集器最新快照，中国市场营收用的就是这项公开数据），已播各集，最多最近 26 集；长篇按 Bangumi 的总集数编号。
+- `sequel.status`：`unknown`（采集器还没有这部作品的关系数据，无法判断）、`none`（未公布）、`announced`（已公布，未定档）、`dated`（定档）。`premiere` 是公布的开播时间，精度按公布的写（`2027-01-10`、`2027-01`、`2027`）；只有完整日期才是 `dated`。并入公司、尚未开播的新一季也算 `dated`（`premiere` 为它的首播日）。不给出估值用的续作概率或预计日期。
 
 #### 4.2.6 `GET /api/v1/stocks/{id}/cover`
 
@@ -1186,7 +1211,7 @@ CREATE TABLE player_days (
 - `GET /api/v1/me/credit` → `{"credit": <CreditAccount>}`：是否开通（`opened`）、未开通时能否开通（`can_open`、`open_message`）、状态、追保日、净资产、毛资产、负债及其构成（`debt`、`interest`、`short_value`、`fees`、`bad_debt`）、冻结的融券卖出所得（`locked`）、可用保证金、维持担保比例（没有负债时为 null）、融资利率、融券费率、各条线（`margin_ratio`、`call_ratio`、`liquidate_ratio`、`target_ratio`）、`debts`（每支股票的融资本金和未付利息）、`shorts`（每支股票的欠券数量、市值、冻结所得、未付费用）。
 - `POST /api/v1/me/credit`：开通，200 返回 `{"credit": ...}`。错误：`credit_open`（409）、`credit_not_eligible`。
 - `POST /api/v1/me/credit/repay`：直接还款，请求 `{"amount": 500000}`（省略则用可用资金还清全部），先还利息再还本金。200：`{"paid": 500000, "credit": ...}`。错误：`no_debt`、`insufficient_cash`、`market_closed`。
-- `GET /api/v1/stocks/{id}/margin` → `StockMargin`：是否标的（`eligible`，否则 `reason`：`new_listing` / `penny` / `delisting` / `not_listed`）、折算率、可融券数量、剩余融资额度、融资利率、融券费率。公开接口。
+- `GET /api/v1/stocks/{id}/margin` → `StockMargin`：是否标的（`eligible`，否则 `reason`：`new_listing` / `penny` / `delisting` / `not_listed`）、折算率、可融券数量（`lendable`）、剩余融资额度、融资余额（`financed`，全部账户未还的融资本金）、融券余量（`shorted`，全部账户的欠券股数）、融资利率、融券费率。公开接口。
 - WebSocket `me` 主题的 `credit` 消息（§5.3.5）：状态变化时推送。
 
 ---

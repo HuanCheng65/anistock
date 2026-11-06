@@ -46,6 +46,9 @@ export type StockMargin = S['StockMargin']
 export type RightsOffer = S['RightsOffer']
 export type CorporateAction = S['CorporateAction']
 export type ExDay = S['ExDay']
+export type WorksResponse = S['WorksResponse']
+export type Work = S['Work']
+export type Sequel = S['Sequel']
 
 /** A non-2xx answer: the server's `{code, message, details}`; `message` is shown as is. */
 export class ApiError extends Error {

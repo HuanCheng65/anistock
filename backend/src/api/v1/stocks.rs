@@ -281,6 +281,11 @@ pub async fn detail(
         let now = st2.clock.ts();
         let agg = super::market::day_aggs(c, &today)?.remove(&id);
         let left = super::market::ipo_remaining(c)?.remove(&id).unwrap_or(0);
+        // per-share profit, the `ratios` basis (current shares; forward-adjusted like the K-line)
+        let cost = param_f64(cfg, "company.operating_cost_ratio", 0.5);
+        let tax = param_f64(cfg, "company.corp_tax", 0.25);
+        let sh = co.shares.max(1) as f64;
+        let eps = move |rev: i64| m((rev as f64 * (1.0 - cost) * (1.0 - tax) / sh).round() as i64);
         let weeks: Vec<RevenueWeek> = {
             let mut s = c
                 .prepare_cached(
@@ -296,6 +301,7 @@ pub async fn detail(
                         revenue: m(r.get(2)?),
                         by_market: ByMarket { us: m(r.get(3)?), cn: m(r.get(4)?), jp: m(r.get(5)?) },
                         dividend_per_share: m(r.get(6)?),
+                        earnings_per_share: eps(r.get(2)?),
                         episodes_aired: r.get(7)?,
                     })
                 })
@@ -333,6 +339,18 @@ pub async fn detail(
             .get(&id)
             .map(|(ep, at)| NextEpisode { episode: *ep, airs_at: ts(unix_ts(&st2, *at)) });
         let r = ratios(c, cfg, &today, Some(id))?.remove(&id).ok_or_else(|| error::internal("ratios"))?;
+        // the last 28 days, cut like `ratios`: actual sums, never annualised
+        let trailing_4w = {
+            let since = days_before(&today, 28)?;
+            let (rev, dps): (i64, i64) = c
+                .query_row(
+                    "SELECT COALESCE(SUM(revenue),0), COALESCE(SUM(dividend_ps),0) FROM company_days WHERE company_id=? AND day>?",
+                    rusqlite::params![id, since],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(sql)?;
+            Trailing4w { earnings_per_share: eps(rev), dividends_per_share: m(dps) }
+        };
         let has_ipo = co.sub_start.as_deref().is_some_and(|s| !s.is_empty());
         Ok(StockDetail {
             stock: sref(&co),
@@ -365,6 +383,7 @@ pub async fn detail(
             vcm: vcm_of(&co, &now),
             ratios: r,
             revenue_weeks: weeks,
+            trailing_4w,
             episode_days,
             next_episode,
             dividends,
