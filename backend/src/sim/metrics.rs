@@ -25,6 +25,12 @@ pub struct DayRow {
     pub close: i64,
     /// the day's opening price: the auction's, else the previous close (`open_ref` at the day's end)
     pub open: i64,
+    /// the day's first trade (the candle's open) and its time (unix seconds); 0 without a trade
+    pub first: i64,
+    pub first_t: i64,
+    /// the first trade's buyer and seller accounts
+    pub first_buyer: i64,
+    pub first_seller: i64,
     pub fair: i64,
     pub heat: f64,
     pub trades: u32,
@@ -46,8 +52,9 @@ pub struct Series {
     pub paths: Vec<(i64, String, Vec<(String, i64, i64, i64)>)>,
     /// market sentiment per day, standard units (empty when the sentiment layer is off)
     pub sentiment: Vec<f64>,
-    /// every stock: (company, [(day, open)]) (the opening gap against the previous close)
-    pub opens: Vec<(i64, Vec<(String, i64)>)>,
+    /// every stock: (company, [(day, auction open, first trade, its time, its buyer, its seller)]) (the opening
+    /// gap; buyer and seller as an agent kind or an account kind)
+    pub opens: Vec<(i64, Vec<(String, i64, i64, i64, String, String)>)>,
 }
 
 pub struct Recorder {
@@ -512,10 +519,17 @@ impl Recorder {
     pub fn absorb(&mut self, tap: &mut super::Tap) {
         for tr in tap.trades.drain(..) {
             if let Some(r) = self.rows.get_mut(&tr.company) {
-                let (d, _) = local(tr.t);
-                let _ = d;
-                if let Some(day) = self.days.last() {
-                    if let Some(row) = r.get_mut(day) {
+                // its own trading day (04:00 rollover): trades after the replay's 23:00 minute loop are absorbed
+                // with the next day's batch but belong to this one
+                let day = crate::market::day_of(tr.t);
+                {
+                    if let Some(row) = r.get_mut(&day) {
+                        if row.trades == 0 {
+                            row.first = tr.price;
+                            row.first_t = tr.t;
+                            row.first_buyer = tr.buyer;
+                            row.first_seller = tr.seller;
+                        }
                         row.trades += 1;
                     }
                 }
@@ -1065,7 +1079,12 @@ impl Recorder {
                 group.get(c).unwrap_or(&"").to_string(),
                 rows.iter().map(|(d, r)| (d.clone(), r.close, r.fair, r.div)).collect(),
             ));
-            self.series.opens.push((*c, rows.iter().map(|(d, r)| (d.clone(), r.open)).collect()));
+            let kinds: HashMap<i64, String> = m.agents.iter().map(|a| (a.account, format!("{:?}", a.kind))).collect();
+            let label = |id: i64| kinds.get(&id).cloned().unwrap_or_else(|| e.account(id).map_or_else(|| "-".into(), |a| a.kind.clone()));
+            self.series.opens.push((
+                *c,
+                rows.iter().map(|(d, r)| (d.clone(), r.open, r.first, r.first_t, label(r.first_buyer), label(r.first_seller))).collect(),
+            ));
         }
         let mut by_kind: BTreeMap<String, (i64, i64, usize)> = BTreeMap::new();
         for ag in &m.agents {

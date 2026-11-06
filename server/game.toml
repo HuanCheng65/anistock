@@ -89,7 +89,11 @@ rate_value = 4.0               # actions per hour at intraday factor 1 (§3)
 rate_trend = 1.5
 rate_news = 0.3
 rate_retail = 3.0
-curve = [0.5, 1.0, 1.3, 0.9, 1.2, 2.0]   # auction, morning, lunch, afternoon, 18-20h, 20-23h
+# the opening auction is busy (4x): with 0.5 it crossed on 17% of days and the candle's open was mostly the first
+# continuous trade into a thin book, 4% of days off by over 5% and reverted within the day; at 4x it crosses on 46%,
+# the open carries 95% of the overnight revision (74%), those outliers fall by about 40%; daily volatility, spreads
+# and volume unchanged (replay 2026-11-07, data/fast/an/opens.py)
+curve = [4.0, 1.0, 1.3, 0.9, 1.2, 2.0]   # auction, morning, lunch, afternoon, 18-20h, 20-23h
 curve_night = [2.4, 1.0]       # 23-02h (anime has just aired), 02-04h
 bias_sigma = 0.05              # spread of the value agents' views (§4)
 bias_half_life_days = 4.0
