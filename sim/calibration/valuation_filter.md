@@ -298,3 +298,30 @@ against the prior variance; not modelled.
 The partial us week refitted on this filter: cuts 6.607 / 7.736, variance scale 1.64, 1.40, 1.48, 1.36, 1.34 (n = 2..6);
 held out, 80% coverage of the complete week's observation 90.8% (base) → 85.8%, 79.3%, 78.6%, 77.1%, 84.3%; forecast
 slope 0.627 (0.008) without, 0.027 (0.010) with the days so far.
+
+## us drift by heat class (v0.6.1, `--heat-only --history`)
+
+The heat class: the tercile of the close's us log level estimate 4 weeks after the premiere over the calibration
+shows (95 with that point inside the data): cuts 6.423 / 7.558. Offsets on the us daily drift from week 4 on:
+
+| | bottom | middle | top |
+|---|---|---|---|
+| history (32 seasons 2018-2025, 1,297 series): weekly drift relative to the season mean, weeks 4..finale−4 (season-clustered se) | −0.0040 (0.0025) | −0.0032 (0.0043) | +0.0072 (0.0026) |
+| even years / odd years | −0.0089 / +0.0009 | +0.0011 / −0.0075 | +0.0078 / +0.0065 |
+| offset used, per day | −0.00057 | −0.00045 | +0.00102 |
+| calibration ML (in sample) | −0.00083 | +0.00118 | +0.00070 |
+
+Calibration log-likelihood of the 381 complete us weeks after the class is set: none 98.81, history offsets 98.82,
+calibration ML 99.06 (held out, fit even → odd 69.57 → 68.46, odd → even 29.24 → 27.78; worse): the two seasons cannot
+estimate the offsets, the history can (top − bottom +0.011/week, t 4.2), and the history offsets do not contradict the
+calibration (even 29.24 → 28.89, odd 69.57 → 69.93). partial_us refitted on top: cuts 6.605 / 7.736, held-out forecast
+slope 0.027 (0.010).
+
+## Season start: incumbents and the new cohort (v0.6.1 check)
+
+Standard replay (seed 1, hidden value, dividends included, split-adjusted): the cap-weighted 14-day total return of the
+stocks listed before 8/15 from 9/20, 9/27, 10/1, 10/4, 10/8, 10/15: +6.0, −1.0, +0.9, −0.4, +0.5, +1.3% (every 14-day
+window of the replay: mean +1.5%, sd 4.5): no dilution of the incumbents at the autumn season start. The new shows'
+point-in-time priors against their realised us attention, level-weighted (sum of realised weekly mean / sum of the
+prior's expected level): premiere week 0.91 (summer) / 1.04 (autumn), weeks 1–3 0.74–0.84; per-show means 1.16–1.19 and
+0.85–0.95. The priors are not low in aggregate; if anything big new shows fall short of them after the premiere week.
