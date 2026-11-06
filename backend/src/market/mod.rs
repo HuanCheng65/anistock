@@ -1280,7 +1280,16 @@ impl Market {
             let room = self.cfg.max_position_frac * wealth - held as f64 * p;
             let budget = (engine.available_cash(a.account) as f64 * frac).min(room);
             let mlim = Self::clamp_price(engine, &rules, c, p * 1.015, t);
-            let q = self.affordable(budget, if market { mlim } else { limit });
+            let at = if market { mlim } else { limit };
+            let mut q = self.affordable(budget, at);
+            // a retail agent stands for many small investors: their money demand does not depend on the nominal
+            // price, so the whole-share remainder is bought with that probability (stochastic rounding). Without
+            // it a share above a small order's size is never bought, and a stock split would release a burst of
+            // retail demand on a known day (docs/v2-corporate.md §3.2)
+            let rest = budget / (at.max(1) as f64 * (1.0 + self.fees_commission) + 1.0) - q as f64;
+            if rest > 0.0 && self.rng.range(0.0, 1.0) < rest && self.affordable(engine.available_cash(a.account) as f64, at) > q {
+                q += 1;
+            }
             if market {
                 self.place(engine, "retail", a.account, c, "buy", "limit", q, Some(mlim), t);
             } else {
