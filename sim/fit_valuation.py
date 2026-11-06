@@ -97,6 +97,34 @@ def fit_curve(shows) -> list[float]:
     return [round(v / s, 4) for v in c]
 
 
+def fit_partial_week(shows, curve_us) -> list[list[float]]:
+    """The us episode week observed day by day (docs/v2-valuation.md §3.2): for n = 1..7 days of a week, the mean and
+    variance over complete episode weeks of ybar_n - ybar_7, where ybar_n is the average of the first n days' log
+    (attention / curve). The filter reads the partial average ybar_n - mean_n as an observation of the level with the
+    week's noise r plus variance_n (its deviation from the full week's average, taken as independent of the week's
+    own noise), so the level estimate given the days so far is the expectation of the estimate the full week will
+    give: the week's news is priced as it arrives, not when the week ends. n = 7: (0, 0)."""
+    dev = [[] for _ in range(7)]
+    for x in shows.values():
+        if x["long_runner"]:
+            continue
+        idx = {d: i for i, d in enumerate(x["days"])}
+        ad = air_days(x)
+        for a, b in zip(ad, ad[1:]):
+            if b - a != 7 or not all((a + k) in idx for k in range(7)):
+                continue
+            v = [x["att"]["us"][idx[a + k]] for k in range(7)]
+            if min(v) <= 0:
+                continue
+            y = [math.log(v[k] / curve_us[k]) for k in range(7)]
+            y7 = sum(y) / 7
+            for n in range(1, 8):
+                dev[n - 1].append(sum(y[:n]) / n - y7)
+    if not dev[0]:
+        return []
+    return [[round(st.mean(d), 6), round(st.pvariance(d), 6)] for d in dev]
+
+
 def finale_day(x):
     """The day of a show's last episode if it has finished: its announced count aired, or nothing new for two
     weeks before the end of the data (a season released at once, as the server reads it)."""
@@ -914,10 +942,18 @@ def main():
     ap.add_argument("--gaussian", action="store_true", help="no outlier component (a plain Kalman filter)")
     ap.add_argument("--clip", type=float, default=4.0)
     ap.add_argument("--history", type=Path, help="history backfill DB (sim/history_backfill.py): fit the long tail")
+    ap.add_argument("--partial-only", action="store_true",
+                    help="only (re)fit the partial-week observation (`partial_us`) into the existing --out file")
     a = ap.parse_args()
     global GAUSSIAN, CLIP
     GAUSSIAN, CLIP = a.gaussian, a.clip
     shows = load(a.inputs)
+    if a.partial_only:
+        res = json.loads(a.out.read_text(encoding="utf-8"))
+        res["partial_us"] = fit_partial_week(shows, res["curve_us"])
+        a.out.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+        print("partial_us", res["partial_us"])
+        return
     curve_us = fit_curve(shows)
     res = {"curve_us": curve_us, "drift": {}, "q": {}, "r": {}, "p0": {}, "prior_bias": {}, "outlier_p": {},
            "outlier_r": {}, "fit": {}}
@@ -1019,6 +1055,9 @@ def main():
     # gain; ipo_all beat cap-weighted buy-and-hold by +9.7 points with 0.25)
     res["ipo_risk"] = 0.0
     res["clip"] = CLIP
+    res["partial_us"] = fit_partial_week(shows, curve_us)
+    lines.append(f"## us episode week, day by day\n\nMean and variance of (average of the first n days − the week's "
+                 f"average) of log(attention / curve), n = 1..7: {res['partial_us']}\n")
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
     if a.report:

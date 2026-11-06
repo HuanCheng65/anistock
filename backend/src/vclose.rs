@@ -47,6 +47,10 @@ pub struct JState {
     /// value's own path (`att_path`, one day ahead). What a post-finale cn/jp day without data earns (`revenue_att`)
     #[serde(default)]
     pub next: Option<M3>,
+    /// the state without the current us episode week's days so far (`partial_observation`): the close observes
+    /// those on top of it and starts from it again the next day, until the complete week replaces them
+    #[serde(default)]
+    pub base: Option<(M3, Cov)>,
     /// the show's long-tail prior (score and format, `vfilter::tail_mult`): follows the inputs until the finale's
     /// week ends, then fixed (the post-finale observations are read through it)
     #[serde(default = "one")]
@@ -103,6 +107,7 @@ impl JState {
             day: day.to_string(),
             post: [1.0; 3],
             next: None,
+            base: None,
             tail_mult: 1.0,
             seq_z: 0.0,
             seq_zs: 0.0,
@@ -506,7 +511,12 @@ impl Engine {
                 let mean = std::array::from_fn(|m| fp.prior_bias[m] + fp.prior_beta[m] * lp);
                 fresh(mean, F::prior_cov(&fp.p0, fp.rho))
             }
-            (Some(st), _) => {
+            (Some(mut st), _) => {
+                // without yesterday's partial us week: today's days so far are observed again below
+                if let Some((bm, bc)) = st.base.take() {
+                    st.mean = bm;
+                    st.cov = bc;
+                }
                 let days = day_no(&st.day).map_or(1, |d| (today - d).max(0));
                 // each market's drift over the days since the state, by weeks since the premiere (per day)
                 let prem = day_no(&s.first_air).unwrap_or(today);
@@ -612,6 +622,21 @@ impl Engine {
             } else if !st.active[m] && st.zero_days[m] == 0 {
                 // newly mapped to its data source: in, at the level the other markets imply
                 st.active[m] = true;
+            }
+        }
+        // the us episode week so far: its average is public every day, and waiting for the complete week to observe
+        // it priced the week's news up to a week late (a predictable revision: on the standard replay, the days so far
+        // running 25% above the value's expectation were followed by +8% to +11% of revisions over the next week). It
+        // is observed with the extra noise of a partial average (fitted), on top of the state without it (`base`)
+        st.base = None;
+        if st.acc_n > 0 && st.active[0] {
+            if let Some((y, xr)) = F::partial_observation(fp, st.acc / st.acc_n as f64, st.acc_n, drift_us) {
+                let covers_finale = fin.is_some_and(|f| today + 1 - st.acc_n <= f + 6 && today >= f);
+                let r = fp.r[0] + xr + if covers_finale { fp.finale_bump_var[0] } else { 0.0 };
+                st.base = Some((st.mean, st.cov));
+                let (mean, cov, _, _) = F::kf_update_joint(&st.mean, &st.cov, 0, y, r, fp.clip);
+                st.mean = mean;
+                st.cov = cov;
             }
         }
         st.next = None;
@@ -1144,7 +1169,9 @@ impl Engine {
         let nb = Base { episode, mean: b.mean, cov: b.cov, last: post };
         self.set_state(&key, &serde_json::to_string(&nb).unwrap_or_default());
         let old = c.fair_value;
-        self.save_jstate(company, JState { mean, cov, ..st.clone() }, ts);
+        // (the state without the partial us week moves with the flash too, or the next close would drop it)
+        let base = st.base.map(|(bm, bc)| (std::array::from_fn(|m| bm[m] + (mean[m] - st.mean[m])), bc));
+        self.save_jstate(company, JState { mean, cov, base, ..st.clone() }, ts);
         let paths = self.paths(&fp, &p, today);
         let totals = self.totals_from(&paths, &fp, today);
         let new = match paths.get(&company) {
