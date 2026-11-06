@@ -316,7 +316,11 @@ async fn orders_and_their_errors() {
 
 /// A fresh register challenge with its answer, as the request's `pow`.
 async fn solved(a: &App) -> Value {
-    let r = a.get("/api/v1/auth/challenge?purpose=register", None).await;
+    solved_for(a, "register").await
+}
+
+async fn solved_for(a: &App, purpose: &str) -> Value {
+    let r = a.get(&format!("/api/v1/auth/challenge?purpose={purpose}"), None).await;
     let c: anistock::api::v1::pow::PowChallenge = serde_json::from_value(r.json["challenge"].clone()).unwrap();
     let n = anistock::api::v1::pow::solve(&c).unwrap();
     json!({"challenge": c, "number": n})
@@ -337,6 +341,20 @@ async fn registration_modes() {
     err(&a.req("POST", "/api/v1/auth/register", Some(json!({"username": "carol", "password": "secret1", "invite": "club"})), &[]).await, 403, "registration_closed");
     // login is unaffected
     assert!(!a.login().await.is_empty());
+}
+
+#[tokio::test]
+async fn login_needs_pow_during_a_surge() {
+    let mut a = app("2026-11-05T10:00:00+08:00", true);
+    let v1 = &mut Arc::get_mut(&mut a.st).unwrap().v1;
+    v1.pow.cfg.surge_per_min = 0; // any attempt starts a surge
+    v1.pow.cfg.login_max = 20;
+    let body = |pow: Value| Some(json!({"username": "alice", "password": "secret1", "pow": pow}));
+    err(&a.req("POST", "/api/v1/auth/login", body(Value::Null), &[]).await, 422, "pow_required");
+    let r = a.req("POST", "/api/v1/auth/login", body(solved_for(&a, "login").await), &[]).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    // a register challenge is not a login challenge
+    err(&a.req("POST", "/api/v1/auth/login", body(solved_for(&a, "register").await), &[]).await, 422, "pow_invalid");
 }
 
 #[tokio::test]
