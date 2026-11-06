@@ -264,6 +264,8 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut bot_by_cp: std::collections::BTreeMap<String, i64> = Default::default();
     let mut bot_by_hour: std::collections::BTreeMap<i64, i64> = Default::default();
     let mut bot_volume: std::collections::BTreeMap<&str, i64> = Default::default();
+    // per company: (bought value, bought qty, sold value, sold qty), cents: the P&L decomposition below
+    let mut bot_by_company: std::collections::BTreeMap<i64, [i64; 4]> = Default::default();
     let mut rec = Recorder::new(&e, &m, &npc_accounts);
     rec.dividend_tax = cfg.game.dividend_tax.clone();
     rec.start_wealth(&e, &m);
@@ -439,6 +441,14 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                     let (_, s) = local(tr.t);
                     *bot_by_hour.entry(s / 3600).or_default() += edge;
                     *bot_volume.entry(if bought { "bought" } else { "sold" }).or_default() += tr.price * tr.qty;
+                    let x = bot_by_company.entry(tr.company).or_default();
+                    if bought {
+                        x[0] += tr.price * tr.qty;
+                        x[1] += tr.qty;
+                    } else {
+                        x[2] += tr.price * tr.qty;
+                        x[3] += tr.qty;
+                    }
                 }
             }
             // where the market makers' dealing result goes: each counterparty's markout to the day's close
@@ -519,6 +529,24 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         b["markout_by_counterparty"] = serde_json::json!(bot_by_cp.iter().map(|(k, v)| (k.clone(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
         b["markout_by_hour"] = serde_json::json!(bot_by_hour.iter().map(|(k, v)| (k.to_string(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
         b["volume"] = serde_json::json!(bot_volume.iter().map(|(k, v)| (k.to_string(), y(*v))).collect::<std::collections::BTreeMap<_, _>>());
+        // P&L by company at the average buy price: realised (sold shares: sale value - their average cost, the spread
+        // the bot captured) and inventory (shares still held: last price - average cost, the drift it rode)
+        let (mut realised, mut inventory) = (0.0, 0.0);
+        let mut rows = Vec::new();
+        for (c, x) in &bot_by_company {
+            let avg = if x[1] > 0 { x[0] as f64 / x[1] as f64 } else { 0.0 };
+            let held = x[1] - x[3];
+            let last = e.company(*c).map_or(0, |co| co.last_price) as f64;
+            let r = x[2] as f64 - x[3] as f64 * avg;
+            let inv = held as f64 * (last - avg);
+            realised += r;
+            inventory += inv;
+            rows.push(serde_json::json!({"company": c, "bought": y(x[0]), "sold": y(x[2]), "held": held,
+                "realised": r / 100.0, "inventory": inv / 100.0}));
+        }
+        rows.sort_by(|a, b| b["inventory"].as_f64().unwrap_or(0.0).abs().partial_cmp(&a["inventory"].as_f64().unwrap_or(0.0).abs()).unwrap());
+        rows.truncate(12);
+        b["pnl"] = serde_json::json!({"realised": realised / 100.0, "inventory": inventory / 100.0, "by_company": rows});
         b
     });
     metrics["capital"] = capital;
