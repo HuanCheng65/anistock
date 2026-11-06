@@ -102,6 +102,35 @@ fn announce(cfg: &Config, args: &[String]) {
     println!("announcement {} posted at {now}{}", c.last_insert_rowid(), if popup { " (popup)" } else { "" });
 }
 
+/// `anistock reprice <values-db>` (server stopped): after a valuation rebuild, cancel every open order and put
+/// each listed stock's price at the value read from `values-db`, a copy of the game database on which the
+/// server started once with ANISTOCK_VALUATION_REBUILD=1 (docs/restart-v0.6.6.md, 价格对齐).
+fn reprice(cfg: &Config, args: &[String]) {
+    let Some(src) = args.first() else { fail("usage: anistock reprice <values-db>", 2) };
+    let c = rusqlite::Connection::open_with_flags(src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap_or_else(|e| fail(format!("{src}: {e}"), 1));
+    let mut q = c.prepare("SELECT id, fair_value FROM companies WHERE status='listed' AND fair_value > 0").unwrap();
+    let values: std::collections::HashMap<i64, i64> =
+        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap_or_else(|e| fail(format!("{src}: {e}"), 1));
+    if values.is_empty() {
+        fail(format!("{src} has no values: start the server on it once with ANISTOCK_VALUATION_REBUILD=1"), 1);
+    }
+    let mut e = Engine::open(&cfg.game_db, cfg.fees(), cfg.rules()).unwrap_or_else(|e| fail(format!("{}: {e}", cfg.game_db.display()), 1));
+    let stem = cfg.game_db.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let dest = cfg.game_db.with_file_name("backups").join(format!("{stem}-before-reprice-{}.db", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+    let backup = e.backup_to(&dest).unwrap_or_else(|err| fail(format!("backup: {err}"), 1));
+    e.margin = cfg.margin.clone();
+    let now = anistock::config::format_ts(&chrono::Utc::now().with_timezone(&cfg.tz));
+    let before: Vec<(i64, i64)> = e.companies().filter(|c| c.status == "listed").map(|c| (c.id, c.last_price)).collect();
+    let (cancelled, n) = e.reprice(&values, &now);
+    e.flush().unwrap_or_else(|err| fail(format!("persist: {err}"), 1));
+    let mut r: Vec<f64> = before.iter().filter_map(|(id, p)| values.get(id).map(|v| *v as f64 / (*p).max(1) as f64)).collect();
+    r.sort_by(f64::total_cmp);
+    let q = |f: f64| r.get(((r.len() as f64 - 1.0) * f) as usize).copied().unwrap_or(f64::NAN);
+    println!("backup {}; {cancelled} open orders cancelled; {n} stocks repriced: new/old median {:.2}, p10 {:.2}, p90 {:.2}",
+             backup.display(), q(0.5), q(0.1), q(0.9));
+}
+
 fn main() {
     // operator command (docs/ops-rebuild-replay.md): run with the server stopped
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -114,6 +143,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("reset-code") {
         let Some(name) = args.get(2) else { fail("usage: anistock reset-code <username>", 2) };
         reset_code(&cfg, name);
+        return;
+    }
+    if args.get(1).map(String::as_str) == Some("reprice") {
+        reprice(&cfg, &args[2..]);
         return;
     }
     if args.get(1).map(String::as_str) == Some("announce") {

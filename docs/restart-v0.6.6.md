@@ -34,6 +34,8 @@ rm -f data/game.db-wal data/game.db-shm
 ### 2. 重新生成每日输入
 
 ```bash
+uv run sim/reconstruct.py airtimes
+uv run sim/reconstruct.py build
 uv run engine/daily_inputs.py --from 2026-07-01 --day 2026-11-05 --force
 python3 -c "
 import json
@@ -42,7 +44,7 @@ for d in ('2026-07-15','2026-10-15','2026-11-05'):
     print(d, len(s), '中国', sum(x['sources']['cn'] for x in s), '日本', sum(x['sources']['jp'] for x in s))"
 ```
 
-三天的“中国”“日本”都应该是大部分作品（例如 7 月 15 日 78 部里约 77 部），不能是 0。
+先用当前代码重建中国、日本序列（`build` 输出的 `extended` 应为 0，见 docs/revalue-v0.6.7.md）。三天的“中国”“日本”都应该是大部分作品（例如 7 月 15 日 78 部里约 77 部），不能是 0。
 
 ### 3. 新开一局，带上账号，发公告
 

@@ -1012,6 +1012,41 @@ impl Engine {
         self.commit();
     }
 
+    /// Operator repricing after a valuation rebuild (`anistock reprice`, docs/restart-v0.6.6.md): cancel every
+    /// open order (players' and NPCs', as the daily close expires them, so nothing rests at the old prices),
+    /// then put each listed company's value, last price and the day's VCM anchor at `values` (cents). The
+    /// previous close stays: today's change shows the move. Returns (orders cancelled, companies repriced).
+    pub fn reprice(&mut self, values: &std::collections::HashMap<i64, i64>, ts: &str) -> (usize, usize) {
+        let mut open: Vec<i64> = self
+            .st
+            .orders
+            .values()
+            .filter(|o| o.status == OrderStatus::Open)
+            .filter(|o| self.st.accounts.get(&o.account_id).is_some_and(|a| a.kind != "company"))
+            .map(|o| o.id)
+            .collect();
+        open.sort();
+        for &id in &open {
+            self.close(id, OrderStatus::Cancelled, ts);
+        }
+        let ids: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        let mut n = 0;
+        for id in ids {
+            if let Some(&v) = values.get(&id).filter(|v| **v > 0) {
+                let c = self.st.companies.get_mut(&id).unwrap();
+                c.fair_value = v;
+                c.last_price = v;
+                c.open_ref = Some(v);
+                c.vcm_until = None;
+                c.vcm_count = 0;
+                self.mark_company(id);
+                n += 1;
+            }
+        }
+        self.commit();
+        (open.len(), n)
+    }
+
     /// End an order and release whatever it still has frozen (v1 `_close`). Idempotent on closed orders
     /// still in memory (v1 closes a filled order a second time in `place_order`).
     pub(crate) fn close(&mut self, id: i64, status: OrderStatus, ts: &str) {
