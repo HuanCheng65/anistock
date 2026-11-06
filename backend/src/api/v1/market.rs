@@ -234,13 +234,28 @@ pub fn ratios(c: &Connection, cfg: &Config, today: &str, only: Option<i64>) -> R
            (SELECT cash FROM accounts a WHERE a.kind='company' AND a.company_id=co.id)
          FROM companies co WHERE {filter}"
     );
+    // dividends per share in today's share terms (前复权, like the K-line): a split does not double the yield
+    let adj = price_factors(c)?;
+    let mut paid: HashMap<i64, Vec<(String, i64)>> = HashMap::new();
+    if !adj.is_empty() {
+        let mut s = c.prepare_cached("SELECT company_id, day, dividend_ps FROM company_days WHERE dividend_ps>0 AND day>?").map_err(sql)?;
+        let mut rows = s.query([&s365]).map_err(sql)?;
+        while let Some(r) = rows.next().map_err(sql)? {
+            paid.entry(r.get(0).map_err(sql)?).or_default().push((r.get(1).map_err(sql)?, r.get(2).map_err(sql)?));
+        }
+    }
     let mut s = c.prepare(&q).map_err(sql)?;
     let rows = s
         .query_map([&s365, &s28], |r| {
-            let (id, shares, price, rev, dps): (i64, i64, i64, i64, i64) =
+            let (id, shares, price, rev, mut dps): (i64, i64, i64, i64, i64) =
                 (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?);
             let (rev28, divs, cash): (i64, String, Option<i64>) = (r.get(5)?, r.get(6)?, r.get(7)?);
-            let divs: Vec<i64> = divs.split(',').filter_map(|x| x.parse().ok()).collect();
+            let mut divs: Vec<i64> = divs.split(',').filter_map(|x| x.parse().ok()).collect();
+            if let (Some(a), Some(v)) = (adj.get(&id), paid.get(&id)) {
+                let f = |(d, x): &(String, i64)| (*x as f64 * forward_factor(Some(a), d)).round() as i64;
+                dps = v.iter().map(f).sum();
+                divs = v.iter().filter(|x| x.0 > s28).map(f).collect();
+            }
             let sh = shares.max(1) as f64;
             let eps = rev as f64 * (1.0 - cost) * (1.0 - tax) / sh;
             let eps28 = rev28 as f64 * 365.0 / 28.0 * (1.0 - cost) * (1.0 - tax) / sh;
@@ -427,16 +442,63 @@ struct Co {
     prev: i64,
     long: bool,
     first_air: String,
+    listed: bool,
+    delisted_on: Option<String>,
 }
 
-/// The three indices and the market breadth (definitions in the module doc of the old v2 read-only
-/// API, kept: cap-weighted, chain-linked day by day, today's point from last prices).
-pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<IndicesResponse> {
+/// Price adjustments (V10 `price_adjustments`, crate::corporate): company -> (first day in new terms, price
+/// factor), by day. Empty before the migration.
+pub fn price_factors(c: &Connection) -> R<HashMap<i64, Vec<(String, f64)>>> {
+    let has: bool = c
+        .query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_adjustments'", [], |_| Ok(()))
+        .optional()
+        .map_err(sql)?
+        .is_some();
+    let mut out: HashMap<i64, Vec<(String, f64)>> = HashMap::new();
+    if !has {
+        return Ok(out);
+    }
+    let mut s = c.prepare_cached("SELECT company_id, day, price_factor FROM price_adjustments ORDER BY day").map_err(sql)?;
+    let mut rows = s.query([]).map_err(sql)?;
+    while let Some(r) = rows.next().map_err(sql)? {
+        out.entry(r.get(0).map_err(sql)?).or_default().push((r.get(1).map_err(sql)?, r.get(2).map_err(sql)?));
+    }
+    Ok(out)
+}
+
+/// The 前复权 factor of `day` (a price or a per-share amount of `day` × it is in today's share terms): the
+/// product of the price factors of the adjustments after `day`.
+pub fn forward_factor(adj: Option<&Vec<(String, f64)>>, day: &str) -> f64 {
+    adj.map_or(1.0, |v| v.iter().filter(|(d, _)| d.as_str() > day).map(|x| x.1).product())
+}
+
+/// The price factor taking effect on `day` (the previous close × it is in `day`'s share terms).
+pub fn factor_on(adj: Option<&Vec<(String, f64)>>, day: &str) -> f64 {
+    adj.map_or(1.0, |v| v.iter().filter(|(d, _)| d.as_str() == day).map(|x| x.1).product())
+}
+
+/// Which level an index reports (docs/api-v1.md §4.1.4).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IndexBasis {
+    /// dividends reinvested: each dividend per share is added back on its day (the main index)
+    TotalReturn,
+    /// prices only
+    Price,
+}
+
+/// The three indices and the market breadth: cap-weighted (yesterday's market value), chain-linked day by day,
+/// today's point from last prices. Members are point in time: each day counts the stocks with a close that
+/// day and the day before (a delisted stock keeps its history up to its delisting; a new listing joins from
+/// its second close). Splits and rights issues are taken out with the 前复权 factors, so they move no index.
+/// On the total-return basis each dividend per share is added back on its day, and a stock's delisting day
+/// ends at the cash per share it returned instead of its close.
+pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: IndexBasis) -> R<IndicesResponse> {
     let qs = quarter_start(today);
     let cos: Vec<Co> = {
         let mut s = c
             .prepare_cached(
-                "SELECT id, shares, last_price, prev_close, long_runner, first_air FROM companies WHERE status='listed'",
+                "SELECT id, shares, last_price, prev_close, long_runner, first_air, status, delisted_on FROM companies
+                 WHERE status IN ('listed', 'delisted')",
             )
             .map_err(sql)?;
         let rows = s
@@ -448,6 +510,8 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
                     prev: r.get(3)?,
                     long: r.get::<_, i64>(4)? != 0,
                     first_air: r.get(5)?,
+                    listed: r.get::<_, String>(6)? == "listed",
+                    delisted_on: r.get(7)?,
                 })
             })
             .map_err(sql)?;
@@ -456,8 +520,8 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
     let by_id: HashMap<i64, &Co> = cos.iter().map(|co| (co.id, co)).collect();
     let mut days: BTreeMap<String, HashMap<i64, i64>> = BTreeMap::new();
     {
-        let mut s = c.prepare_cached("SELECT company_id, day, close FROM candles ORDER BY day").map_err(sql)?;
-        let mut rows = s.query([]).map_err(sql)?;
+        let mut s = c.prepare_cached("SELECT company_id, day, close FROM candles WHERE day<=? ORDER BY day").map_err(sql)?;
+        let mut rows = s.query([today]).map_err(sql)?;
         while let Some(r) = rows.next().map_err(sql)? {
             let id: i64 = r.get(0).map_err(sql)?;
             if by_id.contains_key(&id) {
@@ -465,6 +529,43 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
             }
         }
     }
+    let adj = price_factors(c)?;
+    // cash paid per share on a day (total return): dividends, and what a delisting returned
+    let mut paid: HashMap<(i64, String), f64> = HashMap::new();
+    if basis == IndexBasis::TotalReturn {
+        let mut s =
+            c.prepare_cached("SELECT company_id, day, dividend_ps FROM company_days WHERE dividend_ps>0 AND day<=?").map_err(sql)?;
+        let mut rows = s.query([today]).map_err(sql)?;
+        while let Some(r) = rows.next().map_err(sql)? {
+            let id: i64 = r.get(0).map_err(sql)?;
+            if by_id.contains_key(&id) {
+                *paid.entry((id, r.get(1).map_err(sql)?)).or_default() += r.get::<_, i64>(2).map_err(sql)? as f64;
+            }
+        }
+        for co in cos.iter().filter(|co| !co.listed && co.shares > 0) {
+            let Some(d) = co.delisted_on.clone().filter(|d| d.as_str() <= today) else { continue };
+            // liquidate() pays out all of the company's cash as `delisting`: about cash / shares per share
+            let total: i64 = c
+                .query_row(
+                    "SELECT COALESCE(SUM(l.amount), 0) FROM ledger l JOIN accounts a ON a.id = l.from_id
+                     WHERE a.kind='company' AND a.company_id=?1 AND l.reason='delisting' AND l.day=?2",
+                    rusqlite::params![co.id, d],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            *paid.entry((co.id, d)).or_default() += total as f64 / co.shares as f64;
+        }
+    }
+    // a stock's value at the close of `d` plus the cash it paid that day (its delisting day: only the cash)
+    let end_value = |id: i64, d: &str, close: i64| -> f64 {
+        let cash = paid.get(&(id, d.to_string())).copied().unwrap_or(0.0);
+        let co = by_id[&id];
+        if basis == IndexBasis::TotalReturn && !co.listed && co.delisted_on.as_deref() == Some(d) {
+            cash
+        } else {
+            close as f64 + cash
+        }
+    };
     type Member<'a> = Box<dyn Fn(&Co) -> bool + 'a>;
     let defs: [(&str, &str, Member); 3] = [
         ("all", "番剧综合指数", Box::new(|_| true)),
@@ -483,16 +584,19 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
                 continue;
             }
             if let Some(p) = prev {
-                let (mut num, mut den) = (0i128, 0i128);
+                // weights: yesterday's market value in today's share terms (前复权 close × shares)
+                let (mut num, mut den) = (0f64, 0f64);
                 for (id, close) in closes {
                     if let (true, Some(pc)) = (members.contains(id), p.get(id)) {
-                        let sh = by_id[id].shares as i128;
-                        num += *close as i128 * sh;
-                        den += *pc as i128 * sh;
+                        let a = adj.get(id);
+                        let fwd = forward_factor(a, d);
+                        let sh = by_id[id].shares as f64;
+                        num += end_value(*id, d, *close) * fwd * sh;
+                        den += *pc as f64 * factor_on(a, d) * fwd * sh;
                     }
                 }
-                if den > 0 {
-                    level *= num as f64 / den as f64;
+                if den > 0.0 {
+                    level *= num / den;
                 }
             }
             series.push((d.clone(), level));
@@ -503,17 +607,18 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
         }
         let last_day = series.last().map(|s| s.0.clone()).unwrap_or_default();
         if last_day.as_str() < today {
-            let (mut num, mut den) = (0i128, 0i128);
+            // today from last prices: the stocks listed now with a close on the last day
+            let (mut num, mut den) = (0f64, 0f64);
             let lastc = &days[&last_day];
-            for id in &members {
+            for id in members.iter().filter(|id| by_id[*id].listed) {
                 if let Some(pc) = lastc.get(id) {
-                    let sh = by_id[id].shares as i128;
-                    num += by_id[id].last as i128 * sh;
-                    den += *pc as i128 * sh;
+                    let sh = by_id[id].shares as f64;
+                    num += by_id[id].last as f64 * sh;
+                    den += *pc as f64 * forward_factor(adj.get(id), &last_day) * sh;
                 }
             }
-            if den > 0 {
-                series.push((today.to_string(), level * num as f64 / den as f64));
+            if den > 0.0 {
+                series.push((today.to_string(), level * num / den));
             }
         }
         let n = series.len();
@@ -522,7 +627,7 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
         items.push(MarketIndex {
             key: key.to_string(),
             name: name.to_string(),
-            members: members.len() as i64,
+            members: cos.iter().filter(|co| co.listed && members.contains(&co.id)).count() as i64,
             base_day: day(series[0].0.clone()),
             value: r4(value),
             prev_close: r4(prev_v),
@@ -535,24 +640,40 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool) -> R<Indi
         });
     }
     let (mut up, mut flat, mut down) = (0, 0, 0);
-    for co in &cos {
+    for co in cos.iter().filter(|co| co.listed) {
         match co.last.cmp(&co.prev) {
             std::cmp::Ordering::Greater => up += 1,
             std::cmp::Ordering::Less => down += 1,
             std::cmp::Ordering::Equal => flat += 1,
         }
     }
-    Ok(IndicesResponse { trading_day: day(today), season_start: qs.clone(), breadth: Breadth { up, flat, down }, items })
+    Ok(IndicesResponse {
+        trading_day: day(today),
+        season_start: qs.clone(),
+        basis: match basis {
+            IndexBasis::TotalReturn => "total_return".into(),
+            IndexBasis::Price => "price".into(),
+        },
+        breadth: Breadth { up, flat, down },
+        items,
+    })
 }
 
 /// 指数与涨跌家数
 #[utoipa::path(get, path = "/api/v1/market/indices", tag = "market",
-    params(("series" = Option<bool>, Query, description = "false 时不带走势")),
+    params(("series" = Option<bool>, Query, description = "false 时不带走势"),
+        ("basis" = Option<String>, Query, description = "total_return（默认，全收益）或 price（价格指数）")),
     responses((status = 200, body = IndicesResponse), (status = "default", body = ErrorBody)))]
 pub async fn indices(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> R<Json<IndicesResponse>> {
-    let with_series = Q::parse(q.as_deref()).bool("series", true)?;
+    let q = Q::parse(q.as_deref());
+    let with_series = q.bool("series", true)?;
+    let basis = match q.get("basis") {
+        None | Some("total_return") => IndexBasis::TotalReturn,
+        Some("price") => IndexBasis::Price,
+        Some(_) => return Err(error::invalid(vec![error::not_allowed("basis")])),
+    };
     let today = st.clock.today();
-    read(&st, move |c| compute_indices(c, &today, with_series)).await.map(Json)
+    read(&st, move |c| compute_indices(c, &today, with_series, basis)).await.map(Json)
 }
 
 // ---------------------------------------------------------------- airings (collector snapshots)

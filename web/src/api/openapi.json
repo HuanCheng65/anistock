@@ -1229,6 +1229,10 @@
       },
       "IndicesResponse": {
         "properties": {
+          "basis": {
+            "description": "total_return（全收益：分红在当天加回）或 price（价格指数）",
+            "type": "string"
+          },
           "breadth": {
             "$ref": "#/components/schemas/Breadth"
           },
@@ -1247,6 +1251,7 @@
           }
         },
         "required": [
+          "basis",
           "breadth",
           "items",
           "season_start",
@@ -5018,6 +5023,15 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "description": "total_return（默认，全收益）或 price（价格指数）",
+            "in": "query",
+            "name": "basis",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],

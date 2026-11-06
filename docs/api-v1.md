@@ -525,7 +525,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 |---|---|---|
 | `pe_ttm` | 是 | 市盈率（TTM）= 价格 / EPS，EPS = 近 365 天营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本（`pe`） |
 | `pe_dynamic` | 是 | 市盈率（动）：近 28 天营收年化（`pe_dyn`）。番剧的收入集中在播出的三个月，年化会把播出期的高峰当成全年，严重低估市盈率；界面不再展示，列表和行情条改用 `pe_ttm` |
-| `dividend_yield_ttm` | 是 | 股息率（TTM）= 近 365 天每股分红 / 价格（`dividend_yield`） |
+| `dividend_yield_ttm` | 是 | 股息率（TTM）= 近 365 天每股分红 / 价格（`dividend_yield`）；拆股、配股前的分红按复权因子换算成现在的每股（v0.6.0） |
 | `dividend_yield_dynamic` | 是 | 股息率（动）= 近 28 天已派分红的均值 × 52 / 价格（`dividend_yield_dyn`）。同上，季播作品会严重夸大，界面不再展示 |
 | `pb` | 是 | 市净率 = 价格 / 每股净资产 |
 | `book_value_per_share` | 是 | Money，公司现金 / 股本（原在 `/api/stocks/{id}` 的 `book_value_ps`） |
@@ -706,6 +706,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 {
   "trading_day": "2026-11-06",
   "season_start": "2026-10-01",
+  "basis": "total_return",
   "breadth": {"up": 61, "flat": 22, "down": 58},
   "items": [
     {"key": "all", "name": "番剧综合指数", "members": 141, "base_day": "2026-07-01",
@@ -714,7 +715,10 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   ]
 }
 ```
-- 定义沿用 `v2.rs`：市值加权、逐日链接；今天还没有 K 线时，最后一点用最新价对昨收算出（`is_live` 由 `series` 最后一项的 `trading_day == 本交易日` 判断）。
+- 市值加权（前一天的市值）、逐日链接；今天还没有 K 线时，最后一点用最新价对昨收算出（`is_live` 由 `series` 最后一项的 `trading_day == 本交易日` 判断）。
+- **成分按当天**（v0.6.0 起）：每天计入当天和前一天都有收盘价的股票。退市的股票保留退市前的涨跌，退市后不再计入；新股从上市第二天起计入。`members` 是今天在市的成分数。
+- **口径** `basis`：默认 `total_return`（全收益，主指数）：分红在当天加回（当天收盘价 + 每股分红），退市当天按返还股东的每股现金计；`basis=price` 返回价格指数（只看价格）。两个口径的基日和基点相同（1000）。
+- **复权**：拆股、配股按复权因子换算（和 K 线前复权一致），除权本身不改变指数。权重用前复权收盘价 × 现在的股数。
 - 参数 `series=false` 去掉走势（机器人只要点位时用）。
 - 旧字段 `prev` 改 `prev_close`；`series` 从 `[day, value]` 二元数组改成对象（体积大约翻倍，3 条 × 约 130 点，可以接受；换来自描述）。
 
@@ -853,7 +857,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 - `quote.open_reference`：今日开盘参考价（集合竞价价或昨收），VCM 后续档位的锚（旧 `open_ref`）。
 - `revenue_weeks`：按周（周一起）汇总，`week_start` 是该周第一天（旧 `weeks[].week`，`us/cn/jp` 收进 `by_market`，`dividend_ps` 改 `dividend_per_share`，`aired` 改 `episodes_aired`）。
 - `revenue_weeks[].earnings_per_share`：这一周的每股收益 = 营收 ×（1 − 运营成本率）×（1 − 企业所得税）/ 股本，四舍五入到分；运营成本率和税率取服务器配置（`company.operating_cost_ratio`、`company.corp_tax`），和 `Ratios.pe_ttm` 同一口径。股本用当前股数（拆股后的历史周按新股数计，和前复权 K 线一致）。
-- `trailing_4w`：近 28 天（与 `Ratios` 同样按 `day > 今天 − 28` 切）的实际合计：每股收益、每股分红。不年化。
+- `trailing_4w`：近 28 天（与 `Ratios` 同样按 `day > 今天 − 28` 切）的实际合计：每股收益、每股分红。不年化。每股分红和 `revenue_weeks` 的 `dividend_per_share` 都按复权因子换算成现在的每股（与 K 线前复权一致）。
 - `episode_days`：每集首次出现在数据里的交易日（旧 profile 的 `episodes: [{n, day}]`，改名避免和总集数 `episodes` 冲突）。
 - `holders`：**口径统一**。旧 `/api/stocks/{id}` 按账户类型原样输出（`company`、`mm`、`npc`…），profile 把 `company` 叫 `unissued`、其余全算 `npc`。v1 固定为：`player`（玩家）、`committee`（制作委员会）、`unissued`（公司账户里未发行的）、`market_maker`（做市商 `mm`）、`npc`（NPC 市场的四类主体，`by_style` 按名字前缀的主体类型分；v1 NPC 的 `noise` 账户计入 `npc.total` 但不进 `by_style`）、`other`（世界账户、央行、政府：破产重整和下架收购会把股票卖给世界账户）。各项之和等于 `shares`。NPC 分类型的持股由正在开发的 NPC 市场提供；在那之前 `by_style` 为 null。
 - `audiences`：对应来源没有数据时该键为 null（不再省略）。旧的 `anilist.next_episode`（含 Unix 秒 `airingAt`）删除，用顶层 `next_episode`；`anilist.cover` 删除，用 `cover_url`。`bangumi.name_cn` 删除（就是 `title`）。

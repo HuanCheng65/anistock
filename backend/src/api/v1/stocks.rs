@@ -286,7 +286,26 @@ pub async fn detail(
         let tax = param_f64(cfg, "company.corp_tax", 0.25);
         let sh = co.shares.max(1) as f64;
         let eps = move |rev: i64| m((rev as f64 * (1.0 - cost) * (1.0 - tax) / sh).round() as i64);
-        let weeks: Vec<RevenueWeek> = {
+        // dividends per share in today's share terms (前复权, like the K-line and the per-share profit)
+        let adj: Vec<(String, f64)> = price_adjustments(c, id)?.into_iter().map(|a| (a.0, a.1)).collect();
+        let fwd = |d: &str| super::market::forward_factor(Some(&adj), d);
+        let adj_dps: Vec<(String, String, i64)> = if adj.is_empty() {
+            Vec::new()
+        } else {
+            let mut s = c
+                .prepare_cached("SELECT day, strftime('%Y-%W', day), dividend_ps FROM company_days WHERE company_id=? AND dividend_ps>0")
+                .map_err(sql)?;
+            let rows = s.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(sql)?;
+            rows.collect::<Result<Vec<(String, String, i64)>, _>>()
+                .map_err(sql)?
+                .into_iter()
+                .map(|(d, w, x)| {
+                    let v = (x as f64 * fwd(&d)).round() as i64;
+                    (d, w, v)
+                })
+                .collect()
+        };
+        let mut weeks: Vec<RevenueWeek> = {
             let mut s = c
                 .prepare_cached(
                     "SELECT strftime('%Y-%W', day) wk, MIN(day), SUM(revenue), SUM(rev_us), SUM(rev_cn), SUM(rev_jp),
@@ -308,6 +327,13 @@ pub async fn detail(
                 .map_err(sql)?;
             rows.collect::<Result<_, _>>().map_err(sql)?
         };
+        if !adj.is_empty() {
+            for w in weeks.iter_mut() {
+                // the week's key as SQLite's strftime('%Y-%W') (chrono's %W is the same Monday-based week)
+                let key = super::market::date(&w.week_start)?.format("%Y-%W").to_string();
+                w.dividend_per_share = m(adj_dps.iter().filter(|x| x.1 == key).map(|x| x.2).sum());
+            }
+        }
         let mut episode_days = Vec::new();
         let mut dividends = Vec::new();
         let mut aired_now = 0;
@@ -349,6 +375,7 @@ pub async fn detail(
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .map_err(sql)?;
+            let dps = if adj.is_empty() { dps } else { adj_dps.iter().filter(|x| x.0 > since).map(|x| x.2).sum() };
             Trailing4w { earnings_per_share: eps(rev), dividends_per_share: m(dps) }
         };
         let has_ipo = co.sub_start.as_deref().is_some_and(|s| !s.is_empty());

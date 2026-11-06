@@ -440,6 +440,8 @@ pub struct IndicesResponse {
     pub trading_day: TradingDay,
     #[schema(format = Date)]
     pub season_start: String,
+    /// total_return（全收益：分红在当天加回）或 price（价格指数）
+    pub basis: String,
     pub breadth: Breadth,
     pub items: Vec<MarketIndex>,
 }

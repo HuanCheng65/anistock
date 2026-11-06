@@ -129,7 +129,7 @@ fn stock_ref(c: &Connection, id: i64) -> R<Option<StockRef>> {
 
 /// `daily_close` for `d` (after its close), from the database.
 pub fn daily_close(c: &Connection, d: &str) -> R<Value> {
-    let idx = super::market::compute_indices(c, d, false)?;
+    let idx = super::market::compute_indices(c, d, false, super::market::IndexBasis::TotalReturn)?;
     // closes of d and the day before, per stock listed on d
     let mut s = c
         .prepare(
@@ -139,7 +139,14 @@ pub fn daily_close(c: &Connection, d: &str) -> R<Value> {
         .map_err(sql)?;
     let rows: Vec<(i64, i64, Option<i64>)> =
         s.query_map([d], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(sql)?.collect::<Result<_, _>>().map_err(sql)?;
-    let mut ch: Vec<(i64, f64)> = rows.iter().filter_map(|(id, cl, p)| p.filter(|p| *p > 0).map(|p| (*id, *cl as f64 / p as f64 - 1.0))).collect();
+    // the day before in today's share terms (a split or ex-rights day is not a fall)
+    let adj = super::market::price_factors(c)?;
+    let mut ch: Vec<(i64, f64)> = rows
+        .iter()
+        .filter_map(|(id, cl, p)| {
+            p.filter(|p| *p > 0).map(|p| (*id, *cl as f64 / (p as f64 * super::market::factor_on(adj.get(id), d)) - 1.0))
+        })
+        .collect();
     let (mut up, mut flat, mut down) = (0, 0, 0);
     for (_, x) in &ch {
         if *x > 1e-9 {

@@ -1089,6 +1089,8 @@ export interface components {
             value: number;
         };
         IndicesResponse: {
+            /** @description total_return（全收益：分红在当天加回）或 price（价格指数） */
+            basis: string;
             breadth: components["schemas"]["Breadth"];
             items: components["schemas"]["MarketIndex"][];
             /** Format: date */
@@ -2310,6 +2312,8 @@ export interface operations {
             query?: {
                 /** @description false 时不带走势 */
                 series?: boolean;
+                /** @description total_return（默认，全收益）或 price（价格指数） */
+                basis?: string;
             };
             header?: never;
             path?: never;
