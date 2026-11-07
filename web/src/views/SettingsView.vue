@@ -19,7 +19,7 @@ const account = useAccount()
 const router = useRouter()
 const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]
 const docs = computed(() => {
-  const d: [string, string][] = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书'], ['margin_disclosure', '融资融券风险揭示书']]
+  const d: [string, string][] = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书'], ['margin_disclosure', '融资融券风险揭示书'], ['futures_disclosure', '热度期货风险揭示书']]
   if (session.me?.api_trading?.enabled) d.push(['api_disclosure', '程序化交易风险揭示书'])
   return d
 })

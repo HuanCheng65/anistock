@@ -2,9 +2,9 @@
 // version of each in server/game.toml [account.documents]; raise it there when a text changes materially,
 // and every player accepts the new text again before the next order.
 
-export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure' | 'api_disclosure'
+export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure' | 'api_disclosure' | 'futures_disclosure'
 /** documents signed by typing the username */
-export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure', 'api_disclosure']
+export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure', 'api_disclosure', 'futures_disclosure']
 
 export type Block =
   | { p: string }
@@ -260,6 +260,50 @@ const marginDisclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解融资融券可能造成超过本金的亏损，自愿承担交易结果。',
 }
 
+// docs/v3-futures-ui.md §4: signed before trading heat futures (server/game.toml futures_disclosure)
+const futuresDisclosure: LegalDoc = {
+  title: '热度期货风险揭示书',
+  updated: '2026-11-08',
+  intro: [
+    { p: '热度期货是押一部作品在 4 周合约期内的平均热度：到期按这 28 天公布的安易热度指数的平均值结算。期货用信用账户的保证金交易，盈利和亏损都会放大，亏损可能超过投入的保证金。' },
+    { p: '本揭示书是《风险揭示书》和《融资融券风险揭示书》的补充。交易前应同时阅读热度期货的规则和安易热度指数的编制方法。' },
+  ],
+  sections: [
+    {
+      h: '一、杠杆风险',
+      blocks: [{ ol: [
+        '开仓只冻结名义价值约 15% 的初始保证金。平均热度每偏离成交价 1 点，每手盈亏 10 星辉，相对保证金的变动是热度变动的数倍。',
+        '押更冷（卖出开仓）时，平均热度上涨没有上限，亏损也没有上限。',
+      ] }],
+    },
+    {
+      h: '二、每日结算和强制平仓风险',
+      blocks: [{ ol: [
+        '每天日结按当天的结算价计算持仓盈亏，并在账户间划转。亏损先从现金扣除，现金不足的部分计为信用账户的负债。',
+        '期货的亏损和维持保证金计入信用账户的维持担保比例。追加担保物、强制平仓的规则与融资融券相同；强制平仓时先平期货，平仓的成交价可能明显偏离预期。',
+        '持仓达到上限（单个合约名义价值不超过净资产的 50%，保证金合计不超过净资产的 80%）时，不能继续开仓。',
+      ] }],
+    },
+    {
+      h: '三、指数风险',
+      blocks: [{ ol: [
+        '安易热度指数取自 AniList、Bangumi、Annict 的公开统计。数据来源可能缺失、延迟或被刷量；指数按编制方法补值或替换异常值，已公布的值不再修改。',
+        '合约期最后一天的指数公布前，合约不能到期结算，持仓继续按每日结算价盯市。',
+        '编制方法的变更提前 7 天公告，只适用于公告之后开始的合约期。',
+      ] }],
+    },
+    {
+      h: '四、流动性和价格风险',
+      blocks: [{ ol: [
+        '做市商在自己估计的价格两边报价，它的估计不公开，也可能出错。成交价可能偏离你对平均热度的判断。',
+        '价格短时间内波动过大时进入冷静期，只能在区间内成交。',
+        '未成交的委托在当天日结时撤销。',
+      ] }],
+    },
+  ],
+  declaration: '本人已阅读并理解本揭示书的内容，了解热度期货可能造成超过保证金的亏损，自愿承担交易结果。',
+}
+
 // docs/v2-api-access.md §9: signed before an API key may trade (server/game.toml api_disclosure)
 const apiDisclosure: LegalDoc = {
   title: '程序化交易风险揭示书',
@@ -302,8 +346,8 @@ const apiDisclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解程序化交易的风险，自愿承担程序提交的委托及其交易结果。',
 }
 
-export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure, api_disclosure: apiDisclosure }
+export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure, api_disclosure: apiDisclosure, futures_disclosure: futuresDisclosure }
 
 export function isDocKey(k: unknown): k is DocKey {
-  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure' || k === 'api_disclosure'
+  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure' || k === 'api_disclosure' || k === 'futures_disclosure'
 }

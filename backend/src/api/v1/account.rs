@@ -84,6 +84,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         disclosure_signed: !missing.contains(&"api_disclosure"),
         disclosure_version: st.cfg.api_disclosure,
     };
+    let futures_steps = super::assess::futures_steps(st, c, id)?;
     let stock = stock_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
     let total = cash + stock - liab;
@@ -134,6 +135,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         risk,
         credit_steps,
         api_trading,
+        futures_steps,
         announcement,
     })
 }
@@ -237,13 +239,14 @@ pub async fn sign(
         Some((_, v)) => *v,
         None if doc == "margin_disclosure" => st.cfg.margin_disclosure,
         None if doc == "api_disclosure" => st.cfg.api_disclosure,
+        None if doc == "futures_disclosure" => st.cfg.futures_disclosure,
         None => return Err(error::invalid(vec![error::not_allowed("doc")])),
     };
     if version != current {
         return Err(E::new(409, "document_outdated", "文件已更新，刷新页面后重新阅读"));
     }
     let me = load_me(&st, id).await?;
-    let signature = if matches!(doc.as_str(), "disclosure" | "margin_disclosure" | "api_disclosure") {
+    let signature = if matches!(doc.as_str(), "disclosure" | "margin_disclosure" | "api_disclosure" | "futures_disclosure") {
         let typed = signature.as_deref().map(str::trim).unwrap_or("");
         if typed != me.username {
             return Err(error::invalid(vec![error::field("signature", "mismatch", "签名需与用户名一致")]));

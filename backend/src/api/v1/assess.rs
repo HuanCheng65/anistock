@@ -1,5 +1,6 @@
-//! 风险测评 and the 融资融券 knowledge test (docs/v2-account.md §5, §6): the questions, the answers,
-//! and what they unlock (opening credit needs C4 or above, a passed test and the margin disclosure).
+//! 风险测评 and the knowledge tests of 融资融券 and 热度期货 (docs/v2-account.md §5, §6; docs/v3-futures-ui.md
+//! §4): the questions, the answers, and what they unlock (opening credit needs C4 or above, a passed test and
+//! the margin disclosure; trading futures needs credit, C4, its own test and the futures disclosure).
 
 use std::sync::Arc;
 
@@ -19,19 +20,20 @@ fn kind_of(raw: &str) -> R<&'static str> {
     match raw {
         "risk" => Ok("risk"),
         "margin-quiz" => Ok("margin-quiz"),
+        "futures-quiz" => Ok("futures-quiz"),
         _ => Err(E::new(404, "not_found", "没有这项测评")),
     }
 }
 
 /// 测评题目
 #[utoipa::path(get, path = "/api/v1/assessments/{kind}", tag = "account",
-    params(("kind" = String, Path, description = "risk（风险测评）或 margin-quiz（融资融券知识测试）")),
+    params(("kind" = String, Path, description = "risk（风险测评）、margin-quiz（融资融券知识测试）或 futures-quiz（热度期货知识测试）")),
     responses((status = 200, body = Assessment), (status = "default", body = ErrorBody)))]
 pub async fn questions(Path(raw): Path<String>) -> R<Json<Assessment>> {
     let kind = kind_of(&raw)?;
-    let (version, list, pass) = match kind {
-        "risk" => (a::RISK_VERSION, a::RISK, None),
-        _ => (a::MARGIN_QUIZ_VERSION, a::MARGIN_QUIZ, Some(a::MARGIN_QUIZ_PASS)),
+    let (version, list, pass) = match quiz_of(kind) {
+        None => (a::RISK_VERSION, a::RISK, None),
+        Some(q) => (q.version, q.questions, Some(q.pass)),
     };
     Ok(Json(Assessment {
         kind: kind.into(),
@@ -42,6 +44,33 @@ pub async fn questions(Path(raw): Path<String>) -> R<Json<Assessment>> {
             .map(|q| AssessmentQuestion { text: q.text.into(), options: q.options.iter().map(|o| o.to_string()).collect() })
             .collect(),
     }))
+}
+
+/// The knowledge test of a kind (`None`: the risk questionnaire).
+fn quiz_of(kind: &str) -> Option<&'static a::Quiz> {
+    match kind {
+        "margin-quiz" => Some(&a::MARGIN),
+        "futures-quiz" => Some(&a::FUTURES),
+        _ => None,
+    }
+}
+
+fn passed(c: &Connection, id: i64, q: &a::Quiz) -> R<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM quiz_results WHERE account_id=? AND quiz=? AND passed=1 AND version=?)",
+        params![id, q.name, q.version],
+        |r| r.get(0),
+    )
+    .map_err(sql)
+}
+
+fn signed(c: &Connection, id: i64, doc: &str, version: i64) -> R<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM account_agreements WHERE account_id=? AND doc=? AND version=?)",
+        params![id, doc, version],
+        |r| r.get(0),
+    )
+    .map_err(sql)
 }
 
 fn answers(b: &serde_json::Map<String, serde_json::Value>) -> R<Vec<i64>> {
@@ -91,17 +120,44 @@ pub fn credit_steps(st: &AppState, c: &Connection, id: i64) -> R<CreditSteps> {
     let risk = risk_of(st, c, id)?;
     let min = st.cfg.eligibility.credit_min_level;
     let risk_ok = risk.as_ref().is_some_and(|r| r.valid && r.level[1..].parse::<i64>().unwrap_or(0) >= min);
-    let quiz_passed: bool = c
-        .query_row("SELECT EXISTS(SELECT 1 FROM quiz_results WHERE account_id=? AND quiz='margin' AND passed=1 AND version=?)", params![id, a::MARGIN_QUIZ_VERSION], |r| r.get(0))
-        .map_err(sql)?;
-    let disclosure_signed: bool = c
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM account_agreements WHERE account_id=? AND doc='margin_disclosure' AND version=?)",
-            params![id, st.cfg.margin_disclosure],
-            |r| r.get(0),
-        )
-        .map_err(sql)?;
+    let quiz_passed = passed(c, id, &a::MARGIN)?;
+    let disclosure_signed = signed(c, id, "margin_disclosure", st.cfg.margin_disclosure)?;
     Ok(CreditSteps { verified, risk_ok, min_level: format!("C{min}"), quiz_passed, disclosure_signed, disclosure_version: st.cfg.margin_disclosure })
+}
+
+/// What trading heat futures still needs (docs/v3-futures-ui.md §4): an open credit account, 风险测评 at the
+/// credit level or above, the futures knowledge test, the futures disclosure.
+pub fn futures_steps(st: &AppState, c: &Connection, id: i64) -> R<FuturesSteps> {
+    let credit_open: bool = c
+        .query_row("SELECT EXISTS(SELECT 1 FROM credit_accounts WHERE account_id=? AND status!='defaulted')", [id], |r| r.get(0))
+        .map_err(sql)?;
+    let risk = risk_of(st, c, id)?;
+    let min = st.cfg.eligibility.credit_min_level;
+    let risk_ok = risk.as_ref().is_some_and(|r| r.valid && r.level[1..].parse::<i64>().unwrap_or(0) >= min);
+    Ok(FuturesSteps {
+        credit_open,
+        risk_ok,
+        min_level: format!("C{min}"),
+        quiz_passed: passed(c, id, &a::FUTURES)?,
+        disclosure_signed: signed(c, id, "futures_disclosure", st.cfg.futures_disclosure)?,
+        disclosure_version: st.cfg.futures_disclosure,
+    })
+}
+
+/// The first unmet step, as a `futures_not_eligible` error.
+pub fn futures_refusal(s: &FuturesSteps) -> Option<E> {
+    let msg = if !s.credit_open {
+        "开通信用账户后才能交易热度期货".to_string()
+    } else if !s.risk_ok {
+        format!("风险测评为 {} 及以上才能交易热度期货", s.min_level)
+    } else if !s.quiz_passed {
+        "通过热度期货知识测试后才能交易".to_string()
+    } else if !s.disclosure_signed {
+        "签署《热度期货风险揭示书》后才能交易".to_string()
+    } else {
+        return None;
+    };
+    Some(E::new(422, "futures_not_eligible", msg))
 }
 
 /// The first unmet step, as a `credit_not_eligible` error.
@@ -122,7 +178,7 @@ pub fn credit_refusal(s: &CreditSteps) -> Option<E> {
 
 /// 提交风险测评或知识测试
 #[utoipa::path(post, path = "/api/v1/me/assessments/{kind}", tag = "account",
-    params(("kind" = String, Path, description = "risk 或 margin-quiz")),
+    params(("kind" = String, Path, description = "risk、margin-quiz 或 futures-quiz")),
     request_body = AnswersRequest,
     responses((status = 200, body = AssessmentResult), (status = "default", body = ErrorBody)))]
 pub async fn submit(
@@ -156,20 +212,22 @@ pub async fn submit(
         let risk = read(&st, move |c| risk_of(&st2, c, id)).await?;
         return Ok(Json(AssessmentResult { risk, quiz: None }));
     }
-    let right = a::score_quiz(&ans).ok_or_else(|| error::invalid(vec![error::wrong_type("answers")]))?;
-    let passed = right >= a::MARGIN_QUIZ_PASS;
+    let q = quiz_of(kind).expect("a quiz kind");
+    let right = a::score_quiz(q, &ans).ok_or_else(|| error::invalid(vec![error::wrong_type("answers")]))?;
+    let passed = right >= q.pass;
     super::bind::side_exec(
         &st,
         "INSERT INTO quiz_results(account_id, quiz, version, score, passed, taken_at, day) VALUES (?,?,?,?,?,?,?)",
-        params![id, "margin", a::MARGIN_QUIZ_VERSION, right, passed, now, day],
+        params![id, q.name, q.version, right, passed, now, day],
     )?;
-    let review = a::MARGIN_QUIZ
+    let review = q
+        .questions
         .iter()
         .zip(&ans)
         .map(|(q, given)| QuizReview { correct: *given as usize == q.answer, answer: q.answer as i64, explanation: q.explanation.into() })
         .collect();
     Ok(Json(AssessmentResult {
         risk: None,
-        quiz: Some(QuizResult { score: right, total: a::MARGIN_QUIZ.len() as i64, pass_score: a::MARGIN_QUIZ_PASS, passed, review }),
+        quiz: Some(QuizResult { score: right, total: q.questions.len() as i64, pass_score: q.pass, passed, review }),
     }))
 }

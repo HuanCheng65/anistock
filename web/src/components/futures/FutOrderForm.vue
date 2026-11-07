@@ -2,7 +2,9 @@
 // Order entry for a heat futures contract, on the terminal surface like the stock order form: 押更热 (buy) or
 // 押更冷 (sell), lots, a price that starts at 对手价, and one line that turns the order into money: "平均到 100
 // 赚 230 星辉", the 100 draggable. Margin and commission under it. Futures trade on the credit account's
-// margin (docs/v3-futures.md §4.2): without one, the form says so and links to opening it.
+// margin (docs/v3-futures.md §4.2). Until the futures steps are done (docs/v3-futures-ui.md §4: credit account,
+// 风险测评, the knowledge test, the disclosure) the form lists them with links in place of the button; an
+// order that only closes a position needs none of them.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { errorText, type FuturesContract, type FuturesDetail, type FuturesPosition } from '../../api'
@@ -62,7 +64,18 @@ const sideLabel = computed(() => {
   return side.value === 'buy' ? '押更热' : '押更冷'
 })
 const mineHere = computed(() => (fut.mine?.orders ?? []).filter((o) => o.contract_id === props.c.id && o.status === 'open'))
-const noCredit = computed(() => !!session.me && session.me.credit_status == null)
+const steps = computed(() => {
+  const f = session.me?.futures_steps
+  if (!f) return []
+  return [
+    { k: 'credit', to: '/me', label: '开通信用账户', ok: f.credit_open },
+    { k: 'risk', to: '/assessment/risk', label: `风险测评 ${f.min_level} 及以上`, ok: f.risk_ok },
+    { k: 'quiz', to: '/assessment/futures-quiz', label: '热度期货知识测试', ok: f.quiz_passed },
+    { k: 'sign', to: '/legal/futures_disclosure?sign=1', label: '签署《热度期货风险揭示书》', ok: f.disclosure_signed },
+  ]
+})
+/** the steps are done, or this order only closes */
+const allowed = computed(() => steps.value.every((x) => x.ok) || (closing.value === lots.value && lots.value > 0))
 const closed = computed(() => (session.status?.phase ?? 'closed') === 'closed' || props.c.status !== 'listed')
 const problem = computed(() => {
   if (!(px.value > 0)) return '价格需大于 0，最多两位小数'
@@ -152,12 +165,14 @@ async function cancel(id: number) {
     <div class="kv"><span>手续费</span><span class="num v">{{ money(fee) }}</span></div>
     <div v-if="fut.mine" class="kv"><span>可用保证金</span><span class="num v">{{ money(fut.mine.available_margin) }}</span></div>
 
-    <p v-if="problem && !noCredit" class="note err" role="alert">{{ problem }}</p>
+    <p v-if="problem && allowed" class="note err" role="alert">{{ problem }}</p>
     <RouterLink v-if="!session.me" :to="{ name: 'login', query: { next: route.fullPath } }" class="tbtn buy cta">登录后交易</RouterLink>
-    <template v-else-if="noCredit">
-      <p class="note">热度期货用信用账户的保证金交易，股票也可以充当保证金。</p>
-      <RouterLink to="/me" class="tbtn plain cta">开通信用账户</RouterLink>
-    </template>
+    <div v-else-if="!allowed" class="steps">
+      <p class="note">交易热度期货前完成：</p>
+      <component :is="x.ok ? 'span' : RouterLink" v-for="x in steps" :key="x.k" :to="x.ok ? undefined : x.to" class="step" :class="{ ok: x.ok }">
+        <span class="mk">{{ x.ok ? '✓' : '' }}</span><span>{{ x.label }}</span><span v-if="!x.ok" class="go">›</span>
+      </component>
+    </div>
     <button v-else type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || closed">
       {{ busy ? '提交中…' : `${sideLabel} ${lots} 手` }}
     </button>
@@ -213,6 +228,11 @@ async function cancel(id: number) {
 .note { font-size: 12px; line-height: 1.55; color: var(--t-ink-2); }
 .note.err { color: var(--t-danger); }
 .note.ok { color: var(--t-ink); }
+.steps { display: flex; flex-direction: column; border-top: 1px solid var(--t-line); padding-top: 8px; }
+.step { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 9px 0; font-size: 13px; color: var(--t-ink); border-bottom: 1px solid var(--t-line); }
+.step.ok { color: var(--t-ink-2); }
+.step .mk { color: var(--t-up); }
+.step .go { color: var(--t-ink-2); }
 .mine { border-top: 1px solid var(--t-line); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .minehead { font-size: 12px; color: var(--t-ink-2); }
 .ord { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: 12px; }

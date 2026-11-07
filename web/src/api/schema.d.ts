@@ -1623,6 +1623,20 @@ export interface components {
             /** @description 自上次结算以来的盈亏（按最新价）；结算时划转 */
             unsettled_pnl: components["schemas"]["Money"];
         };
+        /** @description 交易热度期货的前置步骤（docs/v3-futures-ui.md §4） */
+        FuturesSteps: {
+            /** @description 开通了信用账户（期货用它的保证金） */
+            credit_open: boolean;
+            /** @description 签署了当前版本的《热度期货风险揭示书》 */
+            disclosure_signed: boolean;
+            /** Format: int64 */
+            disclosure_version: number;
+            min_level: string;
+            /** @description 通过了热度期货知识测试 */
+            quiz_passed: boolean;
+            /** @description 风险测评有效且不低于 `min_level` */
+            risk_ok: boolean;
+        };
         HeatDay: {
             /** Format: double */
             cn: number | null;
@@ -1869,6 +1883,8 @@ export interface components {
             /** @description 财政补贴、新股认购、排行榜的资格 */
             eligibility: components["schemas"]["EligibilityState"];
             frozen_cash: components["schemas"]["Money"];
+            /** @description 交易热度期货还需要的步骤 */
+            futures_steps: components["schemas"]["FuturesSteps"];
             /** Format: int64 */
             id: number;
             initial_cash: components["schemas"]["Money"];
@@ -2728,7 +2744,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description risk（风险测评）或 margin-quiz（融资融券知识测试） */
+                /** @description risk（风险测评）、margin-quiz（融资融券知识测试）或 futures-quiz（热度期货知识测试） */
                 kind: string;
             };
             cookie?: never;
@@ -3569,7 +3585,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description risk 或 margin-quiz */
+                /** @description risk、margin-quiz 或 futures-quiz */
                 kind: string;
             };
             cookie?: never;

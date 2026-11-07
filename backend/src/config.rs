@@ -119,6 +119,8 @@ pub struct Config {
     pub margin_disclosure: i64,
     /// current version of 程序化交易风险揭示书 (signed before an API key may trade, not before trading)
     pub api_disclosure: i64,
+    /// current version of 热度期货风险揭示书 (signed before trading futures)
+    pub futures_disclosure: i64,
     /// `[api] trading`: API keys with the `trade` scope (docs/v2-api-access.md, phase 2); off until switched on.
     /// ANISTOCK_API_TRADING=1 / 0 overrides it.
     pub api_trading: bool,
@@ -266,6 +268,7 @@ impl Config {
             eligibility,
             margin_disclosure: docs_raw.and_then(|t| t.get("margin_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
             api_disclosure: docs_raw.and_then(|t| t.get("api_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
+            futures_disclosure: docs_raw.and_then(|t| t.get("futures_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
             api_trading: match env("ANISTOCK_API_TRADING").as_deref() {
                 Some("1") => true,
                 Some("0") => false,

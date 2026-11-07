@@ -2057,6 +2057,43 @@
         ],
         "type": "object"
       },
+      "FuturesSteps": {
+        "description": "交易热度期货的前置步骤（docs/v3-futures-ui.md §4）",
+        "properties": {
+          "credit_open": {
+            "description": "开通了信用账户（期货用它的保证金）",
+            "type": "boolean"
+          },
+          "disclosure_signed": {
+            "description": "签署了当前版本的《热度期货风险揭示书》",
+            "type": "boolean"
+          },
+          "disclosure_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "min_level": {
+            "type": "string"
+          },
+          "quiz_passed": {
+            "description": "通过了热度期货知识测试",
+            "type": "boolean"
+          },
+          "risk_ok": {
+            "description": "风险测评有效且不低于 `min_level`",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "credit_open",
+          "disclosure_signed",
+          "disclosure_version",
+          "min_level",
+          "quiz_passed",
+          "risk_ok"
+        ],
+        "type": "object"
+      },
       "HeatDay": {
         "properties": {
           "cn": {
@@ -2978,6 +3015,10 @@
           "frozen_cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "futures_steps": {
+            "$ref": "#/components/schemas/FuturesSteps",
+            "description": "交易热度期货还需要的步骤"
+          },
           "id": {
             "format": "int64",
             "type": "integer"
@@ -3045,6 +3086,7 @@
           "dividends",
           "eligibility",
           "frozen_cash",
+          "futures_steps",
           "id",
           "initial_cash",
           "liabilities",
@@ -6031,7 +6073,7 @@
         "operationId": "questions",
         "parameters": [
           {
-            "description": "risk（风险测评）或 margin-quiz（融资融券知识测试）",
+            "description": "risk（风险测评）、margin-quiz（融资融券知识测试）或 futures-quiz（热度期货知识测试）",
             "in": "path",
             "name": "kind",
             "required": true,
@@ -7172,7 +7214,7 @@
         "operationId": "submit",
         "parameters": [
           {
-            "description": "risk 或 margin-quiz",
+            "description": "risk、margin-quiz 或 futures-quiz",
             "in": "path",
             "name": "kind",
             "required": true,

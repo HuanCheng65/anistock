@@ -22,7 +22,7 @@ const router = createRouter({
     { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue'), meta: { tab: 'me', title: '设置' } },
     { path: '/forgot', name: 'forgot', component: () => import('./views/ForgotView.vue'), meta: { title: '找回密码', bare: true } },
     { path: '/login', name: 'login', component: () => import('./views/LoginView.vue'), meta: { title: '登录', bare: true } },
-    { path: '/assessment/:kind(risk|margin-quiz)', name: 'assessment', component: () => import('./views/AssessmentView.vue'), meta: { tab: 'me', title: '测评', auth: true } },
+    { path: '/assessment/:kind(risk|margin-quiz|futures-quiz)', name: 'assessment', component: () => import('./views/AssessmentView.vue'), meta: { tab: 'me', title: '测评', auth: true } },
     { path: '/legal/:doc', name: 'legal', component: () => import('./views/LegalView.vue'), meta: { tab: 'me', title: '协议' } },
     { path: '/welcome', name: 'welcome', component: () => import('./views/WelcomeView.vue'), meta: { title: '开户', bare: true, auth: true } },
     { path: '/more', redirect: '/me' },

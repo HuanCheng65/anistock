@@ -864,6 +864,8 @@ pub struct Me {
     pub credit_steps: CreditSteps,
     /// 用 API 密钥交易（程序化交易）的条件
     pub api_trading: ApiTradingSteps,
+    /// 交易热度期货还需要的步骤
+    pub futures_steps: FuturesSteps,
     /// 登录后要弹出的公告：开户之后发布、还没看过的最新一条；没有时为 null
     pub announcement: Option<Announcement>,
 }
@@ -903,6 +905,21 @@ pub struct ApiTradingSteps {
     /// 完成了身份验证（服务器不要求身份验证时恒为 true）
     pub verified: bool,
     /// 签署了当前版本的《程序化交易风险揭示书》
+    pub disclosure_signed: bool,
+    pub disclosure_version: i64,
+}
+
+/// 交易热度期货的前置步骤（docs/v3-futures-ui.md §4）
+#[derive(Serialize, ToSchema, Clone)]
+pub struct FuturesSteps {
+    /// 开通了信用账户（期货用它的保证金）
+    pub credit_open: bool,
+    /// 风险测评有效且不低于 `min_level`
+    pub risk_ok: bool,
+    pub min_level: String,
+    /// 通过了热度期货知识测试
+    pub quiz_passed: bool,
+    /// 签署了当前版本的《热度期货风险揭示书》
     pub disclosure_signed: bool,
     pub disclosure_version: i64,
 }

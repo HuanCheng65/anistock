@@ -1328,7 +1328,7 @@ CREATE TABLE player_days (
 | `POST /me/futures/orders` | 下单：`contract_id`、`side`（buy/sell）、`type`（limit/market）、`quantity`（手）、`price`（限价，0.01 点）。需要信用账户。成交后返回 201 和成交数量、均价 |
 | `DELETE /me/futures/orders/{id}` | 撤单，返回最新的“我的期货” |
 
-错误码：`futures_closed`、`contract_not_found`（404）、`contract_not_tradable`、`price_out_of_range`、`price_required`、`auction_limit_only`、`insufficient_margin`、`credit_not_open`、`margin_call_active`、`credit_defaulted`、`position_cap`、`margin_cap`、`order_not_found`（404）。
+错误码：`futures_closed`、`futures_not_eligible`（还没开通期货：信用账户、风险测评、知识测试、风险揭示书，见 `Me.futures_steps`；只平仓的委托不检查）、`contract_not_found`（404）、`contract_not_tradable`、`price_out_of_range`、`price_required`、`auction_limit_only`、`insufficient_margin`、`credit_not_open`、`margin_call_active`、`credit_defaulted`、`position_cap`、`margin_cap`、`order_not_found`（404）。
 
 ### 4.6 排行榜
 

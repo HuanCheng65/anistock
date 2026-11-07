@@ -13,7 +13,7 @@ import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
 import { useTopic } from '../live'
 import { errorText } from '../api'
-import { dir, money, num, pct, qty, signed } from '../format'
+import { dir, money, num, pct, qty } from '../format'
 import { useFutures } from '../stores/futures'
 import { useSession } from '../stores/session'
 
@@ -98,7 +98,7 @@ function back() {
           </section>
 
           <section v-if="pos && pos.quantity" class="mine gutter">
-            <p>押<b :class="pos.quantity > 0 ? 'up' : 'down'">{{ pos.quantity > 0 ? '更热' : '更冷' }}</b> {{ qty(Math.abs(pos.quantity)) }} 手，成本 <span class="num">{{ num(pos.average_price / 100) }}</span>。按现在的预期，{{ pos.pnl >= 0 ? '赚' : '亏' }} <span class="num" :class="dir(pos.pnl)">{{ signed(pos.pnl, 0) }}</span> 星辉。</p>
+            <p>押<b :class="pos.quantity > 0 ? 'up' : 'down'">{{ pos.quantity > 0 ? '更热' : '更冷' }}</b> {{ qty(Math.abs(pos.quantity)) }} 手，成本 <span class="num">{{ num(pos.average_price / 100) }}</span>。按现在的预期，{{ pos.pnl >= 0 ? '赚' : '亏' }} <span class="num" :class="dir(pos.pnl)">{{ money(Math.abs(pos.pnl), 0) }}</span> 星辉。</p>
             <p class="sub">占用保证金 <span class="num">{{ money(pos.margin) }}</span> · 每天日结按结算价划转盈亏</p>
           </section>
 

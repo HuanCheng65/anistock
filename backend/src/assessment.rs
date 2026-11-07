@@ -135,13 +135,63 @@ pub const MARGIN_QUIZ: &[Question] = &[
     ),
 ];
 
+pub const FUTURES_QUIZ_VERSION: i64 = 1;
+pub const FUTURES_QUIZ_PASS: i64 = 4;
+
+/// 热度期货知识测试 (docs/v3-futures-ui.md §4): the settlement is an average, daily marking to market, what a
+/// point is worth, margin and liquidation.
+pub const FUTURES_QUIZ: &[Question] = &[
+    k(
+        "热度期货到期时按什么结算",
+        &["到期那天的市场预期", "合约期 28 天热度指数的平均值", "最后一天的热度指数"],
+        1,
+        "到期按合约期内 28 天公布的热度指数的平均值结算。每天公布一个值，越接近到期，能猜的部分越少。",
+    ),
+    k(
+        "以 90.00 押更热 2 手，最终平均热度是 95.00，赚多少",
+        &["50 星辉", "950 星辉", "100 星辉"],
+        2,
+        "每手每 1 点 10 星辉：（95 − 90）× 2 手 × 10 = 100 星辉。",
+    ),
+    k(
+        "还没到期，期货的盈亏什么时候计入账户",
+        &["每天日结时按结算价划转", "到期时一次结清", "平仓时才结算"],
+        0,
+        "每天日结按当天的结算价算一次盈亏并划转（盯市），所以持仓期间账户每天都会变化。",
+    ),
+    k(
+        "期货亏损使信用账户的维持担保比例低于追保线，会怎样",
+        &["没有影响，到期才算", "和融资一样收到追保通知，仍不足时强制平仓，先平期货", "合约自动作废"],
+        1,
+        "期货用信用账户的保证金交易，亏损计入维持担保比例。追保、强制平仓的规则和融资融券相同，强制平仓时先平期货。",
+    ),
+    k(
+        "开仓 1 手需要准备多少资金",
+        &["合约的全部名义价值", "不需要任何资金", "名义价值的一部分作为保证金，股票也可以充当"],
+        2,
+        "开仓冻结名义价值约 15% 的初始保证金。保证金来自信用账户，可用资金不够时，持有的股票可以充当（相当于融资）。",
+    ),
+];
+
+/// A knowledge test: the questions, the version recorded with each result, the score that passes, and the name
+/// stored in `quiz_results.quiz`.
+pub struct Quiz {
+    pub name: &'static str,
+    pub version: i64,
+    pub pass: i64,
+    pub questions: &'static [Question],
+}
+
+pub const MARGIN: Quiz = Quiz { name: "margin", version: MARGIN_QUIZ_VERSION, pass: MARGIN_QUIZ_PASS, questions: MARGIN_QUIZ };
+pub const FUTURES: Quiz = Quiz { name: "futures", version: FUTURES_QUIZ_VERSION, pass: FUTURES_QUIZ_PASS, questions: FUTURES_QUIZ };
+
 /// Correct answers, or `None` when malformed.
-pub fn score_quiz(answers: &[i64]) -> Option<i64> {
-    if answers.len() != MARGIN_QUIZ.len() {
+pub fn score_quiz(quiz: &Quiz, answers: &[i64]) -> Option<i64> {
+    if answers.len() != quiz.questions.len() {
         return None;
     }
     let mut right = 0;
-    for (a, qn) in answers.iter().zip(MARGIN_QUIZ) {
+    for (a, qn) in answers.iter().zip(quiz.questions) {
         if *a < 0 || *a as usize >= qn.options.len() {
             return None;
         }
@@ -166,11 +216,14 @@ mod tests {
 
     #[test]
     fn quiz_answers_are_in_range() {
-        for qn in MARGIN_QUIZ {
-            assert!(qn.answer < qn.options.len(), "{}", qn.text);
+        for quiz in [&MARGIN, &FUTURES] {
+            for qn in quiz.questions {
+                assert!(qn.answer < qn.options.len(), "{}", qn.text);
+            }
+            assert!(quiz.pass <= quiz.questions.len() as i64);
         }
         let right: Vec<i64> = MARGIN_QUIZ.iter().map(|q| q.answer as i64).collect();
-        assert_eq!(score_quiz(&right), Some(10));
-        assert_eq!(score_quiz(&[0; 10]), Some(MARGIN_QUIZ.iter().filter(|q| q.answer == 0).count() as i64));
+        assert_eq!(score_quiz(&MARGIN, &right), Some(10));
+        assert_eq!(score_quiz(&MARGIN, &[0; 10]), Some(MARGIN_QUIZ.iter().filter(|q| q.answer == 0).count() as i64));
     }
 }

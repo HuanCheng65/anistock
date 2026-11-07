@@ -452,9 +452,23 @@ pub async fn place(
     if ph == CPhase::Closed {
         return Err(E::new(422, "market_closed", "休市中"));
     }
+    if !st.cfg.futures.enabled {
+        return Err(order_error("期货交易还没有开放"));
+    }
+    // the futures steps (docs/v3-futures-ui.md §4); an order that only closes a position needs none of them
+    let st2 = st.clone();
+    let refusal = read(&st, move |c| super::assess::futures_steps(&st2, c, me)).await?;
+    let refusal = super::assess::futures_refusal(&refusal);
     let (d, t) = (st.clock.today(), st.clock.ts());
     let out = engine(&st, move |ctx| -> R<FuturesOrderResponse> {
         let e = &mut ctx.engine;
+        if let Some(err) = refusal {
+            let held = e.st.futures.positions.get(&(me, contract)).map_or(0, |p| p.qty);
+            let closes = held != 0 && (held > 0) == (side == Side::Sell) && qty <= held.abs();
+            if !closes {
+                return Err(err);
+            }
+        }
         if ph == CPhase::Continuous && e.state("auction_day") != Some(d.as_str()) {
             e.open_market(&d, &t);
         }

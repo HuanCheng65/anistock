@@ -24,6 +24,7 @@ const version = computed<number | null>(() => {
   if (!me || !key.value || !SIGNED.includes(key.value)) return null
   if (key.value === 'margin_disclosure') return me.credit_steps.disclosure_signed ? null : me.credit_steps.disclosure_version
   if (key.value === 'api_disclosure') return me.api_trading.disclosure_signed ? null : me.api_trading.disclosure_version
+  if (key.value === 'futures_disclosure') return me.futures_steps.disclosure_signed ? null : me.futures_steps.disclosure_version
   return me.pending_documents.find((d) => d.doc === key.value)?.version ?? null
 })
 const signing = computed(() => route.query.sign === '1' && version.value != null)

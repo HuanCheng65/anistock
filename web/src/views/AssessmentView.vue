@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// /assessment/risk (风险测评) and /assessment/margin-quiz (融资融券知识测试), docs/v2-account.md §5–§6.
+// /assessment/risk (风险测评), /assessment/margin-quiz (融资融券知识测试) and /assessment/futures-quiz (热度期货
+// 知识测试), docs/v2-account.md §5–§6, docs/v3-futures-ui.md §4.
 // The questions come from the server, which scores them.
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -16,8 +17,10 @@ type QuizResult = components['schemas']['QuizResult']
 const route = useRoute()
 const router = useRouter()
 const session = useSession()
-const kind = computed(() => (route.params.kind === 'margin-quiz' ? 'margin-quiz' : 'risk'))
-const title = computed(() => (kind.value === 'risk' ? '风险测评' : '融资融券知识测试'))
+const KINDS = { risk: '风险测评', 'margin-quiz': '融资融券知识测试', 'futures-quiz': '热度期货知识测试' } as const
+type Kind = keyof typeof KINDS
+const kind = computed<Kind>(() => (String(route.params.kind) in KINDS ? (String(route.params.kind) as Kind) : 'risk'))
+const title = computed(() => KINDS[kind.value])
 
 const paper = ref<Assessment | null>(null)
 const answers = ref<(number | null)[]>([])
