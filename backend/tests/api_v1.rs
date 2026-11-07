@@ -55,6 +55,7 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
         "ANISTOCK_DB" => Some(coll.display().to_string()),
         "ANISTOCK_INVITE" => Some("club".into()),
         // API trading off unless a test turns it on (server/game.toml may have it on)
+        "ANISTOCK_NEWS_MODE" => Some(extra.iter().find(|(n, _)| *n == "ANISTOCK_NEWS_MODE").map_or("shadow", |(_, v)| *v).to_string()),
         "ANISTOCK_API_TRADING" => Some(extra.iter().find(|(n, _)| *n == "ANISTOCK_API_TRADING").map_or("0", |(_, v)| *v).to_string()),
         k => extra.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()),
     })
@@ -905,6 +906,62 @@ async fn api_keys_read_but_do_not_write() {
     assert_eq!(r.status, 200, "{}", r.json);
     let live: i64 = c.query_row("SELECT COUNT(*) FROM api_keys WHERE account_id=? AND revoked_at IS NULL", [acct], |r| r.get(0)).unwrap();
     assert_eq!(live, 0);
+}
+
+#[tokio::test]
+async fn media_news_is_archived_and_published_by_mode() {
+    let push = |id: &str| {
+        json!({"event_id": id, "source": "ann", "url": "https://www.animenewsnetwork.com/news/x",
+               "title": "公布续作", "original_title": "Test Anime Gets 2nd Season",
+               "published_at": "2026-11-05T09:30:00+09:00", "fetched_at": "2026-11-05T08:35:00+08:00",
+               "stock_id": 1, "event": "sequel", "direction": "positive", "magnitude": 6.5, "credibility": "official",
+               "model": "jev-1.14.0", "probabilities": {"works": {"1": 0.97, "none": 0.03}}})
+    };
+    let bot = [("authorization", &*format!("Bearer {BOT}"))];
+    // shadow (the default): archived, not published
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    err(&a.req("POST", "/api/v1/bot/news", Some(push("e1")), &[("cookie", ck.as_str())]).await, 403, "forbidden");
+    let r = a.req("POST", "/api/v1/bot/news", Some(push("e1")), &bot).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/bot/news", 200), &r.json, "media news");
+    assert_eq!(r.json["status"], "stored");
+    assert_eq!(r.json["mode"], "shadow");
+    assert!(r.json["news_id"].is_null());
+    let mut bad = push("e2");
+    bad["event"] = json!("explosion");
+    err(&a.req("POST", "/api/v1/bot/news", Some(bad), &bot).await, 400, "invalid_request");
+    let mut bad = push("e2");
+    bad["magnitude"] = json!(11);
+    err(&a.req("POST", "/api/v1/bot/news", Some(bad), &bot).await, 400, "invalid_request");
+    let mut bad = push("e2");
+    bad["stock_id"] = json!(999999);
+    err(&a.req("POST", "/api/v1/bot/news", Some(bad), &bot).await, 404, "stock_not_found");
+    let r = a.get("/api/v1/news?category=media", None).await;
+    assert_eq!(r.json["items"].as_array().unwrap().len(), 0, "{}", r.json);
+
+    // publish: a game news item once; a refined judgement updates the archive, not the news
+    let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_NEWS_MODE", "publish")]);
+    let r = a.req("POST", "/api/v1/bot/news", Some(push("e1")), &bot).await;
+    assert_eq!(r.json["status"], "published", "{}", r.json);
+    let nid = r.json["news_id"].as_i64().unwrap();
+    let mut again = push("e1");
+    again["magnitude"] = json!(4.0);
+    let r = a.req("POST", "/api/v1/bot/news", Some(again), &bot).await;
+    assert_eq!(r.json["news_id"].as_i64(), Some(nid), "{}", r.json);
+    let r = a.get("/api/v1/news?category=media", None).await;
+    let items = r.json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{}", r.json);
+    assert_eq!(items[0]["kind"], "media");
+    assert_eq!(items[0]["category"], "media");
+    assert!(items[0]["title"].as_str().unwrap().contains("公布续作"));
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    let m: f64 = c.query_row("SELECT magnitude FROM media_news WHERE event_id='e1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(m, 4.0);
+    // merged into another event
+    let r = a.req("POST", "/api/v1/bot/news", Some(json!({"event_id": "e1", "merged_into": "e9"})), &bot).await;
+    assert_eq!(r.json["status"], "merged", "{}", r.json);
+    err(&a.req("POST", "/api/v1/bot/news", Some(json!({"event_id": "nope", "merged_into": "e9"})), &bot).await, 404, "media_news_not_found");
 }
 
 #[tokio::test]

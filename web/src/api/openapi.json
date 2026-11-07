@@ -2592,6 +2592,145 @@
         ],
         "type": "object"
       },
+      "MediaNewsRequest": {
+        "description": "外部新闻：news-feed 股市扩展的一次判断（docs/v3-news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并",
+        "properties": {
+          "credibility": {
+            "description": "official、media、rumor",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "description": "positive、negative、neutral",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "description": "sequel、movie、delay、hiatus、sales、award、collab、controversy、staff、rumor、denial、other",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_id": {
+            "description": "news-feed 的事件 id；同一个 id 再推是更新判断",
+            "type": "string"
+          },
+          "fetched_at": {
+            "description": "news-feed 抓到的时间",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "magnitude": {
+            "description": "0–10",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "merged_into": {
+            "description": "这个事件被合并进的事件 id",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "description": "判断用的模型，如 jev-1.14.0",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "original_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "probabilities": {
+            "description": "每个问题的完整概率分布",
+            "type": "object"
+          },
+          "published_at": {
+            "description": "信源给出的发布时间",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "description": "信源，如 animeanime、ann",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stock_id": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "title": {
+            "description": "中文标题（最多 60 字）",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "event_id",
+          "probabilities"
+        ],
+        "type": "object"
+      },
+      "MediaNewsResponse": {
+        "properties": {
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "mode": {
+            "description": "服务器当前的模式：shadow、publish",
+            "type": "string"
+          },
+          "news_id": {
+            "description": "发布成游戏资讯时的资讯 id",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "stored、published、merged",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mode",
+          "news_id",
+          "status"
+        ],
+        "type": "object"
+      },
       "Money": {
         "description": "金额，单位：分（1 星辉 = 100 分）。显示时除以 100。",
         "format": "int64",
@@ -2687,7 +2826,8 @@
           "flash",
           "notice",
           "airing",
-          "close"
+          "close",
+          "media"
         ],
         "type": "string"
       },
@@ -5716,6 +5856,52 @@
           }
         ],
         "summary": "机器人解除绑定（群里 /安易 解绑）",
+        "tags": [
+          "bot"
+        ]
+      }
+    },
+    "/api/v1/bot/news": {
+      "post": {
+        "operationId": "push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaNewsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaNewsResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bot": []
+          }
+        ],
+        "summary": "推送一条外部新闻（机器人）",
         "tags": [
           "bot"
         ]

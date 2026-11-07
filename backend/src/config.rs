@@ -120,6 +120,8 @@ pub struct Config {
     /// `[api] trading`: API keys with the `trade` scope (docs/v2-api-access.md, phase 2); off until switched on.
     /// ANISTOCK_API_TRADING=1 / 0 overrides it.
     pub api_trading: bool,
+    /// `[news] mode`: shadow (archive only), publish (also a game news item); ANISTOCK_NEWS_MODE overrides
+    pub news_mode: String,
     pub always_open: bool,
     pub no_loops: bool,
     /// v1 economy rules (raw 7-day revenue, stepwise episode valuation, transfers to players only, no penny
@@ -262,6 +264,10 @@ impl Config {
             eligibility,
             margin_disclosure: docs_raw.and_then(|t| t.get("margin_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
             api_disclosure: docs_raw.and_then(|t| t.get("api_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
+            news_mode: env("ANISTOCK_NEWS_MODE")
+                .or_else(|| raw.get("news").and_then(|v| v.get("mode")).and_then(|v| v.as_str()).map(str::to_string))
+                .filter(|m| matches!(m.as_str(), "shadow" | "publish"))
+                .unwrap_or_else(|| "shadow".into()),
             api_trading: match env("ANISTOCK_API_TRADING").as_deref() {
                 Some("1") => true,
                 Some("0") => false,
