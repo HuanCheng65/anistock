@@ -319,13 +319,7 @@ impl FilterParams {
         if seg.len() < 3 {
             return self.drift[m];
         }
-        if w < DRIFT_WEEKS[0] {
-            seg[0]
-        } else if w < DRIFT_WEEKS[1] {
-            seg[1]
-        } else {
-            seg[2]
-        }
+        seg[drift_seg(seg.len(), w)]
     }
 
     /// Market `m`'s attention on day `t` relative to the level before the finale on `fin` (Python `runup`): the
@@ -357,8 +351,10 @@ impl FilterParams {
             (Some(c), Some(h)) if h.offset[c as usize] != 0.0 && self.drift_by_week[0].len() >= 3 => {
                 let o = h.offset[c as usize];
                 let mut f = self.clone();
-                f.drift_by_week[0][1] = self.drift_by_week[0][1] + o;
-                f.drift_by_week[0][2] = self.drift_by_week[0][2] + o;
+                // the periods from week DRIFT_WEEKS[0] on: the last two
+                let n = f.drift_by_week[0].len();
+                f.drift_by_week[0][n - 2] = self.drift_by_week[0][n - 2] + o;
+                f.drift_by_week[0][n - 1] = self.drift_by_week[0][n - 1] + o;
                 std::borrow::Cow::Owned(f)
             }
             _ => std::borrow::Cow::Borrowed(self),
@@ -468,6 +464,15 @@ pub fn kf_update(mean: f64, var: f64, y: f64, r: f64, clip: f64) -> (f64, f64, f
 
 /// The in-season fade changes speed after these weeks since the premiere (Python `DRIFT_WEEKS`).
 pub const DRIFT_WEEKS: [i64; 2] = [4, 8];
+/// Six periods (v0.6.8): weeks 0, 1, 2, 3 each, then 4-7 and 8+ (Python `WEEKLY_CUTS`).
+pub const WEEKLY_CUTS: [i64; 5] = [1, 2, 3, 4, 8];
+
+/// Index of week w's period in a drift-by-period list of length n: 3 periods (weeks 0-3, 4-7, 8+) or 6 (weeks 0, 1,
+/// 2, 3, 4-7, 8+) (Python `drift_seg`).
+pub fn drift_seg(n: usize, w: i64) -> usize {
+    let cuts: &[i64] = if n == 6 { &WEEKLY_CUTS } else { &DRIFT_WEEKS };
+    cuts.iter().filter(|&&c| w >= c).count()
+}
 
 /// The joint filter's 3×3 covariance (us, cn, jp).
 pub type Cov = [[f64; 3]; 3];
@@ -1130,6 +1135,12 @@ mod tests {
 
     /// The same case through engine/valuation.py (values printed by Python, bit for bit).
     #[test]
+    fn drift_periods_three_or_six() {
+        assert_eq!([0, 3, 4, 7, 8, 20].map(|w| drift_seg(3, w)), [0, 0, 1, 1, 2, 2]);
+        assert_eq!([0, 1, 2, 3, 4, 7, 8, 20].map(|w| drift_seg(6, w)), [0, 1, 2, 3, 4, 4, 5, 5]);
+    }
+
+    #[test]
     fn matches_python() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
         let cfg = Config::load_from(&root, |_| None).unwrap();
@@ -1146,7 +1157,7 @@ mod tests {
             std::array::from_fn(|m| att_path(&fp, &p, m, m1[m], v1[m], today, &s1, today - 20, false, 120, 1.0));
         // the us drift by heat class (v0.6.1)
         assert_eq!([fp.heat_class(6.0), fp.heat_class(7.0), fp.heat_class(8.0)], [Some(0), Some(1), Some(2)]);
-        assert_eq!(fp.for_class(Some(2)).drift_by_week[0], vec![-0.019118, -0.0055119999999999995, 0.001039]);
+        assert_eq!(fp.for_class(Some(2)).drift_by_week[0], vec![-0.019118, -0.028786, -0.017656, -0.010192, -0.0055119999999999995, 0.001039]);
         assert!(matches!(fp.for_class(None), std::borrow::Cow::Borrowed(_)));
         let hp = att_path(&fp.for_class(Some(2)), &p, 0, 8.1, 0.05, today, &s1, today - 30, false, 60, 1.0)[59];
         assert!((hp.to_bits() as i64 - 4513.620059177454f64.to_bits() as i64).abs() <= 2, "heat class path {hp}");
@@ -1161,19 +1172,19 @@ mod tests {
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
-        assert!(ulps(a, 15.28076217407242) <= 2, "{a}");
-        assert!(ulps(b, 231.9286369847893) <= 2, "{b}");
-        assert!(ulps(own1[0][5], 835.2637132741504) <= 2, "{}", own1[0][5]);
-        assert!(ulps(own1[1][100], 10.094127256246056) <= 2, "{}", own1[1][100]);
+        assert!(ulps(a, 16.106221066247127) <= 2, "{a}");
+        assert!(ulps(b, 231.23009279496696) <= 2, "{b}");
+        assert!(ulps(own1[0][5], 874.6637259315573) <= 2, "{}", own1[0][5]);
+        assert!(ulps(own1[1][100], 11.449508404300216) <= 2, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
         assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.644)));
         // the us episode week's days so far (v0.6.1)
         let wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9];
         let segs = [partial_segment(&fp, 6.0, false), partial_segment(&fp, 7.0, false), partial_segment(&fp, 9.0, false), partial_segment(&fp, 9.0, true)];
         assert_eq!(segs, [Some(1), Some(2), Some(3), Some(0)]);
-        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0958627956, 0.232720463)));
-        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.724157589000001, 0.016692599)));
-        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.497311277, 0.000400462)));
+        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0940560788, 0.246066465)));
+        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.736812908600001, 0.014167226)));
+        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.495926331500001, 0.000491928)));
         assert_eq!(partial_observation(&fp, 1, &wk, -0.0065), Some((7.437, 0.0)));
         assert_eq!(partial_observation(&fp, 1, &wk[..1], 0.0), None);
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
@@ -1182,7 +1193,7 @@ mod tests {
         let o3 = att_path(&fp, &p, 0, 7.0, 0.1, today, &s3, today + 10, false, 120, 1.0);
         assert_eq!(o3[5], 0.0);
         // (after the finale the tail's power and the summed drift may differ in the last few bits)
-        assert!(ulps(o3[15], 456.9515821577898) <= 2 && (o3[110] / 220.84182663908234 - 1.0).abs() < 1e-13, "{} {}", o3[15], o3[110]);
+        assert!(ulps(o3[15], 456.9515821577898) <= 2 && (o3[110] / 221.95767903133648 - 1.0).abs() < 1e-13, "{} {}", o3[15], o3[110]);
         assert!(ulps(post_finale_factor(&fp, &p, 0, today, today + 30, 1.0), 0.16330143897601446) <= 2);
         // the run-up before the finale (v0.6.1)
         let f3 = *s3.last().unwrap();
@@ -1191,7 +1202,7 @@ mod tests {
         assert_eq!(fp.runup(0, None, f3 - 3), 1.0);
         let o3r = att_path(&fp, &p, 2, 2.0, 0.1, today, &s3, today + 10, false, 120, 1.0);
         assert_eq!(f3 - today, 87);
-        for (t, w) in [(f3 - 4, 6.080537047608024), (f3 - 10, 5.8040672681407885), (f3 + 2, 5.838726983662331)] {
+        for (t, w) in [(f3 - 4, 7.609207462833324), (f3 - 10, 7.263232116790903), (f3 + 2, 7.306605418185378)] {
             let v = o3r[(t - today - 1) as usize];
             assert!(ulps(v, w) <= 2, "run-up path {t}: {v}");
         }
@@ -1231,9 +1242,9 @@ mod tests {
         let e5 = sequel_extra(&fp, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &[today + 200, today + 300], true);
         let close = |x: f64, y: f64| (x / y - 1.0).abs() < 1e-12;
         assert!(ulps(z, 1.4591888) <= 2, "{z}");
-        assert!(close(e1, 185259.0513666545) && close(e4, 1742.2352104961365) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
+        assert!(close(e1, 197492.206590515) && close(e4, 1742.2352104961365) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
         let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), Some(&[e1, e4, e5]));
-        assert!(close(g, 36.69099439960396), "{g}");
+        assert!(close(g, 36.94276022379788), "{g}");
         // a scheduled switch 30 days ahead
         let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 30)), None);
         assert!(close(swv, 47.88233917543998), "{swv}");

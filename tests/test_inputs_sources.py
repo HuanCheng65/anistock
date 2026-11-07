@@ -58,3 +58,9 @@ def test_a_source_that_never_reported_keeps_the_inferred_level():
     first = date(2026, 7, 1)
     s = show(first, [d // 7 + 1 for d in range(60)], episodes=12)
     assert airing_sources(s, first + timedelta(days=50), {1: {}}, {"cn": True, "jp": True}) == {"cn": True, "jp": True}
+
+
+def test_drift_periods_three_or_six():
+    from engine.valuation import drift_seg
+    assert [drift_seg(3, w) for w in (0, 3, 4, 7, 8, 20)] == [0, 0, 1, 1, 2, 2]
+    assert [drift_seg(6, w) for w in (0, 1, 2, 3, 4, 7, 8, 20)] == [0, 1, 2, 3, 4, 4, 5, 5]

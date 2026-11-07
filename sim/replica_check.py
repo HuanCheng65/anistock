@@ -30,7 +30,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / "data" / "fast" / "replica_check"
-BIN = next((p for p in (ROOT / "backend/target/release/anistock", ROOT / "bin/anistock") if p.exists()), None)
+BIN = (Path(os.environ["REPLICA_BIN"]) if os.environ.get("REPLICA_BIN") else
+       next((p for p in (ROOT / "backend/target/release/anistock", ROOT / "bin/anistock") if p.exists()), None))
 
 
 def side(spec: str) -> dict:

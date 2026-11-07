@@ -218,9 +218,8 @@ def observations(x, m, curve_us):
 
 
 def d_at(dr, prem, t):
-    """Daily drift on day t of a show premiering on prem: dr = (weeks 0-3, 4-7, 8+)."""
-    w = (t - prem) // 7
-    return dr[0] if w < V.DRIFT_WEEKS[0] else (dr[1] if w < V.DRIFT_WEEKS[1] else dr[2])
+    """Daily drift on day t of a show premiering on prem: dr = (weeks 0-3, 4-7, 8+) or (weeks 0, 1, 2, 3, 4-7, 8+)."""
+    return dr[V.drift_seg(len(dr), (t - prem) // 7)]
 
 
 def d_cum(dr, prem, t0, t1):
@@ -1390,6 +1389,46 @@ def fit_drift_heat(shows, cal, history=None):
     return res
 
 
+def fit_drift_weekly(shows, cal, m):
+    """v0.6.8: market m's drift by period with each of the first four weeks on its own (weeks 0, 1, 2, 3, 4-7, 8+);
+    weeks 1, 2, 3 by maximum likelihood of the market's own filter (q, r, the outlier component and the other
+    periods fixed at `cal`). One rate for
+    weeks 0-3 projected the same fade into all four, while shows fade fastest right after the premiere: the value
+    then fell predictably in week 1 and rose in week 3 (docs/v2-valuation.md §3.12). Held out: fitted on even ids,
+    scored on odd and back; fitted on summer, scored on autumn and back."""
+    q, r, pi, r_out = cal["q"][m], cal["r"][m], cal["outlier_p"][m], cal["outlier_r"][m]
+    old = tuple(cal["drift_by_week"][m])
+    data = []
+    for sid, x in sorted(shows.items()):
+        prior, obs = observations(x, m, cal["curve_us"])
+        ad = air_days(x)
+        if obs and len(obs) >= 3 and x["src"][m]:
+            data.append((sid, ad[0], (None, obs, ad[0])))
+    prm = lambda dr: (tuple(dr), q, r, 1.0, 0.0, pi, r_out)
+    ll = lambda dr, keep: total_ll([d for sid, p_, d in data if keep(sid, p_)], prm(dr))
+    start = [old[0]] * 4 + list(old[-2:]) if len(old) == 3 else list(old)
+    # only weeks 1-3 are free: week 0 is confounded with the prior (the first us week is observed at its end, so
+    # this filter hardly sees its drift; the joint prior's bias takes it), and weeks 4-7 and 8+ keep the fit
+    # with all their data (an autumn-only fit has no week 8 yet)
+    expand = lambda f: [start[0], f[0], f[1], f[2], start[4], start[5]]
+
+    def fit(keep):
+        best, _ = nelder_mead(lambda f: -ll(expand(f), keep), start[1:4], [0.003] * 3, iters=1500)
+        return [round(v, 6) for v in expand(best)]
+    allk = lambda sid, p_: True
+    new = fit(allk)
+    info = {"drift_before": list(old), "loglik": [round(ll(old, allk), 3), round(ll(new, allk), 3)],
+            "shows": len(data)}
+    split = date(2026, 9, 15).toordinal()
+    for lab, tr, te in (("even_to_odd", lambda sid, p_: sid % 2 == 0, lambda sid, p_: sid % 2 == 1),
+                        ("odd_to_even", lambda sid, p_: sid % 2 == 1, lambda sid, p_: sid % 2 == 0),
+                        ("summer_to_autumn", lambda sid, p_: p_ < split, lambda sid, p_: p_ >= split),
+                        ("autumn_to_summer", lambda sid, p_: p_ >= split, lambda sid, p_: p_ < split)):
+        d_ = fit(tr)
+        info[lab] = {"drift": d_, "held_out_loglik": [round(ll(old, te), 3), round(ll(d_, te), 3)]}
+    return new, info
+
+
 def fit_outlier(shows, cal, m):
     """Market m's outlier component by maximum likelihood of its own filter (a profile fit: drift, q and r fixed at
     the calibration `cal`). The weekly cn/jp series and the us week average have occasional one-episode spikes
@@ -1586,6 +1625,10 @@ def main():
     ap.add_argument("--heat-only", action="store_true",
                     help="fit only the us drift by heat class (`drift_heat`) with the rest of --out fixed, and write that "
                          "key back (then refit --partial-only)")
+    ap.add_argument("--drift-only", action="store_true",
+                    help="refit only each market's drift by period, the first four weeks each on its own (`drift_by_week`, "
+                         "six periods) with q, r and the outliers fixed from --out, and write that key back (then refit "
+                         "--prior-only and --partial-only)")
     ap.add_argument("--prior-only", action="store_true",
                     help="refit only the joint prior (bias, p0, the pairwise correlations, cn/jp elasticities) with each "
                          "market's dynamics fixed from --out, and write those keys back (then refit --partial-only)")
@@ -1631,6 +1674,17 @@ def main():
         BUMP.update(cal["finale_bump"])
         cal["drift_heat"] = fit_drift_heat(shows, cal, a.history)
         print(json.dumps(cal["drift_heat"], indent=1))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.drift_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        BUMP.update(cal["finale_bump"])
+        for m in MARKETS:
+            new, info = fit_drift_weekly(shows, cal, m)
+            cal["drift_by_week"][m] = new
+            cal["drift"][m] = new[0]
+            cal.setdefault("fit", {}).setdefault("drift_weekly", {})[m] = info
+            print(m, json.dumps(info))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.prior_only:
@@ -1710,13 +1764,13 @@ def main():
                  f"before the day before the premiere (k = 7, 14, 21, 28): "
                  f"{[growth[k][0] for k in (7, 14, 21, 28)]}, variance {[growth[k][1] for k in (7, 14, 21, 28)]} "
                  f"({[counts[k] for k in (7, 14, 21, 28)]} shows).\n")
-    pf, pt = post_finale(shows, {m: res["drift_by_week"][m][2] for m in MARKETS})
+    pf, pt = post_finale(shows, {m: res["drift_by_week"][m][-1] for m in MARKETS})
     res["post_finale"], res["post_finale_tail"] = pf, pt
     lines.append(f"## After the finale\n\nAttention by week after the finale week, relative to the level at its end "
                  f"(us observed, cn/jp the rebuilt series the revenue uses): {pf}; then ×{pt} a week. The game's "
                  f"`[valuation] post_finale_profile` (measured on AniList in v1) was [0.40, 0.30, 0.22, 0.16, 0.14], ×0.78.\n")
     if a.history:
-        res["tail"] = fit_tail(a.history, shows, {m: res["drift_by_week"][m][2] for m in MARKETS},
+        res["tail"] = fit_tail(a.history, shows, {m: res["drift_by_week"][m][-1] for m in MARKETS},
                                res["finale_bump"], lines)
     u, seasons = season_listing(a.inputs)
     if u:

@@ -38,7 +38,7 @@ def main():
     us = H.us_tail(bump)
     even = [h for h in us if h[0] % 2 == 0]
     odd = [h for h in us if h[0] % 2 == 1]
-    tr = [s for s in FV.transition_stats(shows, "us", fp["drift_by_week"]["us"][2], weeks=3) if s[3] >= 10]
+    tr = [s for s in FV.transition_stats(shows, "us", fp["drift_by_week"]["us"][-1], weeks=3) if s[3] >= 10]
     st_even = tr + FV.bucket(pts for _, _, pts in even)
     curve, _ = FV.tail_curve_fit(st_even, 21)
     tail = {"trans": [round(math.exp(mu + 0.5 * v), 6) for t, mu, v, n in tr], **curve, "var": FV.tail_var_fit(st_even)}

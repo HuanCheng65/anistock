@@ -262,16 +262,26 @@ def kf_update_joint_robust(mean: list[float], cov: list[list[float]], m: int, y:
     return m2, c2, (math.log(tot) if tot > 0 else -1e9), s
 
 
-DRIFT_WEEKS = (4, 8)   # the in-season fade changes speed after these weeks since the premiere
+DRIFT_WEEKS = (4, 8)   # the in-season fade changes speed after these weeks since the premiere (the heat class is
+                       # set at the first)
+WEEKLY_CUTS = (1, 2, 3, 4, 8)   # six periods: weeks 0, 1, 2, 3 each, then 4-7 and 8+ (v0.6.8)
+
+
+def drift_seg(n: int, w: int) -> int:
+    """Index of week w's period in a drift-by-period list of length n: 3 periods (weeks 0-3, 4-7, 8+) or 6 (weeks
+    0, 1, 2, 3, 4-7, 8+)."""
+    cuts = WEEKLY_CUTS if n == 6 else DRIFT_WEEKS
+    return sum(1 for c in cuts if w >= c)
 
 
 def drift_at(fp: dict, m: str, w: int) -> float:
-    """Market m's daily log drift in week w since the premiere: fitted by period (weeks 0-3, 4-7, 8+; a show
-    fades fast after its premiere and more slowly later), else one rate."""
+    """Market m's daily log drift in week w since the premiere: fitted by period (a show fades fast after its
+    premiere and more slowly later: weeks 0-3, 4-7, 8+; or since v0.6.8 each of the first four weeks on its own,
+    the fade being fastest right after the premiere), else one rate."""
     seg = fp.get("drift_by_week", {}).get(m)
     if not seg:
         return fp["drift"][m]
-    return seg[0] if w < DRIFT_WEEKS[0] else (seg[1] if w < DRIFT_WEEKS[1] else seg[2])
+    return seg[drift_seg(len(seg), w)]
 
 
 def heat_class(fp: dict, level: float) -> int | None:
@@ -293,7 +303,8 @@ def for_class(fp: dict, cls: int | None) -> dict:
     seg = fp["drift_by_week"]["us"]
     out = dict(fp)
     out["drift_by_week"] = dict(fp["drift_by_week"])
-    out["drift_by_week"]["us"] = [seg[0], seg[1] + o, seg[2] + o]
+    # the periods from week DRIFT_WEEKS[0] on: the last two
+    out["drift_by_week"]["us"] = list(seg[:-2]) + [seg[-2] + o, seg[-1] + o]
     return out
 
 
