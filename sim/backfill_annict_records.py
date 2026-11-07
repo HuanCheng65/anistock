@@ -20,7 +20,9 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,10 +32,15 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_backfill.db"
 TZ = timezone(timedelta(hours=8))
-QUERY = """query($id: Int!, $after: String) {
-  searchEpisodes(annictIds: [$id]) { nodes {
-    records(first: 100, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
-      pageInfo { hasNextPage endCursor } nodes { createdAt } } } } }"""
+# Annict counts requests: one request reads a page of records of many episodes, each by alias with its own cursor
+BATCH = 20
+
+
+def batch_query(cursors: dict[int, str | None]) -> str:
+    parts = [f'e{eid}: searchEpisodes(annictIds: [{eid}]) {{ nodes {{ records(first: 100, after: {json.dumps(after)}, '
+             f'orderBy: {{field: CREATED_AT, direction: ASC}}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{ createdAt }} }} }} }}'
+             for eid, after in cursors.items()]
+    return "query { " + " ".join(parts) + " }"
 
 
 def load_dotenv() -> None:
@@ -52,7 +59,7 @@ class Client:
         self.last = 0.0
         self.n = 0
 
-    def query(self, variables: dict) -> dict:
+    def query(self, query: str) -> dict:
         for attempt in range(6):
             wait = self.last + self.gap - time.monotonic()
             if wait > 0:
@@ -60,7 +67,7 @@ class Client:
             self.last = time.monotonic()
             self.n += 1
             try:
-                r = self.http.post("https://api.annict.com/graphql", json={"query": QUERY, "variables": variables})
+                r = self.http.post("https://api.annict.com/graphql", json={"query": query})
             except httpx.HTTPError as e:
                 print(f"  network error ({e}), retrying", file=sys.stderr)
                 time.sleep(5 * (attempt + 1))
@@ -73,13 +80,14 @@ class Client:
             if body.get("errors"):
                 raise RuntimeError(json.dumps(body["errors"])[:500])
             return body["data"]
-        raise RuntimeError(f"giving up on {variables}")
+        raise RuntimeError(f"giving up on {query[:200]}")
 
 
 def main() -> None:
     load_dotenv()
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--per-min", type=int, default=300)
+    ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
     token = os.environ.get("ANNICT_TOKEN")
     if not token:
@@ -89,7 +97,7 @@ def main() -> None:
     works = [(int(ext), json.loads(data)) for ext, data in col.execute(
         "SELECT external_id, data FROM snapshots WHERE source='annict' AND kind='work' AND day=?", (day,))]
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(OUT)
+    db = sqlite3.connect(OUT, check_same_thread=False)
     db.executescript("""
         CREATE TABLE IF NOT EXISTS annict_daily (annict_id INTEGER NOT NULL, day TEXT NOT NULL, records INTEGER NOT NULL,
             PRIMARY KEY (annict_id, day));
@@ -100,34 +108,48 @@ def main() -> None:
     total = sum(e.get("recordsCount") or 0 for _, e in todo)
     print(f"{len(works)} works ({day}); {len(todo)} episodes with records to count, about {total} records, "
           f"{len(done)} episodes done before")
-    c = Client(token, args.per_min)
     t0 = time.monotonic()
-    counted = 0
-    for k, (work, ep) in enumerate(todo, start=1):
-        per_day: Counter = Counter()
-        after, n = None, 0
-        while True:
-            data = c.query({"id": ep["annictId"], "after": after})
-            nodes = data["searchEpisodes"]["nodes"]
-            if not nodes:
-                break
-            rec = nodes[0]["records"]
-            for r in rec["nodes"]:
-                t = datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")).astimezone(TZ)
-                per_day[t.date().isoformat()] += 1
-                n += 1
-            if not rec["pageInfo"]["hasNextPage"]:
-                break
-            after = rec["pageInfo"]["endCursor"]
-        with db:
-            for d, x in per_day.items():
-                db.execute("INSERT INTO annict_daily VALUES (?,?,?) ON CONFLICT(annict_id, day) DO UPDATE SET records = records + excluded.records",
-                           (work, d, x))
-            db.execute("INSERT INTO annict_done VALUES (?,?,?,?)", (ep["annictId"], work, n, datetime.now(TZ).isoformat(timespec="seconds")))
-        counted += n
-        if k % 50 == 0 or k == len(todo):
-            rate = counted / max(1.0, time.monotonic() - t0)
-            print(f"  {k}/{len(todo)} episodes, {counted} records, {c.n} requests, {time.monotonic() - t0:.0f}s ({rate:.0f} records/s)")
+    # a big request takes the server seconds: `--workers` read side by side, each with its own episodes and its
+    # share of the rate limit; the database writes are serialised
+    lock = threading.Lock()
+    stats = {"finished": 0, "counted": 0, "requests": 0}
+
+    def work(chunk: list) -> None:
+        cl = Client(token, max(1, args.per_min // args.workers))
+        queue = list(chunk)
+        active: dict[int, list] = {}   # episode -> [work, cursor, records per day, records]
+        while queue or active:
+            while queue and len(active) < BATCH:
+                w, ep = queue.pop(0)
+                active[ep["annictId"]] = [w, None, Counter(), 0]
+            data = cl.query(batch_query({eid: a[1] for eid, a in active.items()}))
+            for eid in list(active):
+                w, _, per_day, n = active[eid]
+                nodes = (data.get(f"e{eid}") or {}).get("nodes") or []
+                rec = nodes[0]["records"] if nodes else {"nodes": [], "pageInfo": {"hasNextPage": False}}
+                for r in rec["nodes"]:
+                    t = datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")).astimezone(TZ)
+                    per_day[t.date().isoformat()] += 1
+                    n += 1
+                active[eid][3] = n
+                if rec["pageInfo"]["hasNextPage"]:
+                    active[eid][1] = rec["pageInfo"]["endCursor"]
+                    continue
+                del active[eid]
+                with lock, db:
+                    for d, x in per_day.items():
+                        db.execute("INSERT INTO annict_daily VALUES (?,?,?) ON CONFLICT(annict_id, day) DO UPDATE SET records = records + excluded.records",
+                                   (w, d, x))
+                    db.execute("INSERT INTO annict_done VALUES (?,?,?,?)", (eid, w, n, datetime.now(TZ).isoformat(timespec="seconds")))
+                    stats["finished"] += 1
+                    stats["counted"] += n
+                    if stats["finished"] % 200 == 0 or stats["finished"] == len(todo):
+                        rate = stats["counted"] / max(1.0, time.monotonic() - t0)
+                        print(f"  {stats['finished']}/{len(todo)} episodes, {stats['counted']} records, "
+                              f"{time.monotonic() - t0:.0f}s ({rate:.0f} records/s)", flush=True)
+
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        list(pool.map(work, [todo[k::args.workers] for k in range(args.workers)]))
     print("done")
 
 
