@@ -52,7 +52,7 @@ impl Engine {
         r
     }
 
-    fn do_futures_place(&mut self, req: &FutOrderReq) -> Result<Placed, OrderError> {
+    pub(crate) fn do_futures_place(&mut self, req: &FutOrderReq) -> Result<Placed, OrderError> {
         if !self.futures.enabled {
             return Err(OrderError::new("期货交易还没有开放"));
         }
@@ -73,6 +73,9 @@ impl Engine {
         };
         let opening = req.qty - req.qty.min(self.fut_closable(req.account_id, &c, req.side));
         let frozen = opening * self.fut_im_lot(&c) + req.qty * self.fut_fee_lot(&c, price.unwrap_or(hi));
+        if self.st.accounts.get(&req.account_id).is_some_and(|a| a.kind == "player") {
+            self.fut_player_check(req, &c, opening, frozen)?; // may finance what free cash does not cover
+        }
         if self.available_cash(req.account_id) < frozen {
             return Err(OrderError::new("可用保证金不足"));
         }

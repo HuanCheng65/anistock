@@ -8,8 +8,10 @@
 //! - `calendar`, `listing`: the periods and listing them at the close
 //! - `trading`: orders, fills, positions and margin, the opening auction
 //! - `settle`: the daily settlement (mark-to-market) and the final settlement
+//! - `credit`: the credit account: financing the margin, maintenance, liquidation, position caps
 
 pub mod calendar;
+pub mod credit;
 pub mod listing;
 pub mod model;
 pub mod rules;

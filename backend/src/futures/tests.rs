@@ -236,6 +236,9 @@ fn market() -> (Engine, [i64; 3]) {
     let rules = e.futures.clone();
     assert_eq!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(90.0)), [1]);
     let ids = ["a", "b", "c"].map(|n| e.register_player(n, "x", 10_000_000, DAY, T1));
+    for id in ids {
+        e.open_credit_unchecked(id, T1);
+    }
     (e, ids)
 }
 
@@ -311,11 +314,11 @@ fn closing_needs_no_margin() {
     // b spends its free cash elsewhere; closing still goes through, opening does not
     let world = e.special("world").unwrap();
     e.do_transfer(b, world, e.available_cash(b) - 1000, "test", DAY, T1, None, None);
-    assert_eq!(e.futures_place(&req(b, Side::Buy, 1, Some(9000))).unwrap_err().0, "可用保证金不足");
+    assert!(e.futures_place(&req(b, Side::Buy, 1, Some(9000))).is_err(), "opening needs margin");
     let placed = e.futures_place(&req(b, Side::Sell, 1, Some(9200))).unwrap();
     assert_eq!(placed.status, OrderStatus::Open);
     // a second closing order cannot close the same lot again
-    assert_eq!(e.futures_place(&req(b, Side::Sell, 1, Some(9200))).unwrap_err().0, "可用保证金不足");
+    assert!(e.futures_place(&req(b, Side::Sell, 1, Some(9200))).is_err());
     e.futures_cancel(b, placed.order_id, T1).unwrap();
     frozen_matches(&e, b);
     e.check_invariants().unwrap();
@@ -463,5 +466,64 @@ fn an_unpaid_loss_is_covered_and_owed() {
     assert_eq!(out.shortfall, 100_000 - margin);
     assert_eq!(cash(&e, b), cb + 100_000, "the winner is paid in full");
     assert_eq!((cash(&e, a), cash(&e, e.special("clearing").unwrap())), (0, 0));
+    e.check_invariants().unwrap();
+}
+
+// ---------------------------------------------------------------- the credit account
+
+#[test]
+fn players_need_credit_and_respect_the_caps() {
+    let (mut e, [a, _, _]) = market();
+    let d = e.register_player("d", "x", 10_000_000, DAY, T1);
+    assert_eq!(e.futures_place(&req(d, Side::Buy, 1, Some(9000))).unwrap_err().0, "期货交易需要先开通信用账户");
+    // 100 000 币 of net assets: one contract's notional at most 50 000 币 = 55 lots at 90.00
+    assert_eq!(
+        e.futures_place(&req(a, Side::Buy, 56, Some(9000))).unwrap_err().0,
+        "单个合约的持仓不能超过净资产的 50%"
+    );
+    assert!(e.futures_place(&req(a, Side::Buy, 55, Some(9000))).is_ok());
+    assert!(e.futures_place(&req(a, Side::Buy, 1, Some(9000))).is_err(), "resting orders count toward the cap");
+}
+
+#[test]
+fn stocks_back_the_margin_through_financing() {
+    let (mut e, [a, _, c]) = market();
+    // c holds 1000 shares of company 2 at 5.00 and only 10 币 of cash
+    e.st.companies.get_mut(&2).unwrap().shares = 1000;
+    e.do_add_shares(c, 2, 1000, 500, DAY);
+    let world = e.special("world").unwrap();
+    e.do_transfer(c, world, e.available_cash(c) - 1000, "test", DAY, T1, None, None);
+    e.futures_place(&req(a, Side::Sell, 2, Some(9000))).unwrap();
+    let placed = e.futures_place(&req(c, Side::Buy, 2, Some(9000))).unwrap();
+    assert_eq!(placed.filled, 2);
+    let debt = e.st.margin.debts[&(c, 1)].principal;
+    let fee_lot = e.fees.commission_on(9000 * 10) + 1;
+    assert_eq!(debt, 2 * 13500 + 2 * fee_lot - 1000, "what free cash did not cover is borrowed");
+    assert_eq!(e.st.futures.positions[&(c, 1)].margin, 2 * 13500);
+    let n = e.credit_numbers(c, DAY);
+    assert_eq!(n.futures_margin, 2 * 13500);
+    assert!(n.available_margin >= 0, "{n:?}");
+    e.check_invariants().unwrap();
+}
+
+#[test]
+fn a_futures_loss_triggers_maintenance_and_liquidation_closes_futures_first() {
+    let (mut e, [a, b, _]) = open_pair();
+    let world = e.special("world").unwrap();
+    e.do_transfer(a, world, e.available_cash(a), "test", DAY, T1, None, None);
+    // the index jumps: a (short 2) owes more than it has; the loss is financed and the account is called
+    e.st.futures.last_mid.insert(1, 11000);
+    let out = e.futures_close(DAY, END, END, &Default::default());
+    assert!(out.shortfall > 0);
+    assert!(e.st.margin.debts[&(a, 1)].principal > 0);
+    e.margin_post_close(DAY, END);
+    assert_ne!(e.credit(a).unwrap().status, crate::margin::NORMAL);
+    assert_eq!(e.margin_restructure_check(a), Err(()), "no restructuring with futures open");
+    // liquidation: b offers to sell back; the sweep closes a's short first
+    e.st.margin.credit.get_mut(&a).unwrap().status = crate::margin::LIQUIDATING.into();
+    let t = "2026-10-13T10:00:00+08:00";
+    e.futures_place(&trading::FutOrderReq { day: "2026-10-13", ts: t, ..req(b, Side::Sell, 2, Some(11000)) }).unwrap();
+    e.margin_sweep("2026-10-13", t);
+    assert_eq!(e.st.futures.position(a, 1), 0);
     e.check_invariants().unwrap();
 }

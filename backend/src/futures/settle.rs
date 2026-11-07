@@ -25,7 +25,7 @@ pub struct FuturesClose {
     pub settled: Vec<i64>,
     /// cents paid from losers to winners
     pub variation: i64,
-    /// cents of losses an account could not pay (covered by world; see `cover_shortfall`)
+    /// cents of losses an account could not pay from free cash (financed, or covered by world; `cover_shortfall`)
     pub shortfall: i64,
 }
 
@@ -59,6 +59,7 @@ impl Engine {
             self.fut_record_day(id, day, price, source);
             let c = self.st.futures.contracts.get_mut(&id).unwrap();
             c.prev_settle = price;
+            c.last_price = price; // marked at the settlement until the next trade
             c.open_ref = None;
             c.vcm_until = None;
             c.vcm_count = 0;
@@ -183,11 +184,17 @@ impl Engine {
         (paid, short)
     }
 
-    /// A loss the account cannot pay: world pays it into clearing so the winners are paid in full, and it
-    /// stays on the account as bad debt where it has a credit account (written off on restructuring).
+    /// A loss the account cannot pay from free cash: a credit account finances it (the maintenance check
+    /// then decides what happens); otherwise, or after a default, world pays it into clearing so the winners
+    /// are paid in full, and it stays on the account as bad debt where it has a credit account.
     fn cover_shortfall(&mut self, account_id: i64, clearing: i64, amount: i64, day: &str, ts: &str, contract_id: i64) {
-        let world = self.special("world").expect("no world account");
         let company = self.st.futures.contracts[&contract_id].company_id;
+        if self.credit(account_id).is_some_and(|c| c.status != crate::margin::DEFAULTED) {
+            self.fut_finance(account_id, company, amount, day, ts);
+            self.do_transfer(account_id, clearing, amount, "futures_mtm", day, ts, Some(company), Some(contract_id));
+            return;
+        }
+        let world = self.special("world").expect("no world account");
         self.do_transfer(world, clearing, amount, "futures_default", day, ts, Some(company), Some(contract_id));
         self.margin_add_bad_debt(account_id, amount);
     }

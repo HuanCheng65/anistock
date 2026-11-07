@@ -317,20 +317,31 @@ pub struct CreditNumbers {
     pub locked: i64,
     pub bad_debt: i64,
     pub liabilities: i64,
+    /// 热度期货: cash held as initial margin (positions and open orders; part of `cash`)
+    pub futures_margin: i64,
+    /// 热度期货: losses at last prices since the last settlement (gains are paid at the settlement)
+    pub futures_loss: i64,
+    /// 热度期货: maintenance margin over the call ratio, a requirement counted like a liability in the ratio
+    /// (so a futures-only account is called exactly when its equity falls under the maintenance margin)
+    pub futures_requirement: i64,
     /// new financing or short sales this account can still back (保证金可用余额)
     pub available_margin: i64,
 }
 
 impl CreditNumbers {
     pub fn gross(&self) -> i64 {
-        self.cash + self.stock_value
+        self.cash + self.stock_value - self.futures_loss
+    }
+    /// What the maintenance ratio is measured against: liabilities and the futures requirement.
+    pub fn requirement(&self) -> i64 {
+        self.liabilities + self.futures_requirement
     }
     pub fn net(&self) -> i64 {
         self.gross() - self.liabilities
     }
-    /// 维持担保比例; None without liabilities.
+    /// 维持担保比例; None without liabilities or futures.
     pub fn ratio(&self) -> Option<f64> {
-        (self.liabilities > 0).then(|| self.gross() as f64 / self.liabilities as f64)
+        (self.requirement() > 0).then(|| self.gross() as f64 / self.requirement() as f64)
     }
 }
 
@@ -570,6 +581,11 @@ impl Engine {
         n.bad_debt = self.credit(account_id).map_or(0, |c| c.bad_debt);
         n.liabilities = n.debt_principal + n.debt_interest + n.short_value + n.short_fees + n.bad_debt;
         avail -= (n.debt_interest + n.short_fees + n.bad_debt) as f64;
+        let fut = self.futures_numbers(account_id);
+        n.futures_margin = fut.held;
+        n.futures_loss = fut.loss;
+        n.futures_requirement = (fut.maintenance as f64 / self.margin.call_ratio).ceil() as i64;
+        avail -= (fut.held + fut.loss) as f64;
         n.available_margin = avail.floor() as i64;
         n
     }
@@ -598,7 +614,7 @@ impl Engine {
         }
     }
 
-    fn emit_debt(&mut self, key: (i64, i64)) {
+    pub(crate) fn emit_debt(&mut self, key: (i64, i64)) {
         match self.st.margin.debts.get(&key) {
             Some(d) if d.principal == 0 && d.interest == 0 => {
                 self.st.margin.debts.remove(&key);
@@ -1283,11 +1299,13 @@ impl Engine {
             self.pay_fee(acct, cid, day, ts);
             self.emit_short((acct, cid));
         }
+        // futures first: the riskiest, and closing them releases their margin
+        self.futures_liquidate(acct, day, ts);
         let free = self.available_cash(acct);
         self.repay(acct, None, free, day, ts);
         let n = self.credit_numbers(acct, day);
         let t = self.margin.target_ratio;
-        if n.liabilities == 0 || n.ratio().is_some_and(|r| r >= t) && n.net() >= 0 {
+        if n.requirement() == 0 || n.ratio().is_some_and(|r| r >= t) && n.net() >= 0 {
             self.set_status(acct, NORMAL, None);
             return;
         }
@@ -1345,7 +1363,7 @@ impl Engine {
             }
         }
         let n = self.credit_numbers(acct, day);
-        if n.liabilities == 0 || n.ratio().is_some_and(|r| r >= t) && n.net() >= 0 {
+        if n.requirement() == 0 || n.ratio().is_some_and(|r| r >= t) && n.net() >= 0 {
             self.set_status(acct, NORMAL, None);
         }
     }
@@ -1396,7 +1414,9 @@ impl Engine {
     /// default's bad debt). Ok(true) when it has defaulted (the season limit does not apply).
     pub fn margin_restructure_check(&self, account_id: i64) -> Result<bool, ()> {
         let Some(c) = self.credit(account_id) else { return Ok(false) };
-        let owes = self.debts_of(account_id).next().is_some() || self.shorts_of(account_id).next().is_some();
+        let owes = self.debts_of(account_id).next().is_some()
+            || self.shorts_of(account_id).next().is_some()
+            || self.st.futures.positions.keys().any(|k| k.0 == account_id);
         if owes {
             return Err(());
         }
