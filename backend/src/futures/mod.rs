@@ -11,8 +11,10 @@
 //! - `credit`: the credit account: financing the margin, maintenance, liquidation, position caps
 //! - `forecast`: the model's forecast of a period's average; refreshing it and listing at the close
 //! - `mm`: the market maker's quotes
+//! - `agents`: the other traders (committees hedging, speculators, news traders) and how they trade
 //! - `report`: a replay's account of the futures
 
+pub mod agents;
 pub mod calendar;
 pub mod credit;
 pub mod forecast;
@@ -30,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::matching::Book;
 use crate::model::OrderStatus;
 pub use model::*;
-pub use rules::FuturesRules;
+pub use rules::{FuturesRules, NpcRules};
 pub use store::FuturesChange;
 
 /// A trade of the current trading day, kept per contract for the volatility control's look-back and the

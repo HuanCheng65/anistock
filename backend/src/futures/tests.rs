@@ -596,3 +596,104 @@ fn the_market_maker_quotes_and_takes_the_other_side() {
     frozen_matches(&e, mm);
     e.check_invariants().unwrap();
 }
+
+// ---------------------------------------------------------------- the other traders
+
+mod traders {
+    use super::*;
+    use crate::futures::agents::{execute, Flash, Hedger, Intent, Moment, News, Strategy, Value, View};
+
+    const NOW: i64 = 1_791_000_000;
+
+    fn at<'a>(flashes: &'a [Flash]) -> Moment<'a> {
+        Moment { day: DAY, t: NOW, flashes, heat_today: None }
+    }
+
+    /// The market of `market()` with contract 1's forecast at 90.00 (sd 4.00).
+    fn priced() -> (Engine, [i64; 3]) {
+        let (mut e, ids) = market();
+        e.st.futures.mean.insert(1, 9000);
+        e.st.futures.sd.insert(1, 400);
+        (e, ids)
+    }
+
+    #[test]
+    fn the_committee_sells_a_share_of_its_revenue() {
+        let (mut e, _) = priced();
+        for i in 0..28 {
+            let day = (d("2026-09-14") + chrono::Duration::days(i)).to_string();
+            let row = crate::model::CompanyDay {
+                company_id: 1,
+                day: day.clone(),
+                revenue: 100_000,
+                rev_us: 0,
+                rev_cn: 0,
+                rev_jp: 0,
+                aired: 0,
+                dividend_ps: 0,
+            };
+            e.st.company_days.insert((1, day), row);
+        }
+        let c = e.st.futures.contracts[&1].clone();
+        let mut h = Hedger { company: 1, ratio: 0.4, lean: 1.0, floor_sds: 1.0 };
+        // 40% of 28 days x 1000 币 against a lot of 900 币: 12 lots, sold no lower than 86.00
+        let want = h.decide(&View::new(&e, at(&[])), 0, &c);
+        assert_eq!(want, Some(Intent { lots: -12, limit: Some(8600) }));
+        // the price 10% over the forecast: it sells 10% more
+        e.st.futures.contracts.get_mut(&1).unwrap().last_price = 9900;
+        let c = e.st.futures.contracts[&1].clone();
+        assert_eq!(h.decide(&View::new(&e, at(&[])), 0, &c).unwrap().lots, -12, "(0.4 x 1.1 x 2.8M / 99000 = 12.4)");
+        assert_eq!(
+            Hedger { company: 2, ..h }.decide(&View::new(&e, at(&[])), 0, &c),
+            None,
+            "another company's contract"
+        );
+    }
+
+    #[test]
+    fn a_speculator_trades_only_outside_its_band() {
+        let (e, [a, _, _]) = priced();
+        let c = e.st.futures.contracts[&1].clone();
+        let mut v = Value { seed: 7, bias_sd: 0.0, threshold: 0.04, budget: 0.05 };
+        // no bias: its view is the forecast; the price (90.00) inside the band: flat
+        assert_eq!(v.decide(&View::new(&e, at(&[])), a, &c), Some(Intent { lots: 0, limit: Some(9000) }));
+        let mut cheap = c.clone();
+        cheap.last_price = 8000;
+        // 5% of 100 000 币 at 800 币 a lot: 6 lots, bought up to 86.40
+        assert_eq!(v.decide(&View::new(&e, at(&[])), a, &cheap), Some(Intent { lots: 6, limit: Some(8640) }));
+        // biases differ by trader and work, and stay fixed
+        let b = Value { seed: 7, bias_sd: 0.15, threshold: 0.04, budget: 0.05 };
+        assert_eq!(b.view(1, 9000.0), b.view(1, 9000.0));
+        assert_ne!(b.view(1, 9000.0), b.view(2, 9000.0));
+    }
+
+    #[test]
+    fn a_news_trader_follows_a_flash_then_closes() {
+        let (mut e, [a, _, _]) = priced();
+        let c = e.st.futures.contracts[&1].clone();
+        let mut n = News { hold_s: 86_400, budget: 0.05, slippage: 0.02 };
+        let up = [Flash { company: 1, t: NOW - 3600, up: true }];
+        assert_eq!(n.decide(&View::new(&e, at(&up)), a, &c), Some(Intent { lots: 5, limit: Some(9180) }));
+        assert_eq!(n.decide(&View::new(&e, at(&[])), a, &c), None, "no flash, no position: nothing to do");
+        // holding after the flash expired: close
+        e.st.futures
+            .positions
+            .insert((a, 1), Position { account_id: a, contract_id: 1, qty: 5, basis: 45000, margin: 0 });
+        let old = [Flash { company: 1, t: NOW - 90_000, up: true }];
+        assert_eq!(n.decide(&View::new(&e, at(&old)), a, &c), Some(Intent { lots: 0, limit: Some(8820) }));
+    }
+
+    #[test]
+    fn execute_moves_toward_the_target() {
+        let (mut e, [a, b, _]) = priced();
+        e.futures_place(&req(b, Side::Sell, 10, Some(9000))).unwrap();
+        assert!(execute(&mut e, a, 1, Intent { lots: 4, limit: Some(9000) }, DAY, T1));
+        assert_eq!(e.st.futures.position(a, 1), 4);
+        // a resting order is replaced by the next decision
+        assert!(execute(&mut e, a, 1, Intent { lots: 6, limit: Some(8500) }, DAY, T1));
+        assert_eq!(e.st.futures.open_orders(a, 1).map(|o| (o.price, o.qty)).collect::<Vec<_>>(), [(Some(8500), 2)]);
+        assert!(!execute(&mut e, a, 1, Intent { lots: 4, limit: None }, DAY, T1), "already there: nothing ordered");
+        assert_eq!(e.st.futures.open_orders(a, 1).count(), 0);
+        e.check_invariants().unwrap();
+    }
+}

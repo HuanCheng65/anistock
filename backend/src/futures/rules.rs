@@ -54,6 +54,54 @@ pub struct FuturesRules {
     pub mm_last_weight: f64,
     /// at its position limit the centre moves this many half-spreads against its inventory
     pub mm_skew: f64,
+    /// the other traders (crate::futures::agents)
+    pub npc: NpcRules,
+}
+
+/// `[futures.npc]`: committees hedging, speculators, news traders.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct NpcRules {
+    /// actions per trader per hour of trading (Poisson)
+    pub rate: f64,
+    /// committees: share of a period's revenue sold, lean toward the price, lowest price in forecast sds
+    pub hedge_ratio: f64,
+    pub hedge_lean: f64,
+    pub hedge_floor_sds: f64,
+    /// speculators: how many, their capital each (cents, from world), the sd of their private bias, the edge
+    /// they want, the share of net assets per contract
+    pub value_n: usize,
+    pub value_capital: i64,
+    pub value_bias_sd: f64,
+    pub value_threshold: f64,
+    pub value_budget: f64,
+    /// news traders: how many, capital each, how long they hold, share per contract, slippage accepted
+    pub news_n: usize,
+    pub news_capital: i64,
+    pub news_hold_h: f64,
+    pub news_budget: f64,
+    pub news_slippage: f64,
+}
+
+impl Default for NpcRules {
+    fn default() -> NpcRules {
+        NpcRules {
+            rate: 2.0,
+            hedge_ratio: 0.4,
+            hedge_lean: 1.0,
+            hedge_floor_sds: 1.0,
+            value_n: 12,
+            value_capital: 20_000_000,
+            value_bias_sd: 0.15,
+            value_threshold: 0.04,
+            value_budget: 0.05,
+            news_n: 4,
+            news_capital: 10_000_000,
+            news_hold_h: 24.0,
+            news_budget: 0.05,
+            news_slippage: 0.02,
+        }
+    }
 }
 
 impl Default for FuturesRules {
@@ -84,6 +132,7 @@ impl Default for FuturesRules {
             mm_min_half: 20,
             mm_last_weight: 0.2,
             mm_skew: 1.0,
+            npc: NpcRules::default(),
         }
     }
 }

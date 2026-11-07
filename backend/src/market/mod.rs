@@ -153,6 +153,8 @@ enum Actor {
     Mm(i64),
     /// the futures market maker of one contract (crate::futures::mm)
     Fmm(i64),
+    /// one of the other futures traders (crate::futures::agents), by index
+    Ftrader(u32),
 }
 
 pub struct Market {
@@ -161,6 +163,10 @@ pub struct Market {
     mms: BTreeMap<i64, MmState>,
     /// futures contracts whose market maker is scheduled
     fmms: BTreeSet<i64>,
+    /// the other futures traders, the companies whose committee hedges, and the 热度快讯 they see
+    ftraders: Vec<crate::futures::agents::Trader>,
+    fhedged: BTreeSet<i64>,
+    fflashes: Vec<crate::futures::agents::Flash>,
     schedule: BinaryHeap<Reverse<(i64, Actor)>>,
     pub events: Vec<Event>,
     heat: HashMap<i64, f64>,
@@ -218,6 +224,9 @@ impl Market {
             agents: Vec::new(),
             mms: BTreeMap::new(),
             fmms: BTreeSet::new(),
+            ftraders: Vec::new(),
+            fhedged: BTreeSet::new(),
+            fflashes: Vec::new(),
             schedule: BinaryHeap::new(),
             events: Vec::new(),
             heat: HashMap::new(),
@@ -1144,6 +1153,7 @@ impl Market {
 
     /// Run every NPC action scheduled before `t_end` (unix seconds).
     pub fn step_until(&mut self, engine: &mut Engine, t_end: i64) {
+        self.ensure_futures_traders(engine);
         while let Some(&Reverse((t, actor))) = self.schedule.peek() {
             if t >= t_end {
                 break;
@@ -1188,6 +1198,16 @@ impl Market {
                     }
                     let gap = (self.rng.exp(self.cfg.mm_rate / 3600.0).ceil() as i64).max(1);
                     self.schedule.push(Reverse((t + gap, Actor::Fmm(k))));
+                }
+                Actor::Ftrader(i) => {
+                    let (_, s) = local(t);
+                    if self.curve(s) > 0.0 && !Self::phase_auction(t) {
+                        let (day, ts) = (day_of(t), ts_of(t));
+                        let m = crate::futures::agents::Moment { day: &day, t, flashes: &self.fflashes, heat_today: None };
+                        self.ftraders[i as usize].act(engine, m, &ts);
+                    }
+                    let gap = (self.rng.exp(engine.futures.npc.rate / 3600.0).ceil() as i64).max(1);
+                    self.schedule.push(Reverse((t + gap, Actor::Ftrader(i))));
                 }
             }
         }
@@ -2168,10 +2188,58 @@ impl Market {
             );
             self.stats.flashes += 1;
             self.post_attention(company, t, "flash");
+            self.fflashes.push(crate::futures::agents::Flash { company, t, up: out.surprise > 0.0 });
         }
         self.note_revisions(engine, t);
         self.requote_revised(engine, t);
         Some(out)
+    }
+
+    /// The futures traders besides the market maker (crate::futures::agents), once contracts trade: the
+    /// speculators and news traders (own accounts, capital from world), and a hedging committee for every
+    /// company with a contract trading (the company's own account). Nothing while futures are off, so a replay
+    /// without them draws the same random numbers.
+    fn ensure_futures_traders(&mut self, engine: &mut Engine) {
+        use crate::futures::agents::{Hedger, News, Trader, Value};
+        if !engine.futures.enabled {
+            return;
+        }
+        let trading = engine.futures_trading();
+        if trading.is_empty() {
+            return;
+        }
+        let now = self.now;
+        let (day, ts) = (day_of(now), ts_of(now));
+        let n = engine.futures.npc.clone();
+        let mut new: Vec<Trader> = vec![];
+        if self.ftraders.is_empty() {
+            for i in 0..n.value_n {
+                let account = engine.futures_npc_account(&format!("期货价值型 {}", i + 1), n.value_capital, &day, &ts);
+                let strategy = Value { seed: self.cfg.seed.wrapping_mul(131).wrapping_add(i as u64), bias_sd: n.value_bias_sd, threshold: n.value_threshold, budget: n.value_budget };
+                new.push(Trader { label: "fut_value", account, strategy: Box::new(strategy) });
+            }
+            for i in 0..n.news_n {
+                let account = engine.futures_npc_account(&format!("期货消息型 {}", i + 1), n.news_capital, &day, &ts);
+                let strategy = News { hold_s: (n.news_hold_h * 3600.0) as i64, budget: n.news_budget, slippage: n.news_slippage };
+                new.push(Trader { label: "fut_news", account, strategy: Box::new(strategy) });
+            }
+        }
+        let companies: BTreeSet<i64> = trading.iter().map(|k| engine.st.futures.contracts[k].company_id).collect();
+        for c in companies {
+            if self.fhedged.contains(&c) {
+                continue;
+            }
+            let Some(account) = engine.account_of("company", c) else { continue };
+            self.fhedged.insert(c);
+            let strategy = Hedger { company: c, ratio: n.hedge_ratio, lean: n.hedge_lean, floor_sds: n.hedge_floor_sds };
+            new.push(Trader { label: "fut_hedger", account, strategy: Box::new(strategy) });
+        }
+        for t in new {
+            let i = self.ftraders.len() as u32;
+            self.ftraders.push(t);
+            let first = now + (self.rng.exp(n.rate / 3600.0).ceil() as i64).max(1);
+            self.schedule.push(Reverse((first, Actor::Ftrader(i))));
+        }
     }
 
     /// Restart the action schedule from `now` (after a pause: no burst of overdue actions).
@@ -2185,6 +2253,15 @@ impl Market {
         for c in mms {
             let t = now + (self.rng.exp(self.cfg.mm_rate / 3600.0).ceil() as i64).max(1);
             self.schedule.push(Reverse((t, Actor::Mm(c))));
+        }
+        let fmms: Vec<i64> = self.fmms.iter().copied().collect();
+        for k in fmms {
+            let t = now + (self.rng.exp(self.cfg.mm_rate / 3600.0).ceil() as i64).max(1);
+            self.schedule.push(Reverse((t, Actor::Fmm(k))));
+        }
+        for i in 0..self.ftraders.len() {
+            let t = now + (self.rng.exp(2.0 / 3600.0).ceil() as i64).max(1);
+            self.schedule.push(Reverse((t, Actor::Ftrader(i as u32))));
         }
         self.now = now;
     }
