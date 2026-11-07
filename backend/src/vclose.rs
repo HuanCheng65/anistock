@@ -15,6 +15,26 @@ use crate::store::persist::Change;
 use crate::valuation::{Params, M3};
 use crate::vfilter::{self as F, Cov, FilterParams};
 
+/// A 热度快讯's mark on a show's filter state (state key `flash:<id>`): the state before the episode's first
+/// flash, the update the latest hour made, and whether a close has settled it. The flash reads the episode's
+/// early comment count as an estimate of the cn level the close will observe; the close then starts from the
+/// state without the flash, so the episode is counted once (docs/v2-api-access.md §7).
+#[derive(Serialize, Deserialize, Clone)]
+struct FlashBase {
+    episode: f64,
+    /// the state's mean and covariance before the episode's first flash
+    mean: M3,
+    cov: Cov,
+    /// the mean after the latest flash of the episode (from `mean`)
+    last: M3,
+    /// the state's day at the first flash (no close in between: the covariance can be restored exactly)
+    #[serde(default)]
+    day: String,
+    /// a close has read the episode's comments as the cn level
+    #[serde(default)]
+    settled: bool,
+}
+
 /// The joint filter's state for one show (docs/v2-valuation.md §3.2): the log levels of the three markets
 /// (us, cn, jp) and their covariance. A market whose data source the show is not mapped to (no Bangumi /
 /// Annict entry), or that reports zero for four weeks after the premiere, is inactive: it earns nothing.
@@ -662,9 +682,22 @@ impl Engine {
             }
             (Some(mut st), _) => {
                 // without yesterday's days so far of the us week: today's are observed again below
+                let had_base = st.base.is_some();
                 if let Some((bm, bc)) = st.base.take() {
                     st.mean = bm;
                     st.cov = bc;
+                }
+                // today's cn value reads the episode a 热度快讯 already estimated: start from the state without
+                // the flash, so the episode counts once
+                let cn_fresh = sources[1]
+                    && observed[1]
+                    && att[1] > 0.0
+                    && match st.last_raw[1] {
+                        Some(r) => r != raw[1],
+                        None => st.last_obs[1] != Some(att[1]),
+                    };
+                if cn_fresh {
+                    self.settle_flash(s.id, &mut st, had_base);
                 }
                 let days = day_no(&st.day).map_or(1, |d| (today - d).max(0));
                 // each market's drift over the days since the state, by weeks since the premiere (per day)
@@ -1359,6 +1392,32 @@ impl Engine {
     /// where the last one put it; a new hour's observation moves the level by the difference only (so a
     /// close in between keeps what it learned).
     #[allow(clippy::too_many_arguments)]
+    /// Take a 热度快讯's update out of `st` before the close reads the episode's comments (see `FlashBase`).
+    /// `cov_restored`: the covariance already came back from the us partial-week base, which the flash left alone.
+    fn settle_flash(&mut self, id: i64, st: &mut JState, cov_restored: bool) {
+        let key = format!("flash:{id}");
+        let Some(mut fb) = self.state(&key).and_then(|v| serde_json::from_str::<FlashBase>(v).ok()) else { return };
+        if fb.settled {
+            return;
+        }
+        // written before settling existed (no `day`): its update has been through closes already, and taking it
+        // out now would jolt the value; it only stops counting
+        if fb.day.is_empty() {
+            fb.settled = true;
+            self.set_state(&key, &serde_json::to_string(&fb).unwrap_or_default());
+            return;
+        }
+        for m in 0..3 {
+            st.mean[m] -= fb.last[m] - fb.mean[m];
+        }
+        // no close since the first flash: the covariance before it is exactly today's without it
+        if !cov_restored && fb.day == st.day {
+            st.cov = fb.cov;
+        }
+        fb.settled = true;
+        self.set_state(&key, &serde_json::to_string(&fb).unwrap_or_default());
+    }
+
     pub fn valuation_flash(&mut self, cfg: &Config, company: i64, episode: f64, hours: f64, comments: i64, prev_final: &[i64], ts: &str) -> Result<Option<FlashOutcome>, String> {
         let fp = FilterParams::load(cfg)?;
         let p = Params::from_config(cfg)?;
@@ -1370,23 +1429,22 @@ impl Engine {
         let today = day_no(&st.day).unwrap_or(0);
         // observation of this episode's cn level: from the state before the episode's first flash, moved by
         // the surprise; every market moves through the covariance
-        #[derive(Serialize, Deserialize)]
-        struct Base {
-            episode: f64,
-            mean: M3,
-            cov: Cov,
-            last: M3,
-        }
         let key = format!("flash:{company}");
-        let base: Option<Base> =
-            self.state(&key).and_then(|v| serde_json::from_str::<Base>(v).ok()).filter(|b| b.episode == episode);
+        let base: Option<FlashBase> =
+            self.state(&key).and_then(|v| serde_json::from_str::<FlashBase>(v).ok()).filter(|b| b.episode == episode);
+        if base.as_ref().is_some_and(|b| b.settled) {
+            // a close has already read this episode's comments as the cn level: a later hour adds nothing new
+            // to the value (it would count the episode twice); the surprise is still reported
+            let v = c.fair_value;
+            return Ok(Some(FlashOutcome { surprise: y_rel.exp() - 1.0, old_value: v, new_value: v }));
+        }
         let first = base.is_none();
-        let b = base.unwrap_or(Base { episode, mean: st.mean, cov: st.cov, last: st.mean });
+        let b = base.unwrap_or(FlashBase { episode, mean: st.mean, cov: st.cov, last: st.mean, day: st.day.clone(), settled: false });
         let (post, post_cov, _, _) = F::kf_update_joint(&b.mean, &b.cov, 1, b.mean[1] + y_rel, r, fp.clip);
         let mean: M3 = std::array::from_fn(|m| st.mean[m] + (post[m] - b.last[m]));
         // the uncertainty shrinks once per episode (a later hour refines the same observation)
         let cov = if first { post_cov } else { st.cov };
-        let nb = Base { episode, mean: b.mean, cov: b.cov, last: post };
+        let nb = FlashBase { last: post, ..b };
         self.set_state(&key, &serde_json::to_string(&nb).unwrap_or_default());
         let old = c.fair_value;
         // (the state without the us week's days so far moves with the flash too, or the next close would drop it)

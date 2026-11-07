@@ -112,10 +112,18 @@ pub enum BotKind {
     /// sentiment batch 2: weekly, hold the hot stocks furthest under their 20-session average close (where
     /// retail holders sit on paper losses)
     DispositionFade,
+    /// a script on the API (docs/v2-api-access.md §7): buys a stock the second a good-news 热度快讯 is
+    /// published (before any NPC or the market maker acts again), sells 30 minutes later
+    SnipeFlash,
+    /// the same, selling 2 hours later
+    SnipeFlash2h,
+    /// buys every published 热度快讯, good or bad, the second it appears (riding the attention buying), sells
+    /// an hour later
+    SnipeAttention,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 40] {
+    pub fn all() -> [BotKind; 43] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -157,6 +165,9 @@ impl BotKind {
             BotKind::BubbleRider,
             BotKind::BubbleRider1,
             BotKind::DispositionFade,
+            BotKind::SnipeFlash,
+            BotKind::SnipeFlash2h,
+            BotKind::SnipeAttention,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -201,6 +212,9 @@ impl BotKind {
             BotKind::BubbleRider => "bubble_rider",
             BotKind::BubbleRider1 => "bubble_rider_1",
             BotKind::DispositionFade => "disposition_fade",
+            BotKind::SnipeFlash => "snipe_flash",
+            BotKind::SnipeFlash2h => "snipe_flash_2h",
+            BotKind::SnipeAttention => "snipe_attention",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -256,6 +270,8 @@ pub struct Bot {
     corp_exits: Vec<corporate::CorpExit>,
     corp_rebuy: Vec<(i64, i64, i64)>,
     corp_done: std::collections::HashSet<i64>,
+    /// the snipe bots: flashes already traded (company, unix seconds)
+    sniped: std::collections::HashSet<(i64, i64)>,
 }
 
 fn place(e: &mut Engine, acct: i64, c: i64, side: &str, kind: &str, qty: i64, price: Option<i64>, t: i64) -> bool {
@@ -316,6 +332,7 @@ impl Bot {
             corp_exits: Vec::new(),
             corp_rebuy: Vec::new(),
             corp_done: Default::default(),
+            sniped: Default::default(),
         }
     }
 
@@ -365,6 +382,27 @@ impl Bot {
         self.exits.retain(|x| t < x.1 || e.holding(self.account, x.0).is_some_and(|h| h.qty > 0));
     }
 
+    fn snipes(&self) -> bool {
+        matches!(self.kind, BotKind::SnipeFlash | BotKind::SnipeFlash2h | BotKind::SnipeAttention)
+    }
+
+    /// A 热度快讯 was just published (`at`, inside continuous trading): the snipe bots trade at once.
+    pub fn on_flash(&mut self, e: &mut Engine, c: i64, at: i64, dir: i8, _old_value: i64, _new_value: i64) {
+        if !self.snipes() || !self.sniped.insert((c, at)) {
+            return;
+        }
+        let (want, hold) = match self.kind {
+            BotKind::SnipeFlash => (dir > 0, 1800),
+            BotKind::SnipeFlash2h => (dir > 0, 7200),
+            _ => (true, 3600),
+        };
+        if want && !self.exits.iter().any(|x| x.0 == c) {
+            let wealth = self.wealth(e);
+            self.buy(e, c, wealth / 5, at);
+            self.exits.push((c, at + hold));
+        }
+    }
+
     /// Called once per simulated minute during continuous trading.
     pub fn on_minute(&mut self, e: &mut Engine, t: i64, heat: &dyn Fn(i64) -> f64, ctx: &BotCtx) {
         let (_, s) = local(t);
@@ -379,10 +417,28 @@ impl Bot {
                 self.opens.entry(c.id).or_default().push(c.last_price);
             }
         }
+        if self.snipes() {
+            // flashes published outside the session (overnight): traded at the first minute of the session
+            for i in self.flashes_seen..ctx.flashes.len() {
+                let (c, at, d) = ctx.flashes[i];
+                self.on_flash(e, c, at, d, 0, 0);
+            }
+            self.flashes_seen = ctx.flashes.len();
+            // sell when due, retried every minute
+            let due: Vec<i64> = self.exits.iter().filter(|x| t >= x.1).map(|x| x.0).collect();
+            for c in due {
+                if e.holding(acct, c).is_some_and(|h| h.qty > 0) {
+                    self.sell_all(e, c, t);
+                }
+            }
+            self.exits.retain(|x| t < x.1 || e.holding(acct, x.0).is_some_and(|h| h.qty > 0));
+            return;
+        }
         match self.kind {
             BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
             BotKind::BuybackFollow | BotKind::RightsSell | BotKind::SplitBuy | BotKind::DelayFade => self.corp_minute(e, t, ctx),
             BotKind::BubbleRider | BotKind::BubbleRider1 | BotKind::DispositionFade => sentiment::on_minute(self, e, t, heat),
+            BotKind::SnipeFlash | BotKind::SnipeFlash2h | BotKind::SnipeAttention => {} // handled above
             BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
                 if !self.exits.is_empty() {
                     self.run_exits(e, t);

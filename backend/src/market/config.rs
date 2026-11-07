@@ -108,6 +108,9 @@ pub struct MarketConfig {
     pub mm_inventory_skew: f64,
     /// weight of the last price (vs the hidden value) in its reference
     pub mm_anchor_to_price: f64,
+    /// the market maker's quotes move with every revision of the public value since the last trade
+    /// (docs/v2-api-access.md §7); off: they move only with trades
+    pub mm_follow_revisions: bool,
     /// market maker's cash after the float migration, 币
     pub mm_cash: f64,
     /// stock lent to the market maker by the rights holders (committee), share of the company's shares, on
@@ -291,6 +294,7 @@ impl Default for MarketConfig {
             mm_level_step: 1.0,
             mm_inventory_skew: 0.3,
             mm_anchor_to_price: 0.3,
+            mm_follow_revisions: false,
             mm_cash: 10000.0,
             mm_loan_frac: 0.0,
             mm_quote_min: 0.0,

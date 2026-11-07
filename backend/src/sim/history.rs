@@ -89,6 +89,7 @@ pub fn cli(args: &[String]) {
         allow_old_inputs: false,
         bot_start: None,
         value_only: false,
+        no_night: false,
         open_at_value: false,
         history: true,
     };

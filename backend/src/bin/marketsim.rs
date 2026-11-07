@@ -32,6 +32,7 @@ fn main() {
     let mut allow_old_inputs = false;
     let mut bot_start = None;
     let mut value_only = false;
+    let mut no_night = false;
     let mut open_at_value = false;
     let mut i = 0;
     while i < args.len() {
@@ -55,6 +56,11 @@ fn main() {
             "--probe-players" => probe = v.parse().expect("--probe-players"),
             "--value-only" => {
                 value_only = true;
+                i += 1;
+                continue;
+            }
+            "--no-night" => {
+                no_night = true;
                 i += 1;
                 continue;
             }
@@ -123,6 +129,7 @@ fn main() {
         allow_old_inputs,
         bot_start,
         value_only,
+        no_night,
         open_at_value,
         history: false,
     };

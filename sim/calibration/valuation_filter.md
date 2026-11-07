@@ -46,7 +46,9 @@ Share of a season's pre-air attention not yet listed, by days from the season st
 
 131 episodes. Share of 28-day comments by hour 1..24: [0.0, 0.0741, 0.1304, 0.1719, 0.2105, 0.2273, 0.2333, 0.2394, 0.25, 0.2667, 0.2805, 0.2982, 0.3235, 0.3519, 0.3824, 0.4167, 0.4316, 0.4507, 0.4737, 0.4868, 0.5116, 0.5238, 0.5439, 0.5714]
 
-Noise variance of log(count_h / (curve_h × previous mean)) by hour: [1.0, 1.1935, 0.5586, 0.4651, 0.5375, 0.644, 0.6575, 0.6307, 0.6336, 0.6304, 0.5613, 0.5459, 0.5037, 0.5414, 0.4981, 0.4994, 0.4919, 0.6027, 0.5804, 0.5331, 0.5367, 0.5511, 0.5464, 0.5543]
+Noise variance of the hour-h count read as the cn level, r_cn + var log(count_h / (curve_h × own final)), by hour: [1.0, 0.9204, 0.4758, 0.3205, 0.3257, 0.3366, 0.3279, 0.2825, 0.3005, 0.2906, 0.1882, 0.1341, 0.1169, 0.1106, 0.1041, 0.1013, 0.0903, 0.0858, 0.0837, 0.0804, 0.0772, 0.0743, 0.0683, 0.064]
+
+(Refitted 2026-11-07 from the same 131-episode sample with sim/fit_valuation.py fit_flash; the earlier figures used the previous episodes' mean in place of the episode's own final and so counted the signal as noise.)
 
 ## IPO discount
 

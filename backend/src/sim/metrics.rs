@@ -55,6 +55,24 @@ pub struct Series {
     /// every stock: (company, [(day, auction open, first trade, its time, its buyer, its seller)]) (the opening
     /// gap; buyer and seller as an agent kind or an account kind)
     pub opens: Vec<(i64, Vec<(String, i64, i64, i64, String, String)>)>,
+    /// every published 热度快讯: the price path right after it (docs/v2-api-access.md §7: how much a script
+    /// that reads the news within a second could take before the market catches up)
+    pub flash_paths: Vec<FlashPath>,
+}
+
+/// Seconds after a published flash at which `FlashPath` samples the stock.
+pub const FLASH_OFFSETS: [i64; 8] = [0, 60, 300, 900, 1800, 3600, 7200, 21600];
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FlashPath {
+    pub company: i64,
+    pub at: i64,
+    pub direction: i8,
+    /// the valuation before and after the flash (the news body shows both)
+    pub old_value: i64,
+    pub new_value: i64,
+    /// at each `FLASH_OFFSETS`: (offset s, last price, best bid, best ask); 0 when a side is empty
+    pub samples: Vec<(i64, i64, i64, i64)>,
 }
 
 pub struct Recorder {
@@ -66,6 +84,8 @@ pub struct Recorder {
     /// (company, day) -> (samples, samples with no offer, samples with no bid)
     book_gaps: HashMap<(i64, String), (u32, u32, u32)>,
     events: Vec<(i64, i64, String, i8, f64)>,
+    /// indices into `series.flash_paths` still being sampled
+    flash_open: Vec<usize>,
     npc: HashSet<i64>,
     mm_accounts: HashSet<i64>,
     /// the market makers' cash and inventory at the start (their buy-and-hold benchmark)
@@ -229,6 +249,7 @@ impl Recorder {
             two_sided: HashMap::new(),
             book_gaps: HashMap::new(),
             events: Vec::new(),
+            flash_open: Vec::new(),
             npc: npc.clone(),
             mm_accounts,
             mm_start_cash: 0,
@@ -380,6 +401,31 @@ impl Recorder {
 
     pub fn flash(&mut self, company: i64, at: i64, surprise: f64) {
         self.events.push((company, at, "flash".into(), if surprise > 0.0 { 1 } else { -1 }, surprise.abs()));
+    }
+
+    /// Start sampling the price path after a published flash (the first sample is taken now).
+    pub fn flash_path(&mut self, e: &Engine, company: i64, at: i64, direction: i8, old_value: i64, new_value: i64) {
+        self.series.flash_paths.push(FlashPath { company, at, direction, old_value, new_value, samples: Vec::new() });
+        let i = self.series.flash_paths.len() - 1;
+        self.flash_open.push(i);
+        self.flash_tick(e, at);
+    }
+
+    /// Take the flash-path samples that are due at `t` (called every simulated minute).
+    pub fn flash_tick(&mut self, e: &Engine, t: i64) {
+        let paths = &mut self.series.flash_paths;
+        self.flash_open.retain(|&i| {
+            let p = &mut paths[i];
+            while let Some(&off) = FLASH_OFFSETS.get(p.samples.len()) {
+                if p.at + off > t {
+                    return true;
+                }
+                let b = e.book(p.company, 1);
+                let last = e.company(p.company).map_or(0, |c| c.last_price);
+                p.samples.push((off, last, b.bids.first().map_or(0, |l| l.price), b.asks.first().map_or(0, |l| l.price)));
+            }
+            false
+        });
     }
 
     pub fn event(&mut self, ev: &Event) {

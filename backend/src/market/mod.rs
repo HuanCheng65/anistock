@@ -116,6 +116,10 @@ struct MmState {
     /// the last requote's half-spread (share of the centre) and its parts: base, volatility term, the
     /// toxicity and information-window multipliers (reports)
     last_half: [f64; 4],
+    /// `mm_follow_revisions`: log change of the public value since the last trade at `news_p` (the market
+    /// price has not yet seen it); the quotes move with it at once
+    news: f64,
+    news_p: i64,
 }
 
 /// Counters for reports.
@@ -164,6 +168,8 @@ pub struct Market {
     subscribed: HashSet<(usize, i64)>,
     /// the public value at the last revision check
     last_fair: HashMap<i64, i64>,
+    /// stocks to requote after a revision (`requote_revised`)
+    requote: Vec<i64>,
     /// (company, episode) whose 热度快讯 has been published (one per episode; later hours only revise)
     flashed: std::collections::HashSet<(i64, u64)>,
     /// sentiment layer: the salt mixed into its draws (from the server secret), the sentiment of the
@@ -215,6 +221,7 @@ impl Market {
             known: HashSet::new(),
             subscribed: HashSet::new(),
             last_fair: HashMap::new(),
+            requote: Vec::new(),
             flashed: Default::default(),
             salt: secret_salt(&game.secret),
             sent_cache: None,
@@ -1003,6 +1010,8 @@ impl Market {
                         human_depth: 0.0,
                         last_quote_p: 0.0,
                         last_half: [0.0; 4],
+                        news: 0.0,
+                        news_p: 0,
                     });
                     let first = now + self.rng.exp(self.cfg.mm_rate / 3600.0) as i64;
                     self.schedule.push(Reverse((first, Actor::Mm(c))));
@@ -1591,7 +1600,20 @@ impl Market {
         st.human_rate = human_half * st.human_rate + (1.0 - human_half) * dflow * 3600.0 / dt;
         let fair = co.fair_value as f64;
         let a = self.cfg.mm_anchor_to_price;
-        let reference = if fair > 0.0 { (1.0 - a) * fair + a * p } else { p };
+        // the market price, moved by the revisions of the public value it has not traded on yet (a dealer
+        // requotes on public news at once, or informed traders pick off the stale quotes: Glosten–Milgrom);
+        // it never learns the value's level, only how much it changed
+        let news = match self.mms.get_mut(&c) {
+            Some(st) if st.news_p == co.last_price => st.news,
+            Some(st) => {
+                st.news = 0.0;
+                st.news_p = co.last_price;
+                0.0
+            }
+            None => 0.0,
+        };
+        let pm = p * news.exp();
+        let reference = if fair > 0.0 { (1.0 - a) * fair + a * pm } else { pm };
         let target = self.mm_target(&co).max(1);
         // below zero it sells borrowed stock, at most `short_cap` shares: the skew runs on through zero, so
         // its offers keep shrinking as the short grows (no step at zero)
@@ -2039,6 +2061,18 @@ impl Market {
         self.adj_seen = Some(seen);
     }
 
+    /// The market makers of the stocks whose value just changed requote now, before anyone else acts
+    /// (`mm_follow_revisions`; outside trading hours their next quotes carry the change).
+    pub fn requote_revised(&mut self, engine: &mut Engine, t: i64) {
+        let (_, s) = local(t);
+        let open = self.curve(s) > 0.0;
+        for c in std::mem::take(&mut self.requote) {
+            if open && self.mms.contains_key(&c) {
+                self.act_mm(engine, c, t);
+            }
+        }
+    }
+
     /// Large revisions of the public value become internal events: they wake up news agents and raise the
     /// stock's activity for a few hours (no news row; the reason is already public).
     pub fn note_revisions(&mut self, engine: &Engine, t: i64) {
@@ -2049,6 +2083,16 @@ impl Market {
             let prev = self.last_fair.insert(c.id, c.fair_value);
             if let Some(p) = prev.filter(|p| *p > 0) {
                 let r = (c.fair_value as f64 / p as f64).ln();
+                if self.cfg.mm_follow_revisions && r != 0.0 {
+                    if let Some(st) = self.mms.get_mut(&c.id) {
+                        if st.news_p != c.last_price {
+                            st.news = 0.0;
+                            st.news_p = c.last_price;
+                        }
+                        st.news += r;
+                        self.requote.push(c.id);
+                    }
+                }
                 if r.abs() >= min {
                     evs.push(Event {
                         company_id: c.id,
@@ -2097,6 +2141,7 @@ impl Market {
             self.post_attention(company, t, "flash");
         }
         self.note_revisions(engine, t);
+        self.requote_revised(engine, t);
         Some(out)
     }
 
