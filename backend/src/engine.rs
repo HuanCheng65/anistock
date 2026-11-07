@@ -8,15 +8,15 @@
 //! currently in the table. Orders, trades, ledger, news and accounts are never deleted, so a counter from
 //! the loaded maximum suffices; lots are deleted when consumed, so a new lot takes `max(live lot id) + 1`.
 
-use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::ops::Bound::{Excluded, Unbounded};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::config::ts_add_minutes;
-use crate::exchange::{cooling, pct0_str, py_round_div, sanity_band, vcm_anchor, yuan_str, Fees, OrderError, Rules};
+use crate::exchange::{pct0_str, py_round_div, sanity_band, vcm_check, yuan_str, Fees, Guard, OrderError, Rules, Vcm};
+use crate::matching::{self, Book, Incoming, Resting, Venue};
+pub use crate::matching::{BookView, Level};
 use crate::model::*;
 use crate::store::persist::{Change, ChangeSink, MemorySink};
 use crate::store::{self, Persister, Snapshot, StoreError};
@@ -43,28 +43,6 @@ pub struct NewOrder<'a> {
     pub ts: &'a str,
     /// false during the opening auction: a limit order only rests on the book
     pub match_: bool,
-}
-
-/// Aggregated depth: (price, total remaining qty, number of orders).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Level {
-    pub price: i64,
-    pub qty: i64,
-    pub orders: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct BookView {
-    pub bids: Vec<Level>,
-    pub asks: Vec<Level>,
-}
-
-#[derive(Default, Debug, Clone)]
-pub(crate) struct Book {
-    /// (Reverse(price), id): best (highest) price first, then time
-    bids: BTreeSet<(Reverse<i64>, i64)>,
-    /// (price, id): best (lowest) price first, then time
-    asks: BTreeSet<(i64, i64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -286,88 +264,30 @@ impl Engine {
     /// Players' resting limit orders in `company_id`, best first per side: (is_buy, price, shares left,
     /// created_at).
     pub fn player_orders(&self, company_id: i64) -> Vec<(bool, i64, i64, &str)> {
-        let Some(b) = self.st.books.get(&company_id) else { return vec![] };
-        let mut out = Vec::new();
+        let b = self.book_of(company_id);
         let player = |o: &Order| self.st.accounts.get(&o.account_id).is_some_and(|a| a.kind == "player");
-        for (Reverse(p), id) in &b.bids {
-            let o = &self.st.orders[id];
-            if player(o) {
-                out.push((true, *p, o.left(), o.created_at.as_str()));
-            }
-        }
-        for (p, id) in &b.asks {
-            let o = &self.st.orders[id];
-            if player(o) {
-                out.push((false, *p, o.left(), o.created_at.as_str()));
-            }
-        }
-        out
+        let bids = b.bids().map(|(p, id)| (true, p, id));
+        let asks = b.asks().map(|(p, id)| (false, p, id));
+        bids.chain(asks)
+            .map(|(buy, p, id)| (buy, p, &self.st.orders[&id]))
+            .filter(|(_, _, o)| player(o))
+            .map(|(buy, p, o)| (buy, p, o.left(), o.created_at.as_str()))
+            .collect()
     }
 
     /// Price levels of the book, best first (v1 `book`).
     pub fn book(&self, company_id: i64, depth: usize) -> BookView {
-        let mut view = BookView { bids: vec![], asks: vec![] };
-        let Some(b) = self.st.books.get(&company_id) else { return view };
-        let push = |levels: &mut Vec<Level>, price: i64, left: i64| {
-            if let Some(l) = levels.last_mut() {
-                if l.price == price {
-                    l.qty += left;
-                    l.orders += 1;
-                    return true;
-                }
-            }
-            if levels.len() == depth {
-                return false;
-            }
-            levels.push(Level { price, qty: left, orders: 1 });
-            true
-        };
-        for (Reverse(p), id) in &b.bids {
-            if !push(&mut view.bids, *p, self.st.orders[id].left()) {
-                break;
-            }
-        }
-        for (p, id) in &b.asks {
-            if !push(&mut view.asks, *p, self.st.orders[id].left()) {
-                break;
-            }
-        }
-        view
+        self.book_of(company_id).depth(depth, |id| self.st.orders[&id].left())
     }
 
     /// Equilibrium price of the resting limit orders: most volume, then least imbalance, then closest to
     /// `reference`. `(None, 0)` if nothing crosses.
     pub fn auction_price(&self, company_id: i64, reference: i64) -> (Option<i64>, i64) {
-        let Some(b) = self.st.books.get(&company_id) else { return (None, 0) };
-        let mut buys: BTreeMap<i64, i64> = BTreeMap::new();
-        let mut sells: BTreeMap<i64, i64> = BTreeMap::new();
-        for (Reverse(p), id) in &b.bids {
-            *buys.entry(*p).or_default() += self.st.orders[id].left();
-        }
-        for (p, id) in &b.asks {
-            *sells.entry(*p).or_default() += self.st.orders[id].left();
-        }
-        if buys.is_empty() || sells.is_empty() {
-            return (None, 0);
-        }
-        let prices: BTreeSet<i64> = buys.keys().chain(sells.keys()).copied().collect();
-        let mut best: Option<((i64, i64, i64), i64, i64)> = None;
-        for p in prices {
-            let demand: i64 = buys.range(p..).map(|(_, q)| q).sum();
-            let supply: i64 = sells.range(..=p).map(|(_, q)| q).sum();
-            let vol = demand.min(supply);
-            if vol <= 0 {
-                continue;
-            }
-            let key = (vol, -(demand - supply).abs(), -(p - reference).abs());
-            if best.as_ref().is_none_or(|b| key > b.0) {
-                best = Some((key, p, vol));
-            }
-        }
-        match best {
-            Some((_, p, v)) => (Some(p), v),
-            None => (None, 0),
-        }
+        self.book_of(company_id).auction(|id| self.st.orders[&id].left(), reference)
+    }
+
+    fn book_of(&self, company_id: i64) -> &Book {
+        self.st.books.get(&company_id).unwrap_or(Book::empty())
     }
 
     /// v1 `check_invariants` on the in-memory state.
@@ -462,20 +382,13 @@ impl Engine {
 
     fn book_insert(&mut self, o: &Order) {
         let (Some(p), OrderStatus::Open) = (o.price, o.status) else { return };
-        let b = self.st.books.entry(o.company_id).or_default();
-        match o.side {
-            Side::Buy => b.bids.insert((Reverse(p), o.id)),
-            Side::Sell => b.asks.insert((p, o.id)),
-        };
+        self.st.books.entry(o.company_id).or_default().insert(o.side, p, o.id);
     }
 
     fn book_remove(&mut self, o: &Order) {
         let Some(p) = o.price else { return };
         if let Some(b) = self.st.books.get_mut(&o.company_id) {
-            match o.side {
-                Side::Buy => b.bids.remove(&(Reverse(p), o.id)),
-                Side::Sell => b.asks.remove(&(p, o.id)),
-            };
+            b.remove(o.side, p, o.id);
         }
     }
 
@@ -762,42 +675,22 @@ impl Engine {
 
     // ------------------------------------------------------------ volatility control
 
-    fn vcm_reference(&self, c: &Company, day: &str, ts: &str) -> (i64, f64) {
-        let anchor = vcm_anchor(c);
-        if c.vcm_count == 0 {
-            let before = ts_add_minutes(ts, -self.rules.vcm_window_min);
-            let price = self
-                .st
-                .recent_trades
-                .get(&c.id)
-                .and_then(|ts_| ts_.iter().rev().find(|t| t.day == day && t.ts.as_str() <= before.as_str()))
-                .map(|t| t.price);
-            return (price.unwrap_or(anchor), self.rules.vcm_threshold);
-        }
-        (anchor, self.rules.vcm_threshold * (c.vcm_count + 1) as f64)
+    /// The last trade price at least the VCM window before `ts` today.
+    fn vcm_lookback(&self, company_id: i64, day: &str, ts: &str) -> Option<i64> {
+        let before = ts_add_minutes(ts, -self.rules.vcm_window_min);
+        let trades = self.st.recent_trades.get(&company_id)?;
+        trades.iter().rev().find(|t| t.day == day && t.ts.as_str() <= before.as_str()).map(|t| t.price)
     }
 
     /// May a trade print at `tp` now? Starts a cooling-off period (and posts a 'vcm' news item) when it
     /// may not, then answers whether `tp` is inside the new band.
     fn allow_fill(&mut self, company_id: i64, tp: i64, day: &str, ts: &str) -> bool {
         let c = &self.st.companies[&company_id];
-        if let Some((lo, hi)) = cooling(c, ts) {
-            return lo <= tp && tp <= hi;
-        }
-        let (r, thr) = self.vcm_reference(c, day, ts);
-        if r <= 0 || ((tp as f64) / (r as f64) - 1.0).abs() <= thr + 1e-12 {
-            return true;
-        }
-        if self.rules.vcm_min_tick && (tp - r).abs() <= 1 {
-            return true;
-        }
-        let rf = r as f64;
-        let mut lo = ((rf * (1.0 - thr) - 1e-9).ceil() as i64).max(1);
-        let mut hi = (rf * (1.0 + thr) + 1e-9).floor() as i64;
-        if self.rules.vcm_min_tick {
-            lo = lo.min((r - 1).max(1));
-            hi = hi.max(r + 1);
-        }
+        let (r, thr, lo, hi) = match vcm_check(c, ts, tp, &self.rules, || self.vcm_lookback(company_id, day, ts)) {
+            Vcm::Allow => return true,
+            Vcm::Block => return false,
+            Vcm::Trigger { reference, threshold, low, high } => (reference, threshold, low, high),
+        };
         let until = ts_add_minutes(ts, self.rules.vcm_cool_min);
         let title = format!("《{}》触发冷静期", c.title);
         let body = format!(
@@ -808,11 +701,7 @@ impl Engine {
             yuan_str(lo),
             yuan_str(hi)
         );
-        let c = self.st.companies.get_mut(&company_id).unwrap();
-        c.vcm_until = Some(until);
-        c.vcm_low = Some(lo);
-        c.vcm_high = Some(hi);
-        c.vcm_count += 1;
+        self.st.companies.get_mut(&company_id).unwrap().start_cooling(until, lo, hi);
         self.dirty_companies.insert(company_id);
         self.st.last_news_id += 1;
         self.out.push(Change::NewsInsert(News {
@@ -1084,73 +973,18 @@ impl Engine {
         self.margin_on_close(&before, ts);
     }
 
-    /// Next resting order after `cursor` on the side opposite to `side`, if its price still crosses `limit`.
-    fn next_resting(&self, company_id: i64, side: Side, limit: i64, cursor: Option<(i64, i64)>) -> Option<(i64, i64)> {
-        let b = self.st.books.get(&company_id)?;
-        match side {
-            Side::Buy => {
-                let mut it = match cursor {
-                    None => b.asks.range(..),
-                    Some(k) => b.asks.range((Excluded(k), Unbounded)),
-                };
-                it.next().filter(|(p, _)| *p <= limit).copied()
-            }
-            Side::Sell => {
-                let mut it = match cursor {
-                    None => b.bids.range(..),
-                    Some((p, id)) => b.bids.range((Excluded((Reverse(p), id)), Unbounded)),
-                };
-                it.next().filter(|(Reverse(p), _)| *p >= limit).map(|(Reverse(p), id)| (*p, *id))
-            }
-        }
-    }
-
     /// Match an incoming order against the book (v1 `_match`). Returns (shares filled, notional). Stops at
     /// the first price the volatility control will not let print.
     fn do_match(&mut self, order_id: i64, day: &str, ts: &str) -> (i64, i64) {
         let o = self.st.orders[&order_id].clone();
         let (lo, hi) = sanity_band(&self.st.companies[&o.company_id], &self.rules);
         let limit = match (o.side, o.price) {
-            (Side::Buy, Some(p)) => p,
+            (_, Some(p)) => p,
             (Side::Buy, None) => hi,
-            (Side::Sell, Some(p)) => p,
             (Side::Sell, None) => lo,
         };
-        let mut remaining = o.qty - o.filled;
-        let (mut filled, mut notional) = (0, 0);
-        let mut cursor = None;
-        while let Some((tp, rid)) = self.next_resting(o.company_id, o.side, limit, cursor) {
-            cursor = Some((tp, rid));
-            if remaining <= 0 {
-                break;
-            }
-            let r = &self.st.orders[&rid];
-            if r.account_id == o.account_id {
-                continue; // no self-trades
-            }
-            if r.status != OrderStatus::Open {
-                continue;
-            }
-            let r_left = r.qty - r.filled;
-            if !self.allow_fill(o.company_id, tp, day, ts) {
-                break;
-            }
-            let mut q = remaining.min(r_left);
-            if o.side == Side::Buy && o.kind == Kind::Market {
-                // pay as you go: never spend more than is free right now
-                let per = tp + (tp as f64 * self.fees.commission).ceil() as i64 + 1;
-                q = q.min(self.available_cash(o.account_id).div_euclid(per));
-                if q <= 0 {
-                    break;
-                }
-            }
-            let (buy, sell) = if o.side == Side::Buy { (order_id, rid) } else { (rid, order_id) };
-            self.fill(buy, sell, q, tp, day, ts);
-            remaining -= q;
-            filled += q;
-            notional += q * tp;
-        }
-        (filled, notional)
+        let incoming = Incoming { id: o.id, account: o.account_id, side: o.side, limit, left: o.qty - o.filled };
+        matching::sweep(&mut StockVenue { e: self, company_id: o.company_id, incoming: Some(&o), day, ts }, incoming)
     }
 
     /// Settle one trade of `q` shares at `tp` (v1 `_fill`).
@@ -1249,38 +1083,8 @@ impl Engine {
         let prev_close = self.st.companies.get(&company_id)?.prev_close;
         let (p, vol) = self.auction_price(company_id, prev_close);
         let p = p?;
-        let b = &self.st.books[&company_id];
-        let buys: Vec<i64> = b.bids.iter().take_while(|(Reverse(bp), _)| *bp >= p).map(|(_, id)| *id).collect();
-        let sells: Vec<i64> = b.asks.iter().take_while(|(sp, _)| *sp <= p).map(|(_, id)| *id).collect();
-        let mut left = vol;
-        'buys: for b in &buys {
-            if left <= 0 {
-                break;
-            }
-            for s in &sells {
-                if left <= 0 {
-                    break;
-                }
-                let buy = &self.st.orders[b];
-                let sell = &self.st.orders[s];
-                if buy.status != OrderStatus::Open {
-                    continue 'buys;
-                }
-                if sell.status != OrderStatus::Open || sell.account_id == buy.account_id {
-                    continue;
-                }
-                let q = buy.left().min(sell.left()).min(left);
-                if q > 0 {
-                    self.fill(*b, *s, q, p, day, ts);
-                    left -= q;
-                }
-            }
-        }
-        if left < vol {
-            Some(p)
-        } else {
-            None
-        }
+        let venue = &mut StockVenue { e: self, company_id, incoming: None, day, ts };
+        (matching::uncross(venue, p, vol) > 0).then_some(p)
     }
 
     /// Once a day when continuous trading starts (v1 `app.ensure_opening_auction`): clear every listed
@@ -1309,6 +1113,47 @@ impl Engine {
             self.dirty_companies.insert(id);
         }
         self.do_set_state("auction_day", day);
+    }
+}
+
+/// One stock's market for the matcher: stock settlement (`Engine::fill`), the company's volatility
+/// control, and cash as the limit on what a market buy can take.
+struct StockVenue<'e, 'a> {
+    e: &'e mut Engine,
+    company_id: i64,
+    /// the order being matched (None in the opening auction)
+    incoming: Option<&'a Order>,
+    day: &'a str,
+    ts: &'a str,
+}
+
+impl Venue for StockVenue<'_, '_> {
+    fn book(&self) -> &Book {
+        self.e.book_of(self.company_id)
+    }
+
+    fn resting(&self, id: i64) -> Option<Resting> {
+        let o = self.e.st.orders.get(&id).filter(|o| o.status == OrderStatus::Open)?;
+        Some(Resting { account: o.account_id, left: o.left() })
+    }
+
+    fn allow(&mut self, price: i64) -> bool {
+        self.e.allow_fill(self.company_id, price, self.day, self.ts)
+    }
+
+    /// A market buy pays as it goes: never more than the cash free right now.
+    fn capacity(&mut self, price: i64, want: i64) -> i64 {
+        match self.incoming {
+            Some(o) if o.side == Side::Buy && o.kind == Kind::Market => {
+                let per = price + (price as f64 * self.e.fees.commission).ceil() as i64 + 1;
+                want.min(self.e.available_cash(o.account_id).div_euclid(per))
+            }
+            _ => want,
+        }
+    }
+
+    fn fill(&mut self, buy: i64, sell: i64, qty: i64, price: i64) {
+        self.e.fill(buy, sell, qty, price, self.day, self.ts);
     }
 }
 

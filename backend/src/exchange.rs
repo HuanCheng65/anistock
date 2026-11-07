@@ -88,34 +88,119 @@ impl Rules {
     }
 }
 
+/// The price state the volatility control works on, for any instrument: the previous close (stocks) or
+/// settlement price (futures), the day's anchor, and the cooling-off period.
+pub trait Guard {
+    /// previous close / settlement price
+    fn prev_close(&self) -> i64;
+    /// the day's VCM anchor (the opening auction price), if set
+    fn open_ref(&self) -> Option<i64>;
+    /// cooling-off period: end time and band
+    fn vcm_until(&self) -> &Option<String>;
+    fn vcm_band(&self) -> (Option<i64>, Option<i64>);
+    /// cooling-off periods started today
+    fn vcm_count(&self) -> i64;
+    /// Start a cooling-off period until `until`, trading only within `low..=high`.
+    fn start_cooling(&mut self, until: String, low: i64, high: i64);
+}
+
+impl Guard for Company {
+    fn prev_close(&self) -> i64 {
+        self.prev_close
+    }
+    fn open_ref(&self) -> Option<i64> {
+        self.open_ref
+    }
+    fn vcm_until(&self) -> &Option<String> {
+        &self.vcm_until
+    }
+    fn vcm_band(&self) -> (Option<i64>, Option<i64>) {
+        (self.vcm_low, self.vcm_high)
+    }
+    fn vcm_count(&self) -> i64 {
+        self.vcm_count
+    }
+    fn start_cooling(&mut self, until: String, low: i64, high: i64) {
+        self.vcm_until = Some(until);
+        self.vcm_low = Some(low);
+        self.vcm_high = Some(high);
+        self.vcm_count += 1;
+    }
+}
+
 /// Python truthiness of `company["vcm_until"]` / `company["open_ref"]`.
 fn truthy_str(s: &Option<String>) -> Option<&str> {
     s.as_deref().filter(|s| !s.is_empty())
 }
 
-/// The cooling-off band if the stock is cooling off at `ts` (string comparison, like v1).
-pub fn cooling(c: &Company, ts: &str) -> Option<(i64, i64)> {
-    match truthy_str(&c.vcm_until) {
-        Some(until) if ts < until => Some((c.vcm_low.unwrap_or(0), c.vcm_high.unwrap_or(0))),
+/// The cooling-off band if the instrument is cooling off at `ts` (string comparison, like v1).
+pub fn cooling(c: &impl Guard, ts: &str) -> Option<(i64, i64)> {
+    match truthy_str(c.vcm_until()) {
+        Some(until) if ts < until => {
+            let (lo, hi) = c.vcm_band();
+            Some((lo.unwrap_or(0), hi.unwrap_or(0)))
+        }
         _ => None,
     }
 }
 
-pub fn sanity_band(c: &Company, rules: &Rules) -> (i64, i64) {
-    (1, (c.prev_close * rules.sanity_mult).max(100))
+pub fn sanity_band(c: &impl Guard, rules: &Rules) -> (i64, i64) {
+    (1, (c.prev_close() * rules.sanity_mult).max(100))
 }
 
 /// Prices that can trade right now: the cooling band, else the sanity band.
-pub fn quote_band(c: &Company, ts: &str, rules: &Rules) -> (i64, i64) {
+pub fn quote_band(c: &impl Guard, ts: &str, rules: &Rules) -> (i64, i64) {
     cooling(c, ts).unwrap_or_else(|| sanity_band(c, rules))
 }
 
 /// `company["open_ref"] or company["prev_close"]`
-pub fn vcm_anchor(c: &Company) -> i64 {
-    match c.open_ref {
+pub fn vcm_anchor(c: &impl Guard) -> i64 {
+    match c.open_ref() {
         Some(r) if r != 0 => r,
-        _ => c.prev_close,
+        _ => c.prev_close(),
     }
+}
+
+/// The volatility control's verdict on a trade price.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Vcm {
+    Allow,
+    /// outside the current cooling-off band
+    Block,
+    /// too far from `reference`: start a cooling-off period with this band
+    Trigger {
+        reference: i64,
+        threshold: f64,
+        low: i64,
+        high: i64,
+    },
+}
+
+/// May a trade print at `tp` at time `ts`? `lookback` is the last trade price at least the VCM window
+/// before `ts` today (asked for only when no cooling-off period has started today).
+pub fn vcm_check(c: &impl Guard, ts: &str, tp: i64, rules: &Rules, lookback: impl FnOnce() -> Option<i64>) -> Vcm {
+    if let Some((lo, hi)) = cooling(c, ts) {
+        return if lo <= tp && tp <= hi { Vcm::Allow } else { Vcm::Block };
+    }
+    let anchor = vcm_anchor(c);
+    let (r, thr) = match c.vcm_count() {
+        0 => (lookback().unwrap_or(anchor), rules.vcm_threshold),
+        n => (anchor, rules.vcm_threshold * (n + 1) as f64),
+    };
+    if r <= 0 || ((tp as f64) / (r as f64) - 1.0).abs() <= thr + 1e-12 {
+        return Vcm::Allow;
+    }
+    if rules.vcm_min_tick && (tp - r).abs() <= 1 {
+        return Vcm::Allow;
+    }
+    let rf = r as f64;
+    let mut lo = ((rf * (1.0 - thr) - 1e-9).ceil() as i64).max(1);
+    let mut hi = (rf * (1.0 + thr) + 1e-9).floor() as i64;
+    if rules.vcm_min_tick {
+        lo = lo.min((r - 1).max(1));
+        hi = hi.max(r + 1);
+    }
+    Vcm::Trigger { reference: r, threshold: thr, low: lo, high: hi }
 }
 
 /// Python `f"{cents / 100:.2f}"`. For integer cents this is exact decimal formatting.

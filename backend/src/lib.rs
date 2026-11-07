@@ -11,6 +11,7 @@ pub mod engine;
 pub mod exchange;
 pub mod inputs;
 pub mod market;
+pub mod matching;
 pub mod ipo;
 pub mod margin;
 pub mod model;
