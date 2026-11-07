@@ -269,6 +269,8 @@ fn fills_open_and_close_positions() {
     let (mut e, [a, b, c]) = market();
     let im = e.fut_im_lot(&e.st.futures.contracts[&1].clone());
     assert_eq!(im, 13500); // 15% of 90.00 x 10 星辉 = 135 星辉
+    let world = e.special("world").unwrap();
+    let world_before = e.st.accounts[&world].cash;
     let sold = e.futures_place(&req(a, Side::Sell, 2, Some(9000))).unwrap();
     assert_eq!((sold.status, sold.filled), (OrderStatus::Open, 0));
     let bought = e.futures_place(&req(b, Side::Buy, 3, Some(9100))).unwrap();
@@ -280,8 +282,7 @@ fn fills_open_and_close_positions() {
     );
     assert_eq!((f.positions[&(b, 1)].qty, f.positions[&(b, 1)].margin), (2, 2 * im));
     // commission: 0.025% of 2 x 90.00 x 1000 cents, each side
-    let fee: i64 = e.st.accounts[&e.special("world").unwrap()].cash + 3 * 10_000_000;
-    assert_eq!(fee, 2 * 45);
+    assert_eq!(e.st.accounts[&world].cash - world_before, 2 * 45);
     for x in [a, b, c] {
         frozen_matches(&e, x);
     }
@@ -570,4 +571,23 @@ fn forecast_of_a_period() {
     }
     let done = e.fut_forecast(&fp, &p, 1, 1, first, last, last).unwrap();
     assert_eq!((done.mean, done.sd), (63.5, 0.0));
+}
+
+#[test]
+fn the_market_maker_quotes_and_takes_the_other_side() {
+    let (mut e, [a, _, _]) = market();
+    e.st.futures.mean.insert(1, 9000);
+    e.st.futures.sd.insert(1, 400);
+    let q = e.futures_mm_requote(1, DAY, T1);
+    assert_eq!((q.mid, q.bids[0], q.asks[0]), (9000, (8900, 10), (9100, 10)));
+    assert_eq!(e.st.futures.last_mid[&1], 9000);
+    let bought = e.futures_place(&req(a, Side::Buy, 15, None)).unwrap();
+    assert_eq!((bought.filled, bought.avg_price), (15, Some((10 * 9100 + 5 * 9200 + 7) / 15)));
+    let mm = e.special("fmm").unwrap();
+    assert_eq!(e.st.futures.position(mm, 1), -15);
+    // requoting replaces its orders and leans against the short
+    let q = e.futures_mm_requote(1, DAY, T1);
+    assert!(q.mid > 9000 && e.st.futures.open_orders(mm, 1).count() == 6);
+    frozen_matches(&e, mm);
+    e.check_invariants().unwrap();
 }

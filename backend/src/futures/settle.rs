@@ -72,9 +72,11 @@ impl Engine {
                 c.status = ContractStatus::Expiring;
             }
             let row = c.clone();
+            let company = row.company_id;
             self.fut_out(FuturesChange::Contract(row));
             if source == SettleSource::Final {
                 self.fut_retire(id);
+                self.fmm_return(id, company, day, ts);
             }
         }
         out

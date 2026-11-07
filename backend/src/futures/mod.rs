@@ -10,11 +10,13 @@
 //! - `settle`: the daily settlement (mark-to-market) and the final settlement
 //! - `credit`: the credit account: financing the margin, maintenance, liquidation, position caps
 //! - `forecast`: the model's forecast of a period's average; refreshing it and listing at the close
+//! - `mm`: the market maker's quotes
 
 pub mod calendar;
 pub mod credit;
 pub mod forecast;
 pub mod listing;
+pub mod mm;
 pub mod model;
 pub mod rules;
 pub mod settle;
@@ -121,6 +123,13 @@ impl FuturesState {
     /// The listed contracts on `work_id`, earliest period first.
     pub fn on_work(&self, work_id: i64) -> impl Iterator<Item = &Contract> {
         self.contracts.values().filter(move |c| c.work_id == work_id)
+    }
+}
+
+impl crate::engine::Engine {
+    /// Contracts trading now, in id order.
+    pub fn futures_trading(&self) -> std::collections::BTreeSet<i64> {
+        self.st.futures.contracts.values().filter(|c| c.trading()).map(|c| c.id).collect()
     }
 }
 

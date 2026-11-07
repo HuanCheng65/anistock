@@ -34,6 +34,19 @@ pub struct FuturesRules {
     /// the realised average's spread around the model's expectation beyond the level's own uncertainty (the
     /// link, the index's daily noise), as a share of the expectation of the days still to come
     pub model_cv: f64,
+    /// the market maker (one account, `fmm`): capital from world per contract listed (returned when it
+    /// settles), position limit and quote size in lots, quote levels
+    pub mm_capital: i64,
+    pub mm_limit: i64,
+    pub mm_size: i64,
+    pub mm_levels: i64,
+    /// half-spread: this many standard deviations of the forecast of the average, at least `mm_min_half` ticks
+    pub mm_spread_sd: f64,
+    pub mm_min_half: i64,
+    /// the quote's centre leans this far from the forecast toward the last price
+    pub mm_last_weight: f64,
+    /// at its position limit the centre moves this many half-spreads against its inventory
+    pub mm_skew: f64,
 }
 
 impl Default for FuturesRules {
@@ -54,6 +67,14 @@ impl Default for FuturesRules {
             index_platform: [114628.0, 2168.0, 1542.0],
             index_scale: 11300.0,
             model_cv: 0.15,
+            mm_capital: 20_000_000,
+            mm_limit: 200,
+            mm_size: 10,
+            mm_levels: 3,
+            mm_spread_sd: 0.25,
+            mm_min_half: 20,
+            mm_last_weight: 0.2,
+            mm_skew: 1.0,
         }
     }
 }

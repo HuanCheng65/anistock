@@ -67,7 +67,8 @@ impl Engine {
             };
             f.contracts.insert(c.id, c.clone());
             new.push(c.id);
-            self.fut_out(FuturesChange::Contract(c));
+            self.fut_out(FuturesChange::Contract(c.clone()));
+            self.fmm_fund(c.id, today, &format!("{today}T06:30:00"));
         }
         new
     }

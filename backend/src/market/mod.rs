@@ -16,7 +16,7 @@ pub mod runtime;
 mod short;
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use serde::Serialize;
 
@@ -151,12 +151,16 @@ pub struct MarketStats {
 enum Actor {
     Agent(u32),
     Mm(i64),
+    /// the futures market maker of one contract (crate::futures::mm)
+    Fmm(i64),
 }
 
 pub struct Market {
     pub cfg: MarketConfig,
     pub agents: Vec<Agent>,
     mms: BTreeMap<i64, MmState>,
+    /// futures contracts whose market maker is scheduled
+    fmms: BTreeSet<i64>,
     schedule: BinaryHeap<Reverse<(i64, Actor)>>,
     pub events: Vec<Event>,
     heat: HashMap<i64, f64>,
@@ -213,6 +217,7 @@ impl Market {
             cfg,
             agents: Vec::new(),
             mms: BTreeMap::new(),
+            fmms: BTreeSet::new(),
             schedule: BinaryHeap::new(),
             events: Vec::new(),
             heat: HashMap::new(),
@@ -1019,6 +1024,15 @@ impl Market {
             }
         }
         self.mms.retain(|c, _| live.contains(c));
+        // 热度期货: one market maker per contract trading
+        let trading = engine.futures_trading();
+        for &k in &trading {
+            if self.fmms.insert(k) {
+                let first = now + self.rng.exp(self.cfg.mm_rate / 3600.0) as i64;
+                self.schedule.push(Reverse((first, Actor::Fmm(k))));
+            }
+        }
+        self.fmms.retain(|k| trading.contains(k));
         // premiere nights: the first air time, when it is the show's first episode
         for &c in &listed {
             if self.premiere_at.contains_key(&c) {
@@ -1159,6 +1173,21 @@ impl Market {
                     }
                     let gap = (self.rng.exp(self.cfg.mm_rate / 3600.0).ceil() as i64).max(1);
                     self.schedule.push(Reverse((t + gap, Actor::Mm(c))));
+                }
+                Actor::Fmm(k) => {
+                    if !self.fmms.contains(&k) {
+                        continue;
+                    }
+                    let (_, s) = local(t);
+                    if self.curve(s) > 0.0 && !Self::phase_auction(t) {
+                        let (day, ts) = (day_of(t), ts_of(t));
+                        if engine.state("auction_day") != Some(day.as_str()) {
+                            engine.open_market(&day, &ts);
+                        }
+                        engine.futures_mm_requote(k, &day, &ts);
+                    }
+                    let gap = (self.rng.exp(self.cfg.mm_rate / 3600.0).ceil() as i64).max(1);
+                    self.schedule.push(Reverse((t + gap, Actor::Fmm(k))));
                 }
             }
         }
