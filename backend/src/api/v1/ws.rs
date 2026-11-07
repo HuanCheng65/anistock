@@ -119,6 +119,13 @@ pub enum WsServerMessage {
         #[schema(value_type = Vec<Vec<serde_json::Value>>)]
         trades: Vec<Value>,
     },
+    /// 主题 `futures:{id}`：合约和盘口（各 10 档）的快照，字段同 `GET /futures/{id}`；有变化时最多每 100 ms 一条
+    Futures {
+        seq: u64,
+        contract: super::futures::FuturesContract,
+        bids: Vec<super::futures::FuturesBookLevel>,
+        asks: Vec<super::futures::FuturesBookLevel>,
+    },
     News {
         seq: u64,
         item: NewsItem,
@@ -142,6 +149,10 @@ pub enum WsServerMessage {
         seq: u64,
         status: Option<String>,
         call_day: Option<TradingDay>,
+    },
+    /// 主题 `me`：我的期货委托或持仓有变化，重新读取 `GET /me/futures`
+    FuturesMine {
+        seq: u64,
     },
     Event(super::events::Event),
 }

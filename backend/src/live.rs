@@ -14,6 +14,9 @@
 //!   subscriber list only when its full snapshot goes out, so it never sees a delta before the full one.
 //! - **Batched writes**: the per-client writer drains its queue into one NDJSON text frame.
 //! - **Slow clients**: per-client queues hold `QUEUE` messages; a full queue closes the connection (4008).
+//! - **Futures** (`futures:{id}`): a change on contract K marks it dirty like a stock; every 100 ms each dirty
+//!   contract with subscribers gets one snapshot of the contract and its book (a few dozen contracts, small
+//!   messages: no deltas). A player's futures orders and positions send `futures_mine` on `me`.
 //! - `news`, `events` and `me` go out as they happen. `news` and `events` keep the last 24 hours (at most
 //!   2000 each) for `since` on reconnect; outside that window the client gets `reset`.
 //! - `time` every 20 s and at once on a phase change, the 04:00 day change and a finished close.
@@ -34,6 +37,7 @@ use crate::api::v1::types::{self as t, Money, OrderSide, StockRef};
 use crate::api::v1::ws::{WsLimits, WsRejected, WsServerMessage as M};
 use crate::config::{Clock, Config};
 use crate::engine::Engine;
+use crate::futures::FuturesChange;
 use crate::model::OrderStatus;
 use crate::store::persist::{Change, ChangeSink};
 
@@ -66,6 +70,13 @@ fn relevant(c: &Change) -> bool {
             | Change::CompanyUpdate(_)
             | Change::CompanyInsert(_)
             | Change::NewsInsert(_)
+            | Change::Futures(
+                FuturesChange::Contract(_)
+                    | FuturesChange::Order(_)
+                    | FuturesChange::Trade(_)
+                    | FuturesChange::Position(_)
+                    | FuturesChange::PositionDelete(..)
+            )
     )
 }
 
@@ -119,6 +130,7 @@ struct Client {
     event_kinds: HashSet<String>,
     me: bool,
     stocks: Vec<i64>,
+    contracts: Vec<i64>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -148,6 +160,9 @@ pub struct Fanout {
     stock_subs: HashMap<i64, Vec<u64>>,
     slots: [Vec<u64>; 10],
     dirty: HashSet<i64>,
+    fut_subs: HashMap<i64, Vec<u64>>,
+    fut_dirty: HashSet<i64>,
+    fut_seq: HashMap<i64, u64>,
     /// trades per stock since the previous flush: (id, price, qty, ts)
     new_trades: HashMap<i64, Vec<(i64, i64, i64, String)>>,
     /// initial stock snapshots to answer: (client, stock)
@@ -197,6 +212,9 @@ impl Fanout {
             stock_subs: HashMap::new(),
             slots: Default::default(),
             dirty: HashSet::new(),
+            fut_subs: HashMap::new(),
+            fut_dirty: HashSet::new(),
+            fut_seq: HashMap::new(),
             new_trades: HashMap::new(),
             init: Vec::new(),
             turnover,
@@ -265,6 +283,7 @@ impl Fanout {
                         event_kinds: HashSet::new(),
                         me: false,
                         stocks: vec![],
+                        contracts: vec![],
                     },
                 );
                 let hello = M::Hello {
@@ -304,6 +323,10 @@ impl Fanout {
                 for tp in topics {
                     if tp == "quotes" && self.clients.get(&id).is_some_and(|c| c.quotes) {
                         self.send_full_quotes(id, e);
+                    } else if let Some(k) = tp.strip_prefix("futures:").and_then(|s| s.parse::<i64>().ok()) {
+                        if self.clients.get(&id).is_some_and(|c| c.contracts.contains(&k)) {
+                            self.send_contract(id, k, e);
+                        }
                     } else if let Some(cid) = tp.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) {
                         if self.clients.get(&id).is_some_and(|c| c.stocks.contains(&cid)) {
                             if let Some(v) = self.stock_subs.get_mut(&cid) {
@@ -397,6 +420,22 @@ impl Fanout {
                 }
                 Ok(())
             }
+            _ if topic.starts_with("futures:") => {
+                let Some(k) = topic["futures:".len()..].parse::<i64>().ok() else { return Err("unknown_topic") };
+                if c.contracts.contains(&k) {
+                    return Ok(());
+                }
+                if !e.st.futures.contracts.contains_key(&k) {
+                    return Err("contract_not_found");
+                }
+                if c.contracts.len() >= MAX_STOCKS {
+                    return Err("too_many_contracts");
+                }
+                c.contracts.push(k);
+                self.fut_subs.entry(k).or_default().push(id);
+                self.send_contract(id, k, e);
+                Ok(())
+            }
             _ => {
                 let Some(cid) = topic.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) else {
                     return Err("unknown_topic");
@@ -427,6 +466,13 @@ impl Fanout {
             _ if topic.starts_with("events:") => {
                 c.event_kinds.remove(&topic["events:".len()..]);
             }
+            _ if topic.starts_with("futures:") => {
+                let Ok(k) = topic["futures:".len()..].parse::<i64>() else { return };
+                c.contracts.retain(|x| *x != k);
+                if let Some(v) = self.fut_subs.get_mut(&k) {
+                    v.retain(|x| *x != id);
+                }
+            }
             _ => {
                 let Some(cid) = topic.strip_prefix("stock:").and_then(|s| s.parse::<i64>().ok()) else { return };
                 c.stocks.retain(|x| *x != cid);
@@ -441,6 +487,11 @@ impl Fanout {
         if let Some(mut c) = self.clients.remove(&id) {
             for cid in &c.stocks {
                 if let Some(v) = self.stock_subs.get_mut(cid) {
+                    v.retain(|x| *x != id);
+                }
+            }
+            for k in &c.contracts {
+                if let Some(v) = self.fut_subs.get_mut(k) {
                     v.retain(|x| *x != id);
                 }
             }
@@ -673,6 +724,22 @@ impl Fanout {
             Change::CompanyUpdate(c) | Change::CompanyInsert(c) => {
                 self.dirty.insert(c.id);
             }
+            Change::Futures(f) => {
+                let (contract, account) = match &f {
+                    FuturesChange::Contract(k) => (Some(k.id), None),
+                    FuturesChange::Order(o) => (Some(o.contract_id), Some(o.account_id)),
+                    FuturesChange::Trade(tr) => (Some(tr.contract_id), None),
+                    FuturesChange::Position(p) => (None, Some(p.account_id)),
+                    FuturesChange::PositionDelete(a, _) => (None, Some(*a)),
+                    _ => (None, None),
+                };
+                if let Some(k) = contract {
+                    self.fut_dirty.insert(k);
+                }
+                if let Some(a) = account.filter(|a| Self::is_player(e, *a)) {
+                    self.to_account(a, |seq| M::FuturesMine { seq });
+                }
+            }
             Change::NewsInsert(n) => {
                 let item = t::NewsItem {
                     id: n.id,
@@ -897,7 +964,34 @@ impl Fanout {
             }
         }
         self.new_trades.clear();
+        let dirty: Vec<i64> = self.fut_dirty.drain().collect();
+        for k in dirty {
+            let Some(subs) = self.fut_subs.get(&k).filter(|v| !v.is_empty()).cloned() else { continue };
+            let Some(msg) = self.encode_contract(e, k, &today) else { continue };
+            for id in subs {
+                self.send_to(id, &msg);
+            }
+        }
         self.flush_removals();
+    }
+
+    /// One contract's snapshot (`seq` per contract, advanced by every message).
+    fn encode_contract(&mut self, e: &Engine, k: i64, today: &str) -> Option<Utf8Bytes> {
+        let (contract, bids, asks) = crate::api::v1::futures::contract_market(e, k, today)?;
+        let seq = {
+            let s = self.fut_seq.entry(k).or_default();
+            *s += 1;
+            *s
+        };
+        Some(text(&M::Futures { seq, contract, bids, asks }))
+    }
+
+    /// A contract's snapshot to one subscriber at once (subscribe, resync).
+    fn send_contract(&mut self, id: u64, k: i64, e: &Engine) {
+        let today = self.clock.today();
+        if let Some(msg) = self.encode_contract(e, k, &today) {
+            self.send_to(id, &msg);
+        }
     }
 
     fn turnover_of(&self, cid: i64, today: &str) -> i64 {

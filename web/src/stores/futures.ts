@@ -3,6 +3,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, call, type FuturesContract, type FuturesDetail, type MyFutures } from '../api'
+import { onLive } from '../live'
 
 export const useFutures = defineStore('futures', () => {
   /** the contracts trading or waiting for their index (null: not loaded) */
@@ -33,6 +34,23 @@ export const useFutures = defineStore('futures', () => {
     const xs = (list.value ?? []).filter((c) => c.stock.id === stockId && c.status === 'listed')
     return xs.sort((a, b) => b.period - a.period)[0] ?? null
   }
+
+  // push (docs/api-v1.md §5): `futures:{id}` snapshots replace the contract and its book; `futures_mine` on
+  // `me` says the player's orders or positions changed, read again at most once a second
+  onLive('futures', (m) => {
+    const d = detail.value[m.contract.id]
+    if (d) detail.value[m.contract.id] = { ...d, contract: m.contract, bids: m.bids, asks: m.asks }
+    const i = list.value?.findIndex((c) => c.id === m.contract.id) ?? -1
+    if (list.value && i >= 0) list.value[i] = m.contract
+  })
+  let mineTimer: number | null = null
+  onLive('futures_mine', () => {
+    if (mineTimer != null) return
+    mineTimer = window.setTimeout(() => {
+      mineTimer = null
+      refreshMine().catch(() => {})
+    }, 1000)
+  })
 
   return { list, detail, mine, error, refreshList, refresh, refreshMine, place, cancel, forStock }
 })

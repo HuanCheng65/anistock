@@ -77,7 +77,7 @@ const confirmText = computed(() => {
   const at = num(px.value / 100)
   const rule = closing.value === lots.value
     ? ''
-    : `平均热度${side.value === 'buy' ? '每高' : '每低'}于 ${at} 1 点，赚 ${money(perPoint.value * lots.value, 0)} 星辉；反过来亏同样多。`
+    : `平均热度比 ${at} 每${side.value === 'buy' ? '高' : '低'} 1 点赚 ${money(perPoint.value * lots.value, 0)} 星辉，每${side.value === 'buy' ? '低' : '高'} 1 点亏同样多。`
   return rule + (crosses.value ? `按 ${at} 以内的价格立即成交。` : `挂单等到 ${at}，当天有效。`)
 })
 

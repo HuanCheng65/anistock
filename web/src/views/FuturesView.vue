@@ -11,6 +11,7 @@ import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
+import { useTopic } from '../live'
 import { errorText } from '../api'
 import { dir, money, num, pct, qty, signed } from '../format'
 import { useFutures } from '../stores/futures'
@@ -33,6 +34,8 @@ usePoll(async () => {
     err.value = errorText(e, '无法加载合约')
   }
 }, 5000, 20000)
+// live: the contract and its book come pushed; the poll then only picks up the days and the index
+useTopic(computed(() => (Number.isFinite(id.value) ? `futures:${id.value}` : null)))
 usePoll(() => (session.me ? fut.refreshMine() : null), 15000, 60000)
 usePoll(() => (fut.list ? null : fut.refreshList()), 60000)
 

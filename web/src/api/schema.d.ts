@@ -2665,6 +2665,14 @@ export interface components {
             /** Format: int64 */
             volume: number;
         } | {
+            asks: components["schemas"]["FuturesBookLevel"][];
+            bids: components["schemas"]["FuturesBookLevel"][];
+            contract: components["schemas"]["FuturesContract"];
+            /** Format: int64 */
+            seq: number;
+            /** @enum {string} */
+            t: "futures";
+        } | {
             item: components["schemas"]["NewsItem"];
             /** Format: int64 */
             seq: number;
@@ -2697,6 +2705,11 @@ export interface components {
             status: string | null;
             /** @enum {string} */
             t: "credit";
+        } | {
+            /** Format: int64 */
+            seq: number;
+            /** @enum {string} */
+            t: "futures_mine";
         } | (components["schemas"]["Event"] & {
             /** @enum {string} */
             t: "event";

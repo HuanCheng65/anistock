@@ -5777,6 +5777,45 @@
             "type": "object"
           },
           {
+            "description": "主题 `futures:{id}`：合约和盘口（各 10 档）的快照，字段同 `GET /futures/{id}`；有变化时最多每 100 ms 一条",
+            "properties": {
+              "asks": {
+                "items": {
+                  "$ref": "#/components/schemas/FuturesBookLevel"
+                },
+                "type": "array"
+              },
+              "bids": {
+                "items": {
+                  "$ref": "#/components/schemas/FuturesBookLevel"
+                },
+                "type": "array"
+              },
+              "contract": {
+                "$ref": "#/components/schemas/FuturesContract"
+              },
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "futures"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "asks",
+              "bids",
+              "contract",
+              "seq",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "item": {
                 "$ref": "#/components/schemas/NewsItem"
@@ -5915,6 +5954,27 @@
               "call_day",
               "seq",
               "status",
+              "t"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "主题 `me`：我的期货委托或持仓有变化，重新读取 `GET /me/futures`",
+            "properties": {
+              "seq": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "t": {
+                "enum": [
+                  "futures_mine"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
               "t"
             ],
             "type": "object"

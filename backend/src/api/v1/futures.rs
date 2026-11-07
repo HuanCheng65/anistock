@@ -27,7 +27,7 @@ use crate::model::{Kind, Side};
 #[schema(value_type = i64)]
 pub struct IndexPrice(pub i64);
 
-#[derive(Serialize, ToSchema, Clone)]
+#[derive(Serialize, ToSchema, Clone, Debug)]
 pub struct FuturesContract {
     pub id: i64,
     pub code: String,
@@ -92,7 +92,7 @@ pub struct HeatDay {
     pub version: String,
 }
 
-#[derive(Serialize, ToSchema, Clone)]
+#[derive(Serialize, ToSchema, Clone, Debug)]
 pub struct FuturesBookLevel {
     pub price: IndexPrice,
     pub quantity: i64,
@@ -174,7 +174,7 @@ pub struct FuturesOrderResponse {
     pub average_price: Option<IndexPrice>,
 }
 
-fn contract_view(e: &Engine, c: &Contract, today: &str) -> FuturesContract {
+pub(crate) fn contract_view(e: &Engine, c: &Contract, today: &str) -> FuturesContract {
     let f = &e.st.futures;
     let days = crate::futures::forecast::day_range(&c.first_day, &c.last_day).map_or(0, |(a, b)| b - a + 1);
     let published: Vec<f64> =
@@ -204,6 +204,21 @@ fn contract_view(e: &Engine, c: &Contract, today: &str) -> FuturesContract {
         average_so_far: (!published.is_empty()).then(|| r6(published.iter().sum::<f64>() / published.len() as f64)),
         final_price: c.final_price.map(IndexPrice),
     }
+}
+
+/// A contract and its book (10 levels a side): `GET /futures/{id}` and the `futures:{id}` push.
+pub(crate) fn contract_market(
+    e: &Engine,
+    id: i64,
+    today: &str,
+) -> Option<(FuturesContract, Vec<FuturesBookLevel>, Vec<FuturesBookLevel>)> {
+    let c = e.st.futures.contracts.get(&id)?;
+    let f = &e.st.futures;
+    let view = f.book(id).depth(10, |o| f.orders[&o].left());
+    let lv = |ls: Vec<crate::matching::Level>| {
+        ls.into_iter().map(|l| FuturesBookLevel { price: IndexPrice(l.price), quantity: l.qty, orders: l.orders }).collect()
+    };
+    Some((contract_view(e, c, today), lv(view.bids), lv(view.asks)))
 }
 
 fn heat_rows(c: &rusqlite::Connection, work: i64, from: &str, to: &str) -> R<Vec<HeatDay>> {
@@ -292,19 +307,8 @@ pub async fn list(State(st): State<Arc<AppState>>) -> R<Json<FuturesList>> {
 pub async fn detail(State(st): State<Arc<AppState>>, Path(raw): Path<String>) -> R<Json<FuturesDetail>> {
     let id = super::path_id(&raw, "id")?;
     let today = st.clock.today();
-    let (contract, bids, asks) = engine(&st, move |ctx| -> R<_> {
-        let e = &ctx.engine;
-        let c = e.st.futures.contracts.get(&id).ok_or_else(|| not_found(id))?;
-        let f = &e.st.futures;
-        let view = f.book(id).depth(10, |o| f.orders[&o].left());
-        let lv = |ls: Vec<crate::matching::Level>| {
-            ls.into_iter()
-                .map(|l| FuturesBookLevel { price: IndexPrice(l.price), quantity: l.qty, orders: l.orders })
-                .collect()
-        };
-        Ok((contract_view(e, c, &today), lv(view.bids), lv(view.asks)))
-    })
-    .await??;
+    let (contract, bids, asks) =
+        engine(&st, move |ctx| contract_market(&ctx.engine, id, &today).ok_or_else(|| not_found(id))).await??;
     let (work, first, last) = (contract.work_id, contract.first_day.0.clone(), contract.last_day.0.clone());
     let (days, index) = read(&st, move |c| {
         let mut s = c
