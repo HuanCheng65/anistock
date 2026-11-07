@@ -3,6 +3,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use super::Tick;
 use super::model::*;
 use super::FuturesState;
 use crate::model::{Kind, OrderStatus, Side};
@@ -223,6 +224,23 @@ pub fn load(conn: &Connection) -> rusqlite::Result<FuturesState> {
     let max = |t: &str| -> rusqlite::Result<i64> {
         conn.query_row(&format!("SELECT COALESCE(MAX(id), 0) FROM {t}"), [], |r| r.get(0))
     };
+    // the trades of the day not settled yet (the settlement's VWAP, the day's volume): a restart mid-day keeps them
+    let ids: Vec<i64> = s.contracts.keys().copied().collect();
+    for id in ids {
+        let mut st = conn.prepare(
+            "SELECT day, ts, price, qty FROM futures_trades WHERE contract_id=?1
+               AND day > COALESCE((SELECT MAX(day) FROM futures_days WHERE contract_id=?1), '') ORDER BY id",
+        )?;
+        let rows = st.query_map([id], |r| Ok((r.get::<_, String>(0)?, Tick { ts: r.get(1)?, price: r.get(2)?, qty: r.get(3)? })))?;
+        for row in rows {
+            let (day, tick) = row?;
+            let today = s.today.entry(id).or_insert_with(|| (day.clone(), vec![]));
+            if today.0 != day {
+                *today = (day, vec![]);
+            }
+            today.1.push(tick);
+        }
+    }
     s.last_contract_id = max("futures_contracts")?;
     s.last_order_id = max("futures_orders")?;
     s.last_trade_id = max("futures_trades")?;

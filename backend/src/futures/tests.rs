@@ -138,6 +138,19 @@ fn rows_round_trip() {
             source: SettleSource::Vwap,
             open_interest: 2,
         }),
+        // a trade of the next day, not settled yet
+        FuturesChange::Trade(FutTrade {
+            id: 4,
+            contract_id: 1,
+            price: 9050,
+            qty: 1,
+            buyer_id: 8,
+            seller_id: 7,
+            buy_order: 4,
+            sell_order: 5,
+            ts: "u".into(),
+            day: "2026-10-09".into(),
+        }),
     ];
     for c in &changes {
         apply(&conn, c).unwrap();
@@ -151,7 +164,9 @@ fn rows_round_trip() {
     assert_eq!(s.position(7, 1), -2);
     assert_eq!(s.open_interest(1), 2);
     assert!(!s.positions.contains_key(&(9, 1)));
-    assert_eq!((s.last_contract_id, s.last_order_id, s.last_trade_id), (2, 7, 3));
+    assert_eq!((s.last_contract_id, s.last_order_id, s.last_trade_id), (2, 7, 4));
+    let (day, ticks) = &s.today[&1];
+    assert_eq!((day.as_str(), ticks.len(), ticks[0].price), ("2026-10-09", 1, 9050), "only the unsettled day's trades");
 }
 
 #[test]
