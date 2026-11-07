@@ -61,8 +61,12 @@ pub enum BotKind {
     /// adaptive liquidity: post bids 5% under and offers 5% over the last price in the ten hottest stocks,
     /// refreshed hourly, and wait for NPC flow to fill them
     /// buy the 3 hottest stocks (by the NPCs' heat) when it starts and hold them: does the valuation follow
-    /// public popularity with a delay?
+    /// public popularity with a delay? (one portfolio chosen once: the same three stocks in every seed, so the seeds
+    /// are not independent draws; reported, the gate uses `HoldHottest28`)
     HoldHottest,
+    /// every 28 days hold the 3 hottest stocks of the day, equal weight (sell the rest): the same question over a
+    /// new portfolio each period, the replay's counterpart of sim/quickcheck.py `hottest3_28d`
+    HoldHottest28,
     BadPrice,
     /// buy each stock the evening before its finale airs (a tenth of the starting cash each) and hold it to the
     /// end: is a finished show's long tail fairly priced? (docs/v2-series.md §11)
@@ -111,7 +115,7 @@ pub enum BotKind {
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 39] {
+    pub fn all() -> [BotKind; 40] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -132,6 +136,7 @@ impl BotKind {
             BotKind::SpoofScare,
             BotKind::BadPrice,
             BotKind::HoldHottest,
+            BotKind::HoldHottest28,
             BotKind::FinaleHold,
             BotKind::FinaleFlip,
             BotKind::LeverHold,
@@ -175,6 +180,7 @@ impl BotKind {
             BotKind::SpoofScare => "spoof_scare",
             BotKind::BadPrice => "bad_price",
             BotKind::HoldHottest => "hold_hottest",
+            BotKind::HoldHottest28 => "hold_hottest_28",
             BotKind::FinaleHold => "finale_hold",
             BotKind::FinaleFlip => "finale_flip",
             BotKind::LeverHold => "lever_hold",
@@ -859,6 +865,34 @@ impl Bot {
                             self.trades_placed += 1;
                         }
                         self.finale_exits.retain(|x| x.0 != c);
+                    }
+                }
+            }
+            BotKind::HoldHottest28 => {
+                // 10:00 each day: every 28 days re-form the portfolio from the day's 3 hottest; in between, top up
+                // a position still under 80% of its share (an order not filled yet)
+                if s != 10 * 3600 {
+                    return;
+                }
+                let today = crate::vclose::day_no(&day_of(t)).unwrap_or(0);
+                if self.since == 0 || today - self.since >= 28 {
+                    self.since = today;
+                    self.sold = hottest(e, heat, 3);
+                    let held: Vec<i64> = e.holdings_of(acct).filter(|h| h.qty > 0).map(|h| h.company_id).collect();
+                    for c in held {
+                        if !self.sold.contains(&c) {
+                            self.sell_all(e, c, t);
+                        }
+                    }
+                }
+                let picks = self.sold.clone();
+                let per = self.wealth(e) / picks.len().max(1) as i64;
+                for c in picks {
+                    let Some(p) = e.company(c).filter(|x| x.status == "listed").map(|x| x.last_price) else { continue };
+                    let have = e.holding(acct, c).map_or(0, |h| h.qty) * p;
+                    if have < per * 8 / 10 {
+                        e.cancel_all(acct, c, &ts);
+                        self.buy(e, c, per - have, t);
                     }
                 }
             }
