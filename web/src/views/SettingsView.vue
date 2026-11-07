@@ -247,7 +247,7 @@ async function unbind(id: number) {
     </section>
     <section v-if="session.me && !keysMissing" class="sec">
       <h2>API 密钥</h2>
-      <p class="hint">{{ trading?.enabled ? '用于脚本读取账户数据、接收成交推送和下单。' : '用于脚本读取账户数据和接收成交推送，目前不能下单。' }}接口说明见 <a href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI 文档</a>。</p>
+      <p class="hint">{{ trading?.enabled ? '用于脚本读取账户数据、接收成交推送和下单。' : '用于脚本读取账户数据和接收成交推送，目前不能下单。' }}使用方法见<a href="https://github.com/HuanCheng65/anistock/blob/main/docs/api-scripts.md" target="_blank" rel="noopener">开发者说明</a>，接口定义见 <a href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI 文档</a>。</p>
       <ul v-if="keys?.length" class="keys">
         <li v-for="k in keys" :key="k.id">
           <div class="keyhead">

@@ -206,8 +206,9 @@ margin_disclosure = 1          # 融资融券风险揭示书: signed before open
 api_disclosure = 1             # 程序化交易风险揭示书: signed before an API key may trade
 
 [api]
-# API keys with the `trade` scope (docs/v2-api-access.md phase 2). Off: keys stay read-only.
-trading = false
+# API keys with the `trade` scope (docs/v2-api-access.md phase 2). Off: keys stay read-only, and existing
+# trade keys stop trading at once (ANISTOCK_API_TRADING=0 overrides without a commit).
+trading = true                 # opened 2026-11-07 with v0.6.10
 
 [api.events]
 # bot events (docs/api-v1.md §5.3.7): big_move thresholds

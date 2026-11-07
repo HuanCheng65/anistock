@@ -54,6 +54,8 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
         "ANISTOCK_GAME_DB" => Some(db2.display().to_string()),
         "ANISTOCK_DB" => Some(coll.display().to_string()),
         "ANISTOCK_INVITE" => Some("club".into()),
+        // API trading off unless a test turns it on (server/game.toml may have it on)
+        "ANISTOCK_API_TRADING" => Some(extra.iter().find(|(n, _)| *n == "ANISTOCK_API_TRADING").map_or("0", |(_, v)| *v).to_string()),
         k => extra.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()),
     })
     .unwrap();
