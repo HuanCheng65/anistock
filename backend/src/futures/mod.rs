@@ -5,7 +5,10 @@
 //! - `model`: the rows (contracts, orders, trades, positions, days, the frozen index)
 //! - `store`: loading and saving them (migration V17)
 //! - `rules`: `[futures]` of game.toml
+//! - `calendar`, `listing`: the periods and listing them at the close
 
+pub mod calendar;
+pub mod listing;
 pub mod model;
 pub mod rules;
 pub mod store;

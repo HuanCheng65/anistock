@@ -1,6 +1,59 @@
+use chrono::NaiveDate;
+
+use super::listing::Underlying;
 use super::store::{apply, load};
 use super::*;
-use crate::model::{Kind, Side};
+use crate::engine::Engine;
+use crate::model::{Company, Kind, Side};
+use crate::{Fees, Rules};
+
+const TS: &str = "2026-10-03T06:30:00+08:00";
+
+fn d(s: &str) -> NaiveDate {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+}
+
+fn listed_company(id: i64) -> Company {
+    Company {
+        id,
+        code: format!("{}", 100000 + id),
+        title: format!("作品{id}"),
+        title_ja: None,
+        title_en: None,
+        studio: None,
+        episodes: Some(12),
+        long_runner: 0,
+        first_air: "2026-10-03".into(),
+        listed_on: "2026-09-20".into(),
+        status: "listed".into(),
+        sub_start: None,
+        sub_end: None,
+        shares: 1000,
+        ipo_price: 500,
+        prev_close: 500,
+        open_ref: None,
+        vcm_until: None,
+        vcm_low: None,
+        vcm_high: None,
+        vcm_count: 0,
+        last_price: 500,
+        fair_value: 500,
+        profit_week: 0,
+        low_weeks: 0,
+        delisted_on: None,
+    }
+}
+
+/// world, cb, gov and listed companies 1 and 2.
+fn engine() -> Engine {
+    let (mut e, _sink) = Engine::in_memory(Fees::default(), Rules::default());
+    for k in ["world", "cb", "gov"] {
+        e.create_account(k, k, None, None, None, TS);
+    }
+    e.insert_company(listed_company(1));
+    e.insert_company(listed_company(2));
+    e
+}
 
 fn contract(id: i64) -> Contract {
     Contract {
@@ -131,4 +184,41 @@ fn variation_margin_sums_to_zero() {
     let b = Position { account_id: 2, contract_id: 1, qty: -2 + 1, basis: -2 * 9000 + 9200 };
     assert_eq!(a.variation(9100), 100 + 200);
     assert_eq!(a.variation(9100) + b.variation(9100), 0);
+}
+
+#[test]
+fn listing_once_per_period_above_the_floor() {
+    let mut e = engine();
+    let rules = FuturesRules::default();
+    let works = [
+        Underlying { company_id: 1, work_id: 1, premiere: d("2026-10-03") },
+        Underlying { company_id: 2, work_id: 2, premiere: d("2026-10-03") },
+    ];
+    let forecast = |u: &Underlying, _: NaiveDate, _: NaiveDate| Some(if u.work_id == 1 { 120.0 } else { 40.0 });
+    // the premiere: period 1 is listed for the hot work only
+    let new = e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &works, forecast);
+    assert_eq!(new.len(), 1);
+    let c = &e.st.futures.contracts[&new[0]];
+    assert_eq!((c.work_id, c.period, c.first_day.as_str(), c.last_day.as_str()), (1, 1, "2026-10-10", "2026-11-06"));
+    assert_eq!((c.forecast, c.prev_settle), (12000, 12000));
+    // the same day again (a re-run close) lists nothing; nor does a day that is no listing day
+    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &works, forecast).is_empty());
+    assert!(e.futures_list(&rules, "2026-10-03", d("2026-10-04"), &works, forecast).is_empty());
+    // period 2 on the first day of period 1; the cold work still stays below the floor
+    let new = e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &works, forecast);
+    assert_eq!(new.iter().map(|i| e.st.futures.contracts[i].period).collect::<Vec<_>>(), [2]);
+}
+
+#[test]
+fn no_listing_for_a_company_on_its_way_out() {
+    let mut e = engine();
+    let rules = FuturesRules::default();
+    let u = [Underlying { company_id: 1, work_id: 1, premiere: d("2026-10-03") }];
+    e.st.companies.get_mut(&1).unwrap().low_weeks = 1;
+    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(500.0)).is_empty());
+    e.st.companies.get_mut(&1).unwrap().low_weeks = 0;
+    e.st.penny_days.insert(1, 3);
+    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(500.0)).is_empty());
+    e.st.penny_days.remove(&1);
+    assert_eq!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(500.0)).len(), 1);
 }
