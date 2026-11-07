@@ -6,7 +6,8 @@
 //! Once a day (10:30; the front-runner at 21:00) each sets a target position per contract and trades toward it
 //! with market orders:
 //!
-//! - `fut_long` / `fut_short`: always long / short, 30% of net assets spread over the contracts trading;
+//! - `fut_long` / `fut_short`: always long / short, 30% of net assets spread over the contracts trading (at least
+//!   one lot each);
 //! - `fut_calendar`: long the first period (the premiere's month), short the third and later (the finale);
 //! - `fut_momentum`: the direction of the index's last week against the week before (when over 5%);
 //! - `fut_front_run`: knows the day's index during the session (a player reading the platforms before the
@@ -55,7 +56,7 @@ pub fn on_minute(b: &mut Bot, e: &mut Engine, t: i64, ctx: &BotCtx) {
     for k in contracts {
         let c = e.st.futures.contracts[&k].clone();
         let lot = (c.prev_settle * c.tick_value).max(1) as f64;
-        let lots = (per / lot).floor() as i64;
+        let lots = ((per / lot).floor() as i64).max(1); // a lot is about 1% of the starting cash
         let direction = match b.kind {
             BotKind::FutLong => 1,
             BotKind::FutShort => -1,

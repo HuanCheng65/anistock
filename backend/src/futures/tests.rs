@@ -194,19 +194,22 @@ fn listing_once_per_period_above_the_floor() {
         Underlying { company_id: 1, work_id: 1, premiere: d("2026-10-03") },
         Underlying { company_id: 2, work_id: 2, premiere: d("2026-10-03") },
     ];
-    let forecast = |u: &Underlying, _: NaiveDate, _: NaiveDate| Some(if u.work_id == 1 { 120.0 } else { 40.0 });
-    // the premiere: period 1 is listed for the hot work only
-    let new = e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &works, forecast);
-    assert_eq!(new.len(), 1);
+    let forecast = |u: &Underlying, _: i64, _: NaiveDate, _: NaiveDate| Some(if u.work_id == 1 { 120.0 } else { 40.0 });
+    // nothing at the premiere or during week 0
+    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &works, forecast).is_empty());
+    assert!(e.futures_list(&rules, "2026-10-03", d("2026-10-04"), &works, forecast).is_empty());
+    // a week later: periods 1 and 2, for the hot work only
+    let new = e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &works, forecast);
+    assert_eq!(new.len(), 2);
     let c = &e.st.futures.contracts[&new[0]];
     assert_eq!((c.work_id, c.period, c.first_day.as_str(), c.last_day.as_str()), (1, 1, "2026-10-10", "2026-11-06"));
     assert_eq!((c.forecast, c.prev_settle), (12000, 12000));
-    // the same day again (a re-run close) lists nothing; nor does a day that is no listing day
-    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &works, forecast).is_empty());
-    assert!(e.futures_list(&rules, "2026-10-03", d("2026-10-04"), &works, forecast).is_empty());
-    // period 2 on the first day of period 1; the cold work still stays below the floor
-    let new = e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &works, forecast);
-    assert_eq!(new.iter().map(|i| e.st.futures.contracts[i].period).collect::<Vec<_>>(), [2]);
+    assert_eq!(e.st.futures.contracts[&new[1]].period, 2);
+    // the same day again (a re-run close) lists nothing
+    assert!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &works, forecast).is_empty());
+    // period 3 on the first day of period 2
+    let new = e.futures_list(&rules, "2026-11-06", d("2026-11-07"), &works, forecast);
+    assert_eq!(new.iter().map(|i| e.st.futures.contracts[i].period).collect::<Vec<_>>(), [3]);
 }
 
 #[test]
@@ -215,12 +218,12 @@ fn no_listing_for_a_company_on_its_way_out() {
     let rules = FuturesRules::default();
     let u = [Underlying { company_id: 1, work_id: 1, premiere: d("2026-10-03") }];
     e.st.companies.get_mut(&1).unwrap().low_weeks = 1;
-    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(500.0)).is_empty());
+    assert!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(500.0)).is_empty());
     e.st.companies.get_mut(&1).unwrap().low_weeks = 0;
     e.st.penny_days.insert(1, 3);
-    assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(500.0)).is_empty());
+    assert!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(500.0)).is_empty());
     e.st.penny_days.remove(&1);
-    assert_eq!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(500.0)).len(), 1);
+    assert_eq!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(500.0)).len(), 2);
 }
 
 // ---------------------------------------------------------------- trading
@@ -234,7 +237,7 @@ fn market() -> (Engine, [i64; 3]) {
     e.futures.enabled = true;
     let u = [Underlying { company_id: 1, work_id: 1, premiere: d("2026-10-03") }];
     let rules = e.futures.clone();
-    assert_eq!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &u, |_, _, _| Some(90.0)), [1]);
+    assert_eq!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(90.0)), [1, 2]);
     let ids = ["a", "b", "c"].map(|n| e.register_player(n, "x", 10_000_000, DAY, T1));
     for id in ids {
         e.open_credit_unchecked(id, T1);
@@ -560,7 +563,7 @@ fn forecast_of_a_period() {
     let (sched, fa, long) = e.work_shape(&e.st.companies[&1].clone(), 1, &p);
     let path =
         crate::vfilter::att_path(&fp.for_class(None), &p, 0, 7.0, 0.04, today, &sched, fa, long, 28, js.tail_mult);
-    let k = e.futures.index_per_att()[0];
+    let k = e.futures.index_per_att(0, 6); // us: the same in every block
     assert!((f.mean - k * path.iter().sum::<f64>() / 28.0).abs() < 1e-9);
     assert!(f.sd > 0.15 * f.mean * 0.99, "at least model_cv of the mean: {f:?}");
     // more certain level, smaller spread; a period entirely published: its average, no spread
@@ -577,7 +580,8 @@ fn forecast_of_a_period() {
 fn the_market_maker_quotes_and_takes_the_other_side() {
     let (mut e, [a, _, _]) = market();
     e.st.futures.mean.insert(1, 9000);
-    e.st.futures.sd.insert(1, 400);
+    e.st.futures.sd.insert(1, 0);
+    e.futures.mm_min_half = 100; // a half-spread of 1.00
     let q = e.futures_mm_requote(1, DAY, T1);
     assert_eq!((q.mid, q.bids[0], q.asks[0]), (9000, (8900, 10), (9100, 10)));
     assert_eq!(e.st.futures.last_mid[&1], 9000);

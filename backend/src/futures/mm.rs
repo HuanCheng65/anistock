@@ -17,10 +17,13 @@ pub struct Quotes {
     pub asks: Vec<(i64, i64)>,
 }
 
-/// The quotes for a forecast `mean` with spread `sd` (ticks), the `last` price and the maker's `position`.
-pub fn quotes(r: &FuturesRules, mean: i64, sd: i64, last: i64, position: i64) -> Quotes {
+/// The quotes for a forecast `mean` with spread `sd` (ticks) and `days_left` in the period, the `last` price
+/// and the maker's `position`. The half-spread covers what the forecast may move before the maker requotes:
+/// a day's share of its uncertainty, `sd / sqrt(days_left)`.
+pub fn quotes(r: &FuturesRules, mean: i64, sd: i64, days_left: i64, last: i64, position: i64) -> Quotes {
     let reference = (1.0 - r.mm_last_weight) * mean as f64 + r.mm_last_weight * last as f64;
-    let half = (r.mm_spread_sd * sd as f64).max(r.mm_min_half as f64);
+    let daily = sd as f64 / (days_left.max(1) as f64).sqrt();
+    let half = (r.mm_spread_sd * daily).max(r.mm_min_half as f64);
     let centre = reference - r.mm_skew * half * position as f64 / r.mm_limit.max(1) as f64;
     let (mut room_buy, mut room_sell) = ((r.mm_limit - position).max(0), (r.mm_limit + position).max(0));
     let mut q = Quotes { mid: centre.round() as i64, ..Quotes::default() };
@@ -81,7 +84,8 @@ impl Engine {
         let f = &self.st.futures;
         let mean = f.mean.get(&contract_id).copied().unwrap_or(c.forecast);
         let sd = f.sd.get(&contract_id).copied().unwrap_or(0);
-        let q = quotes(&self.futures, mean, sd, c.last_price, f.position(acct, contract_id));
+        let left = super::forecast::day_range(day, &c.last_day).map_or(1, |(a, b)| b - a + 1);
+        let q = quotes(&self.futures, mean, sd, left, c.last_price, f.position(acct, contract_id));
         self.st.futures.last_mid.insert(contract_id, q.mid);
         let levels =
             q.bids.iter().map(|&(p, n)| (Side::Buy, p, n)).chain(q.asks.iter().map(|&(p, n)| (Side::Sell, p, n)));
@@ -114,19 +118,21 @@ mod tests {
     #[test]
     fn quotes_widen_with_uncertainty_and_lean_against_inventory() {
         let r = FuturesRules::default();
-        let flat = quotes(&r, 9000, 400, 9000, 0);
+        let flat = quotes(&r, 9000, 100, 1, 9000, 0);
         assert_eq!(flat.mid, 9000);
         assert_eq!(flat.bids, [(8900, 10), (8800, 10), (8700, 10)]);
         assert_eq!(flat.asks, [(9100, 10), (9200, 10), (9300, 10)]);
-        let tight = quotes(&r, 9000, 40, 9000, 0);
+        let tight = quotes(&r, 9000, 10, 1, 9000, 0);
+        // 16 days left: a quarter of the period's uncertainty per day
+        assert_eq!(quotes(&r, 9000, 400, 16, 9000, 0).bids[0].0, 8900);
         assert_eq!((tight.bids[0].0, tight.asks[0].0), (8980, 9020), "at least mm_min_half");
         // long 100 of a 200 limit: the centre moves half a half-spread down
-        let long = quotes(&r, 9000, 400, 9000, 100);
+        let long = quotes(&r, 9000, 100, 1, 9000, 100);
         assert_eq!(long.mid, 8950);
         // at the limit: no more bids
-        let full = quotes(&r, 9000, 400, 9000, 200);
+        let full = quotes(&r, 9000, 100, 1, 9000, 200);
         assert!(full.bids.is_empty() && full.asks.len() == 3);
         // the last price pulls the centre a fifth of the way
-        assert_eq!(quotes(&r, 9000, 400, 10000, 0).mid, 9200);
+        assert_eq!(quotes(&r, 9000, 100, 1, 10000, 0).mid, 9200);
     }
 }

@@ -1,6 +1,6 @@
 //! The model's forecast of a contract's average index (docs/v3-futures.md §4.3): what listing, the initial
 //! margin's floor and the market maker's quotes rest on. The same filter the stock values come from: each
-//! market's expected attention path (`vfilter::att_path`), turned into index points (`FuturesRules::index_per_att`).
+//! market's expected attention path (`vfilter::att_path`), turned into index points (`FuturesRules::index_per_att`, by weeks since the premiere).
 //!
 //! mean = (published days + Σ expected days to come) / days. The spread of the days to come: the levels'
 //! uncertainty (the filter's covariance plus its random walk to the middle of the remaining days, lognormal,
@@ -36,7 +36,6 @@ impl Engine {
         let js = self.st.jstate.get(&work)?;
         let c = self.st.companies.get(&company_id)?;
         let (sched, first_air, long) = self.work_shape(c, work, p);
-        let k = self.futures.index_per_att();
         let days = (last - first + 1) as f64;
         // published days of the period
         let mut known = 0.0;
@@ -51,12 +50,15 @@ impl Engine {
             let fpc = fp.for_class(js.heat_class);
             let h = (last - today) as usize;
             for (m, gm) in g.iter_mut().enumerate() {
-                if !js.active[m] || k[m] == 0.0 {
+                if !js.active[m] {
                     continue;
                 }
                 let path =
                     F::att_path(&fpc, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult);
-                *gm = k[m] * path[(from - today - 1) as usize..].iter().sum::<f64>();
+                let rules = &self.futures;
+                *gm = (from..=last)
+                    .map(|t| rules.index_per_att(m, (t - first_air).div_euclid(7)) * path[(t - today - 1) as usize])
+                    .sum();
             }
         }
         let expected: f64 = g.iter().sum();
@@ -111,22 +113,23 @@ impl Engine {
             for w in self.works_of(c.id) {
                 let (_, first_air, _) = self.work_shape(c, w, p);
                 let Some(premiere) = chrono::NaiveDate::from_num_days_from_ce_opt(first_air as i32) else { continue };
-                let Some(k) = super::calendar::listed_on(premiere, next_day, weeks) else { continue };
-                let (a, b) = super::calendar::period_days(premiere, k, weeks);
-                let (a, b) = (a.num_days_from_ce() as i64, b.num_days_from_ce() as i64);
-                if let Some(f) = self.fut_forecast(fp, p, c.id, w, a, b, today) {
-                    due.push((super::listing::Underlying { company_id: c.id, work_id: w, premiere }, f));
+                for k in super::calendar::listed_on(premiere, next_day, weeks) {
+                    let (a, b) = super::calendar::period_days(premiere, k, weeks);
+                    let (a, b) = (a.num_days_from_ce() as i64, b.num_days_from_ce() as i64);
+                    if let Some(f) = self.fut_forecast(fp, p, c.id, w, a, b, today) {
+                        due.push((super::listing::Underlying { company_id: c.id, work_id: w, premiere }, k, f));
+                    }
                 }
             }
         }
-        let works: Vec<_> = due.iter().map(|(u, _)| *u).collect();
+        let mut works: Vec<_> = due.iter().map(|(u, _, _)| *u).collect();
+        works.dedup();
         let rules = self.futures.clone();
-        let new = self.futures_list(&rules, day, next_day, &works, |u, _, _| {
-            due.iter().find(|(x, _)| x == u).map(|(_, f)| f.mean)
-        });
+        let find = |work: i64, k: i64| due.iter().find(|(u, j, _)| u.work_id == work && *j == k).map(|(_, _, f)| *f);
+        let new = self.futures_list(&rules, day, next_day, &works, |u, k, _, _| find(u.work_id, k).map(|f| f.mean));
         for id in new {
-            let f =
-                due.iter().find(|(u, _)| u.work_id == self.st.futures.contracts[&id].work_id).map(|(_, f)| *f).unwrap();
+            let c = &self.st.futures.contracts[&id];
+            let f = find(c.work_id, c.period).unwrap();
             self.st.futures.mean.insert(id, (f.mean * 100.0).round() as i64);
             self.st.futures.sd.insert(id, (f.sd * 100.0).round() as i64);
         }

@@ -67,6 +67,25 @@ impl FuturesLog {
             rows.push(json!({"contract": id, "work": work, "period": period, "final": fin as f64 / 100.0,
                 "listing": listing.as_ref().map(|x| [x.1 as f64 / 100.0, x.2 as f64 / 100.0])}));
         }
+        // the forecast's day-to-day revisions against what the maker's spread assumes (sd / sqrt(days left)),
+        // root mean square of both relative to the forecast
+        let (mut actual, mut assumed, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        for (_, _, _, last, fc) in self.seen.values() {
+            let Some(end) = crate::vclose::day_no(last) else { continue };
+            for w in fc.windows(2) {
+                let (Some(d0), m0, s0, m1) =
+                    (crate::vclose::day_no(&w[0].0), w[0].1 as f64, w[0].2 as f64, w[1].1 as f64)
+                else {
+                    continue;
+                };
+                if m0 <= 0.0 || d0 >= end {
+                    continue;
+                }
+                actual += ((m1 - m0) / m0).powi(2);
+                assumed += (s0 / ((end - d0) as f64).sqrt() / m0).powi(2);
+                n += 1.0;
+            }
+        }
         let share = |(h, n): (i64, i64)| if n > 0 { h as f64 / n as f64 } else { f64::NAN };
         let mm = e.special("fmm");
         let funded = e.st.futures.mm_funded;
@@ -85,6 +104,7 @@ impl FuturesLog {
             "coverage80": {"listing": share(hits[0]), "mid": share(hits[1]), "last_week": share(hits[2]), "n": hits[0].1},
             "final_over_forecast_median": {"listing": median(&mut ratios[0]), "mid": median(&mut ratios[1]), "last_week": median(&mut ratios[2])},
             "mm_pnl": (mm_cash + mm_marks - funded) as f64 / 100.0,
+            "daily_revision_rms": {"actual": (actual / n.max(1.0)).sqrt(), "assumed": (assumed / n.max(1.0)).sqrt(), "n": n},
             "settled_contracts": rows,
         })
     }

@@ -28,7 +28,10 @@ pub struct FuturesRules {
     /// the index in the valuation filter's units, until the filter observes the index itself (docs/v3-futures.md
     /// §3.5, §3.7): index = scale × Σ weight × link × attention / platform, per market [us, cn, jp]
     pub index_weights: [f64; 3],
-    pub index_link: [f64; 3],
+    /// index units per unit of the inputs' att, per market [us, cn, jp] and four-week block since the premiere
+    /// (weeks 0-3, 4-7, 8-11, 12 and later): Bangumi's marks crowd into the first weeks and fade faster than
+    /// the comments the cn series is built from
+    pub index_link: [[f64; 4]; 3],
     pub index_platform: [f64; 3],
     pub index_scale: f64,
     /// the realised average's spread around the model's expectation beyond the level's own uncertainty (the
@@ -40,7 +43,8 @@ pub struct FuturesRules {
     pub mm_limit: i64,
     pub mm_size: i64,
     pub mm_levels: i64,
-    /// half-spread: this many standard deviations of the forecast of the average, at least `mm_min_half` ticks
+    /// half-spread: this many of a day's share of the forecast's uncertainty (sd / sqrt(days left)), at least
+    /// `mm_min_half` ticks
     pub mm_spread_sd: f64,
     pub mm_min_half: i64,
     /// the quote's centre leans this far from the forecast toward the last price
@@ -63,7 +67,8 @@ impl Default for FuturesRules {
             margin_cap: 0.8,
             settle_window_min: 30,
             index_weights: [0.3, 0.5, 0.2],
-            index_link: [1.0, 3.35, 0.74], // index / the inputs' att, median per show-day (2026-07..11 backfill)
+            // index / the inputs' att, median per show-day of each block (2026-07..11 backfill, sim/heat_inputs.py)
+            index_link: [[1.0; 4], [5.6, 2.25, 2.3, 2.3], [0.66, 0.76, 0.85, 1.1]],
             index_platform: [114628.0, 2168.0, 1542.0],
             index_scale: 11300.0,
             model_cv: 0.15,
@@ -71,7 +76,7 @@ impl Default for FuturesRules {
             mm_limit: 200,
             mm_size: 10,
             mm_levels: 3,
-            mm_spread_sd: 0.25,
+            mm_spread_sd: 0.6, // the forecast revises 3.3% a day (rms) where sd / sqrt(days left) says 5.8% (2026-11-07 replay)
             mm_min_half: 20,
             mm_last_weight: 0.2,
             mm_skew: 1.0,
@@ -89,8 +94,9 @@ impl FuturesRules {
 }
 
 impl FuturesRules {
-    /// Index points per unit of the filter's attention, per market.
-    pub fn index_per_att(&self) -> [f64; 3] {
-        std::array::from_fn(|m| self.index_scale * self.index_weights[m] * self.index_link[m] / self.index_platform[m])
+    /// Index points per unit of the filter's attention in market `m`, `weeks` weeks after the premiere.
+    pub fn index_per_att(&self, m: usize, weeks: i64) -> f64 {
+        let block = (weeks.max(0) / 4).min(3) as usize;
+        self.index_scale * self.index_weights[m] * self.index_link[m][block] / self.index_platform[m]
     }
 }
