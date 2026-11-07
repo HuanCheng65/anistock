@@ -93,3 +93,4 @@ pub(crate) trait Venue {
 | 11 | 回放接入期货和指数 | |
 | 12 | 检验机器人和预测覆盖率 | 结果写进 v3-futures.md §4.5 |
 | 13 | 接口（`/futures/...`），重新生成 `openapi.json` | |
+| 14 | 合约记下挂牌时的指数版本（`futures_contracts.index_version`），预测按合约的版本取平台规模和常数（v3-futures.md §3.4“常数的复核与改版”）；每月复核脚本 | 改版前后挂牌的两个合约各按各的版本预测 |
