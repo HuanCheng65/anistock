@@ -184,6 +184,18 @@ CREATE TABLE IF NOT EXISTS anilist_trends (
     data        TEXT NOT NULL,
     PRIMARY KEY (media_id, date_epoch)
 );
+CREATE TABLE IF NOT EXISTS annict_viewers (
+    episode_id  INTEGER NOT NULL,           -- Annict episode
+    user_id     INTEGER NOT NULL,           -- Annict user: de-duplication and surveillance only, never published
+    first_at    TEXT NOT NULL,              -- the user's first record of the episode
+    PRIMARY KEY (episode_id, user_id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS annict_episode_sync (
+    episode_id  INTEGER PRIMARY KEY,
+    work_id     INTEGER NOT NULL,
+    records     INTEGER NOT NULL,           -- the episode's recordsCount when its records were last read
+    newest_at   TEXT                        -- createdAt of the newest record read
+);
 CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     source      TEXT NOT NULL,
@@ -534,6 +546,74 @@ query ($id: Int!, $after: String) {
 """
 
 
+ANNICT_RECORDS = """
+query ($ids: [Int!], $first: Int!, $after: String) {
+  searchEpisodes(annictIds: $ids) {
+    nodes {
+      annictId
+      records(orderBy: {field: CREATED_AT, direction: DESC}, first: $first, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes { createdAt user { annictId } }
+      }
+    }
+  }
+}
+"""
+
+# seconds per run for reading new records. The first sync of every tracked work takes over an hour: run
+# `collect.py --annict-viewers` once (no limit); until then a work not fully synced reports no viewerPairs
+# and the index falls back to recordsCount.
+ANNICT_VIEWER_BUDGET_S = float(os.environ.get("ANNICT_VIEWER_BUDGET_S", "600"))
+
+
+class Viewers:
+    """Each Annict account counted once per episode (Annict lets an account record an episode again,
+    docs/v3-futures.md §3.1): reads the records added since the last run, newest first, 25 episodes per
+    request, and pages on alone only through an episode with more new records than the first page holds."""
+
+    BATCH, FIRST_PAGE = 25, 50
+
+    def __init__(self, http: "Http", store: Store, deadline: float):
+        self.http, self.db, self.deadline = http, store.db, deadline
+
+    def sync(self, work_id: int, episodes: list[dict]) -> int | None:
+        """The work's distinct (account, episode) pairs, or None if time ran out before all were read."""
+        stale = []
+        for e in episodes:
+            row = self.db.execute("SELECT records, newest_at FROM annict_episode_sync WHERE episode_id=?",
+                                  (e["annictId"],)).fetchone()
+            if not row or row[0] != (e.get("recordsCount") or 0):
+                stale.append((e["annictId"], e.get("recordsCount") or 0, row[1] if row else None))
+        for k in range(0, len(stale), self.BATCH):
+            if time.monotonic() > self.deadline:
+                return None
+            chunk = {eid: (count, seen) for eid, count, seen in stale[k:k + self.BATCH]}
+            res = self.http.graphql(ANNICT, ANNICT_RECORDS, {"ids": list(chunk), "first": self.FIRST_PAGE})
+            for node in res["searchEpisodes"]["nodes"]:
+                count, seen = chunk[node["annictId"]]
+                self._read(node["annictId"], work_id, count, seen, node["records"])
+        ids = [e["annictId"] for e in episodes]
+        if not ids:
+            return 0
+        return self.db.execute(f"SELECT COUNT(*) FROM annict_viewers WHERE episode_id IN ({','.join('?' * len(ids))})",
+                               ids).fetchone()[0]
+
+    def _read(self, eid: int, work_id: int, count: int, seen: str | None, conn: dict) -> None:
+        newest = seen
+        while True:
+            for r in conn["nodes"]:
+                newest = max(newest or r["createdAt"], r["createdAt"])
+                self.db.execute("""INSERT INTO annict_viewers VALUES (?,?,?) ON CONFLICT(episode_id, user_id)
+                                   DO UPDATE SET first_at=min(first_at, excluded.first_at)""",
+                                (eid, r["user"]["annictId"], r["createdAt"]))
+            reached = seen is not None and conn["nodes"] and conn["nodes"][-1]["createdAt"] < seen
+            if reached or not conn["pageInfo"]["hasNextPage"]:
+                break
+            res = self.http.graphql(ANNICT, ANNICT_RECORDS, {"ids": [eid], "first": 100, "after": conn["pageInfo"]["endCursor"]})
+            conn = res["searchEpisodes"]["nodes"][0]["records"]
+        self.db.execute("INSERT OR REPLACE INTO annict_episode_sync VALUES (?,?,?,?)", (eid, work_id, count, newest))
+        self.db.commit()
+
 ANNICT_BY_TITLE = """
 query ($titles: [String!]) {
   searchWorks(titles: $titles, orderBy: {field: WATCHERS_COUNT, direction: DESC}, first: 50) {
@@ -599,7 +679,7 @@ def discover_annict(http: "Http", store: Store) -> int:
     return new
 
 
-def collect_annict(store: Store) -> str | None:
+def collect_annict(store: Store, budget: float | None = None) -> str | None:
     token = os.environ.get("ANNICT_TOKEN", "").strip()
     if not token:
         return None
@@ -636,6 +716,8 @@ def collect_annict(store: Store) -> str | None:
             found[w["annictId"]] = w
             store.register("annict", w["annictId"], w["title"], w.get("malAnimeId"))
 
+    viewers = Viewers(http, store, time.monotonic() + (budget if budget is not None else ANNICT_VIEWER_BUDGET_S))
+    pending = 0
     for wid, w in found.items():
         eps, after = [], None
         while len(eps) < 100:  # latest 100 episodes is plenty, even for long-runners
@@ -647,9 +729,29 @@ def collect_annict(store: Store) -> str | None:
             if not conn["pageInfo"]["hasNextPage"]:
                 break
             after = conn["pageInfo"]["endCursor"]
-        store.snapshot("annict", "work", wid, {**w, "episodes": eps})
+        pairs = viewers.sync(wid, eps)
+        pending += pairs is None
+        extra = {} if pairs is None else {"viewerPairs": pairs}
+        store.snapshot("annict", "work", wid, {**w, "episodes": eps, **extra})
         store.commit()
-    return f"works={len(found)} seasons={seasons} discovered={discovered}"
+    return f"works={len(found)} seasons={seasons} discovered={discovered} viewers_pending={pending}"
+
+
+def sync_annict_viewers(store: Store) -> str:
+    """One-off first sync of `annict_viewers` (no time limit; about an hour) over the episodes of the latest
+    Annict snapshots. Writes no snapshots: the next daily run reports viewerPairs."""
+    token = os.environ["ANNICT_TOKEN"].strip()
+    http = Http(min_interval=0.3, remaining_header="ratelimit-remaining", reset_header="ratelimit-reset",
+                headers={"Authorization": f"Bearer {token}"})
+    viewers = Viewers(http, store, float("inf"))
+    day = store.db.execute("SELECT max(day) FROM snapshots WHERE source='annict' AND kind='work'").fetchone()[0]
+    works = store.db.execute("SELECT external_id, data FROM snapshots WHERE source='annict' AND kind='work' AND day=?",
+                             (day,)).fetchall()
+    total = 0
+    for n, (wid, data) in enumerate(works, start=1):
+        total += viewers.sync(int(wid), json.loads(data).get("episodes") or []) or 0
+        log.info("annict viewers: %d/%d works, %d pairs so far", n, len(works), total)
+    return f"works={len(works)} pairs={total} (episodes of the {day} snapshots)"
 
 
 # ---------------------------------------------------------------- main
@@ -679,6 +781,8 @@ def main() -> int:
                     help="one-off: add a past AniList season (e.g. 2026-summer) and backfill its trends")
     ap.add_argument("--db", default=os.environ.get("ANISTOCK_DB", str(Path(__file__).parent / "data" / "anistock.db")))
     ap.add_argument("--stats", action="store_true")
+    ap.add_argument("--annict-viewers", action="store_true",
+                    help="one-off: the first full read of Annict records, each account once per episode (about an hour)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -688,6 +792,10 @@ def main() -> int:
     store = Store(Path(args.db))
     if args.stats:
         print_stats(store)
+        return 0
+
+    if args.annict_viewers:
+        log.info("annict viewers: %s", sync_annict_viewers(store))
         return 0
 
     if args.season:

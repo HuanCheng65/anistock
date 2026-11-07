@@ -9,8 +9,10 @@ rebuilt series:
 - us: the game's own attention for D (engine/economy.py `attention`: in-progress / 7, list adds, trending, score);
 - cn: Bangumi, the change from D's to D+1's snapshot of the people who marked the show 在看, 看过, 搁置 or 抛弃
   (candidate), with 想看 and the episode comments kept for the calibration;
-- jp: Annict, the change of the episodes' summed `recordsCount` (candidate; the rebuilt jp series is built from
-  Annict records too) and of `watchersCount`.
+- jp: Annict, the change of the distinct (account, episode) pairs among the episodes' records (`viewerPairs`,
+  collect.py `Viewers`: Annict lets an account record an episode again, so the raw `recordsCount` can be
+  inflated by one account); while a work's pairs are not synced yet, the change of the summed `recordsCount`
+  (4% higher on the busiest episodes). `watchersCount` is kept for the calibration.
 
 A change is scaled to 24 hours by the two snapshots' fetch times (a manual re-run overwrites a day's snapshot).
 Checks per market and show (§3.2): missing (a snapshot absent), negative (a cumulative count went down: a source
@@ -43,9 +45,10 @@ sys.path.insert(0, str(ROOT))
 
 from engine import economy as E  # noqa: E402
 
-VERSION = "shadow-1"
+VERSION = "shadow-2"
 WEIGHTS = {"cn": 0.5, "us": 0.3, "jp": 0.2}     # server/game.toml [revenue] market weights
-CANDIDATE = {"cn": "engaged", "jp": "records", "us": "attention"}
+CANDIDATE = {"cn": "engaged", "jp": "viewers", "us": "attention"}
+FALLBACK = {"jp": "records"}   # until a work's viewerPairs are synced (collect.py --annict-viewers)
 SPIKE = 10.0
 SCALE = 10000.0
 OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_index.db"
@@ -100,7 +103,8 @@ def bgm_comments(d: dict) -> float:
 
 def annict_metrics(d: dict) -> dict[str, float]:
     return {"watchers": d.get("watchersCount") or 0,
-            "records": sum((e.get("recordsCount") or 0) for e in d.get("episodes") or [])}
+            "records": sum((e.get("recordsCount") or 0) for e in d.get("episodes") or []),
+            "viewers": d.get("viewerPairs")}
 
 
 def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, tuple[float | None, float | None]]]]:
@@ -141,9 +145,10 @@ def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, 
                 h = hours(a0[k][0], a1[k][0])
                 x0, x1 = annict_metrics(a0[k][1]), annict_metrics(a1[k][1])
                 for name in x0:
-                    m["jp"][name] = ((x1[name] - x0[name]) * 24 / h if h > 0 else None, h)
+                    known = h > 0 and x0[name] is not None and x1[name] is not None
+                    m["jp"][name] = ((x1[name] - x0[name]) * 24 / h if known else None, h)
             else:
-                m["jp"] = {"watchers": (None, None), "records": (None, None)}
+                m["jp"] = {"watchers": (None, None), "records": (None, None), "viewers": (None, None)}
         out[s.id] = m
     return out
 
@@ -177,6 +182,8 @@ def compute(day: str) -> int:
             for metric, (v, h) in metrics.items():
                 db.execute("INSERT OR IGNORE INTO heat_raw VALUES (?,?,?,?,?,?)", (work, day, market, metric, v, h))
             v = metrics.get(CANDIDATE[market], (None, None))[0]
+            if v is None and market in FALLBACK:
+                v = metrics.get(FALLBACK[market], (None, None))[0]
             past = history(db, work, market, day, 28)
             med = st.median(past) if len(past) >= 7 else None
             if v is None:

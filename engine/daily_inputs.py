@@ -77,6 +77,10 @@ File format (JSON, one object):
                         per-market max of `att` and the audience-based pre-air estimate (expected-share
                         denominator, IPO pricing, fair values)
 
+Top level, besides the shows: `heat` {"<id>": {"idx", "us", "cn", "jp", "flags", "version"}}, the AniEx heat index
+of D for every show engine/heat_index.py has published (docs/v3-futures.md §3; frozen once written; omitted for a
+show without a row). Futures settle on it. Top level so that a server binary from before it ignores it.
+
 Not in the file, because they come from game state or config rather than the model: the demand index
 (from Σ att.us over *listed* companies and the game's `a_ref`), market weights, rates, prices.
 """
@@ -351,7 +355,8 @@ def airing_sources(s: E.Show, day: date, markets: dict, mapped: dict[str, bool],
 
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
           window_start: date, aud_dated: dict | None = None, sources: dict | None = None,
-          relations: dict | None = None, schedules: dict | None = None, airing: dict | None = None) -> dict:
+          relations: dict | None = None, schedules: dict | None = None, airing: dict | None = None,
+          heat: dict | None = None) -> dict:
     """The inputs dict for `day` from already-loaded model objects (no I/O)."""
     rv, val = p["revenue"], p["valuation"]
     aud_dated = aud_dated or {}
@@ -408,7 +413,24 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
         "platform": plat,
         "platform_days": n,
         "shows": out,
+        **({"heat": heat} if heat else {}),
     }
+
+
+def load_heat(day: date, path: Path | None = None) -> dict[str, dict]:
+    """The published heat index of `day` per show (engine/heat_index.py), {} if it has not been computed."""
+    from engine.heat_index import OUT
+    path = path or OUT
+    if not path.exists():
+        return {}
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        rows = db.execute("SELECT work_id, idx, us, cn, jp, flags, version FROM heat_index WHERE day=?",
+                          (day.isoformat(),)).fetchall()
+    except sqlite3.OperationalError:   # no table yet
+        return {}
+    return {str(w): {"idx": idx, "us": us, "cn": cn, "jp": jp, "flags": json.loads(flags), "version": v}
+            for w, idx, us, cn, jp, flags, v in rows}
 
 
 def window_start_of(cfg) -> date:
@@ -487,7 +509,8 @@ def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
                             upcoming_days=cfg.game["ipo_subscription_days"] + 1)
     return build(shows, load_markets(), E.load_audiences(cfg.collector_db), E.load_cn_titles(cfg.collector_db),
                  d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), sources_on(source_dates(cfg.collector_db), d),
-                 load_relations(cfg.collector_db), load_schedules(cfg.collector_db), load_airing(cfg.collector_db))
+                 load_relations(cfg.collector_db), load_schedules(cfg.collector_db), load_airing(cfg.collector_db),
+                 load_heat(d))
 
 
 def dumps(inputs: dict) -> str:

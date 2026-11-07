@@ -133,6 +133,24 @@ fn yes() -> bool {
     true
 }
 
+/// One show's AniEx heat index for the day (engine/heat_index.py; docs/v3-futures.md §3): the checked heat
+/// per market and the index futures settle on. Published once and never revised.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HeatIndex {
+    pub idx: f64,
+    #[serde(default)]
+    pub us: Option<f64>,
+    #[serde(default)]
+    pub cn: Option<f64>,
+    #[serde(default)]
+    pub jp: Option<f64>,
+    /// market -> missing | filled | negative | spike (the value was filled or replaced)
+    #[serde(default)]
+    pub flags: BTreeMap<String, String>,
+    /// the method's version
+    pub version: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct RawInputs {
     day: String,
@@ -145,6 +163,9 @@ struct RawInputs {
     platform: Option<Markets>,
     #[serde(default)]
     platform_days: Option<i64>,
+    /// the heat index of the day per show (top level, so binaries from before it ignore it)
+    #[serde(default)]
+    heat: BTreeMap<String, HeatIndex>,
 }
 
 /// Parsed inputs for one day. `shows` keeps the file's (model) order.
@@ -160,6 +181,8 @@ pub struct Inputs {
     pub platform: Option<Markets>,
     /// the number of days `platform` averages (up to 365; fewer while the collector's history is short)
     pub platform_days: i64,
+    /// the day's published heat index per show (empty before it is computed)
+    pub heat: BTreeMap<i64, HeatIndex>,
 }
 
 impl ShowInputs {
@@ -194,6 +217,10 @@ impl Inputs {
         for (k, v) in raw.cn_titles {
             cn_titles.insert(k.parse::<i64>().map_err(|e| format!("cn_titles key {k}: {e}"))?, v);
         }
+        let mut heat = BTreeMap::new();
+        for (k, v) in raw.heat {
+            heat.insert(k.parse::<i64>().map_err(|e| format!("heat key {k}: {e}"))?, v);
+        }
         Ok(Inputs {
             day: raw.day,
             window_start: raw.window_start,
@@ -202,6 +229,7 @@ impl Inputs {
             cn_titles,
             platform: raw.platform,
             platform_days: raw.platform_days.unwrap_or(0),
+            heat,
         })
     }
 
@@ -327,5 +355,23 @@ pub fn fetch_flashes(cfg: &Config) {
         Ok(o) if o.status.success() => {}
         Ok(o) => eprintln!("flash_fetch.py failed: {}", tail(&o.stderr, 500)),
         Err(e) => eprintln!("flash_fetch.py failed: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod heat_tests {
+    use super::*;
+
+    #[test]
+    fn heat_is_optional_and_keyed_by_show() {
+        let old = Inputs::parse(r#"{"day":"2026-11-05","cn_titles":{},"shows":[]}"#).unwrap();
+        assert!(old.heat.is_empty());
+        let new = Inputs::parse(
+            r#"{"day":"2026-11-05","cn_titles":{},"shows":[],
+                "heat":{"103303":{"idx":47.2,"us":260.6,"cn":8.8,"jp":null,"flags":{"jp":"missing"},"version":"shadow-2"}}}"#,
+        )
+        .unwrap();
+        let h = &new.heat[&103303];
+        assert_eq!((h.idx, h.jp, h.flags["jp"].as_str()), (47.2, None, "missing"));
     }
 }
