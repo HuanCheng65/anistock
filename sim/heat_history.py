@@ -44,12 +44,12 @@ def days_between(a: date, b: date):
         d += timedelta(days=1)
 
 
-def bgm_daily(db: sqlite3.Connection) -> dict[int, dict[str, float]]:
+def bgm_daily(db: sqlite3.Connection, table: str = "bgm_weekly") -> dict[int, dict[str, float]]:
     """subject -> day -> people who started it that day (a week's change spread over its days)."""
     out: dict[int, dict[str, float]] = defaultdict(dict)
     rows = defaultdict(list)
     for sid, at, done, doing, hold, dropped in db.execute(
-            "SELECT subject_id, at, done, doing, on_hold, dropped FROM bgm_weekly ORDER BY subject_id, at"):
+            f"SELECT subject_id, at, done, doing, on_hold, dropped FROM {table} ORDER BY subject_id, at"):
         local = (datetime.fromisoformat(at.replace("Z", "+00:00")) + timedelta(hours=8)).date()
         rows[sid].append((local, sum(x or 0 for x in (done, doing, hold, dropped))))
     for sid, pts in rows.items():
@@ -68,6 +68,9 @@ def main() -> None:
     ap.add_argument("--from", dest="start", default="2026-01-01")
     ap.add_argument("--until", default=None)
     ap.add_argument("--markets", default=None, help="directory of the markets.json to compare with")
+    ap.add_argument("--archive", action="store_true",
+                    help="cn from every anime subject of the archive (bgm_anime_weekly), with the title matches of "
+                         "sim/match_archive.py for shows without one")
     args = ap.parse_args()
     from server.config import load
     p = load().params
@@ -78,12 +81,16 @@ def main() -> None:
     start, end = date.fromisoformat(args.start), date.fromisoformat(until)
     shows, _ = E.load_shows(col, p, start, end)
     matches = E.effective_matches(col)
-    cn = bgm_daily(db)
+    table = "bgm_anime_weekly" if args.archive else "bgm_weekly"
+    if args.archive:
+        for aid, sid in json.loads((DB.parent / "archive_matches.json").read_text()).items():
+            matches.setdefault(aid, {}).setdefault("bgm", sid)
+    cn = bgm_daily(db, table)
     jp: dict[int, dict[str, int]] = defaultdict(dict)
     for aid, day, n in db.execute("SELECT annict_id, day, records FROM annict_daily"):
         jp[aid][day] = n
     jp_seen = {r[0] for r in db.execute("SELECT DISTINCT annict_id FROM annict_done")}
-    cn_seen = {r[0] for r in db.execute("SELECT DISTINCT subject_id FROM bgm_weekly")}
+    cn_seen = {r[0] for r in db.execute(f"SELECT DISTINCT subject_id FROM {table}")}
     cn_last = max((max(v) for v in cn.values() if v), default="")   # after the last dump: not measured yet
 
     db.execute("CREATE TABLE IF NOT EXISTS heat_history (work_id INTEGER NOT NULL, day TEXT NOT NULL, us REAL, cn REAL, jp REAL, PRIMARY KEY (work_id, day))")
