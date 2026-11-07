@@ -303,7 +303,7 @@
 | 步骤 | 内容 | 前提 |
 |---|---|---|
 | 1 | 采集器告警：某个来源当天没有抓到时通知运营者（`engine/collect_check.py`，已实现） | 无 |
-| 2 | 指数在后台计算、校验、存储（`engine/heat_index.py`，写 `data/derived/heat_index.db`，已实现），对比报告；日本分项改为逐集拉取新记录、按账号去重（`collect.py` `Viewers`，已实现；上线后在服务器上跑一次 `uv run collect.py --annict-viewers` 做首次全量同步，约 80 分钟，避开 06:00 的采集；同步完成前这部作品仍用 `recordsCount`）；指数写进每日输入文件的顶层 `heat`（旧版本的服务程序会忽略它） | 1 |
+| 2 | 指数在后台计算、校验、存储（`engine/heat_index.py`，写 `data/derived/heat_index.db`，已实现），对比报告；日本分项改为逐集拉取新记录、按账号去重（`collect.py` `Viewers`，已实现；上线后在服务器上跑一次 `uv run collect.py --annict-viewers` 做首次全量同步，约 2 分钟，避开 06:00 的采集；同步完成前这部作品仍用 `recordsCount`）；指数写进每日输入文件的顶层 `heat`（旧版本的服务程序会忽略它） | 1 |
 | 3 | 核对三家数据条款；校准中国、日本分项；估算操纵成本 | 2 运行约 3 周 |
 | 4 | 热度明细页面和接口；编制方法文档 | 3 |
 | 5 | 营收切换到指数，同时打开绝对营收（`replica_check` 先检查） | 3、平台规模满两季 |

@@ -26,11 +26,17 @@ import argparse
 import json
 import logging
 import os
+import queue
 import re
 import sqlite3
 import sys
+import threading
 import time
 import unicodedata
+from collections import deque
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -567,72 +573,112 @@ query ($id: Int!, $after: String) {
 """
 
 
-ANNICT_RECORDS = """
-query ($ids: [Int!], $first: Int!, $after: String) {
-  searchEpisodes(annictIds: $ids) {
-    nodes {
-      annictId
-      records(orderBy: {field: CREATED_AT, direction: DESC}, first: $first, after: $after) {
-        pageInfo { hasNextPage endCursor }
-        nodes { createdAt user { annictId } }
-      }
-    }
-  }
-}
-"""
+def annict_records_query(cursors: dict[int, str | None], first: int) -> tuple[str, dict]:
+    """A page of records, newest first, for many episodes in one request: each episode under its own alias
+    with its own cursor (Annict counts requests, not episodes)."""
+    params = "".join(f", $a{eid}: String" for eid in cursors)
+    parts = " ".join(
+        f"e{eid}: searchEpisodes(annictIds: [{eid}]) {{ nodes {{ records(orderBy: {{field: CREATED_AT, direction: DESC}}, "
+        f"first: $first, after: $a{eid}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{ createdAt user {{ annictId }} }} }} }} }}"
+        for eid in cursors)
+    return f"query ($first: Int!{params}) {{ {parts} }}", {"first": first, **{f"a{e}": c for e, c in cursors.items()}}
 
-# seconds per run for reading new records. The first sync of every tracked work takes over an hour: run
+
+# seconds per run for reading new records. The first sync of every tracked work takes a few minutes: run
 # `collect.py --annict-viewers` once (no limit); until then a work not fully synced reports no viewerPairs
 # and the index falls back to recordsCount.
 ANNICT_VIEWER_BUDGET_S = float(os.environ.get("ANNICT_VIEWER_BUDGET_S", "600"))
+# the first sync reads side by side, each worker with its share of the budget (Annict allows 600 a minute)
+ANNICT_VIEWER_WORKERS, ANNICT_VIEWER_PER_MIN = 4, 300
+
+
+@dataclass
+class EpisodeRead:
+    """One episode's records read since its last sync: each account's earliest record and the newest seen."""
+    eid: int
+    work_id: int
+    count: int                      # the episode's recordsCount, stored once it is read
+    seen: str | None                # newest_at of the last sync: reading stops once past it
+    cursor: str | None = None
+    newest: str | None = None
+    firsts: dict[int, str] = field(default_factory=dict)
+    read: int = 0
+
+    def __post_init__(self):
+        self.newest = self.seen
+
+    def take(self, conn: dict) -> bool:
+        """Adds one page; True when the episode is read back to its last sync."""
+        for r in conn["nodes"]:
+            at, user = r["createdAt"], r["user"]["annictId"]
+            self.newest = max(self.newest or at, at)
+            self.firsts[user] = min(self.firsts.get(user, at), at)
+        self.read += len(conn["nodes"])
+        self.cursor = conn["pageInfo"]["endCursor"]
+        reached = self.seen is not None and conn["nodes"] and conn["nodes"][-1]["createdAt"] < self.seen
+        return bool(reached) or not conn["pageInfo"]["hasNextPage"]
+
+
+def read_records(http: "Http", todo: list[EpisodeRead], stop: Callable[[], bool],
+                 done: Callable[[EpisodeRead], None], batch: int, page: int) -> bool:
+    """Pages through the episodes `batch` at a time, one request per page of all of them, and hands each
+    finished episode to `done`. False if `stop` said so before all were read."""
+    waiting, active = deque(todo), {}
+    while waiting or active:
+        if stop():
+            return False
+        while waiting and len(active) < batch:
+            ep = waiting.popleft()
+            active[ep.eid] = ep
+        data = http.graphql(ANNICT, *annict_records_query({e: ep.cursor for e, ep in active.items()}, page))
+        for eid, ep in list(active.items()):
+            nodes = (data.get(f"e{eid}") or {}).get("nodes")
+            if not nodes:  # gone from Annict: no sync row, so it is tried again next run
+                del active[eid]
+            elif ep.take(nodes[0]["records"]):
+                del active[eid]
+                done(ep)
+    return True
 
 
 class Viewers:
     """Each Annict account counted once per episode (Annict lets an account record an episode again,
-    docs/v3-futures.md §3.1): reads the records added since the last run, newest first, 25 episodes per
-    request, and pages on alone only through an episode with more new records than the first page holds."""
+    docs/v3-futures.md §3.1): reads the records added since the last run, newest first, a page of 20
+    episodes per request."""
 
-    BATCH, FIRST_PAGE = 25, 50
+    BATCH, PAGE = 20, 100
 
     def __init__(self, http: "Http", store: Store, deadline: float):
         self.http, self.db, self.deadline = http, store.db, deadline
 
     def sync(self, work_id: int, episodes: list[dict]) -> int | None:
         """The work's distinct (account, episode) pairs, or None if time ran out before all were read."""
-        stale = []
-        for e in episodes:
-            row = self.db.execute("SELECT records, newest_at FROM annict_episode_sync WHERE episode_id=?",
-                                  (e["annictId"],)).fetchone()
-            if not row or row[0] != (e.get("recordsCount") or 0):
-                stale.append((e["annictId"], e.get("recordsCount") or 0, row[1] if row else None))
-        for k in range(0, len(stale), self.BATCH):
-            if time.monotonic() > self.deadline:
-                return None
-            chunk = {eid: (count, seen) for eid, count, seen in stale[k:k + self.BATCH]}
-            res = self.http.graphql(ANNICT, ANNICT_RECORDS, {"ids": list(chunk), "first": self.FIRST_PAGE})
-            for node in res["searchEpisodes"]["nodes"]:
-                count, seen = chunk[node["annictId"]]
-                self._read(node["annictId"], work_id, count, seen, node["records"])
+        if not read_records(self.http, self.stale(work_id, episodes), lambda: time.monotonic() > self.deadline,
+                            self.save, self.BATCH, self.PAGE):
+            return None
         ids = [e["annictId"] for e in episodes]
         if not ids:
             return 0
         return self.db.execute(f"SELECT COUNT(*) FROM annict_viewers WHERE episode_id IN ({','.join('?' * len(ids))})",
                                ids).fetchone()[0]
 
-    def _read(self, eid: int, work_id: int, count: int, seen: str | None, conn: dict) -> None:
-        newest = seen
-        while True:
-            for r in conn["nodes"]:
-                newest = max(newest or r["createdAt"], r["createdAt"])
-                self.db.execute("""INSERT INTO annict_viewers VALUES (?,?,?) ON CONFLICT(episode_id, user_id)
-                                   DO UPDATE SET first_at=min(first_at, excluded.first_at)""",
-                                (eid, r["user"]["annictId"], r["createdAt"]))
-            reached = seen is not None and conn["nodes"] and conn["nodes"][-1]["createdAt"] < seen
-            if reached or not conn["pageInfo"]["hasNextPage"]:
-                break
-            res = self.http.graphql(ANNICT, ANNICT_RECORDS, {"ids": [eid], "first": 100, "after": conn["pageInfo"]["endCursor"]})
-            conn = res["searchEpisodes"]["nodes"][0]["records"]
-        self.db.execute("INSERT OR REPLACE INTO annict_episode_sync VALUES (?,?,?,?)", (eid, work_id, count, newest))
+    def stale(self, work_id: int, episodes: list[dict]) -> list[EpisodeRead]:
+        """The episodes whose recordsCount changed since their last sync."""
+        out = []
+        for e in episodes:
+            row = self.db.execute("SELECT records, newest_at FROM annict_episode_sync WHERE episode_id=?",
+                                  (e["annictId"],)).fetchone()
+            if not row or row[0] != (e.get("recordsCount") or 0):
+                out.append(EpisodeRead(e["annictId"], work_id, e.get("recordsCount") or 0, row[1] if row else None))
+        return out
+
+    def save(self, ep: EpisodeRead) -> None:
+        """One transaction per episode: an interrupted sync resumes at the first episode not saved."""
+        self.db.executemany("""INSERT INTO annict_viewers VALUES (?,?,?) ON CONFLICT(episode_id, user_id)
+                               DO UPDATE SET first_at=min(first_at, excluded.first_at)""",
+                            [(ep.eid, user, at) for user, at in ep.firsts.items()])
+        self.db.execute("INSERT OR REPLACE INTO annict_episode_sync VALUES (?,?,?,?)",
+                        (ep.eid, ep.work_id, ep.count, ep.newest))
         self.db.commit()
 
 ANNICT_BY_TITLE = """
@@ -700,12 +746,16 @@ def discover_annict(http: "Http", store: Store) -> int:
     return new
 
 
+def annict_http(token: str, min_interval: float = 0.3) -> Http:
+    return Http(min_interval=min_interval, remaining_header="ratelimit-remaining", reset_header="ratelimit-reset",
+                headers={"Authorization": f"Bearer {token}"})
+
+
 def collect_annict(store: Store, budget: float | None = None) -> str | None:
     token = os.environ.get("ANNICT_TOKEN", "").strip()
     if not token:
         return None
-    http = Http(min_interval=0.3, remaining_header="ratelimit-remaining", reset_header="ratelimit-reset",
-                headers={"Authorization": f"Bearer {token}"})
+    http = annict_http(token)
     year, season = current_season(now_local().date())
     py, ps = previous_season(year, season)
     seasons = [f"{year}-{season}", f"{py}-{ps}"]
@@ -759,20 +809,53 @@ def collect_annict(store: Store, budget: float | None = None) -> str | None:
 
 
 def sync_annict_viewers(store: Store) -> str:
-    """One-off first sync of `annict_viewers` (no time limit; about an hour) over the episodes of the latest
+    """One-off first sync of `annict_viewers` (no time limit; a few minutes) over the episodes of the latest
     Annict snapshots. Writes no snapshots: the next daily run reports viewerPairs."""
     token = os.environ["ANNICT_TOKEN"].strip()
-    http = Http(min_interval=0.3, remaining_header="ratelimit-remaining", reset_header="ratelimit-reset",
-                headers={"Authorization": f"Bearer {token}"})
-    viewers = Viewers(http, store, float("inf"))
+    viewers = Viewers(None, store, float("inf"))
     day = store.db.execute("SELECT max(day) FROM snapshots WHERE source='annict' AND kind='work'").fetchone()[0]
     works = store.db.execute("SELECT external_id, data FROM snapshots WHERE source='annict' AND kind='work' AND day=?",
                              (day,)).fetchall()
-    total = 0
-    for n, (wid, data) in enumerate(works, start=1):
-        total += viewers.sync(int(wid), json.loads(data).get("episodes") or []) or 0
-        log.info("annict viewers: %d/%d works, %d pairs so far", n, len(works), total)
-    return f"works={len(works)} pairs={total} (episodes of the {day} snapshots)"
+    todo = [ep for wid, data in works for ep in viewers.stale(int(wid), json.loads(data).get("episodes") or [])]
+    log.info("annict viewers: %d works, %d episodes to read", len(works), len(todo))
+    n, records = _read_in_parallel(todo, token, viewers.save)
+    pairs = store.db.execute("SELECT COUNT(*) FROM annict_viewers").fetchone()[0]
+    return f"works={len(works)} episodes={n} records={records} pairs={pairs} (episodes of the {day} snapshots)"
+
+
+def _read_in_parallel(todo: list[EpisodeRead], token: str, save: Callable[[EpisodeRead], None]) -> tuple[int, int]:
+    """Workers read their share of the episodes; this thread alone writes, so the database never sees another
+    thread. Episodes finished before a failure or Ctrl-C are still saved. Returns (episodes, records) read."""
+    k, stop, finished = ANNICT_VIEWER_WORKERS, threading.Event(), queue.Queue()
+    gap = 60.0 * k / ANNICT_VIEWER_PER_MIN
+    t0, n, records = time.monotonic(), 0, 0
+
+    def save_one(ep: EpisodeRead) -> None:
+        nonlocal n, records
+        save(ep)
+        n, records = n + 1, records + ep.read
+        if n % 200 == 0 or n == len(todo):
+            secs = time.monotonic() - t0
+            log.info("annict viewers: %d/%d episodes, %d records, %.0fs (%.0f records/s)",
+                     n, len(todo), records, secs, records / max(secs, 1.0))
+
+    with ThreadPoolExecutor(max_workers=k) as pool:
+        futures = [pool.submit(read_records, annict_http(token, gap), todo[i::k], stop.is_set, finished.put,
+                               Viewers.BATCH, Viewers.PAGE) for i in range(k)]
+        try:
+            while not all(f.done() for f in futures) and not any(f.done() and f.exception() for f in futures):
+                try:
+                    save_one(finished.get(timeout=1))
+                except queue.Empty:
+                    pass
+        finally:
+            stop.set()
+            wait(futures)
+            while not finished.empty():
+                save_one(finished.get())
+        for f in futures:
+            f.result()
+    return n, records
 
 
 # ---------------------------------------------------------------- main
@@ -803,7 +886,7 @@ def main() -> int:
     ap.add_argument("--db", default=os.environ.get("ANISTOCK_DB", str(Path(__file__).parent / "data" / "anistock.db")))
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--annict-viewers", action="store_true",
-                    help="one-off: the first full read of Annict records, each account once per episode (about an hour)")
+                    help="one-off: the first full read of Annict records, each account once per episode (a few minutes)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
