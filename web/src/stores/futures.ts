@@ -1,0 +1,38 @@
+// 热度期货 (docs/v3-futures.md §4–5): the contracts, one contract's market, and the player's futures. Prices are
+// in hundredths of an index point; a contract's tick_value is what one hundredth of one lot is worth.
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import { api, call, type FuturesContract, type FuturesDetail, type MyFutures } from '../api'
+
+export const useFutures = defineStore('futures', () => {
+  /** the contracts trading or waiting for their index (null: not loaded) */
+  const list = ref<FuturesContract[] | null>(null)
+  const detail = ref<Record<number, FuturesDetail>>({})
+  const mine = ref<MyFutures | null>(null)
+  const error = ref<Record<number, string>>({})
+
+  async function refreshList() {
+    list.value = (await call(api.GET('/api/v1/futures'))).contracts
+  }
+  async function refresh(id: number) {
+    detail.value[id] = await call(api.GET('/api/v1/futures/{id}', { params: { path: { id } } }))
+  }
+  async function refreshMine() {
+    mine.value = await call(api.GET('/api/v1/me/futures'))
+  }
+  async function place(body: { contract_id: number; side: 'buy' | 'sell'; quantity: number; price: number }) {
+    const r = await call(api.POST('/api/v1/me/futures/orders', { body: { ...body, type: 'limit' } }))
+    await Promise.all([refresh(body.contract_id), refreshMine()])
+    return r
+  }
+  async function cancel(orderId: number) {
+    mine.value = await call(api.DELETE('/api/v1/me/futures/orders/{id}', { params: { path: { id: orderId } } }))
+  }
+  /** the contract trading on a stock now (one per work at a time; the latest period when two overlap) */
+  function forStock(stockId: number): FuturesContract | null {
+    const xs = (list.value ?? []).filter((c) => c.stock.id === stockId && c.status === 'listed')
+    return xs.sort((a, b) => b.period - a.period)[0] ?? null
+  }
+
+  return { list, detail, mine, error, refreshList, refresh, refreshMine, place, cancel, forStock }
+})

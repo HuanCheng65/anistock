@@ -25,6 +25,7 @@ import { useStockNav } from '../composables/useStockNav'
 import { bigMoney, dir, hm, money, pct, qty, share, signed, weekdayTime } from '../format'
 import { useAccount } from '../stores/account'
 import { useCredit } from '../stores/credit'
+import { useFutures } from '../stores/futures'
 import { markEditing } from '../version'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
@@ -40,6 +41,10 @@ const prefs = usePrefs()
 const session = useSession()
 const account = useAccount()
 const credit = useCredit()
+const fut = useFutures()
+usePoll(() => fut.refreshList().catch(() => {}), 300000)
+/** the heat futures contract on this stock's work, while one trades */
+const contract = computed(() => fut.forStock(id.value))
 const desk = useMedia(DESK)
 const wide = useMedia('(min-width: 1180px)')
 const drawer = ref(false)
@@ -251,6 +256,10 @@ function back() {
       <div class="center">
         <EmptyState v-if="err && !s" :text="err" action="返回股票" to="/stocks" tone="error" />
         <template v-else-if="s && q">
+          <nav v-if="contract" class="kind" aria-label="品种">
+            <span aria-current="page">股票</span>
+            <RouterLink :to="`/futures/${contract.id}`">热度期货</RouterLink>
+          </nav>
           <section class="hero">
             <Cover :id="s.stock.id" :title="s.stock.title" :w="desk ? 92 : 96" :h="desk ? 128 : 134" :size="desk ? 18 : 19" />
             <div class="ht">
@@ -379,6 +388,9 @@ function back() {
 
 <style scoped>
 .code { font-size: 13px; color: var(--ink-2); }
+.kind { display: flex; gap: 22px; padding: 0 var(--gutter); border-bottom: 1px solid var(--hair); font-size: 15px; }
+.kind a, .kind span { padding: 11px 0 9px; color: var(--muted); border-bottom: 2px solid transparent; }
+.kind [aria-current] { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
 .step { margin-left: auto; width: 36px; }
 .step + .step { margin-left: 0; }
 .step:disabled { color: var(--hair); }

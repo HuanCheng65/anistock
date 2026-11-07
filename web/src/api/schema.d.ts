@@ -1586,6 +1586,21 @@ export interface components {
             status: string;
             type: string;
         };
+        /** @description The body of 期货下单 (documentation: the handler reads the fields itself, as `/me/orders` does). */
+        FuturesOrderRequest: {
+            /** Format: int64 */
+            contract_id: number;
+            price: null | components["schemas"]["IndexPrice"];
+            /**
+             * Format: int64
+             * @description 手
+             */
+            quantity: number;
+            /** @description buy | sell */
+            side: string;
+            /** @description limit | market */
+            type: string;
+        };
         FuturesOrderResponse: {
             average_price: null | components["schemas"]["IndexPrice"];
             /** Format: int64 */
@@ -3808,7 +3823,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FuturesOrderRequest"];
+            };
+        };
         responses: {
             201: {
                 headers: {

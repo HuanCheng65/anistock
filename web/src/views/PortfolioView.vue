@@ -10,8 +10,9 @@ import RestructureEntry from '../components/RestructureEntry.vue'
 import Sparkline from '../components/Sparkline.vue'
 import Tabs from '../components/Tabs.vue'
 import { usePoll } from '../composables/usePoll'
-import { dir, money, pct, qty, signed, when } from '../format'
+import { dir, money, num, pct, qty, signed, when } from '../format'
 import { useAccount } from '../stores/account'
+import { useFutures } from '../stores/futures'
 import { MODE_LABEL } from '../stores/credit'
 import { useIpo } from '../stores/ipo'
 import { usePrefs } from '../stores/prefs'
@@ -59,6 +60,9 @@ async function more(which: 'trades' | 'ledger') {
 }
 
 const me = computed(() => session.me)
+const fut = useFutures()
+usePoll(() => (session.me ? fut.refreshMine().catch(() => {}) : null), 30000, 60000)
+const futPos = computed(() => (fut.mine?.positions ?? []).filter((p) => p.quantity))
 function rememberHold() {
   prefs.context = { key: 'hold', label: '持仓', ids: positions.value.map((p) => p.stock.id) }
 }
@@ -162,7 +166,15 @@ async function cancel(id: number) {
                 </tr>
               </tbody>
             </table>
-            <EmptyState v-if="!positions.length" text="暂无持仓" action="去看股票" to="/stocks" />
+            <EmptyState v-if="!positions.length && !futPos.length" text="暂无持仓" action="去看股票" to="/stocks" />
+            <section v-if="futPos.length" class="futs" aria-labelledby="futs-h">
+              <h2 id="futs-h" class="h2 gutter">热度期货<span class="num fm">保证金 {{ money(fut.mine!.margin_held) }}</span></h2>
+              <RouterLink v-for="p in futPos" :key="p.contract.id" :to="`/futures/${p.contract.id}`" class="fut gutter">
+                <span class="serif clamp1 t">{{ p.contract.stock.title }} · 第 {{ p.contract.period }} 期</span>
+                <span class="num r" :class="dir(p.pnl)">{{ signed(p.pnl, 0) }}</span>
+                <span class="m">押{{ p.quantity > 0 ? '更热' : '更冷' }} {{ qty(Math.abs(p.quantity)) }} 手 · 成本 <span class="num">{{ num(p.average_price / 100) }}</span>，现在预期 <span class="num">{{ num(p.contract.last_price / 100) }}</span></span>
+              </RouterLink>
+            </section>
           </template>
           <div v-else class="gutter"><div v-for="i in 3" :key="i" class="skel" style="height: 50px; margin: 12px 0"></div></div>
         </template>
@@ -261,6 +273,11 @@ async function cancel(id: number) {
 .m.up { color: var(--up); }
 .m.down { color: var(--down); }
 .split { grid-column: 3; margin-top: -2px; }
+.futs { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.futs .h2 { display: flex; align-items: baseline; gap: 10px; }
+.fm { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
+.fut { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 12px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
+.fut .m { grid-column: 1 / -1; }
 .ord { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--hair-2); align-items: center; }
 .oside { font-size: 13px; text-align: right; }
 .tt { max-width: 0; width: 50%; }

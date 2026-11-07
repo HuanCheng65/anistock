@@ -1952,6 +1952,47 @@
         ],
         "type": "object"
       },
+      "FuturesOrderRequest": {
+        "description": "The body of 期货下单 (documentation: the handler reads the fields itself, as `/me/orders` does).",
+        "properties": {
+          "contract_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice",
+                "description": "限价，0.01 点；市价委托不填"
+              }
+            ]
+          },
+          "quantity": {
+            "description": "手",
+            "format": "int64",
+            "type": "integer"
+          },
+          "side": {
+            "description": "buy | sell",
+            "type": "string"
+          },
+          "type": {
+            "description": "limit | market",
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_id",
+          "price",
+          "quantity",
+          "side",
+          "type"
+        ],
+        "type": "object"
+      },
       "FuturesOrderResponse": {
         "properties": {
           "average_price": {
@@ -7412,6 +7453,16 @@
     "/api/v1/me/futures/orders": {
       "post": {
         "operationId": "futures_place",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FuturesOrderRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "201": {
             "content": {

@@ -396,8 +396,25 @@ fn my_futures(e: &Engine, me: i64, today: &str) -> MyFutures {
     }
 }
 
+/// The body of 期货下单 (documentation: the handler reads the fields itself, as `/me/orders` does).
+#[derive(ToSchema)]
+#[allow(dead_code)]
+pub struct FuturesOrderRequest {
+    pub contract_id: i64,
+    /// buy | sell
+    pub side: String,
+    /// limit | market
+    #[schema(rename = "type")]
+    pub kind: String,
+    /// 手
+    pub quantity: i64,
+    /// 限价，0.01 点；市价委托不填
+    pub price: Option<IndexPrice>,
+}
+
 /// 期货下单
 #[utoipa::path(post, path = "/api/v1/me/futures/orders", operation_id = "futures_place", tag = "account",
+    request_body = FuturesOrderRequest,
     responses((status = 201, body = FuturesOrderResponse), (status = "default", body = ErrorBody)))]
 pub async fn place(
     State(st): State<Arc<AppState>>,

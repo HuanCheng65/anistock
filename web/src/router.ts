@@ -9,6 +9,8 @@ const router = createRouter({
     { path: '/stocks', name: 'stocks', component: () => import('./views/StocksView.vue'), meta: { tab: 'stocks', title: '股票' } },
     { path: '/stocks/:id(\\d+)', name: 'stock', component: () => import('./views/StockView.vue'), meta: { tab: 'stocks', title: '股票', noNav: true } },
     { path: '/stock/:id', redirect: (to) => `/stocks/${to.params.id}` },
+    { path: '/futures', name: 'futures', component: () => import('./views/FuturesListView.vue'), meta: { tab: 'stocks', title: '热度期货' } },
+    { path: '/futures/:id(\\d+)', name: 'contract', component: () => import('./views/FuturesView.vue'), meta: { tab: 'stocks', title: '热度期货', noNav: true } },
     { path: '/watch', redirect: { path: '/stocks', query: { f: 'watch' } } },
     { path: '/ipo', name: 'ipo', component: () => import('./views/IpoView.vue'), meta: { tab: 'ipo', title: '新股认购' } },
     { path: '/news', name: 'news', component: () => import('./views/NewsView.vue'), meta: { tab: 'news', title: '资讯' } },
