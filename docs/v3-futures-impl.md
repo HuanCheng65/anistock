@@ -70,7 +70,7 @@ pub(crate) trait Venue {
 
 ### 2.3 数据
 
-迁移 `V17__futures.sql`，表和股票分开：`heat_index_pub`（游戏库里冻结的指数）、`futures_contracts`、`futures_orders`、`futures_trades`、`futures_positions`、`futures_candles`、`futures_settlements`。清算账户是一个新的特殊账户（`clearing`），不计入货币总量，每天日结后余额为 0。
+迁移 `V17__futures.sql`，表和股票分开：`heat_index_pub`（游戏库里冻结的指数）、`futures_contracts`、`futures_orders`、`futures_trades`、`futures_positions`、`futures_candles`、`futures_settlements`。清算账户是一个新的特殊账户（`clearing`，第一次盯市时创建），不计入货币总量，每天日结后余额为 0。
 
 价格以 0.01 指数点为单位存整数；合约乘数存在合约上（1 点 = 10 星辉）。
 
@@ -82,7 +82,7 @@ pub(crate) trait Venue {
 |---|---|---|
 | 1 | 撮合抽成 `src/matching/`，股票改为调用它 | `cargo test`；Python 对拍（`backend/difftest/run.sh`）；同一种子的回放结果逐字节相同 |
 | 2 | 指数进入每日输入（顶层的 `heat`，按作品；旧版本的服务程序忽略它）；日本分项按账号去重 | 旧输入照常解析；去重的计数（`tests/test_heat_inputs.py`） |
-| 3 | 迁移、`FuturesState`、清算账户、`[futures]` 配置 | 迁移测试；载入和保存往返 |
+| 3 | 迁移、`FuturesState`、`[futures]` 配置（默认关闭；game.toml 暂不加这一节，旧版本的服务程序读不了） | 迁移测试；载入和保存往返 |
 | 4 | 分期和挂牌 | 期的边界、门槛、第 0 周不挂、预测下调不摘牌 |
 | 5 | 下单、撮合、清算、集合竞价 | 成交、部分成交、开平仓、冻结释放、冷静期、不变量 |
 | 6 | 每日结算价和盯市 | 结算价的取法；清算账户和账本合计为 0 |

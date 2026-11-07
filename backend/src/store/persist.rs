@@ -109,6 +109,8 @@ pub enum Change {
     Margin(crate::margin::MarginChange),
     /// corporate actions (crate::corporate, V10)
     Corporate(crate::corporate::CorporateChange),
+    /// 热度期货 rows (crate::futures, V17)
+    Futures(crate::futures::FuturesChange),
     /// `INSERT OR REPLACE INTO lots` (a split rescales a lot's quantity and cost)
     LotReplace(Lot),
     StateSet {
@@ -410,6 +412,7 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
         }
         Change::Margin(m) => crate::margin::apply(conn, m)?,
         Change::Corporate(m) => crate::corporate::apply(conn, m)?,
+        Change::Futures(m) => crate::futures::store::apply(conn, m)?,
         Change::LotReplace(l) => {
             conn.prepare_cached("INSERT OR REPLACE INTO lots(id, account_id, company_id, qty, cost, acquired_on) VALUES (?,?,?,?,?,?)")?
                 .execute(params![l.id, l.account_id, l.company_id, l.qty, l.cost, l.acquired_on])?;

@@ -96,6 +96,8 @@ pub struct Config {
     pub market: crate::market::MarketConfig,
     /// `[margin]`: 融资融券 (defaults when the section is absent)
     pub margin: crate::margin::MarginRules,
+    /// `[futures]`: 热度期货 (defaults when the section is absent: off)
+    pub futures: crate::futures::FuturesRules,
     /// `[corporate]`: company capital policy (defaults when the section is absent)
     pub corporate: crate::corporate::CorporateRules,
     pub tz: Tz,
@@ -210,6 +212,7 @@ impl Config {
             .map_err(err("[npc]"))?;
         let market = crate::market::MarketConfig::from_table(raw.get("market")).map_err(ConfigError)?;
         let margin = crate::margin::MarginRules::from_table(raw.get("margin")).map_err(ConfigError)?;
+        let futures = crate::futures::FuturesRules::from_table(raw.get("futures")).map_err(ConfigError)?;
         let corporate = crate::corporate::CorporateRules::from_table(raw.get("corporate")).map_err(ConfigError)?;
         let tz: Tz = game.timezone.parse().map_err(|e| ConfigError(format!("timezone: {e}")))?;
 
@@ -244,6 +247,7 @@ impl Config {
             npc,
             market,
             margin,
+            futures,
             corporate,
             tz,
             collector_db: path_env("ANISTOCK_DB", root.join("data").join("anistock.db")),

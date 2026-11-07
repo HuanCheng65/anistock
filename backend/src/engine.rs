@@ -105,6 +105,8 @@ pub(crate) struct State {
     pub margin: crate::margin::MarginState,
     /// corporate actions (crate::corporate)
     pub corp: crate::corporate::CorporateState,
+    /// 热度期货 (crate::futures)
+    pub futures: crate::futures::FuturesState,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -1176,6 +1178,7 @@ impl State {
             player_returns: s.player_returns.clone(),
             margin: s.margin.clone(),
             corp: s.corp.clone(),
+            futures: s.futures.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,
             last_ledger_id: s.max_ledger_id,
