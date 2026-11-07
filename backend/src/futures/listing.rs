@@ -34,7 +34,8 @@ impl Engine {
     ) -> Vec<i64> {
         let mut new = vec![];
         for u in works {
-            for k in listed_on(u.premiere, on, rules.weeks) {
+            let Some(k) = listed_on(u.premiere, on, rules.weeks) else { continue };
+            {
                 if !self.may_underlie(u.company_id) || self.st.futures.on_work(u.work_id).any(|c| c.period == k) {
                     continue;
                 }

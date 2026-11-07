@@ -1,8 +1,9 @@
 //! Contract periods, anchored on each work's premiere (docs/v3-futures.md §4.1). Week 0 is the premiere day
 //! and the six after it (a whole season released at once falls in it too); period k covers weeks
-//! `weeks*(k-1)+1 ..= weeks*k`. Week 0 has no contract. Period k is listed on the first day of period k-1, and
-//! period 1 on its own first day, a week after the premiere (with a week of data: at the premiere the forecast
-//! is mostly the prior), so the current and the next period trade side by side.
+//! `weeks*(k-1)+1 ..= weeks*k`. Week 0 has no contract. One contract per work at a time, so the players of a
+//! work trade the same one: period 1 is listed on its first day, a week after the premiere (with a week of
+//! data: at the premiere the forecast is mostly the prior), and each later period in the last week of the one
+//! before it.
 
 use chrono::{Duration, NaiveDate};
 
@@ -12,23 +13,23 @@ pub fn period_days(premiere: NaiveDate, k: i64, weeks: i64) -> (NaiveDate, Naive
     (first, first + Duration::days(7 * weeks - 1))
 }
 
-/// The day period `k` is listed: the first day of period k-1; period 1 on its own first day.
+/// The day period `k` is listed: its own first day for period 1, a week before its first day after that.
 pub fn listing_day(premiere: NaiveDate, k: i64, weeks: i64) -> NaiveDate {
-    period_days(premiere, (k - 1).max(1), weeks).0
+    let first = period_days(premiere, k, weeks).0;
+    if k <= 1 {
+        first
+    } else {
+        first - Duration::days(7)
+    }
 }
 
-/// The periods listed on `day` (period 1 and 2 together, a week after the premiere).
-pub fn listed_on(premiere: NaiveDate, day: NaiveDate, weeks: i64) -> Vec<i64> {
-    let since = (day - premiere).num_days() - 7; // days since period 1 began
-    if since < 0 || since % (7 * weeks) != 0 {
-        return vec![];
+/// The period listed on `day`, if any.
+pub fn listed_on(premiere: NaiveDate, day: NaiveDate, weeks: i64) -> Option<i64> {
+    let since = (day - premiere).num_days();
+    if since == 7 {
+        return Some(1);
     }
-    let next = since / (7 * weeks) + 2;
-    if next == 2 {
-        vec![1, 2]
-    } else {
-        vec![next]
-    }
+    (since > 7 && since % (7 * weeks) == 0).then(|| since / (7 * weeks) + 1)
 }
 
 #[cfg(test)]
@@ -45,8 +46,8 @@ mod tests {
         assert_eq!(period_days(p, 1, 4), (d("2026-10-10"), d("2026-11-06")));
         assert_eq!(period_days(p, 2, 4), (d("2026-11-07"), d("2026-12-04")));
         assert_eq!(listing_day(p, 1, 4), d("2026-10-10"));
-        assert_eq!(listing_day(p, 2, 4), d("2026-10-10"));
-        assert_eq!(listing_day(p, 3, 4), d("2026-11-07"));
+        assert_eq!(listing_day(p, 2, 4), d("2026-10-31"), "the last week of period 1");
+        assert_eq!(listing_day(p, 3, 4), d("2026-11-28"));
     }
 
     #[test]
@@ -55,12 +56,12 @@ mod tests {
         let mut listed = vec![];
         for n in -10..120 {
             let day = p + Duration::days(n);
-            for k in listed_on(p, day, 4) {
+            if let Some(k) = listed_on(p, day, 4) {
                 assert_eq!(listing_day(p, k, 4), day);
                 listed.push(k);
             }
         }
-        assert_eq!(listed, [1, 2, 3, 4, 5, 6]); // on days 7, 7, 35, 63, 91, 119
-        assert!(listed_on(p, p, 4).is_empty(), "nothing in week 0");
+        assert_eq!(listed, [1, 2, 3, 4, 5]); // on days 7, 28, 56, 84, 112
+        assert_eq!(listed_on(p, p, 4), None, "nothing in week 0");
     }
 }

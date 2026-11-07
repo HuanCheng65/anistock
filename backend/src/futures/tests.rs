@@ -198,18 +198,17 @@ fn listing_once_per_period_above_the_floor() {
     // nothing at the premiere or during week 0
     assert!(e.futures_list(&rules, "2026-10-02", d("2026-10-03"), &works, forecast).is_empty());
     assert!(e.futures_list(&rules, "2026-10-03", d("2026-10-04"), &works, forecast).is_empty());
-    // a week later: periods 1 and 2, for the hot work only
+    // a week later: period 1, for the hot work only
     let new = e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &works, forecast);
-    assert_eq!(new.len(), 2);
+    assert_eq!(new.len(), 1);
     let c = &e.st.futures.contracts[&new[0]];
     assert_eq!((c.work_id, c.period, c.first_day.as_str(), c.last_day.as_str()), (1, 1, "2026-10-10", "2026-11-06"));
     assert_eq!((c.forecast, c.prev_settle), (12000, 12000));
-    assert_eq!(e.st.futures.contracts[&new[1]].period, 2);
     // the same day again (a re-run close) lists nothing
     assert!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &works, forecast).is_empty());
-    // period 3 on the first day of period 2
-    let new = e.futures_list(&rules, "2026-11-06", d("2026-11-07"), &works, forecast);
-    assert_eq!(new.iter().map(|i| e.st.futures.contracts[i].period).collect::<Vec<_>>(), [3]);
+    // period 2 in the last week of period 1
+    let new = e.futures_list(&rules, "2026-10-30", d("2026-10-31"), &works, forecast);
+    assert_eq!(new.iter().map(|i| e.st.futures.contracts[i].period).collect::<Vec<_>>(), [2]);
 }
 
 #[test]
@@ -223,7 +222,7 @@ fn no_listing_for_a_company_on_its_way_out() {
     e.st.penny_days.insert(1, 3);
     assert!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(500.0)).is_empty());
     e.st.penny_days.remove(&1);
-    assert_eq!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(500.0)).len(), 2);
+    assert_eq!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(500.0)).len(), 1);
 }
 
 // ---------------------------------------------------------------- trading
@@ -237,7 +236,7 @@ fn market() -> (Engine, [i64; 3]) {
     e.futures.enabled = true;
     let u = [Underlying { company_id: 1, work_id: 1, premiere: d("2026-10-03") }];
     let rules = e.futures.clone();
-    assert_eq!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(90.0)), [1, 2]);
+    assert_eq!(e.futures_list(&rules, "2026-10-09", d("2026-10-10"), &u, |_, _, _, _| Some(90.0)), [1]);
     let ids = ["a", "b", "c"].map(|n| e.register_player(n, "x", 10_000_000, DAY, T1));
     for id in ids {
         e.open_credit_unchecked(id, T1);

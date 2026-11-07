@@ -117,7 +117,7 @@ impl Engine {
             for w in self.works_of(c.id) {
                 let (_, first_air, _) = self.work_shape(c, w, p);
                 let Some(premiere) = chrono::NaiveDate::from_num_days_from_ce_opt(first_air as i32) else { continue };
-                for k in super::calendar::listed_on(premiere, next_day, weeks) {
+                if let Some(k) = super::calendar::listed_on(premiere, next_day, weeks) {
                     let (a, b) = super::calendar::period_days(premiere, k, weeks);
                     let (a, b) = (a.num_days_from_ce() as i64, b.num_days_from_ce() as i64);
                     if let Some(f) = self.fut_forecast(fp, p, c.id, w, a, b, today) {
