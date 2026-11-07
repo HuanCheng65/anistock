@@ -120,8 +120,9 @@ impl Default for FuturesRules {
             index_weights: [0.3, 0.5, 0.2],
             // index / the inputs' att, median per show-day of each block (2026-07..11 backfill, sim/heat_inputs.py)
             index_link: [[1.0; 4], [5.6, 2.25, 2.3, 2.3], [0.66, 0.76, 0.85, 1.1]],
-            index_platform: [114628.0, 2168.0, 1542.0],
-            index_scale: 11300.0,
+            // the index method v1 (engine/heat_index.py PLATFORM, SCALE)
+            index_platform: [116352.0, 1772.0, 1649.0],
+            index_scale: 14437.0,
             model_cv: 0.15,
             horizon_drift: 0.002,
             mm_capital: 20_000_000,

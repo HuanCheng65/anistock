@@ -20,8 +20,11 @@ rollback; the candidates only grow otherwise),
 spike (over SPIKE x the median of the show's previous 28 days, with 7 or more of them); a negative or spiking
 value is replaced by that median, a missing one by the mean of the last 7 days, and the row says so.
 
-index = sum over markets of weight x heat / platform size x SCALE, platform size = the mean daily total of the
-market over the stored days (up to 365). Both SCALE and the platform rule are provisional until the switch
+index = sum over markets of weight x heat / platform size x SCALE, with the method's fixed constants (version v1,
+docs/v3-futures.md §3.7): each platform size the mean daily total of the shows on air over 2025-11..2026-10 from
+the backfills, SCALE such that the median show on air scores 100. A new version is announced 7 days ahead and
+applies to contract periods starting after (§3.4). (Before v1 the platform sizes rolled with the stored days.)
+The constants are not changed by data: that is the point
 (§3.5). Rows are written once and never updated (INSERT OR IGNORE): the published-and-frozen rule, rehearsed.
 
 Writes data/derived/heat_index.db (heat_raw: every measured change; heat_index: the checked values and the index).
@@ -45,12 +48,15 @@ sys.path.insert(0, str(ROOT))
 
 from engine import economy as E  # noqa: E402
 
-VERSION = "shadow-2"
+VERSION = "v1"
 WEIGHTS = {"cn": 0.5, "us": 0.3, "jp": 0.2}     # server/game.toml [revenue] market weights
 CANDIDATE = {"cn": "engaged", "jp": "viewers", "us": "attention"}
 FALLBACK = {"jp": "records"}   # until a work's viewerPairs are synced (collect.py --annict-viewers)
 SPIKE = 10.0
-SCALE = 10000.0
+SCALE = 14437.0
+# the mean daily total of the shows on air, 2025-11-01..2026-10-31 (sim/heat_history.py --archive over the
+# backfilled seasons; jp counted per account and episode: the backfill's raw records x 0.96)
+PLATFORM = {"us": 116352.0, "cn": 1772.0, "jp": 1649.0}
 OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_index.db"
 
 SCHEMA = """
@@ -199,15 +205,7 @@ def compute(day: str) -> int:
             vals[market] = v
         rows.append((work, vals, flags))
         flags_all[work] = flags
-    # platform size: the mean daily total per market over the stored days and this one (up to 365 days)
-    platform = {}
-    for market in WEIGHTS:
-        totals = [r[0] for r in db.execute(
-            f"SELECT SUM({market}) FROM heat_index WHERE {market} IS NOT NULL AND day<? GROUP BY day ORDER BY day DESC LIMIT 364",
-            (day,))]
-        today_total = sum(v.get(market) or 0.0 for _, v, _ in rows)
-        totals.append(today_total)
-        platform[market] = st.fmean(totals) if totals and st.fmean(totals) > 0 else None
+    platform = PLATFORM   # fixed by the method (v1)
     n = 0
     for work, vals, flags in rows:
         idx = sum(WEIGHTS[m] * (vals[m] or 0.0) / platform[m] * SCALE for m in WEIGHTS if vals.get(m) is not None and platform[m])
