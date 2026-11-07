@@ -1468,7 +1468,7 @@ export interface components {
         };
         /** @description 一次除权：这一天起按新的股数交易 */
         ExDay: {
-            /** @description split | rights */
+            /** @description split | rights | dividend */
             kind: string;
             /**
              * Format: double
@@ -2042,6 +2042,11 @@ export interface components {
             /** Format: double */
             day_change: number;
             dividends: components["schemas"]["Money"];
+            /**
+             * Format: date
+             * @description 最近一笔买入的日期：股息红利税按持股时间计算，先买的先算，这一笔满期后全部按最低税率
+             */
+            newest_lot_on: string | null;
             /** Format: date */
             oldest_lot_on: string | null;
             pnl: components["schemas"]["Money"];

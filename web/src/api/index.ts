@@ -49,6 +49,7 @@ export type RightsOffer = S['RightsOffer']
 export type CorporateAction = S['CorporateAction']
 export type ExDay = S['ExDay']
 export type WorksResponse = S['WorksResponse']
+export type HeatDay = S['HeatDay']
 export type Work = S['Work']
 export type Sequel = S['Sequel']
 

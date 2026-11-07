@@ -1573,7 +1573,7 @@
         "description": "一次除权：这一天起按新的股数交易",
         "properties": {
           "kind": {
-            "description": "split | rights",
+            "description": "split | rights | dividend",
             "type": "string"
           },
           "price_factor": {
@@ -3578,6 +3578,14 @@
           "dividends": {
             "$ref": "#/components/schemas/Money"
           },
+          "newest_lot_on": {
+            "description": "最近一笔买入的日期：股息红利税按持股时间计算，先买的先算，这一笔满期后全部按最低税率",
+            "format": "date",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "oldest_lot_on": {
             "format": "date",
             "type": [
@@ -3614,6 +3622,7 @@
           "average_cost",
           "day_change",
           "dividends",
+          "newest_lot_on",
           "oldest_lot_on",
           "pnl",
           "pnl_ratio",

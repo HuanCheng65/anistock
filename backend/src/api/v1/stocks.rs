@@ -527,6 +527,36 @@ fn price_adjustments(c: &Connection, id: i64) -> R<Vec<(String, f64, f64, Option
     rows.collect::<Result<_, _>>().map_err(sql)
 }
 
+/// A stock's ex-dividend days, as price adjustments: a dividend paid at a day's close makes the next trading day
+/// ex-dividend, with factor 1 − dividend / that close (both in that day's share terms).
+fn dividend_adjustments(c: &Connection, id: i64, today: &str) -> R<Vec<(String, f64, f64, Option<String>)>> {
+    let mut s = c
+        .prepare_cached(
+            "SELECT d.day, (SELECT MIN(n.day) FROM candles n WHERE n.company_id=d.company_id AND n.day>d.day), d.dividend_ps, k.close
+             FROM company_days d JOIN candles k ON k.company_id=d.company_id AND k.day=d.day
+             WHERE d.company_id=? AND d.dividend_ps>0 AND k.close>0 ORDER BY d.day",
+        )
+        .map_err(sql)?;
+    let rows = s
+        .query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?)))
+        .map_err(sql)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (paid, next, dps, close) = row.map_err(sql)?;
+        // no closed day after it yet: today's partial bar is ex-dividend, unless the dividend was paid today
+        let ex = match next {
+            Some(d) => d,
+            None if paid.as_str() < today => today.to_string(),
+            None => continue,
+        };
+        let f = 1.0 - dps as f64 / close as f64;
+        if f > 0.0 && f < 1.0 {
+            out.push((ex, f, 1.0, Some("dividend".into())));
+        }
+    }
+    Ok(out)
+}
+
 fn exists(c: &Connection, id: i64) -> R<()> {
     c.query_row("SELECT 1 FROM companies WHERE id=?", [id], |_| Ok(()))
         .optional()
@@ -626,7 +656,7 @@ pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, R
             if let (Some(a), Some(close)) = (agg, last) {
                 if items.last().is_none_or(|k| k.trading_day.0 < today) {
                     items.push(Candle {
-                        trading_day: day(today),
+                        trading_day: day(today.clone()),
                         open: m(a.0),
                         high: m(a.1),
                         low: m(a.2),
@@ -638,8 +668,11 @@ pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, R
                 }
             }
         }
-        // 前复权 (docs/v2-corporate.md §5): bars before each split / ex-rights day × its factor
-        let adj = price_adjustments(c, id)?;
+        // 前复权 (docs/v2-corporate.md §5): bars before each split / ex-rights day × its factor, and before each
+        // ex-dividend day × (1 − dividend / that close): a season's weekly payouts do not read as a falling price
+        let mut adj = price_adjustments(c, id)?;
+        adj.extend(dividend_adjustments(c, id, &today)?);
+        adj.sort_by(|a, b| a.0.cmp(&b.0));
         if forward && !adj.is_empty() {
             for k in items.iter_mut() {
                 let (mut pf, mut qf) = (1.0, 1.0);
@@ -662,7 +695,11 @@ pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, R
         let ex_days = adj
             .into_iter()
             .filter(|(d, ..)| d.as_str() >= from.as_str() && d.as_str() <= to.as_str())
-            .map(|(d, p, q, kind)| ExDay { trading_day: day(d), kind: if q != 1.0 { kind.unwrap_or_else(|| "split".into()) } else { kind.unwrap_or_else(|| "rights".into()) }, price_factor: r6(p) })
+            .map(|(d, p, q, kind)| ExDay {
+                trading_day: day(d),
+                kind: kind.unwrap_or_else(|| if q != 1.0 { "split".into() } else { "rights".into() }),
+                price_factor: r6(p),
+            })
             .collect();
         Ok(CandlesResponse { items, adjust: if forward { "forward".into() } else { "none".into() }, ex_days })
     })
@@ -896,4 +933,32 @@ pub async fn ipo_one(
 ) -> R<Json<Ipo>> {
     let id = super::path_id(&raw, "id")?;
     load_ipo(&st, id, caller.viewer()).await.map(Json)
+}
+
+#[cfg(test)]
+mod dividend_tests {
+    use super::*;
+
+    #[test]
+    fn a_dividend_makes_the_next_trading_day_ex_dividend() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("g.db");
+        crate::store::migrate(&path).unwrap();
+        let c = crate::store::connect(&path).unwrap();
+        c.execute_batch(
+            "INSERT INTO companies(id, code, title, first_air, listed_on, status, shares, ipo_price, prev_close, last_price)
+               VALUES (1, '100001', 'A', '2026-07-01', '2026-06-20', 'listed', 1000, 100, 100, 100);
+             INSERT INTO candles(company_id, day, open, high, low, close) VALUES
+               (1, '2026-11-01', 100, 100, 100, 100), (1, '2026-11-02', 96, 96, 96, 96), (1, '2026-11-03', 96, 96, 96, 96);
+             INSERT INTO company_days(company_id, day, revenue, rev_us, rev_cn, rev_jp, aired, dividend_ps)
+               VALUES (1, '2026-11-01', 0, 0, 0, 0, 3, 4), (1, '2026-11-03', 0, 0, 0, 0, 3, 5);",
+        )
+        .unwrap();
+        // paid at 11-01's close of 100: 11-02 trades ex-dividend, bars before it × 0.96; 11-03's has no next day yet
+        assert_eq!(dividend_adjustments(&c, 1, "2026-11-03").unwrap(), vec![("2026-11-02".to_string(), 0.96, 1.0, Some("dividend".into()))]);
+        // on 11-04, before its close: 11-03's dividend makes today's partial bar ex-dividend
+        let later = dividend_adjustments(&c, 1, "2026-11-04").unwrap();
+        assert_eq!(later[1].0, "2026-11-04");
+        assert!((later[1].1 - (1.0 - 5.0 / 96.0)).abs() < 1e-12);
+    }
 }

@@ -276,7 +276,8 @@ pub fn positions(c: &Connection, id: i64) -> R<Vec<Position>> {
             "SELECT h.company_id, h.qty, h.qty_frozen, co.code, co.title, co.last_price, co.prev_close,
                (SELECT COALESCE(SUM(qty*cost),0) FROM lots l WHERE l.account_id=h.account_id AND l.company_id=h.company_id),
                (SELECT COALESCE(SUM(amount),0) FROM ledger WHERE to_id=h.account_id AND company_id=h.company_id AND reason='dividend'),
-               (SELECT MIN(acquired_on) FROM lots l WHERE l.account_id=h.account_id AND l.company_id=h.company_id)
+               (SELECT MIN(acquired_on) FROM lots l WHERE l.account_id=h.account_id AND l.company_id=h.company_id),
+               (SELECT MAX(acquired_on) FROM lots l WHERE l.account_id=h.account_id AND l.company_id=h.company_id)
              FROM holdings h JOIN companies co ON co.id = h.company_id
              WHERE h.account_id=? AND h.qty > 0
                AND NOT EXISTS (SELECT 1 FROM short_positions s WHERE s.account_id=h.account_id AND s.company_id=h.company_id AND s.qty > 0)
@@ -300,6 +301,7 @@ pub fn positions(c: &Connection, id: i64) -> R<Vec<Position>> {
                 day_change: super::market::ratio(last, prev),
                 dividends: m(r.get(8)?),
                 oldest_lot_on: r.get(9)?,
+                newest_lot_on: r.get(10)?,
             })
         })
         .map_err(sql)?;

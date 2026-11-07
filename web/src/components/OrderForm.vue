@@ -1,7 +1,9 @@
 <script setup lang="ts">
-// Order entry on the terminal surface: side, limit / market, price, quantity, cost, submit; plus the
-// player's open orders in this stock (撤单). 对手价 fills the best opposite price, and the line beside it
-// estimates what filling the quantity now costs against the mid price, walking the visible book.
+// Order entry on the terminal surface: side, price, quantity, cost, submit; plus the player's open orders in this
+// stock (撤单). Every order is a limit order: the price starts at 对手价 (the best opposite price), so the default
+// fills now, and the line under it says which: filling now (and what that costs against the mid price, walking
+// the visible book), or waiting until the other side comes to it, good until the daily close. Market orders stay
+// in the API; here a price that crosses the book is the same thing, with a limit.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { api, ApiError, call, errorText, type PlaceOrderResponse, type StockDetail } from '../api'
@@ -23,8 +25,7 @@ const route = useRoute()
 const prefs = usePrefs()
 
 const side = ref<'buy' | 'sell'>(props.initialSide ?? 'buy')
-const kind = ref<'limit' | 'market'>('limit')
-const price = ref(centsText(props.stock.quote.price))
+const price = ref('')
 const qty = ref('')
 const busy = ref(false)
 const msg = ref<{ kind: 'ok' | 'error'; text: string; sign?: boolean } | null>(null)
@@ -35,14 +36,7 @@ onBeforeUnmount(() => markEditing(editKey, false))
 
 watch(() => props.initialSide, (s) => s && (side.value = s))
 watch(() => props.pick, (p) => {
-  if (p) {
-    price.value = centsText(p.price)
-    kind.value = 'limit'
-  }
-})
-watch(() => props.stock.stock.id, () => {
-  price.value = centsText(props.stock.quote.price)
-  qty.value = ''
+  if (p) price.value = centsText(p.price)
 })
 
 
@@ -50,19 +44,15 @@ const st = computed(() => session.status)
 const rules = computed(() => session.rules)
 const phase = computed(() => st.value?.phase ?? 'closed')
 const auction = computed(() => phase.value === 'auction')
-watch(auction, (a) => { if (a) kind.value = 'limit' }, { immediate: true })
 const commissionRate = computed(() => rules.value?.fees.commission ?? 0.00025)
 const stampRate = computed(() => rules.value?.fees.stamp_duty ?? 0.0005)
 const vcm = computed(() => (props.stock.vcm.active ? props.stock.vcm : null))
-const sess = computed(() => rules.value?.session ?? { auction_start: '08:45', open: '09:00', close: '04:00' })
+const sess = computed(() => rules.value?.session ?? { auction_start: '08:45', open: '09:00', close: '04:00', daily_close: '06:30' })
 
 const bestAsk = computed(() => props.book.asks[0]?.price ?? null)
 const bestBid = computed(() => props.book.bids[0]?.price ?? null)
 /** price in cents (NaN when the text is not a valid price) */
-const px = computed(() => {
-  if (kind.value === 'market') return (side.value === 'buy' ? bestAsk.value : bestBid.value) ?? props.stock.quote.price
-  return toCents(price.value) ?? NaN
-})
+const px = computed(() => toCents(price.value) ?? NaN)
 const n = computed(() => {
   const v = Number(qty.value)
   return Number.isInteger(v) && v > 0 ? v : 0
@@ -99,10 +89,8 @@ const modes = computed<Mode[]>(() => {
 })
 watch(modes, (ms) => { if (!ms.includes(mode.value)) mode.value = ms[0] }, { immediate: true })
 const creditMode = computed(() => (mode.value === 'plain' ? null : mode.value))
-watch(creditMode, (m) => { if (m) kind.value = 'limit' })
-const worstAsk = computed(() => props.book.asks.reduce((m, a) => Math.max(m, a.price), bestAsk.value ?? props.stock.quote.price))
 const maxBuy = computed(() => {
-  const p = kind.value === 'market' ? worstAsk.value : px.value
+  const p = px.value
   if (!(p > 0)) return 0
   return Math.max(0, Math.floor(cash.value / (p * (1 + commissionRate.value) + 1)))
 })
@@ -140,10 +128,20 @@ const total = computed(() => (side.value === 'buy' ? notional.value + commission
 // ---- 对手价 and the cost of filling now
 const counter = computed(() => (side.value === 'buy' ? bestAsk.value : bestBid.value))
 function useCounter() {
-  if (counter.value == null) return
-  kind.value = 'limit'
-  price.value = centsText(counter.value)
+  price.value = centsText(counter.value ?? props.stock.quote.price)
 }
+// the price starts at 对手价 (the last price on an empty side), and again on a new stock or side; a price the
+// player typed or picked from the book stays until then
+watch([() => props.stock.stock.id, side], ([id], [was]) => {
+  useCounter()
+  if (id !== was) qty.value = ''
+}, { immediate: true })
+/** whether the entered price meets the other side now (in the auction: whether it is in the cross) */
+const crosses = computed(() => {
+  const c = counter.value
+  if (c == null || !(px.value > 0)) return false
+  return side.value === 'buy' ? px.value >= c : px.value <= c
+})
 const mid = computed(() => {
   const a = bestAsk.value, b = bestBid.value
   if (a != null && b != null) return (a + b) / 2
@@ -166,19 +164,24 @@ const impact = computed(() => {
   const extra = side.value === 'buy' ? cost - mid.value * want : mid.value * want - cost
   return { extra: Math.max(0, Math.round(extra)), ratio: Math.max(0, extra / (mid.value * want)) }
 })
-const impactText = computed(() => {
-  if (!props.book.asks.length && !props.book.bids.length) return ''
-  if (counter.value == null) return side.value === 'buy' ? '暂无卖出委托' : '暂无买入委托'
+/** the line under the price: fills now (and its cost), or waits until the other side comes, until the daily close */
+const fillText = computed(() => {
+  if (!(px.value > 0)) return ''
+  const until = `${sess.value.daily_close} 前有效`
+  if (auction.value) return `${sess.value.open} 集合竞价统一成交，${until}`
+  if (!crosses.value) {
+    if (counter.value == null) return `${side.value === 'buy' ? '暂无卖出委托' : '暂无买入委托'}，挂单等待，${until}`
+    return `${side.value === 'buy' ? '卖价降到' : '买价升到'} ${money(px.value)} 才成交，${until}`
+  }
   const x = impact.value
-  if (!x) return '盘口深度不足'
-  const pctText = (x.ratio * 100).toFixed(2) + '%'
-  if (!n.value) return `立即成交 · 每股约${side.value === 'buy' ? '多付' : '少收'} ${pctText}`
-  return `立即成交 · 约${side.value === 'buy' ? '多付' : '少收'} ${pctText}（${money(x.extra)} 星辉）`
+  if (!x) return '立即成交一部分，其余挂单等待'
+  if (!n.value || x.extra === 0) return '立即成交'
+  return `立即成交，比中间价约${side.value === 'buy' ? '多付' : '少收'} ${money(x.extra)} 星辉`
 })
 
 const problem = computed(() => {
   if (!n.value) return qty.value ? '数量需为正整数' : ''
-  if (kind.value === 'limit' && !(px.value > 0)) return '价格需大于 0，最多两位小数'
+  if (!(px.value > 0)) return '价格需大于 0，最多两位小数'
   if (mode.value === 'short_sell' && px.value < last.value) return `融券卖出价格不能低于最新价 ${money(last.value)}`
   if (creditMode.value && n.value > maxQty.value) return `最多${MODE_LABEL[mode.value]} ${fmtQty(maxQty.value)} 股`
   if (creditMode.value) return ''
@@ -187,7 +190,7 @@ const problem = computed(() => {
   return ''
 })
 const outsideBand = computed(() =>
-  vcm.value && kind.value === 'limit' && px.value > 0 && vcm.value.low != null && vcm.value.high != null &&
+  vcm.value && px.value > 0 && vcm.value.low != null && vcm.value.high != null &&
   (px.value < vcm.value.low || px.value > vcm.value.high))
 
 function fill(frac: number) {
@@ -206,7 +209,10 @@ const submitText = computed(() => (creditMode.value ? MODE_LABEL[mode.value] : s
 
 // 下单前确认 (settings): the press opens a dialog with the order; its button sends
 const confirming = ref(false)
-const confirmTitle = computed(() => `${submitText.value}《${props.stock.stock.title}》？`)
+const confirmTitle = computed(() => `${submitText.value} ${fmtQty(n.value)} 股《${props.stock.stock.title}》？`)
+const confirmText = computed(() => (crosses.value && !auction.value
+  ? `按 ${money(px.value)} 以内的价格立即成交，${side.value === 'buy' ? '约花' : '约到账'} ${money(total.value)} 星辉。`
+  : `挂单等到 ${money(px.value)}，${sess.value.daily_close} 前没有成交会自动撤销。`))
 
 function submit() {
   if (busy.value || problem.value || !n.value) return
@@ -221,8 +227,8 @@ async function place() {
   try {
     const r = await call(api.POST('/api/v1/me/orders', {
       body: {
-        stock_id: props.stock.stock.id, side: side.value, type: kind.value, quantity: n.value,
-        price: kind.value === 'limit' ? px.value : null,
+        stock_id: props.stock.stock.id, side: side.value, type: 'limit', quantity: n.value,
+        price: px.value,
         ...(creditMode.value ? { credit: creditMode.value } : {}),
       },
       headers: { 'Idempotency-Key': `${Date.now()}-${Math.random().toString(36).slice(2)}` },
@@ -249,12 +255,12 @@ function describe(r: PlaceOrderResponse, asked: number): { kind: 'ok' | 'error';
   if (auction.value && o.status === 'open' && o.filled_quantity === 0) return { kind: 'ok', text: `已提交委托，${sess.value.open} 集合竞价统一成交` }
   if (o.status === 'filled') return { kind: 'ok', text: `已成交 ${fmtQty(o.filled_quantity)} 股${avg}` }
   if (o.status === 'cancelled') {
-    if (o.filled_quantity === 0) return { kind: 'error', text: '没有对手方委托，市价委托已撤销' }
-    return { kind: 'ok', text: `已成交 ${fmtQty(o.filled_quantity)} 股${avg}。其余 ${fmtQty(rest)} 股没有对手方，已撤销` }
+    if (o.filled_quantity === 0) return { kind: 'error', text: '没有成交，委托已撤销' }
+    return { kind: 'ok', text: `已成交 ${fmtQty(o.filled_quantity)} 股${avg}。其余 ${fmtQty(rest)} 股已撤销` }
   }
   if (o.filled_quantity > 0) return { kind: 'ok', text: `已成交 ${fmtQty(o.filled_quantity)} 股${avg}。其余 ${fmtQty(rest)} 股等待成交` }
   if (vcm.value) return { kind: 'ok', text: `已提交委托。冷静期内只在 ${money(vcm.value.low)} – ${money(vcm.value.high)} 之间成交` }
-  return { kind: 'ok', text: '已提交委托' }
+  return { kind: 'ok', text: `已挂单，${sess.value.daily_close} 前有效` }
 }
 
 async function cancel(id: number) {
@@ -278,34 +284,27 @@ async function cancel(id: number) {
       <button type="button" role="tab" :aria-selected="side === 'buy'" class="b" @click="side = 'buy'">买入</button>
       <button type="button" role="tab" :aria-selected="side === 'sell'" class="s" @click="side = 'sell'">卖出</button>
     </div>
-    <div class="kinds" role="tablist" aria-label="委托类型">
-      <button type="button" role="tab" :aria-selected="kind === 'limit'" @click="kind = 'limit'">限价</button>
-      <button type="button" role="tab" :aria-selected="kind === 'market'" :disabled="auction || !!creditMode" @click="kind = 'market'">市价</button>
-    </div>
     <div v-if="modes.length > 1 || modes[0] !== 'plain'" class="modes" role="tablist" aria-label="交易方式">
       <button v-for="m in modes" :key="m" type="button" role="tab" :aria-selected="mode === m" @click="mode = m">
         {{ m === 'plain' ? '普通' : MODE_LABEL[m] }}
       </button>
     </div>
     <p v-if="mode === 'short_sell'" class="note">融券卖出价格不低于最新价 <span class="num">{{ money(last) }}</span></p>
-    <p v-if="auction" class="note">集合竞价时段只接受限价委托，{{ sess.open }} 统一成交</p>
     <p v-if="vcm" class="note warn">冷静期至 {{ hm(vcm.until) }}，只在 <span class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</span> 之间成交</p>
 
-    <label v-if="kind === 'limit'" class="row">价格
+    <label class="row">价格
       <span class="pricebox">
         <input class="tinput num" inputmode="decimal" v-model="price" autocomplete="off" aria-label="价格" />
         <button type="button" class="tbtn counter" :class="side" :disabled="counter == null" @click="useCounter">对手价</button>
       </span>
     </label>
-    <p v-else class="note">市价委托按对手方价格成交，成交价可能偏离现价</p>
-    <p v-if="impactText" class="note impact num">{{ impactText }}</p>
+    <p v-if="fillText" class="note impact" :class="{ wait: !crosses || auction }">{{ fillText }}</p>
     <label class="row">数量
       <input class="tinput num" inputmode="numeric" v-model="qty" autocomplete="off" aria-label="数量"
              :placeholder="side === 'sell' && !creditMode ? `可卖 ${fmtQty(sellable)}` : `最多 ${fmtQty(maxQty)}`" />
     </label>
     <div class="fracs">
       <button type="button" class="tbtn plain num" @click="fill(1 / 4)">1/4</button>
-      <button type="button" class="tbtn plain num" @click="fill(1 / 3)">1/3</button>
       <button type="button" class="tbtn plain num" @click="fill(1 / 2)">1/2</button>
       <button type="button" class="tbtn plain" @click="fill(1)">全部</button>
     </div>
@@ -322,12 +321,7 @@ async function cancel(id: number) {
         {{ busy ? '提交中…' : submitText }}
       </button>
       <Modal :open="confirming" :title="confirmTitle" :edit-key="`${editKey}-confirm`" :busy="busy" @close="confirming = false">
-        <dl class="cf num">
-          <div><dt>价格</dt><dd>{{ kind === 'limit' ? money(px) : '市价' }}</dd></div>
-          <div><dt>数量</dt><dd>{{ fmtQty(n) }} 股</dd></div>
-          <div><dt>{{ side === 'buy' ? '预计花费' : '预计到账' }}</dt><dd>{{ money(total) }}</dd></div>
-        </dl>
-        <p v-if="kind === 'market'">市价委托按对手方价格成交，成交价可能偏离现价。</p>
+        <p>{{ confirmText }}</p>
         <template #actions>
           <button type="button" class="btn" :class="side === 'buy' ? 'cf-buy' : 'cf-sell'" :disabled="busy" @click="confirming = false; place()">{{ submitText }}</button>
           <button type="button" class="btn ghost" :disabled="busy" @click="confirming = false">取消</button>
@@ -341,6 +335,7 @@ async function cancel(id: number) {
     </p>
 
     <div v-if="myOrders.length" class="mine">
+      <div class="minehead">未成交 · {{ sess.daily_close }} 前有效</div>
       <div v-for="o in myOrders" :key="o.id" class="ord num">
         <span :class="o.side === 'buy' ? 'tup' : 'tdown'" class="sans">{{ o.side === 'buy' ? '买' : '卖' }}</span>
         <span>{{ o.price != null ? money(o.price) : '市价' }}</span>
@@ -353,10 +348,6 @@ async function cancel(id: number) {
 
 <style scoped>
 .signlink { margin-left: 8px; color: var(--t-ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
-.cf { margin: 0 0 4px; border-top: 1px solid var(--hair-2); }
-.cf div { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--hair-2); }
-.cf dt { font-family: var(--font); font-size: 13px; color: var(--ink-2); }
-.cf dd { margin: 0; font-size: 15px; color: var(--ink); }
 .btn.cf-buy { background: var(--up); color: #fff; }
 .btn.cf-sell { background: var(--down); color: #fff; }
 .of { display: flex; flex-direction: column; gap: 10px; color: var(--t-ink); }
@@ -364,10 +355,6 @@ async function cancel(id: number) {
 .sides button { height: 36px; border: 0; font-size: 14px; font-weight: 700; background: transparent; color: var(--t-ink-2); }
 .sides .b[aria-selected="true"] { background: var(--t-up); color: var(--t-bg); }
 .sides .s[aria-selected="true"] { background: var(--t-down); color: var(--t-bg); }
-.kinds { display: flex; gap: 16px; font-size: 13px; }
-.kinds button { border: 0; background: none; padding: 2px 0; color: var(--t-ink-2); }
-.kinds button[aria-selected="true"] { color: var(--t-ink); font-weight: 700; }
-.kinds button:disabled { opacity: 0.4; }
 .modes { display: flex; gap: 6px; flex-wrap: wrap; }
 .modes button { height: 28px; padding: 0 10px; border: 1px solid var(--t-field-border); background: transparent; color: var(--t-ink-2); font-size: 12px; }
 .modes button[aria-selected="true"] { border-color: var(--t-ink); color: var(--t-ink); font-weight: 700; }
@@ -379,8 +366,9 @@ async function cancel(id: number) {
 .counter.buy { color: var(--t-up); border-color: var(--t-up); background: transparent; }
 .counter.sell { color: var(--t-down); border-color: var(--t-down); background: transparent; }
 .counter:disabled { opacity: 0.4; }
-.impact { color: var(--t-ink); font-family: var(--font); margin-top: -4px; }
-.fracs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.impact { color: var(--t-ink); margin-top: -4px; padding-left: 56px; }
+.impact.wait { color: #F2B45A; }
+.fracs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .fracs .tbtn { height: 28px; font-size: 12px; }
 .kv { display: flex; justify-content: space-between; font-size: 12px; color: var(--t-ink-2); }
 .kv .v { color: var(--t-ink); }
@@ -390,6 +378,7 @@ async function cancel(id: number) {
 .note.err { color: var(--t-danger); }
 .note.ok { color: var(--t-ink); }
 .mine { border-top: 1px solid var(--t-line); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.minehead { font-size: 12px; color: var(--t-ink-2); }
 .ord { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto auto; gap: 8px; align-items: center; font-size: 12px; }
 .sans { font-family: var(--font); }
 .cx { border: 0; background: none; color: var(--t-ink-3); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; padding: 4px 0; }

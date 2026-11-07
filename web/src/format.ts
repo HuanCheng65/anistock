@@ -234,3 +234,15 @@ export function taxBrackets(t: { max_holding_days: number | null; rate: number }
     return { k, v: `${Math.round(rate * 100)}%` }
   })
 }
+
+/** Days until the newest lot bought on `newest` reaches the lowest dividend tax band (0: already there, or no
+ *  data). Lots are taxed first in, first out, so once the newest is through, every share is. */
+export function lowestTaxIn(newest: string | null | undefined, today: string | undefined,
+  t: { max_holding_days: number | null; rate: number }[] = DEFAULT_DIVIDEND_TAX): number {
+  if (!newest || !today || !t.length) return 0
+  const floor = Math.min(...t.map((b) => b.rate))
+  const taxed = t.filter((b) => b.rate > floor && b.max_holding_days != null).map((b) => b.max_holding_days as number)
+  if (!taxed.length) return 0
+  const held = Math.round((Date.parse(today) - Date.parse(newest)) / 86400000)
+  return Math.max(0, Math.max(...taxed) + 1 - held)
+}

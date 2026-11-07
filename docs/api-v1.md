@@ -704,6 +704,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 | `day_change` | number | | 比例，价格相对昨收 |
 | `dividends` | Money | | 这支股票累计到手的分红（税前，与旧接口一致） |
 | `oldest_lot_on` | date | 是 | 最早一批的买入交易日，用来提示分红税档（`oldest_lot`） |
+| `newest_lot_on` | date | 是 | 最近一批的买入交易日。分红税按批先进先出，这一批持有满期后全部按最低税率，用来提示“再持有几天分红免税” |
 
 ---
 
@@ -996,7 +997,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "ex_days": [{"trading_day": "2026-10-20", "kind": "split", "price_factor": 0.5}]
 }
 ```
-- 前复权（docs/v2-corporate.md §5）：每个除权日（拆股、配股后按新股数交易的第一天）之前的开高低收 × `price_factor`，成交量按拆股比例相乘；最新价格不变。`ex_days` 是区间内的除权日。分红不复权。
+- 前复权（docs/v2-corporate.md §5）：每个除权除息日之前的开高低收 × `price_factor`，成交量按拆股比例相乘；最新价格不变。除权日是拆股、配股后按新股数交易的第一天；除息日是分红日（当天日结时派发）之后的第一个交易日，因子 = 1 − 每股分红 / 分红日收盘价（`kind: "dividend"`）。分红日之后还没有日结过的交易日时，本交易日未完成的那一根就是除息日。`ex_days` 是区间内的除权除息日。（2026-11-08 起含分红；之前分红不复权。）
 - 本交易日有成交而还没日结时，最后一根是 `is_partial: true`（旧 `live: true`）。旧字段 `time` 改 `trading_day`，`replay` 布尔改成 `source` 枚举。
 - 只有日线。参数 `interval` 预留，v1 只接受 `1d`。
 

@@ -179,7 +179,6 @@ h1 { font-size: 30px; font-weight: 900; line-height: 1.25; }
 .paper {
   flex: 1; min-height: 220px; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain;
   border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 14px 2px 18px;
-  scrollbar-width: thin; scrollbar-color: var(--hair) transparent;
 }
 .sig { padding-top: 4px; }
 .rows { border-top: 1px solid var(--rule); }

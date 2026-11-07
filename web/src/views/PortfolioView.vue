@@ -64,7 +64,10 @@ function rememberHold() {
 }
 const positions = computed(() => account.positions ?? [])
 const today = computed(() => positions.value.reduce((a, p) => a + (p.value - p.value / (1 + (p.day_change || 0))), 0))
-const floating = computed(() => positions.value.reduce((a, p) => a + p.pnl, 0))
+// 盈亏 counts the dividends received (a season pays its value out week by week; the price alone reads as a loss)
+const gain = (p: { pnl: number; dividends: number }) => p.pnl + p.dividends
+const gainRatio = (p: { pnl: number; dividends: number; value: number }) => (p.value - p.pnl > 0 ? gain(p) / (p.value - p.pnl) : null)
+const floating = computed(() => positions.value.reduce((a, p) => a + gain(p), 0))
 const rank = computed(() => session.boards.all?.viewer?.rank ?? null)
 const pending = computed(() => ipo.open.filter((i) => i.viewer?.quantity).length)
 const curve = computed(() => (account.history ?? []).map((d) => d.total_assets))
@@ -113,7 +116,7 @@ async function cancel(id: number) {
         <dl v-if="me" class="facts split gutter">
           <div><dt>可用资金</dt><dd>{{ money(me.available_cash) }}</dd></div>
           <div><dt>市值</dt><dd>{{ money(me.stock_value) }}</dd></div>
-          <div><dt>浮动盈亏</dt><dd :class="dir(floating)">{{ signed(floating) }}</dd></div>
+          <div><dt>持仓盈亏</dt><dd :class="dir(floating)">{{ signed(floating) }}</dd></div>
         </dl>
         <CreditPanel v-if="me" :me="me" />
         <RestructureEntry v-if="me" :me="me" />
@@ -139,11 +142,12 @@ async function cancel(id: number) {
               <Cover :id="p.stock.id" :title="p.stock.title" :w="36" :h="50" :spine="false" class="hc" />
               <span class="serif clamp1 t">{{ p.stock.title }}</span>
               <span class="num r v">{{ money(p.value) }}</span>
-              <span class="num m">{{ qty(p.quantity) }} 股 · 成本 {{ money(p.average_cost) }}<template v-if="p.dividends > 0"> · 分红 {{ money(p.dividends) }}</template></span>
-              <span class="num r m" :class="dir(p.pnl)">{{ signed(p.pnl) }}&nbsp;&nbsp;{{ pct(p.pnl_ratio) }}</span>
+              <span class="num m">{{ qty(p.quantity) }} 股 · 成本 {{ money(p.average_cost) }}</span>
+              <span class="num r m" :class="dir(gain(p))">{{ signed(gain(p)) }}&nbsp;&nbsp;{{ pct(gainRatio(p)) }}</span>
+              <span v-if="p.dividends > 0" class="num r m split">股价 {{ signed(p.pnl) }} · 分红 {{ signed(p.dividends) }}</span>
             </RouterLink>
             <table v-if="positions.length" class="table desk-only htable">
-              <thead><tr><th>名称</th><th>持仓</th><th>可卖</th><th>成本</th><th>现价</th><th>市值</th><th>盈亏</th><th>今日</th><th>分红</th></tr></thead>
+              <thead><tr><th>名称</th><th>持仓</th><th>可卖</th><th>成本</th><th>现价</th><th>市值</th><th>盈亏</th><th>其中分红</th><th>今日</th></tr></thead>
               <tbody>
                 <tr v-for="p in positions" :key="p.stock.id">
                   <td class="tt"><RouterLink :to="`/stocks/${p.stock.id}`" class="hn" @click="rememberHold"><Cover :id="p.stock.id" :title="p.stock.title" :w="24" :h="34" :spine="false" /><span class="serif clamp1">{{ p.stock.title }}</span></RouterLink></td>
@@ -152,9 +156,9 @@ async function cancel(id: number) {
                   <td class="num">{{ money(p.average_cost) }}</td>
                   <td class="num">{{ money(p.price) }}</td>
                   <td class="num">{{ money(p.value) }}</td>
-                  <td class="num" :class="dir(p.pnl)">{{ signed(p.pnl) }}</td>
-                  <td class="num" :class="dir(p.day_change)">{{ pct(p.day_change) }}</td>
+                  <td class="num" :class="dir(gain(p))">{{ signed(gain(p)) }}&nbsp;&nbsp;{{ pct(gainRatio(p)) }}</td>
                   <td class="num">{{ money(p.dividends) }}</td>
+                  <td class="num" :class="dir(p.day_change)">{{ pct(p.day_change) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -256,6 +260,7 @@ async function cancel(id: number) {
 .m { font-size: 12px; color: var(--muted); }
 .m.up { color: var(--up); }
 .m.down { color: var(--down); }
+.split { grid-column: 3; margin-top: -2px; }
 .ord { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--hair-2); align-items: center; }
 .oside { font-size: 13px; text-align: right; }
 .tt { max-width: 0; width: 50%; }

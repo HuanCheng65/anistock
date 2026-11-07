@@ -23,6 +23,20 @@ dl, dd { margin: 0; }
 ul, ol { margin: 0; padding: 0; list-style: none; }
 :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
+/* scrollbars of scrolling containers (side lists, the trade column, sheets, tables): a thin thumb in the
+   hairline colour on no track, darker while the pointer is over the container; on the terminal surface, its
+   line colour. The page's own scrollbar stays the browser's. */
+body * { scrollbar-width: thin; scrollbar-color: var(--hair) transparent; }
+@media (hover: hover) { body *:hover { scrollbar-color: var(--muted) transparent; } }
+.term, .term * { scrollbar-color: var(--t-line) transparent; }
+@media (hover: hover) { .term:hover, .term *:hover { scrollbar-color: var(--t-ink-2) transparent; } }
+/* engines without scrollbar-color (Safari) */
+body ::-webkit-scrollbar { width: 8px; height: 8px; }
+body ::-webkit-scrollbar-track { background: transparent; }
+body ::-webkit-scrollbar-thumb { background: var(--hair); border: 2px solid transparent; border-radius: 4px; background-clip: padding-box; }
+body ::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+body .term::-webkit-scrollbar-thumb, body .term ::-webkit-scrollbar-thumb { background-color: var(--t-line); }
+
 .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 .serif { font-family: var(--font-serif); }
 .clamp1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

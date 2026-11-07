@@ -40,11 +40,12 @@ impl Engine {
         heat: &BTreeMap<i64, HeatIndex>,
     ) -> FuturesClose {
         let mut out = FuturesClose::default();
+        // the index is published whether or not futures trade: the stock page shows it (热度)
+        self.fut_publish_heat(day, heat);
         if !self.futures.enabled && self.st.futures.contracts.is_empty() {
             return out;
         }
         self.fut_expire_orders(session_end, ts);
-        self.fut_publish_heat(day, heat);
         let ids: Vec<i64> = self.st.futures.contracts.keys().copied().collect();
         for id in ids {
             let c = &self.st.futures.contracts[&id];
@@ -96,11 +97,9 @@ impl Engine {
         self.st.futures.reap();
     }
 
-    /// Freeze the day's index of every work with contracts into the game database.
+    /// Freeze the day's index of every work into the game database (the stock page's 热度, the contracts' settlement).
     fn fut_publish_heat(&mut self, day: &str, heat: &BTreeMap<i64, HeatIndex>) {
-        let works: std::collections::BTreeSet<i64> = self.st.futures.contracts.values().map(|c| c.work_id).collect();
-        for w in works {
-            let Some(h) = heat.get(&w) else { continue };
+        for (&w, h) in heat {
             self.st.futures.heat.insert((w, day.to_string()), h.idx);
             self.fut_out(FuturesChange::Heat(HeatRow {
                 work_id: w,

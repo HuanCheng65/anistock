@@ -11,6 +11,7 @@ import KChart, { type Period } from '../components/KChart.vue'
 import OrderBook from '../components/OrderBook.vue'
 import OrderForm from '../components/OrderForm.vue'
 import BizPanel from '../components/stock/BizPanel.vue'
+import HeatPanel from '../components/stock/HeatPanel.vue'
 import HoldersPanel from '../components/stock/HoldersPanel.vue'
 import NoticePanel from '../components/stock/NoticePanel.vue'
 import PositionStrip from '../components/stock/PositionStrip.vue'
@@ -115,9 +116,10 @@ const periodModel = computed({ get: () => period.value as string, set: (v: strin
 const pos = computed(() => (session.me ? (account.positions ?? []).find((x) => x.stock.id === id.value) ?? null : null))
 const subscribing = computed(() => s.value?.status === 'subscribing')
 
-// ---- the lower half: 经营 / 作品 / 公告 / 股东, the last one chosen remembered for the session
-type Lower = 'biz' | 'works' | 'notices' | 'holders'
+// ---- the lower half: 热度 / 经营 / 作品 / 公告 / 股东, the last one chosen remembered for the session
+type Lower = 'heat' | 'biz' | 'works' | 'notices' | 'holders'
 const lowerTabs: { key: Lower; label: string }[] = [
+  { key: 'heat', label: '热度' },
   { key: 'biz', label: '经营' },
   { key: 'works', label: '作品' },
   { key: 'notices', label: '公告' },
@@ -134,7 +136,7 @@ function savedTab(): Lower | null {
 }
 const chosen = ref<Lower | null>(savedTab())
 // before a choice: a stock still in subscription has no revenue yet, so it opens on its schedule
-const tab = computed<Lower>(() => chosen.value ?? (subscribing.value ? 'works' : 'biz'))
+const tab = computed<Lower>(() => chosen.value ?? (subscribing.value ? 'works' : 'heat'))
 const tabModel = computed({ get: () => tab.value as string, set: (v: string) => (chosen.value = v as Lower) })
 const lower = ref<HTMLElement | null>(null)
 const tabbar = ref<HTMLElement | null>(null)
@@ -151,6 +153,11 @@ watch(tab, async (t) => {
   await nextTick()
   if (stuck) window.scrollTo({ top: window.scrollY + sec.getBoundingClientRect().top - stick })
 }, { flush: 'pre' })
+const heatFailed = ref(false)
+function loadHeat(force = false) {
+  heatFailed.value = false
+  store.refreshHeat(id.value, force).catch(() => (heatFailed.value = true))
+}
 const worksFailed = ref(false)
 function loadWorks(force = false) {
   worksFailed.value = false
@@ -159,11 +166,13 @@ function loadWorks(force = false) {
 usePoll(() => {
   if (!Number.isFinite(id.value)) return null
   if (tab.value === 'works') loadWorks()
+  if (tab.value === 'heat') loadHeat()
   if (tab.value === 'holders') return credit.loadMargin(id.value).catch(() => {})
   return null
 }, 60000)
 watch([tab, id], () => {
   if (tab.value === 'works' && !store.works[id.value]) loadWorks()
+  if (tab.value === 'heat' && !store.heat[id.value]) loadHeat()
   if (tab.value === 'holders' && !credit.margins[id.value]) credit.loadMargin(id.value).catch(() => {})
 })
 const works = computed(() => store.works[id.value] ?? null)
@@ -317,7 +326,8 @@ function back() {
               <Tabs v-model="tabModel" :items="lowerTabs" label="资料" ids="stk" class="ltabs" />
             </div>
             <div :id="`stk-panel-${tab}`" :key="tab" class="panel gutter" role="tabpanel" :aria-labelledby="`stk-tab-${tab}`" tabindex="0">
-              <BizPanel v-if="tab === 'biz'" :s="s" :today="session.status?.trading_day" :desk="desk" />
+              <HeatPanel v-if="tab === 'heat'" :s="s" :days="store.heat[id] ?? null" :failed="heatFailed" :today="session.status?.trading_day" :desk="desk" @retry="loadHeat(true)" />
+              <BizPanel v-else-if="tab === 'biz'" :s="s" :today="session.status?.trading_day" :desk="desk" />
               <WorksPanel v-else-if="tab === 'works'" :s="s" :works="works" :failed="worksFailed" :today="session.status?.trading_day" @retry="loadWorks(true)" />
               <NoticePanel v-else-if="tab === 'notices'" :items="notices" :more="!!store.newsMore[id]" :today="session.status?.trading_day" :load="() => store.moreNews(id)" :title="s.stock.title" />
               <HoldersPanel v-else :s="s" :margin="margin" />

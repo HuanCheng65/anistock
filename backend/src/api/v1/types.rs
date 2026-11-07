@@ -316,6 +316,9 @@ pub struct Position {
     pub dividends: Money,
     #[schema(format = Date)]
     pub oldest_lot_on: Option<String>,
+    /// 最近一笔买入的日期：股息红利税按持股时间计算，先买的先算，这一笔满期后全部按最低税率
+    #[schema(format = Date)]
+    pub newest_lot_on: Option<String>,
 }
 
 // ---------------------------------------------------------------- market
@@ -698,7 +701,7 @@ pub struct CandlesResponse {
 #[derive(Serialize, ToSchema)]
 pub struct ExDay {
     pub trading_day: TradingDay,
-    /// split | rights
+    /// split | rights | dividend
     pub kind: String,
     /// 这一天之前的价格 × 它（前复权）
     pub price_factor: f64,
