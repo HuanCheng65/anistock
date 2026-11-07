@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// /legal/:doc — 用户协议, 隐私政策, 风险揭示书, 融资融券风险揭示书, readable without signing in.
+// /legal/:doc — 用户协议, 隐私政策, 风险揭示书, 融资融券风险揭示书, 程序化交易风险揭示书, readable without signing in.
 // With ?sign=1 a document signed by typing the username shows the signature field at the end.
 import { computed, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -23,6 +23,7 @@ const version = computed<number | null>(() => {
   const me = session.me
   if (!me || !key.value || !SIGNED.includes(key.value)) return null
   if (key.value === 'margin_disclosure') return me.credit_steps.disclosure_signed ? null : me.credit_steps.disclosure_version
+  if (key.value === 'api_disclosure') return me.api_trading.disclosure_signed ? null : me.api_trading.disclosure_version
   return me.pending_documents.find((d) => d.doc === key.value)?.version ?? null
 })
 const signing = computed(() => route.query.sign === '1' && version.value != null)

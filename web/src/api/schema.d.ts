@@ -989,6 +989,17 @@ export interface components {
              */
             max: number;
         };
+        /** @description 用 API 密钥交易的条件（每次请求都检查） */
+        ApiTradingSteps: {
+            /** @description 签署了当前版本的《程序化交易风险揭示书》 */
+            disclosure_signed: boolean;
+            /** Format: int64 */
+            disclosure_version: number;
+            /** @description 本站开放了 API 交易；为 false 时只能生成只读密钥 */
+            enabled: boolean;
+            /** @description 完成了身份验证（服务器不要求身份验证时恒为 true） */
+            verified: boolean;
+        };
         /** @description 一份测评的题目 */
         Assessment: {
             /** @description `risk` 或 `margin-quiz` */
@@ -1477,6 +1488,8 @@ export interface components {
             trading_day: components["schemas"]["TradingDay"];
         };
         LeaderRow: {
+            /** @description 程序化：这个周期内（总榜为开户以来）用 API 密钥下过单 */
+            program: boolean;
             /** Format: int64 */
             rank: number;
             /** Format: int64 */
@@ -1580,6 +1593,8 @@ export interface components {
         };
         Me: {
             announcement: null | components["schemas"]["Announcement"];
+            /** @description 用 API 密钥交易（程序化交易）的条件 */
+            api_trading: components["schemas"]["ApiTradingSteps"];
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
             /** @description 开户时间 */

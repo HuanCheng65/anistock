@@ -77,6 +77,13 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
     let (verification, eligibility) = eligibility_of(st, c, id, &created_at)?;
     let risk = super::assess::risk_of(st, c, id)?;
     let credit_steps = super::assess::credit_steps(st, c, id)?;
+    let missing = super::keys::trade_missing(st, c, id)?;
+    let api_trading = ApiTradingSteps {
+        enabled: st.cfg.api_trading,
+        verified: !missing.contains(&"verification"),
+        disclosure_signed: !missing.contains(&"api_disclosure"),
+        disclosure_version: st.cfg.api_disclosure,
+    };
     let stock = stock_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
     let total = cash + stock - liab;
@@ -126,6 +133,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         eligibility,
         risk,
         credit_steps,
+        api_trading,
         announcement,
     })
 }
@@ -228,13 +236,14 @@ pub async fn sign(
     let current = match st.cfg.documents.iter().find(|(d, _)| *d == doc) {
         Some((_, v)) => *v,
         None if doc == "margin_disclosure" => st.cfg.margin_disclosure,
+        None if doc == "api_disclosure" => st.cfg.api_disclosure,
         None => return Err(error::invalid(vec![error::not_allowed("doc")])),
     };
     if version != current {
         return Err(E::new(409, "document_outdated", "文件已更新，刷新页面后重新阅读"));
     }
     let me = load_me(&st, id).await?;
-    let signature = if doc == "disclosure" || doc == "margin_disclosure" {
+    let signature = if matches!(doc.as_str(), "disclosure" | "margin_disclosure" | "api_disclosure") {
         let typed = signature.as_deref().map(str::trim).unwrap_or("");
         if typed != me.username {
             return Err(error::invalid(vec![error::field("signature", "mismatch", "签名需与用户名一致")]));
@@ -522,10 +531,11 @@ pub async fn place(
     headers: HeaderMap,
     body: Bytes,
 ) -> R<Response> {
-    let me = caller.player()?;
+    let who = caller.trader(&st).await?;
+    let me = who.account;
     require_signed(&st, me).await?;
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(str::to_string);
-    let Some(k) = key else { return place_new(&st, me, &headers, &body).await.map(super::created) };
+    let Some(k) = key else { return place_new(&st, who, &headers, &body).await.map(super::created) };
     if k.is_empty() || k.len() > 64 {
         return Err(error::invalid(vec![error::bad_format("idempotency-key")]));
     }
@@ -552,7 +562,7 @@ pub async fn place(
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    let res = place_new(&st, me, &headers, &body).await;
+    let res = place_new(&st, who, &headers, &body).await;
     let mut idem = st.v1.idem.lock().unwrap();
     match res {
         Ok(out) => {
@@ -567,7 +577,14 @@ pub async fn place(
     }
 }
 
-async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]) -> R<PlaceOrderResponse> {
+/// The order rate (`order_rps`, web and keys together) for placing and cancelling.
+fn take_order_token(st: &AppState, me: i64) -> R<()> {
+    let v = st.v1.limiter.lock().unwrap().take(&st.v1.limits, super::ratelimit::Key::Order(me));
+    if v.allowed { Ok(()) } else { Err(error::rate_limited(v.reset.max(1))) }
+}
+
+async fn place_new(st: &Arc<AppState>, who: super::Trader, headers: &HeaderMap, body: &[u8]) -> R<PlaceOrderResponse> {
+    let me = who.account;
     let b = json_body(headers, body)?;
     let stock_id = need(body_int(&b, "stock_id")?, "stock_id")?;
     let side = need(body_str(&b, "side")?, "side")?;
@@ -615,8 +632,26 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
         }
     };
     let (d, t) = (st.clock.today(), st.clock.ts());
+    let per_day = st.v1.limits.orders_per_day;
+    {
+        let today = st.v1.orders_today.lock().unwrap();
+        if today.get(&me).is_some_and(|(day, n)| *day == d && *n >= per_day) {
+            return Err(error::daily_order_limit(per_day));
+        }
+    }
+    take_order_token(st, me)?;
+    let (max_open, max_stock) = (st.v1.limits.max_open_orders, st.v1.limits.max_open_orders_per_stock);
+    let d2 = d.clone();
     let order_id = engine(&st, move |ctx| -> R<i64> {
+        let d = d2;
         let e = &mut ctx.engine;
+        let open = e.open_orders_of(me);
+        if open.len() >= max_open {
+            return Err(error::too_many_open_orders("account", max_open));
+        }
+        if open.iter().filter(|o| o.company_id == stock_id).count() >= max_stock {
+            return Err(error::too_many_open_orders("stock", max_stock));
+        }
         let co = e.company(stock_id).cloned().ok_or_else(|| error::stock_not_found(stock_id))?;
         if co.status != "listed" {
             return Err(E::new(422, "stock_not_tradable", if co.status == "delisted" { "这支股票已退市" } else { "这支股票还没有上市" })
@@ -677,6 +712,22 @@ async fn place_new(st: &Arc<AppState>, me: i64, headers: &HeaderMap, body: &[u8]
         res.map(|p| p.order_id).map_err(|err| super::credit::credit_error(&err.0).unwrap_or_else(|| order_error(&err.0)))
     })
     .await??;
+    {
+        let mut today = st.v1.orders_today.lock().unwrap();
+        let e = today.entry(me).or_insert_with(|| (d.clone(), 0));
+        if e.0 != d {
+            *e = (d.clone(), 0);
+        }
+        e.1 += 1;
+    }
+    if let Some(key) = who.key {
+        // the 程序化 mark and the surveillance reports (docs/v2-api-access.md §6)
+        super::bind::side_exec(
+            st,
+            "INSERT OR IGNORE INTO api_orders(order_id, account_id, key_id, day) VALUES (?,?,?,?)",
+            rusqlite::params![order_id, me, key, d],
+        )?;
+    }
     let st2 = st.clone();
     read(st, move |c| {
         let order = order_of(&st2, c, me, order_id)?.ok_or_else(|| error::internal("placed order missing"))?;
@@ -701,7 +752,8 @@ pub async fn cancel(
     Extension(caller): Extension<Caller>,
     Path(raw): Path<String>,
 ) -> R<Json<OrderEnvelope>> {
-    let me = caller.player()?;
+    let me = caller.trader(&st).await?.account;
+    take_order_token(&st, me)?;
     let id = super::path_id(&raw, "id")?;
     let st2 = st.clone();
     let current = read(&st, move |c| order_of(&st2, c, me, id)).await?.ok_or_else(|| error::order_not_found(id))?;
@@ -938,7 +990,7 @@ pub async fn subscribe(
     headers: HeaderMap,
     body: Bytes,
 ) -> R<Json<SubscriptionResponse>> {
-    let me = caller.player()?;
+    let me = caller.trader(&st).await?.account;
     require_signed(&st, me).await?;
     let id = super::path_id(&raw, "id")?;
     let b = json_body(&headers, &body)?;
@@ -1007,7 +1059,7 @@ pub async fn unsubscribe(
     Extension(caller): Extension<Caller>,
     Path(raw): Path<String>,
 ) -> R<Json<IpoEnvelope>> {
-    let me = caller.player()?;
+    let me = caller.trader(&st).await?.account;
     let id = super::path_id(&raw, "id")?;
     engine(&st, move |ctx| -> R<()> {
         let co = ctx.engine.company(id).cloned().filter(|c| c.sub_start.as_deref().is_some_and(|s| !s.is_empty()));
@@ -1077,9 +1129,16 @@ pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>, gate: Op
                 idx / base.filter(|b| *b > 0.0).unwrap_or(1.0) - 1.0
             }
         };
+        let program: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM api_orders WHERE account_id=? AND day>=?)",
+                rusqlite::params![id, period_start.unwrap_or("")],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
         rows.push((
             ret,
-            LeaderRow { rank: 0, user: UserRef { id, username }, total_assets: m(total), r#return: r6(ret), restructures: count },
+            LeaderRow { rank: 0, user: UserRef { id, username }, total_assets: m(total), r#return: r6(ret), restructures: count, program },
         ));
     }
     rows.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.user.id.cmp(&b.1.user.id)));

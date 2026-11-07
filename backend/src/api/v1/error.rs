@@ -89,6 +89,17 @@ pub fn bad_api_key() -> E {
 pub fn web_only() -> E {
     E::new(403, "forbidden", "只能在网页上操作").details(json!({"required_scope": "web"}))
 }
+pub fn too_many_open_orders(scope: &str, max: usize) -> E {
+    let msg = if scope == "stock" { format!("这支股票最多同时挂 {max} 笔委托，先撤掉一些") } else { format!("最多同时挂 {max} 笔委托，先撤掉一些") };
+    E::new(409, "too_many_open_orders", msg).details(json!({"scope": scope, "max": max}))
+}
+pub fn daily_order_limit(max: i64) -> E {
+    E::new(429, "daily_order_limit", format!("今天的委托已达上限（{max} 笔），下一个交易日再来")).details(json!({"max": max}))
+}
+/// A key with the `trade` scope whose account no longer meets the conditions (docs/v2-api-access.md §4).
+pub fn trade_not_allowed(missing: Vec<&'static str>) -> E {
+    E::new(403, "forbidden", "这个账号现在不能用 API 交易").details(json!({"required_scope": "trade", "required": missing}))
+}
 pub fn too_many_api_keys(max: i64) -> E {
     E::new(409, "too_many_api_keys", format!("最多同时有 {max} 个 API 密钥，先吊销不用的")).details(json!({"max": max}))
 }

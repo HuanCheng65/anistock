@@ -1,6 +1,6 @@
 # 程序化交易与 API 密钥
 
-状态：已定（2026-11-07），阶段一实现中。⚠️ 表示相对现实的简化。
+状态：已定（2026-11-07）。阶段一（只读）已上线（v0.6.8）；阶段二（交易）已实现，开关 `[api] trading` 默认关闭（§11）。⚠️ 表示相对现实的简化。
 
 ## 1. 为什么要做
 
@@ -100,12 +100,12 @@
 
 ## 8. 文件和接口
 
-### 8.1 数据（阶段一 V15 迁移建 `api_keys`；`orders.source` 和 `api_disclosure` 随阶段二）
+### 8.1 数据（阶段一 V15 建 `api_keys`；阶段二 V18 建 `api_orders`）
 
 | 表 | 字段 |
 |---|---|
 | `api_keys` | `id, account_id, name, prefix, key_hash, scopes, created_at, expires_at, last_used_at, last_used_ip, revoked_at` |
-| `orders` 增加 | `source`（`web` / `api`，老数据为 `web`） |
+| `api_orders`（V18） | `order_id, account_id, key_id, day`：用 API 密钥下的单；不在表里的都来自网页。原计划给 `orders` 加 `source` 列，改为单独的表：引擎和 28 处 `NewOrder` 都不用改，还多记了是哪个密钥 |
 | `account_agreements.doc` | 增加 `api_disclosure` |
 
 `prefix` 是明文的前 8 位（`anx_` 后 4 位），列表里用来区分密钥。
@@ -149,3 +149,13 @@
 - `docs/api-v1.md` 增加 API 密钥一节；OpenAPI 增加 `api_key` 认证方式。
 
 阶段二（交易权限、`trader()`、下单限额、挂单上限、`orders.source`、排行榜标记、风险揭示书）等 §7 的检验通过后再做。
+
+## 11. 阶段二实现（2026-11-07）
+
+- `Caller::trader()`：cookie 照旧；`ApiKey` 要有 `trade`，且 `[api] trading` 打开、身份验证有效、签署了当前版本的 `api_disclosure`，每次请求都查。用在下单、撤单、新股和配股的认购与撤销、还融资款；其余写接口仍是 `player()`（只能网页）。
+- 生成 `trade` 密钥时同样检查；`scopes` 存为 `read:account,trade`。
+- 限额（`[api.rate_limit]`）：`order_rps` 5 / `order_burst` 10（下单和撤单），`orders_per_day` 5000（内存计数，重启清零），`max_open_orders` 100、`max_open_orders_per_stock` 20。对网页同样生效。
+- `GET /me` 增加 `api_trading { enabled, verified, disclosure_signed, disclosure_version }`；排行榜每行增加 `program`。
+- 《程序化交易风险揭示书》是 `api_disclosure`（`web/src/legal/documents.ts`），版本在 `[account.documents]`，和 `margin_disclosure` 一样不进入“交易前必须签署”的列表。正文是按 §9 写的草稿，开放前需要确认。
+- 用户协议第五条已经写着“不按本站公开的接口规范使用脚本……”，按规范使用即被允许，不需要改，也就不用让所有人重新同意。
+- 开放：把 `server/game.toml` 的 `[api] trading` 改为 `true`，`deploy/update.sh` 后重启（配置随代码检出，不用打新版本）。也可以用环境变量 `ANISTOCK_API_TRADING=1` 临时打开。

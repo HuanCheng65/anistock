@@ -490,10 +490,8 @@ impl Bot {
                 continue;
             }
             let free = e.available_shares(acct, c);
-            if free > 0 {
-                if place(e, acct, c, "sell", "limit", free, Some(ask - 1), t) {
-                    self.trades_placed += 1;
-                }
+            if free > 0 && place(e, acct, c, "sell", "limit", free, Some(ask - 1), t) {
+                self.trades_placed += 1;
             }
             let have = held * bid;
             if have < budget {

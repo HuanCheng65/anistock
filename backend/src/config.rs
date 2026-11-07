@@ -115,6 +115,11 @@ pub struct Config {
     pub eligibility: crate::kyc::Rules,
     /// current version of 融资融券风险揭示书 (signed before opening credit, not before trading)
     pub margin_disclosure: i64,
+    /// current version of 程序化交易风险揭示书 (signed before an API key may trade, not before trading)
+    pub api_disclosure: i64,
+    /// `[api] trading`: API keys with the `trade` scope (docs/v2-api-access.md, phase 2); off until switched on.
+    /// ANISTOCK_API_TRADING=1 / 0 overrides it.
+    pub api_trading: bool,
     pub always_open: bool,
     pub no_loops: bool,
     /// v1 economy rules (raw 7-day revenue, stepwise episode valuation, transfers to players only, no penny
@@ -256,6 +261,12 @@ impl Config {
             documents,
             eligibility,
             margin_disclosure: docs_raw.and_then(|t| t.get("margin_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
+            api_disclosure: docs_raw.and_then(|t| t.get("api_disclosure")).and_then(|v| v.as_integer()).unwrap_or(1),
+            api_trading: match env("ANISTOCK_API_TRADING").as_deref() {
+                Some("1") => true,
+                Some("0") => false,
+                _ => raw.get("api").and_then(|v| v.get("trading")).and_then(|v| v.as_bool()).unwrap_or(false),
+            },
             always_open: env("ANISTOCK_ALWAYS_OPEN").as_deref() == Some("1"),
             no_loops: env("ANISTOCK_NO_LOOPS").as_deref() == Some("1"),
             // development/difftest only: the v1 economy rules (see `economy_v1`)

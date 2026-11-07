@@ -298,6 +298,34 @@
         ],
         "type": "object"
       },
+      "ApiTradingSteps": {
+        "description": "用 API 密钥交易的条件（每次请求都检查）",
+        "properties": {
+          "disclosure_signed": {
+            "description": "签署了当前版本的《程序化交易风险揭示书》",
+            "type": "boolean"
+          },
+          "disclosure_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "enabled": {
+            "description": "本站开放了 API 交易；为 false 时只能生成只读密钥",
+            "type": "boolean"
+          },
+          "verified": {
+            "description": "完成了身份验证（服务器不要求身份验证时恒为 true）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disclosure_signed",
+          "disclosure_version",
+          "enabled",
+          "verified"
+        ],
+        "type": "object"
+      },
       "Assessment": {
         "description": "一份测评的题目",
         "properties": {
@@ -1955,6 +1983,10 @@
       },
       "LeaderRow": {
         "properties": {
+          "program": {
+            "description": "程序化：这个周期内（总榜为开户以来）用 API 密钥下过单",
+            "type": "boolean"
+          },
           "rank": {
             "format": "int64",
             "type": "integer"
@@ -1976,6 +2008,7 @@
           }
         },
         "required": [
+          "program",
           "rank",
           "restructures",
           "return",
@@ -2427,6 +2460,10 @@
               }
             ]
           },
+          "api_trading": {
+            "$ref": "#/components/schemas/ApiTradingSteps",
+            "description": "用 API 密钥交易（程序化交易）的条件"
+          },
           "available_cash": {
             "$ref": "#/components/schemas/Money"
           },
@@ -2519,6 +2556,7 @@
         },
         "required": [
           "announcement",
+          "api_trading",
           "available_cash",
           "cash",
           "created_at",

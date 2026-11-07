@@ -242,7 +242,7 @@
 | 400 | `invalid_json` | 请求内容不是有效的 JSON | — |
 | 401 | `unauthenticated` | 登录后可用 | — |
 | 401 | `bad_credentials` | 用户名或密码不正确 | — |
-| 403 | `forbidden` | 没有权限 | `required_scope` |
+| 403 | `forbidden` | 没有权限 / 这个账号现在不能用 API 交易 | `required_scope`；API 交易条件不满足时另有 `required`（§3.6） |
 | 403 | `not_bound` | 这个 QQ 还没有绑定账号 | — |
 | 404 | `not_found` | 没有这个接口 | — |
 | 404 | `stock_not_found` | 股票不存在 | `id` |
@@ -278,6 +278,7 @@
 | 503 | `busy` | 当前登录的人较多，稍后重试 | `retry_after`（秒） |
 | 422 | `restructure_not_eligible` | 总资产低于 10,000 星辉才能申请重整 | `reason`: `not_poor` \| `this_season` \| `market_closed` \| `margin_debt`，`threshold` |
 | 409 | `credit_open` | 信用账户已经开通 | — |
+| 409 | `too_many_open_orders` | 最多同时挂 100 笔委托，先撤掉一些 | `scope`（`account` / `stock`）、`max` |
 | 422 | `credit_not_eligible` | 注册满 7 天后才能开通 / 净资产不低于 50,000 星辉才能开通 / 穿仓后需要先申请重整 | — |
 | 422 | `credit_not_open` | 尚未开通信用账户 | — |
 | 422 | `credit_defaulted` | 信用账户已穿仓 | — |
@@ -298,6 +299,7 @@
 | 422 | `liquidating` | 强制平仓期间不能买入 | — |
 | 422 | `bind_code_invalid` | 绑定码不正确或已过期 | — |
 | 429 | `rate_limited` | 操作太频繁，稍后重试 | `retry_after`（秒） |
+| 429 | `daily_order_limit` | 今天的委托已达上限（5000 笔），下一个交易日再来 | `max` |
 | 500 | `internal` | 服务器暂时无法响应，稍后重试 | — |
 | 503 | `unavailable` | 服务器正在维护，稍后重试 | — |
 
@@ -348,8 +350,11 @@ ETag 主要是给机器人和轮询的客户端省流量；网页连上 WebSocke
 | 登录 / 注册（按 IP） | 10 次/分 | `auth_per_min` |
 | 注册（按 IP，另外计数；只有注册成功才计入） | 20 次/天 | `register_per_ip_day` |
 | 绑定码兑换（按 QQ） | 5 次/小时 | `bind_per_hour` |
+| 下单、撤单（按账号，网页和全部 API 密钥合计，同时也算在上面“已登录玩家”里） | **5 次/秒**（桶容量 10） | `order_rps`、`order_burst` |
+| 每日委托（按账号，只计接受的委托） | 5,000 笔/交易日 | `orders_per_day` |
+| 未成交委托（按账号） | 同时 100 笔，单支股票 20 笔 | `max_open_orders`、`max_open_orders_per_stock` |
 
-- 下单、撤单不另设限额，算在玩家的 10 次/秒里（引擎吞吐远高于这个数）。
+- 每日委托的计数在内存里，服务重启后从 0 开始。挂单超限返回 409 `too_many_open_orders`，每日超限返回 429 `daily_order_limit`。
 - 响应头采用 IETF 草案 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`；超限返回 429 `rate_limited` 和 `Retry-After`。
 - 按 IP 计数时，IPv6 地址按所在的 /64 合并（一个用户通常有整个 /64，可以随意换地址）；IPv4 映射地址按 IPv4 计。
 - WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 32，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 2000，`ws_total`）、每个账号用 API 密钥打开的连接（默认 3，`ws_per_account`，浏览器不计）和每条连接的订阅数（§5.2）。
@@ -556,7 +561,11 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 
 - 在网页设置里生成（`POST /api/v1/me/api-keys`，只接受 cookie）：`{"name": "看盘脚本", "expires_in_days": 90}`，有效期 30、90（默认）或 365 天。201 返回 `{"key": ApiKey, "token": "anx_…"}`，明文只返回这一次，服务器只存 SHA-256。每个账号同时有效的密钥最多 5 个，超出返回 409 `too_many_api_keys`。
 - 请求时带 `Authorization: Bearer anx_…`。前缀 `anx_` 区分 API 密钥和机器人令牌。密钥无效、已吊销或已过期返回 401 `unauthenticated`。
-- 权限：目前只有 `read:account`，和机器人代表玩家时相同：公开读接口加 `/me/*` 的读接口，WebSocket 可以订阅 `me`。写接口和只在网页上做的操作返回 403 `forbidden`，`details.required_scope` 为 `"web"`。交易权限 `trade` 在第二阶段开放。
+- 权限（生成时在 `scopes` 里选，之后不能改）：
+  - `read:account`（默认）：和机器人代表玩家时相同，公开读接口加 `/me/*` 的读接口，WebSocket 可以订阅 `me`。
+  - `trade`：另外可以下单、撤单（`POST`/`DELETE /me/orders`，含信用委托）、认购和撤销新股与配股、还融资款。返回的 `scopes` 为 `["read:account", "trade"]`。只在 `game.toml` 的 `[api] trading = true` 时能生成（否则 400 `invalid_request`），而且账号要完成身份验证、签署当前版本的《程序化交易风险揭示书》（`POST /me/agreements`，`doc: "api_disclosure"`，签名为用户名）。这两个条件每次请求都检查：不满足时返回 403 `forbidden`，`details.required` 列出缺少的条件（`api_trading`、`verification`、`api_disclosure`），满足后自动恢复，不用重新生成。`GET /me` 的 `api_trading` 给出这些状态。
+  - 只读密钥调用交易接口返回 403 `forbidden`，`details.required_scope` 为 `"trade"`；其余写接口和只在网页上做的操作（登录、改密码、签署、开通信用、重整、注销、管理密钥）返回 403，`required_scope` 为 `"web"`。
+  - 用 `trade` 密钥下的单记在 `api_orders` 表里（哪个密钥、哪个交易日），排行榜据此显示“程序化”标记（§4.6）。脚本下单建议带 `Idempotency-Key`，网络重试不会重复下单。
 - `GET /api/v1/me/api-keys` 列出没有吊销的密钥（含已过期的），带 `prefix`（明文前 8 位）、`last_used_at`、`last_used_ip`；`DELETE /api/v1/me/api-keys/{id}` 吊销，立即生效，用它打开的 WebSocket 以 4001 关闭。
 - 找回密码时全部密钥吊销，注销账号时全部删除。主动修改密码不影响密钥。
 
@@ -1318,7 +1327,7 @@ CREATE TABLE player_days (
   "as_of": "2026-11-06T21:05:00+08:00",
   "items": [
     {"rank": 1, "user": {"id": 4, "username": "alice"}, "total_assets": 10640000, "return": 0.031,
-     "restructures": 0}
+     "restructures": 0, "program": false}
   ],
   "viewer": {"rank": 1, "return": 0.031}
 }
@@ -1327,6 +1336,7 @@ CREATE TABLE player_days (
 - `week`：本周（周一开始的交易日）的收益率 = 当前 `return_index` / 上周最后一个交易日日结后的 `return_index` − 1。`season`：本季（1/4/7/10 月 1 日起）同理，以上季最后一个交易日为起点。都来自资产快照表（§4.5.10），重整不影响口径。本周或本季才注册的玩家以注册时为起点。
 - `return` 是比例（旧 `return_pct`）。排名相同时按 `user.id` 升序，名次不并列。
 - `viewer`：登录或机器人代表时给出自己的名次，否则 null。
+- `program`：这个周期内（总榜为开户以来）用 API 密钥下过单，页面显示“程序化”。只读密钥不触发。
 - 约 40 人，不分页。
 
 ---

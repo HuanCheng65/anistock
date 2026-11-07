@@ -18,7 +18,11 @@ const bot = computed(() => session.rules?.contact.qq_bot)
 const account = useAccount()
 const router = useRouter()
 const themes: [Theme, string][] = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]
-const docs = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书'], ['margin_disclosure', '融资融券风险揭示书']] as const
+const docs = computed(() => {
+  const d: [string, string][] = [['terms', '用户协议'], ['privacy', '隐私政策'], ['disclosure', '风险揭示书'], ['margin_disclosure', '融资融券风险揭示书']]
+  if (session.me?.api_trading?.enabled) d.push(['api_disclosure', '程序化交易风险揭示书'])
+  return d
+})
 // ---- 修改密码: the new cookie comes back with the answer; other devices sign in again
 const changing = ref(false)
 const curPw = ref('')
@@ -61,7 +65,11 @@ async function closeAccount() {
   }
 }
 
-// ---- API 密钥 (docs/v2-api-access.md): read-only for now; the token is shown once
+// ---- API 密钥 (docs/v2-api-access.md): read-only, or trading while the server allows it (身份验证 and the
+// signed 程序化交易风险揭示书 first); the token is shown once
+const trading = computed(() => session.me?.api_trading ?? null)
+const keyTrade = ref(false)
+const tradeReady = computed(() => !!trading.value?.verified && !!trading.value?.disclosure_signed)
 const keys = ref<ApiKey[] | null>(null)
 // an older server without API keys: hide the section
 const keysMissing = ref(false)
@@ -90,6 +98,7 @@ function closeMaking() {
   making.value = false
   keyName.value = ''
   keyDays.value = 90
+  keyTrade.value = false
   made.value = null
   copied.value = false
   keyErr.value = ''
@@ -98,7 +107,7 @@ async function makeKey() {
   busy.value = true
   keyErr.value = ''
   try {
-    made.value = await call(api.POST('/api/v1/me/api-keys', { body: { name: keyName.value.trim(), expires_in_days: keyDays.value } }))
+    made.value = await call(api.POST('/api/v1/me/api-keys', { body: { name: keyName.value.trim(), expires_in_days: keyDays.value, scopes: keyTrade.value ? ['trade'] : ['read:account'] } }))
     await loadKeys()
   } catch (e) {
     keyErr.value = errorText(e)
@@ -238,7 +247,7 @@ async function unbind(id: number) {
     </section>
     <section v-if="session.me && !keysMissing" class="sec">
       <h2>API 密钥</h2>
-      <p class="hint">用于脚本读取账户数据和接收成交推送，目前不能下单。接口说明见 <a href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI 文档</a>。</p>
+      <p class="hint">{{ trading?.enabled ? '用于脚本读取账户数据、接收成交推送和下单。' : '用于脚本读取账户数据和接收成交推送，目前不能下单。' }}接口说明见 <a href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI 文档</a>。</p>
       <ul v-if="keys?.length" class="keys">
         <li v-for="k in keys" :key="k.id">
           <div class="keyhead">
@@ -247,6 +256,7 @@ async function unbind(id: number) {
           </div>
           <div class="keymeta">
             <span class="num">{{ k.prefix }}…</span>
+            <span v-if="k.scopes.includes('trade')">可交易</span>
             <span v-if="k.expired" class="expired">已过期</span>
             <span v-else>{{ k.expires_at.slice(0, 10) }} 到期</span>
             <span>{{ k.last_used_at ? `${when(k.last_used_at)}使用` : '未使用' }}</span>
@@ -273,6 +283,14 @@ async function unbind(id: number) {
           <div class="opts" role="radiogroup" aria-label="有效期">
             <button v-for="d in lifetimes" :key="d" type="button" role="radio" :aria-checked="keyDays === d" @click="keyDays = d">{{ d }} 天</button>
           </div>
+          <template v-if="trading?.enabled">
+            <div class="opts" role="radiogroup" aria-label="权限">
+              <button type="button" role="radio" :aria-checked="!keyTrade" @click="keyTrade = false">只读</button>
+              <button type="button" role="radio" :aria-checked="keyTrade" @click="keyTrade = true">交易</button>
+            </div>
+            <p v-if="keyTrade && !trading.verified" class="hint">先完成上方的身份验证</p>
+            <p v-if="keyTrade && !trading.disclosure_signed" class="hint">先签署<RouterLink to="/legal/api_disclosure?sign=1">《程序化交易风险揭示书》</RouterLink></p>
+          </template>
           <p v-if="keyErr" class="msg error" role="alert">{{ keyErr }}</p>
         </form>
         <template #actions>
@@ -281,7 +299,7 @@ async function unbind(id: number) {
             <button type="button" class="btn ghost" @click="closeMaking">完成</button>
           </template>
           <template v-else>
-            <button type="submit" form="key-form" class="btn" :disabled="busy || !keyName.trim()">生成</button>
+            <button type="submit" form="key-form" class="btn" :disabled="busy || !keyName.trim() || (keyTrade && !tradeReady)">生成</button>
             <button type="button" class="btn ghost" :disabled="busy" @click="closeMaking">取消</button>
           </template>
         </template>

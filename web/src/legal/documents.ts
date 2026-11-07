@@ -2,9 +2,9 @@
 // version of each in server/game.toml [account.documents]; raise it there when a text changes materially,
 // and every player accepts the new text again before the next order.
 
-export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure'
+export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure' | 'api_disclosure'
 /** documents signed by typing the username */
-export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure']
+export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure', 'api_disclosure']
 
 export type Block =
   | { p: string }
@@ -260,8 +260,50 @@ const marginDisclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解融资融券可能造成超过本金的亏损，自愿承担交易结果。',
 }
 
-export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure }
+// docs/v2-api-access.md §9: signed before an API key may trade (server/game.toml api_disclosure)
+const apiDisclosure: LegalDoc = {
+  title: '程序化交易风险揭示书',
+  updated: '2026 年 11 月 7 日',
+  intro: [
+    { p: '程序化交易是用 API 密钥让程序代替手动下单、撤单、认购和还款。程序的速度和数量远超手动操作，错误也会被同样放大。' },
+    { p: '本揭示书是《风险揭示书》的补充。使用前应阅读开发者文档中的接口说明和频率限制。' },
+  ],
+  sections: [
+    {
+      h: '一、委托效力',
+      blocks: [{ ol: [
+        '程序发出的委托与手动委托效力相同。程序错误、网络重试、行情延迟造成的成交，不予撤销。',
+        '网络重试可能重复下单。下单时带上 Idempotency-Key，同一个 key 在 24 小时内只成交一次。',
+      ] }],
+    },
+    {
+      h: '二、密钥安全',
+      blocks: [{ ol: [
+        '交易密钥等同于账户的交易权限。不要写进公开的代码仓库，不要发给他人。',
+        '发现泄露应立即在设置页吊销。吊销前用泄露的密钥发出的委托，由账户自己承担。',
+        '找回密码时，全部密钥自动吊销。失去身份验证后，交易密钥暂停使用，重新验证后恢复。',
+      ] }],
+    },
+    {
+      h: '三、频率和数量限制',
+      blocks: [{ ol: [
+        '下单和撤单每秒最多 5 次，每个交易日最多 5,000 笔委托；同时最多 100 笔未成交委托，单支股票最多 20 笔。网页和全部密钥合计。',
+        '超出限制的请求会被拒绝。本站可以调整这些限制，调整后在开发者文档中公布。',
+      ] }],
+    },
+    {
+      h: '四、标记和监控',
+      blocks: [{ ol: [
+        '用 API 密钥下过单的账户，在排行榜上显示“程序化”标记。',
+        '利用接口对敲、刷单或绕过频率限制的，按用户协议第五条处理。',
+      ] }],
+    },
+  ],
+  declaration: '本人已阅读并理解本揭示书的内容，自行承担程序发出的全部委托的结果。',
+}
+
+export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure, api_disclosure: apiDisclosure }
 
 export function isDocKey(k: unknown): k is DocKey {
-  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure'
+  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure' || k === 'api_disclosure'
 }

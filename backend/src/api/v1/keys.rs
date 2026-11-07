@@ -1,8 +1,10 @@
 //! Personal API keys for scripts (docs/v2-api-access.md). A key is `anx_` + 40 base62 characters, shown
 //! once; only its SHA-256 is kept, on the side connection like the QQ bindings (not game state).
 //!
-//! Phase 1 grants `read:account` only: a key reads `/me/*` and may subscribe `me` on the WebSocket; every
-//! write stays with the browser session (`Caller::player`).
+//! `read:account`: a key reads `/me/*` and may subscribe `me` on the WebSocket. `trade` (phase 2, while
+//! `[api] trading` is on): it also places and cancels orders, subscribes to new issues and rights, and repays
+//! credit (`Caller::trader`); it needs 身份验证 and the signed 程序化交易风险揭示书, at creation and on every
+//! request. Everything else stays with the browser session (`Caller::player`).
 
 use std::sync::Arc;
 
@@ -32,6 +34,26 @@ const TOUCH_EVERY: i64 = 60;
 pub fn hash(token: &str) -> Vec<u8> {
     use sha2::Digest;
     sha2::Sha256::digest(token.as_bytes()).to_vec()
+}
+
+/// What the account still lacks for a `trade` key: `verification` (身份验证) and `api_disclosure` (the
+/// current 程序化交易风险揭示书 signed).
+pub fn trade_missing(st: &AppState, c: &rusqlite::Connection, id: i64) -> R<Vec<&'static str>> {
+    let mut out = Vec::new();
+    if st.cfg.eligibility.require_kyc && crate::kyc::method(c, id).map_err(sql)?.is_none() {
+        out.push("verification");
+    }
+    let signed: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM account_agreements WHERE account_id=? AND doc='api_disclosure' AND version=?)",
+            params![id, st.cfg.api_disclosure],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if !signed {
+        out.push("api_disclosure");
+    }
+    Ok(out)
 }
 
 fn unix(ts: &str) -> i64 {
@@ -162,13 +184,28 @@ pub async fn create(
         None | Some(serde_json::Value::Null) => vec!["read:account".into()],
         Some(serde_json::Value::Array(a)) => {
             let v: Vec<String> = a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
-            if v.len() != a.len() || v.is_empty() || v.iter().any(|s| s != "read:account") {
-                return Err(error::invalid(vec![error::field("scopes", "not_allowed", "目前只能授予 read:account")]));
+            if v.len() != a.len() || v.is_empty() || v.iter().any(|s| s != "read:account" && s != "trade") {
+                return Err(error::invalid(vec![error::field("scopes", "not_allowed", "权限只能是 read:account 或 trade")]));
             }
-            v
+            if v.iter().any(|s| s == "trade") {
+                if !st.cfg.api_trading {
+                    return Err(error::invalid(vec![error::field("scopes", "not_allowed", "交易权限还没有开放")]));
+                }
+                // a trading key reads the account too
+                vec!["read:account".into(), "trade".into()]
+            } else {
+                vec!["read:account".into()]
+            }
         }
         Some(_) => return Err(error::invalid(vec![error::wrong_type("scopes")])),
     };
+    if scopes.iter().any(|s| s == "trade") {
+        let st2 = st.clone();
+        let missing = read(&st, move |c| trade_missing(&st2, c, me)).await?;
+        if !missing.is_empty() {
+            return Err(error::trade_not_allowed(missing));
+        }
+    }
     let days = body_int(&b, "expires_in_days")?.unwrap_or(DEFAULT_DAYS);
     if !LIFETIMES.contains(&days) {
         return Err(error::invalid(vec![error::field("expires_in_days", "not_allowed", "有效期只能是 30、90 或 365 天")]));
