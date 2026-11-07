@@ -109,7 +109,7 @@ pub enum Change {
     Margin(crate::margin::MarginChange),
     /// corporate actions (crate::corporate, V10)
     Corporate(crate::corporate::CorporateChange),
-    /// 热度期货 rows (crate::futures, V17)
+    /// 热度期货 rows (crate::futures, V19)
     Futures(crate::futures::FuturesChange),
     /// `INSERT OR REPLACE INTO lots` (a split rescales a lot's quantity and cost)
     LotReplace(Lot),

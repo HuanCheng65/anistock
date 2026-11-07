@@ -289,7 +289,7 @@ pub async fn repay(
     headers: HeaderMap,
     body: Bytes,
 ) -> R<Json<RepayResponse>> {
-    let id = caller.player()?;
+    let id = caller.trader(&st).await?.account;
     let b = json_body_opt(&headers, &body)?;
     let amount = body_int(&b, "amount")?;
     if amount.is_some_and(|a| a < 1) {

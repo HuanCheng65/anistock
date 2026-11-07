@@ -2,9 +2,9 @@
 // version of each in server/game.toml [account.documents]; raise it there when a text changes materially,
 // and every player accepts the new text again before the next order.
 
-export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure'
+export type DocKey = 'terms' | 'privacy' | 'disclosure' | 'margin_disclosure' | 'api_disclosure'
 /** documents signed by typing the username */
-export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure']
+export const SIGNED: DocKey[] = ['disclosure', 'margin_disclosure', 'api_disclosure']
 
 export type Block =
   | { p: string }
@@ -260,8 +260,50 @@ const marginDisclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解融资融券可能造成超过本金的亏损，自愿承担交易结果。',
 }
 
-export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure }
+// docs/v2-api-access.md §9: signed before an API key may trade (server/game.toml api_disclosure)
+const apiDisclosure: LegalDoc = {
+  title: '程序化交易风险揭示书',
+  updated: '2026 年 11 月 7 日',
+  intro: [
+    { p: '程序化交易是指通过 API 密钥，由程序自动提交委托、撤销委托、认购新股和配股、偿还融资款。程序的下单速度和数量远超手动操作，程序中的错误也会随之放大。' },
+    { p: '本揭示书是《风险揭示书》的补充。使用程序化交易前，应同时阅读接口规范和频率限制。' },
+  ],
+  sections: [
+    {
+      h: '一、委托效力风险',
+      blocks: [{ ol: [
+        '通过 API 密钥提交的委托，与在网页上提交的委托效力相同。因程序错误、网络重试或行情延迟产生的成交，安易不予撤销。',
+        '网络重试可能导致重复下单。委托附带 Idempotency-Key 的，同一个 key 在 24 小时内只会提交一笔委托。',
+      ] }],
+    },
+    {
+      h: '二、密钥安全风险',
+      blocks: [{ ol: [
+        '具有交易权限的密钥等同于账户的交易权限。密钥公开或交给他人的，他人可以用该账户交易。',
+        '发现密钥泄露的，应立即在设置中吊销。吊销前使用该密钥产生的委托和成交，由账户承担。',
+        '找回密码时，账户的全部密钥自动吊销。账户失去身份验证期间，交易密钥暂停使用；重新完成身份验证后恢复。',
+      ] }],
+    },
+    {
+      h: '三、频率和数量限制',
+      blocks: [{ ol: [
+        '每个账户每秒最多提交或撤销 5 笔委托，每个交易日最多提交 5,000 笔委托，同时最多有 100 笔未成交委托，其中单支股票最多 20 笔。网页和全部密钥合并计算。',
+        '超出限制的请求将被拒绝。安易可以根据运行情况调整上述限制，调整前会发布公告。',
+      ] }],
+    },
+    {
+      h: '四、标记和监控',
+      blocks: [{ ol: [
+        '使用 API 密钥提交过委托的账户，在排行榜上显示“程序化”标记。',
+        '利用接口进行对敲、刷量，或者绕过频率限制的，按用户协议第五条处理。',
+      ] }],
+    },
+  ],
+  declaration: '本人已阅读并理解本揭示书的内容，了解程序化交易的风险，自愿承担程序提交的委托及其交易结果。',
+}
+
+export const DOCUMENTS: Record<DocKey, LegalDoc> = { terms, privacy, disclosure, margin_disclosure: marginDisclosure, api_disclosure: apiDisclosure }
 
 export function isDocKey(k: unknown): k is DocKey {
-  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure'
+  return k === 'terms' || k === 'privacy' || k === 'disclosure' || k === 'margin_disclosure' || k === 'api_disclosure'
 }

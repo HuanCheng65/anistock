@@ -23,6 +23,13 @@ pub struct Limits {
     pub ws_total: usize,
     /// password hashes (scrypt) computed at the same time
     pub hash_concurrency: usize,
+    /// placing and cancelling orders per account, web and API keys together (on top of `player`)
+    pub order: (f64, f64),
+    /// orders an account may place in one trading day
+    pub orders_per_day: i64,
+    /// open orders an account may have at once, and in one stock
+    pub max_open_orders: usize,
+    pub max_open_orders_per_stock: usize,
 }
 
 impl Limits {
@@ -47,6 +54,10 @@ impl Limits {
             ws_per_account: f("ws_per_account", 3.0) as usize,
             ws_total: f("ws_total", 2000.0) as usize,
             hash_concurrency: (cfg.api_f64("rate_limit.hash_concurrency", 2.0) as usize).max(1),
+            order: (f("order_rps", 5.0), f("order_burst", 10.0)),
+            orders_per_day: f("orders_per_day", 5000.0) as i64,
+            max_open_orders: f("max_open_orders", 100.0) as usize,
+            max_open_orders_per_stock: f("max_open_orders_per_stock", 20.0) as usize,
         }
     }
 }
@@ -59,6 +70,8 @@ pub enum Key {
     Auth(String),
     Register(String),
     Bind(String),
+    /// order placement and cancellation, per account
+    Order(i64),
 }
 
 /// The per-IP limit key: an IPv4 address as is, an IPv6 address by its /64 (one subscriber usually holds
@@ -119,6 +132,7 @@ impl Limiter {
             Key::Auth(_) => limits.auth,
             Key::Register(_) => limits.register,
             Key::Bind(_) => limits.bind,
+            Key::Order(_) => limits.order,
         };
         let now = Instant::now();
         self.sweeps += 1;
@@ -156,6 +170,10 @@ mod tests {
             ws_per_account: 3,
             ws_total: 100,
             hash_concurrency: 2,
+            order: (1.0, 1.0),
+            orders_per_day: 10,
+            max_open_orders: 10,
+            max_open_orders_per_stock: 5,
         };
         let mut lim = Limiter::default();
         for _ in 0..3 {
@@ -180,6 +198,10 @@ mod tests {
             ws_per_account: 3,
             ws_total: 100,
             hash_concurrency: 2,
+            order: (1.0, 1.0),
+            orders_per_day: 10,
+            max_open_orders: 10,
+            max_open_orders_per_stock: 5,
         };
         let mut lim = Limiter::default();
         for _ in 0..5 {

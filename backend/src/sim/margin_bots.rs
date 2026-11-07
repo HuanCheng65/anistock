@@ -99,6 +99,25 @@ fn short_each(b: &mut Bot, e: &mut Engine, targets: &[i64], frac: f64, t: i64) {
     }
 }
 
+/// Short `c` with `frac` of the available margin, at the last price (the event snipe bot).
+pub(super) fn short_one(b: &mut Bot, e: &mut Engine, c: i64, frac: f64, t: i64) {
+    short_each(b, e, &[c], frac, t);
+}
+
+/// Cover the short position in `c` at up to 1% over the last price.
+pub(super) fn cover_one(b: &mut Bot, e: &mut Engine, c: i64, t: i64) {
+    let acct = b.account;
+    let q = e.short_qty(acct, c);
+    if q <= 0 {
+        return;
+    }
+    e.cancel_all(acct, c, &ts_of(t));
+    let p = e.company(c).map_or(0, |x| x.last_price);
+    if credit(e, acct, c, Mode::BuyReturn, q, p * 101 / 100 + 1, t) {
+        b.trades_placed += 1;
+    }
+}
+
 pub fn on_minute(b: &mut Bot, e: &mut Engine, t: i64) {
     let (d, s) = local(t);
     let acct = b.account;

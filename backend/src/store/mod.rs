@@ -223,7 +223,7 @@ pub struct Snapshot {
     pub margin: crate::margin::MarginState,
     /// corporate actions (migration V10; empty for older databases)
     pub corp: crate::corporate::CorporateState,
-    /// 热度期货 (migration V17; empty for older databases)
+    /// 热度期货 (migration V19; empty for older databases)
     pub futures: crate::futures::FuturesState,
     pub max_order_id: i64,
     pub max_trade_id: i64,

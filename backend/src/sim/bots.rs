@@ -123,6 +123,15 @@ pub enum BotKind {
     /// buys every published 热度快讯, good or bad, the second it appears (riding the attention buying), sells
     /// an hour later
     SnipeAttention,
+    /// a script on the API: buys each show's stock at the first second of the session after its 开播 notice
+    /// (published at the close; the news NPCs follow over hours), sells 2 hours later
+    SnipePremiere,
+    /// the same for 完结 notices, selling short (融券) and covering 2 hours later
+    SnipeFinale,
+    /// a script on the API quoting every second on the 5 hottest stocks: bid 1 tick over the best bid and ask 1
+    /// tick under the best ask, re-quoting whenever it is no longer alone at the top or overbids the level
+    /// below (high-frequency pennying of the market maker, docs/v2-api-access.md §7)
+    ScalperFast,
     /// 热度期货 (docs/v3-futures.md §4.5; sim/futures_bots.rs): always long / always short
     FutLong,
     FutShort,
@@ -139,7 +148,7 @@ pub enum BotKind {
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 50] {
+    pub fn all() -> [BotKind; 53] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -184,6 +193,9 @@ impl BotKind {
             BotKind::SnipeFlash,
             BotKind::SnipeFlash2h,
             BotKind::SnipeAttention,
+            BotKind::SnipePremiere,
+            BotKind::SnipeFinale,
+            BotKind::ScalperFast,
             BotKind::FutLong,
             BotKind::FutShort,
             BotKind::FutCalendar,
@@ -238,6 +250,9 @@ impl BotKind {
             BotKind::SnipeFlash => "snipe_flash",
             BotKind::SnipeFlash2h => "snipe_flash_2h",
             BotKind::SnipeAttention => "snipe_attention",
+            BotKind::SnipePremiere => "snipe_premiere",
+            BotKind::SnipeFinale => "snipe_finale",
+            BotKind::ScalperFast => "scalper_fast",
             BotKind::FutLong => "fut_long",
             BotKind::FutShort => "fut_short",
             BotKind::FutCalendar => "fut_calendar",
@@ -270,6 +285,8 @@ pub struct BotCtx<'a> {
     /// published company notices of corporate actions and schedule changes so far: (company, unix seconds, news
     /// kind, title) (docs/v2-corporate.md)
     pub notices: &'a [(i64, i64, String, String)],
+    /// 开播 / 完结 notices from the closes so far: (company, unix seconds, direction +1 / -1)
+    pub events: &'a [(i64, i64, i8)],
     /// the day's heat index per work, as the platforms show it during the session (the futures front-runner)
     pub heat_today: &'a std::collections::BTreeMap<i64, crate::inputs::HeatIndex>,
 }
@@ -304,6 +321,10 @@ pub struct Bot {
     corp_done: std::collections::HashSet<i64>,
     /// the snipe bots: flashes already traded (company, unix seconds)
     sniped: std::collections::HashSet<(i64, i64)>,
+    /// the event snipe bots: notices already read
+    events_seen: usize,
+    /// scalper_fast: the stocks it quotes (the 5 hottest, refreshed each minute)
+    fast_targets: Vec<i64>,
 }
 
 fn place(e: &mut Engine, acct: i64, c: i64, side: &str, kind: &str, qty: i64, price: Option<i64>, t: i64) -> bool {
@@ -365,6 +386,8 @@ impl Bot {
             corp_rebuy: Vec::new(),
             corp_done: Default::default(),
             sniped: Default::default(),
+            events_seen: 0,
+            fast_targets: Vec::new(),
         }
     }
 
@@ -416,6 +439,100 @@ impl Bot {
 
     fn snipes(&self) -> bool {
         matches!(self.kind, BotKind::SnipeFlash | BotKind::SnipeFlash2h | BotKind::SnipeAttention)
+    }
+
+    /// snipe_premiere / snipe_finale: trade each new 开播 / 完结 notice at the first minute it can (the open
+    /// after the close that published it), close the position 2 hours later.
+    fn event_snipe(&mut self, e: &mut Engine, t: i64, ctx: &BotCtx) {
+        let acct = self.account;
+        let short = self.kind == BotKind::SnipeFinale;
+        if short && e.credit(acct).is_none() && e.open_credit(acct, self.start_cash, &day_of(t), &ts_of(t)).is_err() {
+            return;
+        }
+        while self.events_seen < ctx.events.len() {
+            let (c, at, dir) = ctx.events[self.events_seen];
+            self.events_seen += 1;
+            // (notices from before the bot started are history)
+            if t - at > 86_400 || (dir < 0) != short || self.exits.iter().any(|x| x.0 == c) {
+                continue;
+            }
+            if short {
+                margin::short_one(self, e, c, 0.2, t);
+            } else {
+                let wealth = self.wealth(e);
+                self.buy(e, c, wealth / 5, t);
+            }
+            self.exits.push((c, t + 7200));
+        }
+        let due: Vec<i64> = self.exits.iter().filter(|x| t >= x.1).map(|x| x.0).collect();
+        for c in due {
+            if short {
+                if e.short_qty(acct, c) > 0 {
+                    margin::cover_one(self, e, c, t);
+                }
+            } else if e.holding(acct, c).is_some_and(|h| h.qty > 0) {
+                self.sell_all(e, c, t);
+            }
+        }
+        self.exits.retain(|x| t < x.1 || e.short_qty(acct, x.0) > 0 || e.holding(acct, x.0).is_some_and(|h| h.qty > 0));
+    }
+
+    /// scalper_fast, every second of continuous trading (the sim steps the NPCs second by second for it).
+    pub fn on_second(&mut self, e: &mut Engine, t: i64) {
+        if self.kind != BotKind::ScalperFast {
+            return;
+        }
+        let acct = self.account;
+        let ts = ts_of(t);
+        let targets = self.fast_targets.clone();
+        let budget = self.wealth(e) / 5;
+        for c in targets {
+            let mine: Vec<(bool, i64)> = e
+                .open_orders_of(acct)
+                .iter()
+                .filter(|o| o.company_id == c)
+                .map(|o| (matches!(o.side, crate::model::Side::Buy), o.price.unwrap_or(0)))
+                .collect();
+            let book = e.book(c, 2);
+            let my_bid = mine.iter().find(|m| m.0).map(|m| m.1);
+            let my_ask = mine.iter().find(|m| !m.0).map(|m| m.1);
+            // keep a quote while it is alone at the top and no more than a tick inside the next level
+            let bid_ok = my_bid.is_some_and(|p| {
+                book.bids.first().is_some_and(|l| l.price == p && l.orders == 1)
+                    && book.bids.get(1).is_some_and(|l| p - l.price == 1)
+            });
+            let ask_ok = my_ask.is_some_and(|p| {
+                book.asks.first().is_some_and(|l| l.price == p && l.orders == 1)
+                    && book.asks.get(1).is_some_and(|l| l.price - p == 1)
+            });
+            let held = e.holding(acct, c).map_or(0, |h| h.qty);
+            let last = e.company(c).map_or(0, |x| x.last_price);
+            let (want_bid, want_ask) = (held * last < budget, held > 0);
+            let bid_fine = if want_bid { bid_ok } else { my_bid.is_none() };
+            let ask_fine = if want_ask { ask_ok } else { my_ask.is_none() };
+            if bid_fine && ask_fine {
+                continue;
+            }
+            e.cancel_all(acct, c, &ts);
+            let b = e.book(c, 1);
+            let (Some(bid), Some(ask)) = (b.bids.first().map(|l| l.price), b.asks.first().map(|l| l.price)) else {
+                continue;
+            };
+            if ask - bid < 3 {
+                continue;
+            }
+            let free = e.available_shares(acct, c);
+            if free > 0 && place(e, acct, c, "sell", "limit", free, Some(ask - 1), t) {
+                self.trades_placed += 1;
+            }
+            let have = held * bid;
+            if have < budget {
+                let q = affordable(e, (budget - have).min(e.available_cash(acct)), bid + 1);
+                if place(e, acct, c, "buy", "limit", q, Some(bid + 1), t) {
+                    self.trades_placed += 1;
+                }
+            }
+        }
     }
 
     /// A 热度快讯 was just published (`at`, inside continuous trading): the snipe bots trade at once.
@@ -475,6 +592,8 @@ impl Bot {
             BotKind::BuybackFollow | BotKind::RightsSell | BotKind::SplitBuy | BotKind::DelayFade => self.corp_minute(e, t, ctx),
             BotKind::BubbleRider | BotKind::BubbleRider1 | BotKind::DispositionFade => sentiment::on_minute(self, e, t, heat),
             BotKind::SnipeFlash | BotKind::SnipeFlash2h | BotKind::SnipeAttention => {} // handled above
+            BotKind::SnipePremiere | BotKind::SnipeFinale => self.event_snipe(e, t, ctx),
+            BotKind::ScalperFast => self.fast_targets = hottest(e, heat, 5),
             BotKind::FutLong
             | BotKind::FutShort
             | BotKind::FutCalendar

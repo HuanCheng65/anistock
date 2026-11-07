@@ -1,4 +1,4 @@
-//! Futures rows (migration V17). Prices are in ticks: hundredths of an index point.
+//! Futures rows (migration V19). Prices are in ticks: hundredths of an index point.
 
 use serde::Serialize;
 

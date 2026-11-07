@@ -54,6 +54,8 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
         "ANISTOCK_GAME_DB" => Some(db2.display().to_string()),
         "ANISTOCK_DB" => Some(coll.display().to_string()),
         "ANISTOCK_INVITE" => Some("club".into()),
+        // API trading off unless a test turns it on (server/game.toml may have it on)
+        "ANISTOCK_API_TRADING" => Some(extra.iter().find(|(n, _)| *n == "ANISTOCK_API_TRADING").map_or("0", |(_, v)| *v).to_string()),
         k => extra.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()),
     })
     .unwrap();
@@ -79,6 +81,7 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
     v1s.limits.player = (1e9, 1e9);
     v1s.limits.auth = (1e9, 1e9);
     v1s.limits.register = (1e9, 1e9);
+    v1s.limits.order = (1e9, 1e9);
     // a cheap proof of work: the tests run unoptimised
     v1s.pow.cfg.cost = 2;
     v1s.pow.cfg.register_max = 20;
@@ -839,15 +842,34 @@ async fn api_keys_read_but_do_not_write() {
     assert_eq!(r.json["username"], "alice");
     assert_eq!(a.req("GET", "/api/v1/me/portfolio", None, &k).await.status, 200);
     assert_eq!(a.req("GET", "/api/v1/me/orders", None, &k).await.status, 200);
-    // writes and web-only endpoints stay with the browser
+    // orders need the `trade` scope; web-only endpoints stay with the browser
     let order = json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 100, "quantity": 1});
     let r = a.req("POST", "/api/v1/me/orders", Some(order), &k).await;
+    err(&r, 403, "forbidden");
+    assert_eq!(r.json["details"]["required_scope"], "trade");
+    let r = a.req("POST", "/api/v1/me/restructure", Some(json!({})), &k).await;
     err(&r, 403, "forbidden");
     assert_eq!(r.json["details"]["required_scope"], "web");
     err(&a.req("POST", "/api/v1/me/api-keys", Some(json!({"name": "再来"})), &k).await, 403, "forbidden");
     err(&a.req("GET", "/api/v1/me/api-keys", None, &k).await, 403, "forbidden");
     err(&a.req("DELETE", &format!("/api/v1/me/api-keys/{id}"), None, &k).await, 403, "forbidden");
     err(&a.req("GET", "/api/v1/me", None, &[("authorization", "Bearer anx_nope")]).await, 401, "unauthenticated");
+    // with `[api] trading` off even a key carrying `trade` cannot trade
+    {
+        let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+        let tok = "anx_TradeKeyWhileTheSwitchIsOff0000000000";
+        c.execute(
+            "INSERT INTO api_keys(account_id, name, prefix, key_hash, scopes, created_at, expires_at) SELECT id, 't', 'anx_Trad', ?, 'read:account,trade', ?, '2027-01-01T00:00:00+08:00' FROM accounts WHERE username='alice'",
+            rusqlite::params![v1::keys::hash(tok), TS],
+        )
+        .unwrap();
+        let b = format!("Bearer {tok}");
+        let order = json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 100, "quantity": 1});
+        let r = a.req("POST", "/api/v1/me/orders", Some(order), &[("authorization", b.as_str())]).await;
+        err(&r, 403, "forbidden");
+        assert_eq!(r.json["details"]["required"], json!(["api_trading"]));
+        c.execute("DELETE FROM api_keys WHERE name='t'", []).unwrap();
+    }
 
     // five in force at most; the list never shows the token
     for i in 0..4 {
@@ -899,6 +921,85 @@ async fn api_keys_read_but_do_not_write() {
     assert_eq!(r.status, 200, "{}", r.json);
     let live: i64 = c.query_row("SELECT COUNT(*) FROM api_keys WHERE account_id=? AND revoked_at IS NULL", [acct], |r| r.get(0)).unwrap();
     assert_eq!(live, 0);
+}
+
+#[tokio::test]
+async fn trade_keys_need_verification_and_the_disclosure() {
+    let mut a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_API_TRADING", "1")]);
+    {
+        let l = &mut Arc::get_mut(&mut a.st).unwrap().v1.limits;
+        l.max_open_orders_per_stock = 2;
+        l.orders_per_day = 3;
+    }
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let (a, h) = (&a, &h);
+    let make = |body: Value| async move { a.req("POST", "/api/v1/me/api-keys", Some(body), h).await };
+    let c = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    let acct: i64 = c.query_row("SELECT id FROM accounts WHERE username='alice'", [], |r| r.get(0)).unwrap();
+
+    // not verified, not signed
+    let me = a.get("/api/v1/me", Some(&ck)).await.json;
+    assert_eq!(me["api_trading"], json!({"enabled": true, "verified": false, "disclosure_signed": false, "disclosure_version": 1}));
+    let r = make(json!({"name": "交易", "scopes": ["trade"]})).await;
+    err(&r, 403, "forbidden");
+    assert_eq!(r.json["details"]["required"], json!(["verification", "api_disclosure"]));
+    c.execute("INSERT INTO bindings(account_id, platform, external_id, scopes, created_at) VALUES (?, 'qq', 'OPENIDT', 'read:account', ?)", rusqlite::params![acct, TS]).unwrap();
+    err(&make(json!({"name": "交易", "scopes": ["trade"]})).await, 403, "forbidden");
+    // the disclosure is signed with the username, like the other two
+    let r = a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "api_disclosure", "version": 1, "signature": "bob"})), h).await;
+    err(&r, 400, "invalid_request");
+    let r = a.req("POST", "/api/v1/me/agreements", Some(json!({"doc": "api_disclosure", "version": 1, "signature": "alice"})), h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    assert_eq!(r.json["api_trading"]["disclosure_signed"], true);
+    assert_eq!(r.json["pending_documents"], json!([]));
+
+    let r = make(json!({"name": "交易", "scopes": ["trade"]})).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    assert_eq!(r.json["key"]["scopes"], json!(["read:account", "trade"]));
+    let key_id = r.json["key"]["id"].as_i64().unwrap();
+    let bearer = format!("Bearer {}", r.json["token"].as_str().unwrap());
+    let k = [("authorization", bearer.as_str())];
+    let r = make(json!({"name": "只读"})).await;
+    let ro = format!("Bearer {}", r.json["token"].as_str().unwrap());
+
+    // the trade key places and cancels; the read-only one still cannot
+    let order = json!({"stock_id": 1, "side": "buy", "type": "limit", "price": 100, "quantity": 1});
+    let r = a.req("POST", "/api/v1/me/orders", Some(order.clone()), &[("authorization", ro.as_str())]).await;
+    err(&r, 403, "forbidden");
+    assert_eq!(r.json["details"]["required_scope"], "trade");
+    let r = a.req("POST", "/api/v1/me/orders", Some(order.clone()), &k).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    let first = r.json["order"]["id"].as_i64().unwrap();
+    let marked: i64 = c.query_row("SELECT key_id FROM api_orders WHERE order_id=?", [first], |r| r.get(0)).unwrap();
+    assert_eq!(marked, key_id);
+    // a browser order is not marked
+    let r = a.req("POST", "/api/v1/me/orders", Some(order.clone()), h).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    let web = r.json["order"]["id"].as_i64().unwrap();
+    let n: i64 = c.query_row("SELECT COUNT(*) FROM api_orders WHERE order_id=?", [web], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+    // two open orders in one stock at most (web and keys together)
+    let r = a.req("POST", "/api/v1/me/orders", Some(order.clone()), &k).await;
+    err(&r, 409, "too_many_open_orders");
+    assert_eq!(r.json["details"], json!({"scope": "stock", "max": 2}));
+    assert_eq!(a.req("DELETE", &format!("/api/v1/me/orders/{first}"), None, &k).await.status, 200);
+    // three orders a day: the third goes in, the fourth does not
+    assert_eq!(a.req("POST", "/api/v1/me/orders", Some(order.clone()), &k).await.status, 201);
+    a.req("DELETE", &format!("/api/v1/me/orders/{web}"), None, h).await;
+    let r = a.req("POST", "/api/v1/me/orders", Some(order.clone()), &k).await;
+    err(&r, 429, "daily_order_limit");
+
+    // the leaderboard row carries the 程序化 mark
+    let rows = v1::account::ranked(&c, 10_000_000, None, None).unwrap();
+    assert!(rows.iter().find(|r| r.user.id == acct).unwrap().program);
+    assert!(rows.iter().filter(|r| r.user.id != acct).all(|r| !r.program));
+
+    // losing 身份验证 stops the key at once; the browser keeps trading
+    c.execute("DELETE FROM bindings WHERE account_id=?", [acct]).unwrap();
+    let r = a.req("DELETE", &format!("/api/v1/me/orders/{web}"), None, &k).await;
+    err(&r, 403, "forbidden");
+    assert_eq!(r.json["details"]["required"], json!(["verification"]));
 }
 
 #[tokio::test]

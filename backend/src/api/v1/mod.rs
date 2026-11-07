@@ -70,6 +70,9 @@ pub struct V1State {
     pub hashing: tokio::sync::Semaphore,
     /// account -> last password change (Unix seconds), loaded on first use (password.rs)
     pub pw_changed: std::sync::RwLock<Option<HashMap<i64, i64>>>,
+    /// account -> (trading day, orders placed that day), for `orders_per_day` (kept in memory: a restart
+    /// forgets the day's count)
+    pub orders_today: Mutex<HashMap<i64, (String, i64)>>,
 }
 
 impl V1State {
@@ -85,6 +88,7 @@ impl V1State {
             pow: pow::Pow::new(pow::PowConfig::from_config(cfg)),
             hashing: tokio::sync::Semaphore::new(ratelimit::Limits::from_config(cfg).hash_concurrency),
             pw_changed: std::sync::RwLock::new(None),
+            orders_today: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -116,6 +120,13 @@ pub enum Caller {
     ApiKey { account: i64, key: i64, scopes: Vec<String> },
 }
 
+/// Who places an order: the account, and the API key when it came through one (`api_orders`).
+#[derive(Clone, Copy, Debug)]
+pub struct Trader {
+    pub account: i64,
+    pub key: Option<i64>,
+}
+
 impl Caller {
     /// The account whose data a read under `/me` returns: the cookie's, or the bound player's when the
     /// binding grants `read:account`.
@@ -138,6 +149,29 @@ impl Caller {
             Caller::Bot { .. } => Err(error::forbidden("player")),
             Caller::ApiKey { .. } => Err(error::web_only()),
             Caller::Anon => Err(error::unauthenticated()),
+        }
+    }
+
+    /// Placing and cancelling orders, subscriptions and repayments: a browser session, or an API key with the
+    /// `trade` scope while `[api] trading` is on and the account is verified and has signed the
+    /// 程序化交易风险揭示书 (checked on every request, docs/v2-api-access.md §4).
+    pub async fn trader(&self, st: &Arc<AppState>) -> R<Trader> {
+        match self {
+            Caller::ApiKey { account, key, scopes } => {
+                if !scopes.iter().any(|s| s == "trade") {
+                    return Err(error::forbidden("trade"));
+                }
+                if !st.cfg.api_trading {
+                    return Err(error::trade_not_allowed(vec!["api_trading"]));
+                }
+                let (st2, a) = (st.clone(), *account);
+                let missing = read(st, move |c| keys::trade_missing(&st2, c, a)).await?;
+                if !missing.is_empty() {
+                    return Err(error::trade_not_allowed(missing));
+                }
+                Ok(Trader { account: *account, key: Some(*key) })
+            }
+            _ => self.player().map(|account| Trader { account, key: None }),
         }
     }
 

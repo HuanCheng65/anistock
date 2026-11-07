@@ -859,6 +859,8 @@ pub struct Me {
     pub risk: Option<RiskResult>,
     /// 开通信用账户还需要的步骤
     pub credit_steps: CreditSteps,
+    /// 用 API 密钥交易（程序化交易）的条件
+    pub api_trading: ApiTradingSteps,
     /// 登录后要弹出的公告：开户之后发布、还没看过的最新一条；没有时为 null
     pub announcement: Option<Announcement>,
 }
@@ -888,6 +890,18 @@ pub struct RiskResult {
     pub valid_until: TradingDay,
     /// 是否仍在有效期内
     pub valid: bool,
+}
+
+/// 用 API 密钥交易的条件（每次请求都检查）
+#[derive(Serialize, ToSchema, Clone)]
+pub struct ApiTradingSteps {
+    /// 本站开放了 API 交易；为 false 时只能生成只读密钥
+    pub enabled: bool,
+    /// 完成了身份验证（服务器不要求身份验证时恒为 true）
+    pub verified: bool,
+    /// 签署了当前版本的《程序化交易风险揭示书》
+    pub disclosure_signed: bool,
+    pub disclosure_version: i64,
 }
 
 /// 开通信用账户的前置步骤（注册天数、净资产在开通时检查）
@@ -1177,6 +1191,8 @@ pub struct LeaderRow {
     #[serde(rename = "return")]
     pub r#return: f64,
     pub restructures: i64,
+    /// 程序化：这个周期内（总榜为开户以来）用 API 密钥下过单
+    pub program: bool,
 }
 
 #[derive(Serialize, ToSchema, Clone)]

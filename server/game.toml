@@ -160,6 +160,11 @@ bind_per_hour = 5             # bind-code redemptions per QQ number
 ws_per_ip = 32                # concurrent WebSocket connections per IP (campus NAT shares one address)
 ws_total = 2000               # concurrent WebSocket connections, site-wide
 ws_per_account = 3            # concurrent WebSocket connections opened with API keys, per account (docs/v2-api-access.md)
+order_rps = 5                 # placing / cancelling orders per account, web and API keys together (also counts above)
+order_burst = 10
+orders_per_day = 5000         # orders an account may place in a trading day
+max_open_orders = 100         # open orders at once, per account
+max_open_orders_per_stock = 20
 hash_concurrency = 2          # password hashes (scrypt, ~50 ms each) at a time; a login waits up to 5 s for a slot
 
 [api.pow]
@@ -198,6 +203,12 @@ terms = 1
 privacy = 1
 disclosure = 1
 margin_disclosure = 1          # 融资融券风险揭示书: signed before opening credit
+api_disclosure = 1             # 程序化交易风险揭示书: signed before an API key may trade
+
+[api]
+# API keys with the `trade` scope (docs/v2-api-access.md phase 2). Off: keys stay read-only, and existing
+# trade keys stop trading at once (ANISTOCK_API_TRADING=0 overrides without a commit).
+trading = true                 # opened 2026-11-07 with v0.6.10
 
 [api.events]
 # bot events (docs/api-v1.md §5.3.7): big_move thresholds

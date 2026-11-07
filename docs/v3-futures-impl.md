@@ -70,7 +70,7 @@ pub(crate) trait Venue {
 
 ### 2.3 数据
 
-迁移 `V17__futures.sql`，表和股票分开：`heat_index_pub`（游戏库里冻结的指数）、`futures_contracts`、`futures_orders`、`futures_trades`、`futures_positions`、`futures_candles`、`futures_settlements`。清算账户是一个新的特殊账户（`clearing`，第一次盯市时创建），不计入货币总量，每天日结后余额为 0。
+迁移 `V19__futures.sql`（V18 是 API 交易的），表和股票分开：`heat_index`（游戏库里冻结的指数）、`futures_contracts`、`futures_orders`、`futures_trades`、`futures_positions`、`futures_days`（每日行情和结算）。清算账户是一个新的特殊账户（`clearing`，第一次盯市时创建），不计入货币总量，每天日结后余额为 0。
 
 价格以 0.01 指数点为单位存整数；合约乘数存在合约上（1 点 = 10 星辉）。
 

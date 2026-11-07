@@ -59,13 +59,14 @@ const unranked = computed(() => (session.me && !session.me.eligibility.leaderboa
           <span class="nm clamp1" :class="{ me: mine(p.user.id) }">{{ p.user.username }}</span>
           <span class="num ret" :class="dir(p.return)">{{ pct(p.return) }}</span>
           <span v-if="p.restructures" class="rs">重整 {{ p.restructures }} 次</span>
+          <span v-if="p.program" class="rs">程序化</span>
           <div class="block" :class="p.tone" :style="{ height: p.h + 'px' }"><span class="serif">{{ p.rank }}</span></div>
         </div>
       </section>
       <div v-if="rows.length" class="rrow head gutter"><span></span><span></span><span>总资产</span><span>收益率</span></div>
       <div v-for="r in rest" :key="r.user.id" class="rrow gutter" :class="{ me: mine(r.user.id) }">
         <span class="num rk">{{ r.rank }}</span>
-        <span class="clamp1 nm">{{ r.user.username }}<span v-if="r.restructures" class="rs">重整 {{ r.restructures }} 次</span></span>
+        <span class="clamp1 nm">{{ r.user.username }}<span v-if="r.program" class="rs">程序化</span><span v-if="r.restructures" class="rs">重整 {{ r.restructures }} 次</span></span>
         <span class="num">{{ money(r.total_assets) }}</span>
         <span class="num" :class="dir(r.return)">{{ pct(r.return) }}</span>
       </div>

@@ -90,7 +90,7 @@ pub async fn subscribe(
     headers: HeaderMap,
     body: Bytes,
 ) -> R<Json<RightsOffer>> {
-    let me = caller.player()?;
+    let me = caller.trader(&st).await?.account;
     super::account::require_signed(&st, me).await?;
     let id = super::path_id(&raw, "id")?;
     let b = json_body(&headers, &body)?;
@@ -106,7 +106,7 @@ pub async fn subscribe(
     params(("id" = i64, Path, description = "股票 id")),
     responses((status = 200, body = RightsOffer), (status = "default", body = ErrorBody)))]
 pub async fn unsubscribe(State(st): State<Arc<AppState>>, Extension(caller): Extension<Caller>, Path(raw): Path<String>) -> R<Json<RightsOffer>> {
-    let me = caller.player()?;
+    let me = caller.trader(&st).await?.account;
     let id = super::path_id(&raw, "id")?;
     set(&st, me, id, 0).await
 }

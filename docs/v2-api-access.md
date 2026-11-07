@@ -1,6 +1,6 @@
 # 程序化交易与 API 密钥
 
-状态：已定（2026-11-07），阶段一实现中。⚠️ 表示相对现实的简化。
+状态：已定（2026-11-07）。阶段一（只读）已上线（v0.6.8）；阶段二（交易）随 v0.6.10 开放（`[api] trading = true`，§11）。⚠️ 表示相对现实的简化。
 
 ## 1. 为什么要做
 
@@ -92,6 +92,7 @@
 | 3. 带夜盘 | `snipe_flash_2h` 相对买入持有 +7.1 个百分点：快讯后的下一次日结同向修正 87%–92% | 快讯的观测噪声口径错误，日结又重复计算同一集（`docs/v2-valuation.md` §3.4） |
 | 4. 修好估值 | 日结同向修正降到 45%（利好）/ 65%（利空，两个方向的日结都平均下调约 1%）；但价格跟不上新估值，`snipe_flash` +9.1 个百分点 | 做市商随估值修正立即调整报价（`docs/v2-npc-market.md` §14） |
 | 5. 做市商跟随，完整门禁（3 个种子，42 个机器人） | 相对买入持有：`snipe_flash` −22.7 / −13.5 / +3.1（平均 −11.0），`snipe_flash_2h` −22.1 / −1.0 / −1.4（平均 −8.2），`snipe_attention` 平均 −87.1；顺着快讯做 `ride_flash` −36.7，反着做 `fade_flash` −102.6。快讯后下次日结同向修正 45%（利好）、65%（利空） | 通过。唯一超过 +5 的选股机器人 `hold_hottest`（+13.2）是两支个股的表现（《学生会也有洞！》《无职转生 第三季》，见 `docs/roadmap.md` 总则 3），修复前同一种子 +22.4。副作用见 `docs/v2-npc-market.md` §14。估值的漂移参数另行重拟合（`prior-fix` 分支），合并后门禁全量重跑 |
+| 6. 零延迟的其余策略（v0.6.9 代码，`inputs_fix5`，3 个种子；买入持有 −3.6% / −5.4% / −2.2%） | `snipe_premiere`（开播通知后开盘第一分钟买入，2 小时后卖）−13.0% / −19.7% / −12.9%。`snipe_finale`（完结通知后开盘第一分钟融券卖出，2 小时后买回）+2.1% / +2.8% / +2.7%，但 12 笔卖空的已实现盈亏合计约 0：收益来自资金闲置而买入持有为负，不是交易本身。`scalper_fast`（每秒在 5 支最热股票上比做市商高/低一档报价）−30.6% / −47.6% / −41.2%，比每分钟报价的 `scalper`（−23.4% / −23.0% / −18.6%）亏得更多：成交对手主要是价值型 NPC（逆向选择） | 通过。线上时序：快讯的新闻和做市商的重新报价在引擎的同一次处理里完成（`market/runtime.rs` `tick` → `apply_flash`），引擎单线程，API 下单只能排在其后。拉抬、挂撤单、冷静期反向三项没有单独做零延迟版本：做市商不看玩家挂单，趋势型 NPC 按分钟反应，快一秒没有作用 |
 
 模拟里的快讯和线上一致：08:00–03:00 每小时一次，到播出后 26 小时；吐槽数是最终数 × 小时曲线 × 早期估计的误差（按拟合方差取对数正态）。只在第一次超过门槛时发快讯，其余只更新估值。
 
@@ -99,12 +100,12 @@
 
 ## 8. 文件和接口
 
-### 8.1 数据（阶段一 V15 迁移建 `api_keys`；`orders.source` 和 `api_disclosure` 随阶段二）
+### 8.1 数据（阶段一 V15 建 `api_keys`；阶段二 V18 建 `api_orders`）
 
 | 表 | 字段 |
 |---|---|
 | `api_keys` | `id, account_id, name, prefix, key_hash, scopes, created_at, expires_at, last_used_at, last_used_ip, revoked_at` |
-| `orders` 增加 | `source`（`web` / `api`，老数据为 `web`） |
+| `api_orders`（V18） | `order_id, account_id, key_id, day`：用 API 密钥下的单；不在表里的都来自网页。原计划给 `orders` 加 `source` 列，改为单独的表：引擎和 28 处 `NewOrder` 都不用改，还多记了是哪个密钥 |
 | `account_agreements.doc` | 增加 `api_disclosure` |
 
 `prefix` 是明文的前 8 位（`anx_` 后 4 位），列表里用来区分密钥。
@@ -148,3 +149,13 @@
 - `docs/api-v1.md` 增加 API 密钥一节；OpenAPI 增加 `api_key` 认证方式。
 
 阶段二（交易权限、`trader()`、下单限额、挂单上限、`orders.source`、排行榜标记、风险揭示书）等 §7 的检验通过后再做。
+
+## 11. 阶段二实现（2026-11-07）
+
+- `Caller::trader()`：cookie 照旧；`ApiKey` 要有 `trade`，且 `[api] trading` 打开、身份验证有效、签署了当前版本的 `api_disclosure`，每次请求都查。用在下单、撤单、新股和配股的认购与撤销、还融资款；其余写接口仍是 `player()`（只能网页）。
+- 生成 `trade` 密钥时同样检查；`scopes` 存为 `read:account,trade`。
+- 限额（`[api.rate_limit]`）：`order_rps` 5 / `order_burst` 10（下单和撤单），`orders_per_day` 5000（内存计数，重启清零），`max_open_orders` 100、`max_open_orders_per_stock` 20。对网页同样生效。
+- `GET /me` 增加 `api_trading { enabled, verified, disclosure_signed, disclosure_version }`；排行榜每行增加 `program`。
+- 《程序化交易风险揭示书》是 `api_disclosure`（`web/src/legal/documents.ts`），版本在 `[account.documents]`，和 `margin_disclosure` 一样不进入“交易前必须签署”的列表。正文是按 §9 写的草稿，开放前需要确认。
+- 用户协议第五条已经写着“不按本站公开的接口规范使用脚本……”，按规范使用即被允许，不需要改，也就不用让所有人重新同意。
+- 开放：把 `server/game.toml` 的 `[api] trading` 改为 `true`，`deploy/update.sh` 后重启（配置随代码检出，不用打新版本）。也可以用环境变量 `ANISTOCK_API_TRADING=1` 临时打开。

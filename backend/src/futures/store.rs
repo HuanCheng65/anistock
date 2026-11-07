@@ -1,4 +1,4 @@
-//! Loading and saving the futures tables (V17). Every change is one row, written by the persister in the
+//! Loading and saving the futures tables (V19). Every change is one row, written by the persister in the
 //! same transaction as the rest of the operation (`Change::Futures`).
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -167,7 +167,7 @@ fn order(r: &Row) -> rusqlite::Result<FutOrder> {
 }
 
 /// Load the futures state: contracts not settled, open orders, positions, and the id counters (empty if the
-/// database predates V17, e.g. an old simulation world).
+/// database predates V19, e.g. an old simulation world).
 pub fn load(conn: &Connection) -> rusqlite::Result<FuturesState> {
     let mut s = FuturesState::default();
     if !table_exists(conn, "futures_contracts")? {

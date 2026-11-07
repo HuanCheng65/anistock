@@ -3,7 +3,7 @@
 //! margin and positions, the daily mark-to-market and the final settlement live here.
 //!
 //! - `model`: the rows (contracts, orders, trades, positions, days, the frozen index)
-//! - `store`: loading and saving them (migration V17)
+//! - `store`: loading and saving them (migration V19)
 //! - `rules`: `[futures]` of game.toml
 //! - `calendar`, `listing`: the periods and listing them at the close
 //! - `trading`: orders, fills, positions and margin, the opening auction

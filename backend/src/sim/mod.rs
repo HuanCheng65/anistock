@@ -481,6 +481,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut published_keys: HashSet<(i64, u64)> = HashSet::new();
     let mut flash_eps: HashSet<(i64, u64)> = HashSet::new();
     let mut notices: Vec<(i64, i64, String, String)> = Vec::new();
+    let mut close_events: Vec<(i64, i64, i8)> = Vec::new();
+    // scalper_fast quotes every second: the NPCs are stepped second by second for it
+    let per_second = bot.as_ref().is_some_and(|b| b.kind == bots::BotKind::ScalperFast);
     let reveal_days: Option<i64> = std::env::var("SIM_REVEAL_DAYS").ok().and_then(|v| v.parse().ok());
     let mut synth: Option<(crate::vfilter::SequelParams, SynthSequels)> = match std::env::var("SIM_SYNTH_SEQUELS") {
         Ok(v) if v == "1" => {
@@ -553,6 +556,14 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 }
             }
             let tick = std::time::Instant::now();
+            if per_second && t >= t_cont && t < t_end && k >= bot_start {
+                for sec in t + 1..=next {
+                    m.step_until(&mut e, sec);
+                    if let Some(b) = bot.as_mut() {
+                        b.on_second(&mut e, sec);
+                    }
+                }
+            }
             m.step_until(&mut e, next);
             npc_time += tick.elapsed().as_secs_f64();
             t = next;
@@ -566,7 +577,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             if t >= t_cont && t < t_end && k >= bot_start {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
-                    let ctx = bots::BotCtx { band, flashes: &published, notices: &notices, heat_today: &inp.heat };
+                    let ctx = bots::BotCtx { band, flashes: &published, notices: &notices, events: &close_events, heat_today: &inp.heat };
                     b.on_minute(&mut e, t, &heat, &ctx);
                 }
                 if let Some(p) = probe.as_mut() {
@@ -647,10 +658,12 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 let ev = mk("premiere", 1, 4.0, Nature::Sentiment, format!("《{}》开播", c.title));
                 rec.event(&ev);
                 m.post_event(&mut e, ev, None);
+                close_events.push((s.id, t_close, 1));
             } else if s.episodes_known && s.episodes.is_some_and(|n| prev_aired < n && s.aired >= n) {
                 let ev = mk("finale", -1, 3.0, Nature::Sentiment, format!("《{}》完结", c.title));
                 rec.event(&ev);
                 m.post_event(&mut e, ev, None);
+                close_events.push((s.id, t_close, -1));
             }
         }
         let warn_at = cfg.game.delist_after_weeks - 1;
