@@ -25,6 +25,15 @@ pub struct FuturesRules {
     pub margin_cap: f64,
     /// the settlement price is the volume-weighted average of the trades in the session's last minutes
     pub settle_window_min: i64,
+    /// the index in the valuation filter's units, until the filter observes the index itself (docs/v3-futures.md
+    /// §3.5, §3.7): index = scale × Σ weight × link × attention / platform, per market [us, cn, jp]
+    pub index_weights: [f64; 3],
+    pub index_link: [f64; 3],
+    pub index_platform: [f64; 3],
+    pub index_scale: f64,
+    /// the realised average's spread around the model's expectation beyond the level's own uncertainty (the
+    /// link, the index's daily noise), as a share of the expectation of the days still to come
+    pub model_cv: f64,
 }
 
 impl Default for FuturesRules {
@@ -40,6 +49,11 @@ impl Default for FuturesRules {
             position_cap: 0.5,
             margin_cap: 0.8,
             settle_window_min: 30,
+            index_weights: [0.3, 0.5, 0.2],
+            index_link: [1.0, 4.8, 0.88],
+            index_platform: [114628.0, 2168.0, 1542.0],
+            index_scale: 11300.0,
+            model_cv: 0.15,
         }
     }
 }
@@ -50,5 +64,12 @@ impl FuturesRules {
             None => Ok(FuturesRules::default()),
             Some(v) => v.clone().try_into().map_err(|e| format!("[futures]: {e}")),
         }
+    }
+}
+
+impl FuturesRules {
+    /// Index points per unit of the filter's attention, per market.
+    pub fn index_per_att(&self) -> [f64; 3] {
+        std::array::from_fn(|m| self.index_scale * self.index_weights[m] * self.index_link[m] / self.index_platform[m])
     }
 }

@@ -521,6 +521,12 @@ impl Engine {
             self.close(id, OrderStatus::Cancelled, &ts);
         }
 
+        // 热度期货: the day's orders expire, every contract is marked to its settlement price, finished periods
+        // settle on their average index (crate::futures); before the maintenance check, which sees the result,
+        // and before the listing of tomorrow's periods
+        let fc = self.futures_close(&day, &ts, &cutoff, &cx.inp.heat);
+        cx.sum.injected += fc.shortfall;
+
         // 7. candles and next day's reference price
         let listed_now: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
         for &id in &listed_now {
@@ -536,6 +542,8 @@ impl Engine {
             let f = self.corporate_close(&day, &ts, sunday, vc.as_ref())?;
             cx.sum.exported += f.exported;
             cx.sum.injected += f.injected;
+            // 热度期货: refresh the contracts' forecasts, list the periods due tomorrow (crate::futures)
+            self.futures_after_close(&fp, &p, &day);
         }
 
         // refresh titles
@@ -547,11 +555,6 @@ impl Engine {
                 }
             }
         }
-
-        // 热度期货: the day's orders expire, every contract is marked to its settlement price, finished periods
-        // settle on their average index (crate::futures); before the maintenance check, which sees the result
-        let fc = self.futures_close(&day, &ts, &cutoff, &cx.inp.heat);
-        cx.sum.injected += fc.shortfall;
 
         // 融资融券: manufactured dividends, interest and fees, maintenance (crate::margin)
         self.margin_post_close(&day, &ts);

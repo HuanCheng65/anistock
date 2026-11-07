@@ -231,7 +231,7 @@ impl JState {
             sequel_paid: None,
         }
     }
-    fn var(&self, m: usize) -> f64 {
+    pub(crate) fn var(&self, m: usize) -> f64 {
         self.cov[m][m]
     }
 }
@@ -381,7 +381,7 @@ impl Engine {
 
     /// A work's schedule, first air day and long-runner flag: the company's own for its first work, else from the
     /// work's state.
-    fn work_shape(&self, c: &Company, w: i64, p: &Params) -> (Vec<i64>, i64, bool) {
+    pub(crate) fn work_shape(&self, c: &Company, w: i64, p: &Params) -> (Vec<i64>, i64, bool) {
         if w == c.id {
             return self.shape(c, p);
         }

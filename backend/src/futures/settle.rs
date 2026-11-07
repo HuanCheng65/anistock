@@ -241,6 +241,7 @@ impl Engine {
         f.today.remove(&id);
         f.last_mid.remove(&id);
         f.sd.remove(&id);
+        f.mean.remove(&id);
         if let Some(w) = work.filter(|w| !f.contracts.values().any(|c| c.work_id == *w)) {
             f.heat.retain(|(x, _), _| *x != w);
         }

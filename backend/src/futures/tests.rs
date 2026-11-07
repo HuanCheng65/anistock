@@ -527,3 +527,47 @@ fn a_futures_loss_triggers_maintenance_and_liquidation_closes_futures_first() {
     assert_eq!(e.st.futures.position(a, 1), 0);
     e.check_invariants().unwrap();
 }
+
+// ---------------------------------------------------------------- the forecast
+
+fn game_cfg() -> crate::config::Config {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    crate::config::Config::load_from(&root, |_| None).unwrap()
+}
+
+/// Work 1 in its fifth week, with a filter state of log level `level` (us only) and log variance `var`.
+fn with_state(e: &mut Engine, level: f64, var: f64) {
+    let mut js = crate::vclose::JState::empty("2026-11-07");
+    js.active = [true, false, false];
+    js.mean = [level, 0.0, 0.0];
+    js.cov[0][0] = var;
+    e.st.jstate.insert(1, js);
+}
+
+#[test]
+fn forecast_of_a_period() {
+    let cfg = game_cfg();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    let p = crate::valuation::Params::from_config(&cfg).unwrap();
+    let mut e = engine();
+    with_state(&mut e, 7.0, 0.04);
+    let day = |s: &str| crate::vclose::day_no(s).unwrap();
+    let (first, last, today) = (day("2026-11-07"), day("2026-12-04"), day("2026-11-06"));
+    let f = e.fut_forecast(&fp, &p, 1, 1, first, last, today).unwrap();
+    // the mean is the expected path in index points
+    let js = e.st.jstate[&1].clone();
+    let (sched, fa, long) = e.work_shape(&e.st.companies[&1].clone(), 1, &p);
+    let path =
+        crate::vfilter::att_path(&fp.for_class(None), &p, 0, 7.0, 0.04, today, &sched, fa, long, 28, js.tail_mult);
+    let k = e.futures.index_per_att()[0];
+    assert!((f.mean - k * path.iter().sum::<f64>() / 28.0).abs() < 1e-9);
+    assert!(f.sd > 0.15 * f.mean * 0.99, "at least model_cv of the mean: {f:?}");
+    // more certain level, smaller spread; a period entirely published: its average, no spread
+    with_state(&mut e, 7.0, 0.0001);
+    assert!(e.fut_forecast(&fp, &p, 1, 1, first, last, today).unwrap().sd < f.sd);
+    for t in first..=last {
+        e.st.futures.heat.insert((1, forecast::day_str(t)), 50.0 + (t - first) as f64);
+    }
+    let done = e.fut_forecast(&fp, &p, 1, 1, first, last, last).unwrap();
+    assert_eq!((done.mean, done.sd), (63.5, 0.0));
+}

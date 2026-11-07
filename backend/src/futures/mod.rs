@@ -9,9 +9,11 @@
 //! - `trading`: orders, fills, positions and margin, the opening auction
 //! - `settle`: the daily settlement (mark-to-market) and the final settlement
 //! - `credit`: the credit account: financing the margin, maintenance, liquidation, position caps
+//! - `forecast`: the model's forecast of a period's average; refreshing it and listing at the close
 
 pub mod calendar;
 pub mod credit;
+pub mod forecast;
 pub mod listing;
 pub mod model;
 pub mod rules;
@@ -51,7 +53,9 @@ pub struct FuturesState {
     pub today: HashMap<i64, (String, Vec<Tick>)>,
     /// contract -> the market maker's latest mid quote (the settlement price without trades)
     pub last_mid: HashMap<i64, i64>,
-    /// contract -> standard deviation of the forecast of its average (ticks; the initial margin's floor)
+    /// contract -> the forecast of its average and its standard deviation (ticks; refreshed at each close:
+    /// the market maker's reference and the initial margin's floor)
+    pub mean: HashMap<i64, i64>,
     pub sd: HashMap<i64, i64>,
     /// (work, day) -> published index, for the works with contracts not settled yet
     pub heat: BTreeMap<(i64, String), f64>,
