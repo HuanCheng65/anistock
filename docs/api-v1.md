@@ -1324,7 +1324,7 @@ CREATE TABLE player_days (
 | `GET /futures` | 合约列表：作品、期数、合约期、最新价、前结算价、成交量、持仓量、一手的初始保证金、合约期内已公布的天数和平均指数 |
 | `GET /futures/{id}` | 一个合约：同上，加盘口（10 档）、每日结算（OHLC、结算价及其来源、持仓量）、合约期内已公布的指数 |
 | `GET /stocks/{id}/heat` | 公司各部作品已公布的热度指数（冻结在游戏库里，只增不改） |
-| `GET /me/futures` | 我的期货：持仓（方向用正负号表示，自上次结算以来的盈亏，占用的保证金）、未成交委托、保证金汇总和维持担保比例 |
+| `GET /me/futures` | 我的期货：持仓（方向用正负号表示；开仓均价 `average_price`，平仓按比例扣除、日结不改变；持仓以来的盈亏 `pnl`；自上次结算以来的盈亏 `unsettled_pnl`；占用的保证金）、未成交委托、保证金汇总和维持担保比例 |
 | `POST /me/futures/orders` | 下单：`contract_id`、`side`（buy/sell）、`type`（limit/market）、`quantity`（手）、`price`（限价，0.01 点）。需要信用账户。成交后返回 201 和成交数量、均价 |
 | `DELETE /me/futures/orders/{id}` | 撤单，返回最新的“我的期货” |
 

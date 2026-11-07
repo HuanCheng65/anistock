@@ -125,6 +125,10 @@ pub struct FuturesPosition {
     pub contract: FuturesContract,
     /// 正数为多头，负数为空头
     pub quantity: i64,
+    /// 开仓均价（平仓按比例扣除，日结不改变）
+    pub average_price: IndexPrice,
+    /// 持仓以来的盈亏（按最新价，含已经日结划转的部分）
+    pub pnl: Money,
     /// 自上次结算以来的盈亏（按最新价）；结算时划转
     pub unsettled_pnl: Money,
     /// 占用的初始保证金
@@ -369,6 +373,8 @@ fn my_futures(e: &Engine, me: i64, today: &str) -> MyFutures {
             Some(FuturesPosition {
                 contract: contract_view(e, c, today),
                 quantity: p.qty,
+                average_price: IndexPrice(if p.qty != 0 { crate::exchange::py_round_div(p.cost, p.qty) } else { 0 }),
+                pnl: m((p.qty * c.last_price - p.cost) * c.tick_value),
                 unsettled_pnl: m(p.variation(c.last_price) * c.tick_value),
                 margin: m(p.margin),
             })

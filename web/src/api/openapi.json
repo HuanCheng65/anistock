@@ -1981,12 +1981,20 @@
       },
       "FuturesPosition": {
         "properties": {
+          "average_price": {
+            "$ref": "#/components/schemas/IndexPrice",
+            "description": "开仓均价（平仓按比例扣除，日结不改变）"
+          },
           "contract": {
             "$ref": "#/components/schemas/FuturesContract"
           },
           "margin": {
             "$ref": "#/components/schemas/Money",
             "description": "占用的初始保证金"
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Money",
+            "description": "持仓以来的盈亏（按最新价，含已经日结划转的部分）"
           },
           "quantity": {
             "description": "正数为多头，负数为空头",
@@ -1999,8 +2007,10 @@
           }
         },
         "required": [
+          "average_price",
           "contract",
           "margin",
+          "pnl",
           "quantity",
           "unsettled_pnl"
         ],

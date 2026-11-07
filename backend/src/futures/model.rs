@@ -120,6 +120,9 @@ pub struct Position {
     pub basis: i64,
     /// cents of initial margin held for it (part of the account's `cash_frozen`)
     pub margin: i64,
+    /// the signed ticks paid for the open lots when they were opened (average cost: closing lots take their
+    /// share out), so `cost / qty` is the average entry price; settlement does not reset it
+    pub cost: i64,
 }
 
 impl Position {

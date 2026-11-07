@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS futures_positions (
     qty          INTEGER NOT NULL,
     basis        INTEGER NOT NULL,
     margin       INTEGER NOT NULL DEFAULT 0,
+    cost         INTEGER NOT NULL DEFAULT 0,  -- signed ticks paid for the open lots at entry (average cost)
     PRIMARY KEY (account_id, contract_id)
 );
 

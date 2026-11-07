@@ -1593,9 +1593,13 @@ export interface components {
             order: components["schemas"]["FuturesOrder"];
         };
         FuturesPosition: {
+            /** @description 开仓均价（平仓按比例扣除，日结不改变） */
+            average_price: components["schemas"]["IndexPrice"];
             contract: components["schemas"]["FuturesContract"];
             /** @description 占用的初始保证金 */
             margin: components["schemas"]["Money"];
+            /** @description 持仓以来的盈亏（按最新价，含已经日结划转的部分） */
+            pnl: components["schemas"]["Money"];
             /**
              * Format: int64
              * @description 正数为多头，负数为空头

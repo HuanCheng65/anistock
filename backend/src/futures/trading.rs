@@ -232,6 +232,7 @@ impl Engine {
             qty: 0,
             basis: 0,
             margin: 0,
+            cost: 0,
         });
         let closing = if pos.qty * d < 0 { d.abs().min(pos.qty.abs()) } else { 0 };
         let opening = d.abs() - closing;
@@ -239,6 +240,10 @@ impl Engine {
         // the closing part's margin is released
         let released = if closing > 0 { pos.margin * closing / pos.qty.abs() } else { 0 };
         pos.margin -= released;
+        if closing > 0 {
+            pos.cost -= pos.cost * closing / pos.qty.abs();
+        }
+        pos.cost += d.signum() * opening * tp;
         pos.qty += d;
         pos.basis += d * tp;
 
@@ -284,7 +289,7 @@ impl Engine {
     /// Store a position; a flat one with nothing left to settle is deleted.
     pub(crate) fn fut_put_position(&mut self, p: Position) {
         let key = (p.account_id, p.contract_id);
-        if p.qty == 0 && p.basis == 0 && p.margin == 0 {
+        if p.qty == 0 && p.basis == 0 && p.margin == 0 && p.cost == 0 {
             if self.st.futures.positions.remove(&key).is_some() {
                 self.fut_out(FuturesChange::PositionDelete(key.0, key.1));
             }

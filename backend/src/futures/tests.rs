@@ -113,9 +113,9 @@ fn rows_round_trip() {
         FuturesChange::Order(order(5, Side::Buy, 8900, OrderStatus::Open)),
         FuturesChange::Order(order(6, Side::Sell, 9100, OrderStatus::Open)),
         FuturesChange::Order(order(7, Side::Sell, 9200, OrderStatus::Cancelled)),
-        FuturesChange::Position(Position { account_id: 7, contract_id: 1, qty: -2, basis: -18000, margin: 0 }),
-        FuturesChange::Position(Position { account_id: 8, contract_id: 1, qty: 2, basis: 18000, margin: 0 }),
-        FuturesChange::Position(Position { account_id: 9, contract_id: 1, qty: 0, basis: 5, margin: 0 }),
+        FuturesChange::Position(Position { account_id: 7, contract_id: 1, qty: -2, basis: -18000, margin: 0, cost: 0 }),
+        FuturesChange::Position(Position { account_id: 8, contract_id: 1, qty: 2, basis: 18000, margin: 0, cost: 0 }),
+        FuturesChange::Position(Position { account_id: 9, contract_id: 1, qty: 0, basis: 5, margin: 0, cost: 0 }),
         FuturesChange::PositionDelete(9, 1),
         FuturesChange::Trade(FutTrade {
             id: 3,
@@ -180,8 +180,8 @@ fn heat_is_published_once() {
 fn variation_margin_sums_to_zero() {
     // A is long 2 and B short 2 from yesterday's settlement at 90.00; A sells B one lot at 92.00; today settles
     // at 91.00. A earns 1.00 on the lot kept and 2.00 on the lot sold; B pays the same.
-    let a = Position { account_id: 1, contract_id: 1, qty: 2 - 1, basis: 2 * 9000 - 9200, margin: 0 };
-    let b = Position { account_id: 2, contract_id: 1, qty: -2 + 1, basis: -2 * 9000 + 9200, margin: 0 };
+    let a = Position { account_id: 1, contract_id: 1, qty: 2 - 1, basis: 2 * 9000 - 9200, margin: 0, cost: 0 };
+    let b = Position { account_id: 2, contract_id: 1, qty: -2 + 1, basis: -2 * 9000 + 9200, margin: 0, cost: 0 };
     assert_eq!(a.variation(9100), 100 + 200);
     assert_eq!(a.variation(9100) + b.variation(9100), 0);
 }
@@ -283,6 +283,7 @@ fn fills_open_and_close_positions() {
         (-2, -18000, 2 * im)
     );
     assert_eq!((f.positions[&(b, 1)].qty, f.positions[&(b, 1)].margin), (2, 2 * im));
+    assert_eq!((f.positions[&(a, 1)].cost, f.positions[&(b, 1)].cost), (-18000, 18000), "entry cost, signed");
     // commission: 0.025% of 2 x 90.00 x 1000 cents, each side
     assert_eq!(e.st.accounts[&world].cash - world_before, 2 * 45);
     for x in [a, b, c] {
@@ -297,7 +298,9 @@ fn fills_open_and_close_positions() {
     assert_eq!(placed.filled, 3);
     let f = &e.st.futures;
     assert_eq!((f.positions[&(a, 1)].qty, f.positions[&(a, 1)].margin), (1, im));
+    assert_eq!(f.positions[&(a, 1)].cost, 9050, "the short closed out of the cost, the new long at its price");
     let pb = f.positions[&(b, 1)];
+    assert_eq!(pb.cost, 0, "flat: no entry cost left");
     assert_eq!(
         (pb.qty, pb.basis, pb.margin),
         (0, 2 * 9000 + 9100 - 3 * 9050, 0),
@@ -677,7 +680,7 @@ mod traders {
         // holding after the flash expired: close
         e.st.futures
             .positions
-            .insert((a, 1), Position { account_id: a, contract_id: 1, qty: 5, basis: 45000, margin: 0 });
+            .insert((a, 1), Position { account_id: a, contract_id: 1, qty: 5, basis: 45000, margin: 0, cost: 0 });
         let old = [Flash { company: 1, t: NOW - 90_000, up: true }];
         assert_eq!(n.decide(&View::new(&e, at(&old)), a, &c), Some(Intent { lots: 0, limit: Some(8820) }));
     }
