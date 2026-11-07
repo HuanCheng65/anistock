@@ -358,3 +358,110 @@ fn opening_auction_and_cooling_off() {
     }
     e.check_invariants().unwrap();
 }
+
+// ---------------------------------------------------------------- settlement
+
+const END: &str = "2026-10-13T04:00:00"; // the end of trading day DAY's session
+
+fn heat(work: i64, idx: f64) -> std::collections::BTreeMap<i64, crate::inputs::HeatIndex> {
+    let h =
+        crate::inputs::HeatIndex { idx, us: None, cn: None, jp: None, flags: Default::default(), version: "t".into() };
+    std::collections::BTreeMap::from([(work, h)])
+}
+
+fn cash(e: &Engine, a: i64) -> i64 {
+    e.st.accounts[&a].cash
+}
+
+/// a short 2 and b long 2 at 90.00.
+fn open_pair() -> (Engine, [i64; 3]) {
+    let (mut e, ids) = market();
+    e.futures_place(&req(ids[0], Side::Sell, 2, Some(9000))).unwrap();
+    e.futures_place(&req(ids[1], Side::Buy, 2, Some(9000))).unwrap();
+    (e, ids)
+}
+
+#[test]
+fn daily_settlement_marks_to_market() {
+    let (mut e, [a, b, c]) = open_pair();
+    let (ca, cb) = (cash(&e, a), cash(&e, b));
+    e.st.futures.last_mid.insert(1, 9100);
+    let out = e.futures_close(DAY, END, END, &heat(1, 95.0));
+    assert_eq!((out.variation, out.shortfall), (2 * 100 * 10, 0));
+    assert_eq!((cash(&e, a), cash(&e, b)), (ca - 2000, cb + 2000));
+    assert_eq!(cash(&e, e.special("clearing").unwrap()), 0);
+    let k = &e.st.futures.contracts[&1];
+    assert_eq!((k.prev_settle, k.status), (9100, ContractStatus::Listed));
+    let im = e.fut_im_lot(&k.clone());
+    assert_eq!(im, 13650);
+    let pa = e.st.futures.positions[&(a, 1)];
+    assert_eq!((pa.qty, pa.basis, pa.margin), (-2, -2 * 9100, 2 * im));
+    assert_eq!(e.st.futures.heat[&(1, DAY.to_string())], 95.0);
+    for x in [a, b, c] {
+        frozen_matches(&e, x);
+    }
+    e.check_invariants().unwrap();
+}
+
+#[test]
+fn settlement_price_sources() {
+    let (mut e, [a, b, _]) = open_pair();
+    // trades in the last half hour: their volume-weighted average
+    let late =
+        |acct, side, qty, p| trading::FutOrderReq { ts: "2026-10-13T03:45:00+08:00", ..req(acct, side, qty, Some(p)) };
+    e.futures_place(&late(a, Side::Sell, 1, 9200)).unwrap();
+    e.futures_place(&late(b, Side::Buy, 1, 9200)).unwrap();
+    e.futures_place(&late(a, Side::Sell, 3, 9300)).unwrap();
+    e.futures_place(&late(b, Side::Buy, 3, 9300)).unwrap();
+    e.futures_close(DAY, END, END, &Default::default());
+    assert_eq!(e.st.futures.contracts[&1].prev_settle, (9200 + 3 * 9300 + 2) / 4);
+    // the next day without trades or quotes: the previous settlement
+    let before = e.st.futures.contracts[&1].prev_settle;
+    e.futures_close("2026-10-13", "2026-10-14T04:00:00", "2026-10-14T04:00:00", &Default::default());
+    assert_eq!(e.st.futures.contracts[&1].prev_settle, before);
+    e.check_invariants().unwrap();
+}
+
+#[test]
+fn final_settlement_on_the_period_average() {
+    let (mut e, [a, b, c]) = open_pair();
+    let k = e.st.futures.contracts[&1].clone();
+    let first = d(&k.first_day);
+    let (ca, cb) = (cash(&e, a), cash(&e, b));
+    // the last day is published but one day in the middle is missing: trading stops, the contract waits
+    for i in 0..28 {
+        if i != 10 {
+            e.st.futures.heat.insert((1, (first + chrono::Duration::days(i)).to_string()), 80.0 + i as f64);
+        }
+    }
+    e.futures_close(&k.last_day, END, END, &Default::default());
+    assert_eq!(e.st.futures.contracts[&1].status, ContractStatus::Expiring);
+    assert!(e.futures_place(&req(a, Side::Buy, 1, Some(9000))).is_err());
+    // the missing day arrives: settled on the average, 80 + 13.5 = 93.50
+    e.st.futures.heat.insert((1, (first + chrono::Duration::days(10)).to_string()), 90.0);
+    let out = e.futures_close("2026-11-07", END, END, &Default::default());
+    assert_eq!(out.settled, [1]);
+    assert!(!e.st.futures.contracts.contains_key(&1) && e.st.futures.positions.is_empty());
+    assert_eq!((cash(&e, a), cash(&e, b)), (ca - 2 * 350 * 10, cb + 2 * 350 * 10));
+    for x in [a, b, c] {
+        assert_eq!(e.st.accounts[&x].cash_frozen, 0);
+    }
+    e.check_invariants().unwrap();
+}
+
+#[test]
+fn an_unpaid_loss_is_covered_and_owed() {
+    let (mut e, [a, b, _]) = open_pair();
+    let world = e.special("world").unwrap();
+    // a keeps only its margin
+    let spare = e.available_cash(a);
+    e.do_transfer(a, world, spare, "test", DAY, T1, None, None);
+    let margin = e.st.accounts[&a].cash;
+    e.st.futures.last_mid.insert(1, 9000 + 5000); // +50 points: a owes 2 x 5000 x 10 cents
+    let cb = cash(&e, b);
+    let out = e.futures_close(DAY, END, END, &Default::default());
+    assert_eq!(out.shortfall, 100_000 - margin);
+    assert_eq!(cash(&e, b), cb + 100_000, "the winner is paid in full");
+    assert_eq!((cash(&e, a), cash(&e, e.special("clearing").unwrap())), (0, 0));
+    e.check_invariants().unwrap();
+}

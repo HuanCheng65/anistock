@@ -7,11 +7,13 @@
 //! - `rules`: `[futures]` of game.toml
 //! - `calendar`, `listing`: the periods and listing them at the close
 //! - `trading`: orders, fills, positions and margin, the opening auction
+//! - `settle`: the daily settlement (mark-to-market) and the final settlement
 
 pub mod calendar;
 pub mod listing;
 pub mod model;
 pub mod rules;
+pub mod settle;
 pub mod store;
 pub mod trading;
 
@@ -49,6 +51,8 @@ pub struct FuturesState {
     pub last_mid: HashMap<i64, i64>,
     /// contract -> standard deviation of the forecast of its average (ticks; the initial margin's floor)
     pub sd: HashMap<i64, i64>,
+    /// (work, day) -> published index, for the works with contracts not settled yet
+    pub heat: BTreeMap<(i64, String), f64>,
     pub last_contract_id: i64,
     pub last_order_id: i64,
     pub last_trade_id: i64,

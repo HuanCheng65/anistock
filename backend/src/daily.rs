@@ -548,6 +548,11 @@ impl Engine {
             }
         }
 
+        // 热度期货: the day's orders expire, every contract is marked to its settlement price, finished periods
+        // settle on their average index (crate::futures); before the maintenance check, which sees the result
+        let fc = self.futures_close(&day, &ts, &cutoff, &cx.inp.heat);
+        cx.sum.injected += fc.shortfall;
+
         // 融资融券: manufactured dividends, interest and fees, maintenance (crate::margin)
         self.margin_post_close(&day, &ts);
 

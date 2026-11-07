@@ -207,6 +207,18 @@ pub fn load(conn: &Connection) -> rusqlite::Result<FuturesState> {
         let p = p?;
         s.positions.insert((p.account_id, p.contract_id), p);
     }
+    // the published index of the works still settling, from the first day of their earliest period
+    if let Some(from) = s.contracts.values().map(|c| c.first_day.clone()).min() {
+        for r in conn
+            .prepare("SELECT work_id, day, idx FROM heat_index WHERE day >= ?")?
+            .query_map([from], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?)))?
+        {
+            let (w, d, idx) = r?;
+            if s.contracts.values().any(|c| c.work_id == w) {
+                s.heat.insert((w, d), idx);
+            }
+        }
+    }
     let max = |t: &str| -> rusqlite::Result<i64> {
         conn.query_row(&format!("SELECT COALESCE(MAX(id), 0) FROM {t}"), [], |r| r.get(0))
     };

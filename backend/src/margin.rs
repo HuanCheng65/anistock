@@ -1111,6 +1111,16 @@ impl Engine {
         }
     }
 
+    /// A loss the account could not pay (a futures settlement) becomes bad debt on its credit account, if it
+    /// has one; restructuring writes it off.
+    pub(crate) fn margin_add_bad_debt(&mut self, account_id: i64, amount: i64) {
+        if let Some(c) = self.st.margin.credit.get_mut(&account_id) {
+            c.bad_debt += amount;
+            let row = c.clone();
+            self.out.push(Change::Margin(MarginChange::Credit(row)));
+        }
+    }
+
     /// After the day's dividends and delistings: manufactured dividends (Sunday), interest and lending fees,
     /// payment of what is owed from free cash, and the maintenance check (margin calls, liquidation).
     pub fn margin_post_close(&mut self, day: &str, ts: &str) {
