@@ -489,6 +489,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         _ => None,
     };
+    let mut fut_log = crate::futures::report::FuturesLog::default();
     let mut news_seen = tap.0.lock().unwrap().news.len();
     let mut adj_seen = e.price_adjustments().len();
     let mut npc_time = 0.0f64;
@@ -565,7 +566,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             if t >= t_cont && t < t_end && k >= bot_start {
                 if let Some(b) = bot.as_mut() {
                     let heat = |c: i64| m.heat(c);
-                    let ctx = bots::BotCtx { band, flashes: &published, notices: &notices };
+                    let ctx = bots::BotCtx { band, flashes: &published, notices: &notices, heat_today: &inp.heat };
                     b.on_minute(&mut e, t, &heat, &ctx);
                 }
                 if let Some(p) = probe.as_mut() {
@@ -596,6 +597,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             crate::daily::CloseOutcome::Skipped => return Err(format!("close {day} skipped")),
         }
         e.check_invariants().map_err(|err| format!("after {day}: {err}"))?;
+        fut_log.observe(&e, day);
         if opts.history {
             let v: Vec<((i64, String), i64)> = e.companies().filter(|c| c.status == "listed").map(|c| ((c.id, day.clone()), c.fair_value)).collect();
             tap.0.lock().unwrap().history.as_mut().unwrap().values.extend(v);
@@ -829,6 +831,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         b
     });
     metrics["capital"] = capital;
+    if e.futures.enabled {
+        metrics["futures"] = fut_log.report(&e);
+    }
     metrics["grown_cash"] = serde_json::json!(grown_cash as f64 / 100.0);
     metrics["bot_start"] = serde_json::json!(days.get(bot_start));
     metrics["mm_counterparty_markout"] =

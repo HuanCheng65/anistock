@@ -68,6 +68,7 @@ impl Engine {
                 c.final_price = Some(price);
                 c.settled_on = Some(day.to_string());
                 out.settled.push(id);
+                self.st.futures.settled.push((id, price));
             } else if over {
                 c.status = ContractStatus::Expiring;
             }

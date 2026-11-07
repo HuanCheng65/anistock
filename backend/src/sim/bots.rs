@@ -18,6 +18,9 @@ mod sentiment;
 #[path = "corporate_bots.rs"]
 pub mod corporate;
 
+#[path = "futures_bots.rs"]
+pub mod futures;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BotKind {
     /// buy every listed stock equally on day one, hold (the baseline)
@@ -120,10 +123,23 @@ pub enum BotKind {
     /// buys every published 热度快讯, good or bad, the second it appears (riding the attention buying), sells
     /// an hour later
     SnipeAttention,
+    /// 热度期货 (docs/v3-futures.md §4.5; sim/futures_bots.rs): always long / always short
+    FutLong,
+    FutShort,
+    /// long the first period, short the third and later
+    FutCalendar,
+    /// the direction of the index's last week
+    FutMomentum,
+    /// knows the day's index during the session
+    FutFrontRun,
+    /// holds the stocks, sells futures worth half of them
+    FutHedge,
+    /// holds the stocks and buys the futures (the same direction twice)
+    FutDouble,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 43] {
+    pub fn all() -> [BotKind; 50] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -168,6 +184,13 @@ impl BotKind {
             BotKind::SnipeFlash,
             BotKind::SnipeFlash2h,
             BotKind::SnipeAttention,
+            BotKind::FutLong,
+            BotKind::FutShort,
+            BotKind::FutCalendar,
+            BotKind::FutMomentum,
+            BotKind::FutFrontRun,
+            BotKind::FutHedge,
+            BotKind::FutDouble,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -215,6 +238,13 @@ impl BotKind {
             BotKind::SnipeFlash => "snipe_flash",
             BotKind::SnipeFlash2h => "snipe_flash_2h",
             BotKind::SnipeAttention => "snipe_attention",
+            BotKind::FutLong => "fut_long",
+            BotKind::FutShort => "fut_short",
+            BotKind::FutCalendar => "fut_calendar",
+            BotKind::FutMomentum => "fut_momentum",
+            BotKind::FutFrontRun => "fut_front_run",
+            BotKind::FutHedge => "fut_hedge",
+            BotKind::FutDouble => "fut_double",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -240,6 +270,8 @@ pub struct BotCtx<'a> {
     /// published company notices of corporate actions and schedule changes so far: (company, unix seconds, news
     /// kind, title) (docs/v2-corporate.md)
     pub notices: &'a [(i64, i64, String, String)],
+    /// the day's heat index per work, as the platforms show it during the session (the futures front-runner)
+    pub heat_today: &'a std::collections::BTreeMap<i64, crate::inputs::HeatIndex>,
 }
 
 pub struct Bot {
@@ -434,11 +466,22 @@ impl Bot {
             self.exits.retain(|x| t < x.1 || e.holding(acct, x.0).is_some_and(|h| h.qty > 0));
             return;
         }
+        if futures::is_futures(self.kind) {
+            futures::on_minute(self, e, t, ctx);
+            return;
+        }
         match self.kind {
             BotKind::LeverHold | BotKind::ShortRich | BotKind::ShortDividend => margin::on_minute(self, e, t),
             BotKind::BuybackFollow | BotKind::RightsSell | BotKind::SplitBuy | BotKind::DelayFade => self.corp_minute(e, t, ctx),
             BotKind::BubbleRider | BotKind::BubbleRider1 | BotKind::DispositionFade => sentiment::on_minute(self, e, t, heat),
             BotKind::SnipeFlash | BotKind::SnipeFlash2h | BotKind::SnipeAttention => {} // handled above
+            BotKind::FutLong
+            | BotKind::FutShort
+            | BotKind::FutCalendar
+            | BotKind::FutMomentum
+            | BotKind::FutFrontRun
+            | BotKind::FutHedge
+            | BotKind::FutDouble => {} // handled above
             BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
                 if !self.exits.is_empty() {
                     self.run_exits(e, t);

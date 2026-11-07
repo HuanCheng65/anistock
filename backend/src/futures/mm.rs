@@ -55,6 +55,7 @@ impl Engine {
         let company = self.st.futures.contracts[&contract_id].company_id;
         let amount = self.futures.mm_capital;
         self.do_transfer(world, acct, amount, "futures_mm_fund", day, ts, Some(company), Some(contract_id));
+        self.st.futures.mm_funded += amount;
     }
 
     /// A contract settled: its capital goes back to world, as far as the maker's free cash goes.
@@ -63,6 +64,7 @@ impl Engine {
         let world = self.special("world").expect("no world account");
         let amount = self.futures.mm_capital.min(self.available_cash(acct)).max(0);
         self.do_transfer(acct, world, amount, "futures_mm_return", day, ts, Some(company_id), Some(contract_id));
+        self.st.futures.mm_funded -= amount;
     }
 
     /// Requote one contract: cancel the maker's orders on it, place new ones, record the mid (the settlement

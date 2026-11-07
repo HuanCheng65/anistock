@@ -25,6 +25,7 @@ fn main() {
     let mut days = None;
     let mut sets = Vec::new();
     let mut margin_sets: Vec<String> = Vec::new();
+    let mut futures_sets: Vec<String> = Vec::new();
     let mut bots_arg = "all".to_string();
     let mut threshold = 5.0;
     let mut probe = 0usize;
@@ -45,6 +46,7 @@ fn main() {
             "--days" => days = Some(v.parse().expect("--days")),
             "--set" => sets.push(v),
             "--margin" => margin_sets.push(v),
+            "--futures" => futures_sets.push(v),
             "--bots" => bots_arg = v,
             "--threshold" => threshold = v.parse().expect("--threshold"),
             "--bot-start" => bot_start = Some(v),
@@ -83,16 +85,9 @@ fn main() {
         i += 2;
     }
     let mut cfg = Config::load().expect("config");
-    // --margin key=value: override [margin] (融资融券) for this run
-    if !margin_sets.is_empty() {
-        let mut t = toml::Value::try_from(&cfg.margin).expect("margin rules");
-        for kv in &margin_sets {
-            let (k, v) = kv.split_once('=').unwrap_or_else(|| panic!("--margin {kv}: key=value"));
-            let v: toml::Value = toml::from_str(&format!("x = {v}")).map(|t: toml::Table| t["x"].clone()).expect("--margin value");
-            t.as_table_mut().unwrap().insert(k.trim().to_string(), v);
-        }
-        cfg.margin = anistock::margin::MarginRules::from_table(Some(&t)).expect("--margin");
-    }
+    // --margin / --futures key=value: override [margin] (融资融券) / [futures] (热度期货) for this run
+    cfg.margin = overridden(&cfg.margin, &margin_sets, "--margin");
+    cfg.futures = overridden(&cfg.futures, &futures_sets, "--futures");
     let mut market = cfg.market.clone();
     for kv in &sets {
         market.set(kv).unwrap_or_else(|e| panic!("--set {kv}: {e}"));
@@ -190,4 +185,15 @@ fn main() {
     for (k, v) in &bot_results {
         println!("{k}: {:.2}%", v["return"].as_f64().unwrap_or(f64::NAN) * 100.0);
     }
+}
+
+/// `rules` with `key=value` overrides (TOML values) applied.
+fn overridden<T: serde::Serialize + serde::de::DeserializeOwned>(rules: &T, sets: &[String], flag: &str) -> T {
+    let mut t = toml::Value::try_from(rules).expect("rules");
+    for kv in sets {
+        let (k, v) = kv.split_once('=').unwrap_or_else(|| panic!("{flag} {kv}: key=value"));
+        let v: toml::Value = toml::from_str(&format!("x = {v}")).map(|t: toml::Table| t["x"].clone()).unwrap_or_else(|e| panic!("{flag} {kv}: {e}"));
+        t.as_table_mut().unwrap().insert(k.trim().to_string(), v);
+    }
+    t.try_into().unwrap_or_else(|e| panic!("{flag}: {e}"))
 }

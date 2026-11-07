@@ -11,6 +11,7 @@
 //! - `credit`: the credit account: financing the margin, maintenance, liquidation, position caps
 //! - `forecast`: the model's forecast of a period's average; refreshing it and listing at the close
 //! - `mm`: the market maker's quotes
+//! - `report`: a replay's account of the futures
 
 pub mod calendar;
 pub mod credit;
@@ -18,6 +19,7 @@ pub mod forecast;
 pub mod listing;
 pub mod mm;
 pub mod model;
+pub mod report;
 pub mod rules;
 pub mod settle;
 pub mod store;
@@ -61,6 +63,10 @@ pub struct FuturesState {
     pub sd: HashMap<i64, i64>,
     /// (work, day) -> published index, for the works with contracts not settled yet
     pub heat: BTreeMap<(i64, String), f64>,
+    /// contracts settled since the engine started and their final prices (for reports; not stored)
+    pub settled: Vec<(i64, i64)>,
+    /// capital the market maker holds from world: funded at listing less returned at settlement (not stored)
+    pub mm_funded: i64,
     pub last_contract_id: i64,
     pub last_order_id: i64,
     pub last_trade_id: i64,

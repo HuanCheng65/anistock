@@ -63,7 +63,7 @@ impl Default for FuturesRules {
             margin_cap: 0.8,
             settle_window_min: 30,
             index_weights: [0.3, 0.5, 0.2],
-            index_link: [1.0, 4.8, 0.88],
+            index_link: [1.0, 3.35, 0.74], // index / the inputs' att, median per show-day (2026-07..11 backfill)
             index_platform: [114628.0, 2168.0, 1542.0],
             index_scale: 11300.0,
             model_cv: 0.15,
