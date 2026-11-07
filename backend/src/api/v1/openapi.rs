@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, assess, bind, keys, password, corporate, credit, market, search, stocks, works};
+use super::{account, assess, bind, keys, password, corporate, credit, futures, market, search, stocks, works};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -26,6 +26,7 @@ use super::{account, assess, bind, keys, password, corporate, credit, market, se
         account::me, account::portfolio, account::asset_history, account::orders, account::order_one, account::place,
         account::cancel, account::my_trades, account::ledger, account::restructure,
         account::leaderboard, account::sign, account::read_announcement, account::close, assess::questions, assess::submit, credit::credit, credit::open, credit::repay, credit::stock_margin,
+        futures::list, futures::detail, futures::heat, futures::mine, futures::place, futures::cancel,
         account::challenge, account::register, account::login, account::logout, password::reset, password::change, password::bot_issue,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
         keys::list, keys::create, keys::revoke,
@@ -36,7 +37,7 @@ use super::{account, assess, bind, keys, password, corporate, credit, market, se
     )),
     tags(
         (name = "market", description = "市场"), (name = "stocks", description = "股票"), (name = "news", description = "资讯"),
-        (name = "ipos", description = "新股"), (name = "account", description = "账户"), (name = "leaderboard", description = "排行"),
+        (name = "ipos", description = "新股"), (name = "futures", description = "期货"), (name = "account", description = "账户"), (name = "leaderboard", description = "排行"),
         (name = "auth", description = "认证"), (name = "bindings", description = "绑定"), (name = "bot", description = "机器人"),
     )
 )]

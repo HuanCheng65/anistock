@@ -14,6 +14,7 @@ pub mod corporate;
 pub mod credit;
 pub mod error;
 pub mod events;
+pub mod futures;
 pub mod keys;
 pub mod market;
 pub mod openapi;
@@ -613,6 +614,12 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/credit", get(credit::credit).post(credit::open))
         .route("/me/credit/repay", post(credit::repay))
         .route("/stocks/{id}/margin", get(credit::stock_margin))
+        .route("/stocks/{id}/heat", get(futures::heat))
+        .route("/futures", get(futures::list))
+        .route("/futures/{id}", get(futures::detail))
+        .route("/me/futures", get(futures::mine))
+        .route("/me/futures/orders", post(futures::place))
+        .route("/me/futures/orders/{id}", delete(futures::cancel))
         .route("/leaderboard", get(account::leaderboard))
         .route("/auth/challenge", get(account::challenge))
         .route("/auth/register", post(account::register))

@@ -157,6 +157,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/futures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 期货合约 */
+        get: operations["futures_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/futures/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 期货合约详情 */
+        get: operations["futures_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ipos": {
         parameters: {
             query?: never;
@@ -518,6 +552,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/futures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的期货 */
+        get: operations["my_futures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/futures/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 期货下单 */
+        post: operations["futures_place"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/futures/orders/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 期货撤单 */
+        delete: operations["futures_cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/ledger": {
         parameters: {
             query?: never;
@@ -784,6 +869,23 @@ export interface paths {
         };
         /** 作品封面（图片） */
         get: operations["cover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stocks/{id}/heat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 热度指数 */
+        get: operations["stock_heat"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1378,6 +1480,140 @@ export interface components {
             /** Format: int64 */
             trade_id: number;
         };
+        FuturesBookLevel: {
+            /** Format: int64 */
+            orders: number;
+            price: components["schemas"]["IndexPrice"];
+            /** Format: int64 */
+            quantity: number;
+        };
+        FuturesContract: {
+            /** Format: double */
+            average_so_far: number | null;
+            /**
+             * Format: double
+             * @description last_price / prev_settle - 1
+             */
+            change: number;
+            code: string;
+            /**
+             * Format: int64
+             * @description 合约期内已公布的天数和它们的平均指数
+             */
+            days_published: number;
+            /** Format: int64 */
+            days_total: number;
+            final_price: null | components["schemas"]["IndexPrice"];
+            first_day: components["schemas"]["TradingDay"];
+            /** Format: int64 */
+            id: number;
+            /** @description 一手的初始保证金 */
+            initial_margin: components["schemas"]["Money"];
+            last_day: components["schemas"]["TradingDay"];
+            last_price: components["schemas"]["IndexPrice"];
+            /** Format: int64 */
+            open_interest: number;
+            /**
+             * Format: int64
+             * @description k: weeks 4k-3 to 4k after the premiere
+             */
+            period: number;
+            /** @description 前结算价 */
+            prev_settle: components["schemas"]["IndexPrice"];
+            /** @description 开放枚举：listed、expiring（等待指数）、settled */
+            status: string;
+            stock: components["schemas"]["StockRef"];
+            /** @description 一手每 0.01 点的价值 */
+            tick_value: components["schemas"]["Money"];
+            /** Format: int64 */
+            volume_today: number;
+            /**
+             * Format: int64
+             * @description the AniList work whose index it settles on
+             */
+            work_id: number;
+        };
+        FuturesDayRow: {
+            close: null | components["schemas"]["IndexPrice"];
+            day: components["schemas"]["TradingDay"];
+            high: null | components["schemas"]["IndexPrice"];
+            low: null | components["schemas"]["IndexPrice"];
+            open: null | components["schemas"]["IndexPrice"];
+            /** Format: int64 */
+            open_interest: number;
+            settle: components["schemas"]["IndexPrice"];
+            /** @description 开放枚举：vwap（收盘前 30 分钟成交均价）、mid（做市报价中间价）、prev（沿用前结算价）、final（到期结算） */
+            settle_source: string;
+            /** Format: int64 */
+            volume: number;
+        };
+        FuturesDetail: {
+            asks: components["schemas"]["FuturesBookLevel"][];
+            bids: components["schemas"]["FuturesBookLevel"][];
+            contract: components["schemas"]["FuturesContract"];
+            days: components["schemas"]["FuturesDayRow"][];
+            /** @description 合约期内已公布的指数 */
+            index: components["schemas"]["HeatDay"][];
+        };
+        FuturesList: {
+            contracts: components["schemas"]["FuturesContract"][];
+        };
+        FuturesOrder: {
+            /** Format: int64 */
+            contract_id: number;
+            created_at: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            filled: number;
+            /** @description 冻结的保证金和手续费 */
+            frozen: components["schemas"]["Money"];
+            /** Format: int64 */
+            id: number;
+            price: null | components["schemas"]["IndexPrice"];
+            /** Format: int64 */
+            quantity: number;
+            side: string;
+            status: string;
+            type: string;
+        };
+        FuturesOrderResponse: {
+            average_price: null | components["schemas"]["IndexPrice"];
+            /** Format: int64 */
+            filled: number;
+            order: components["schemas"]["FuturesOrder"];
+        };
+        FuturesPosition: {
+            contract: components["schemas"]["FuturesContract"];
+            /** @description 占用的初始保证金 */
+            margin: components["schemas"]["Money"];
+            /**
+             * Format: int64
+             * @description 正数为多头，负数为空头
+             */
+            quantity: number;
+            /** @description 自上次结算以来的盈亏（按最新价）；结算时划转 */
+            unsettled_pnl: components["schemas"]["Money"];
+        };
+        HeatDay: {
+            /** Format: double */
+            cn: number | null;
+            day: components["schemas"]["TradingDay"];
+            /** @description 市场 → missing、filled、negative、spike（补值或替换） */
+            flags: unknown;
+            /**
+             * Format: double
+             * @description 安易热度指数
+             */
+            index: number;
+            /** Format: double */
+            jp: number | null;
+            /**
+             * Format: double
+             * @description 各市场当天的热度（校验后）；没有数据来源的市场为 null
+             */
+            us: number | null;
+            /** @description 编制方法版本 */
+            version: string;
+        };
         Holders: {
             /** Format: int64 */
             committee: number;
@@ -1396,6 +1632,11 @@ export interface components {
             /** Format: double */
             value: number;
         };
+        /**
+         * Format: int64
+         * @description Hundredths of an index point (90.00 = 9000).
+         */
+        IndexPrice: number;
         IndicesResponse: {
             /** @description total_return（全收益：分红在当天加回）或 price（价格指数） */
             basis: string;
@@ -1624,6 +1865,23 @@ export interface components {
          * @description 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
          */
         Money: number;
+        MyFutures: {
+            /** @description 可用保证金 */
+            available_margin: components["schemas"]["Money"];
+            /** @description 维持保证金 */
+            maintenance_margin: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 信用账户的维持担保比例（计入期货）；没有负债和期货时为 null
+             */
+            maintenance_ratio: number | null;
+            /** @description 占用的初始保证金（持仓和委托） */
+            margin_held: components["schemas"]["Money"];
+            orders: components["schemas"]["FuturesOrder"][];
+            positions: components["schemas"]["FuturesPosition"][];
+            /** @description 自上次结算以来的亏损 */
+            unsettled_loss: components["schemas"]["Money"];
+        };
         MyTrade: {
             amount: components["schemas"]["Money"];
             at: components["schemas"]["Timestamp"];
@@ -2141,6 +2399,9 @@ export interface components {
             trailing_4w: components["schemas"]["Trailing4w"];
             vcm: components["schemas"]["Vcm"];
         };
+        StockHeat: {
+            works: components["schemas"]["WorkHeat"][];
+        };
         StockMargin: {
             /** @description 是否融资融券标的 */
             eligible: boolean;
@@ -2263,6 +2524,11 @@ export interface components {
             /** @description 开放枚举：upcoming（未开播）、airing、finished、halted（暂停播出） */
             status: string;
             title: string;
+        };
+        WorkHeat: {
+            days: components["schemas"]["HeatDay"][];
+            /** Format: int64 */
+            work_id: number;
         };
         WorksResponse: {
             sequel: components["schemas"]["Sequel"];
@@ -2665,6 +2931,63 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResetCode"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    futures_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuturesList"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    futures_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 合约 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuturesDetail"];
                 };
             };
             default: {
@@ -3427,6 +3750,90 @@ export interface operations {
             };
         };
     };
+    my_futures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyFutures"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    futures_place: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuturesOrderResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    futures_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 委托 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyFutures"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     ledger: {
         parameters: {
             query?: {
@@ -4008,6 +4415,36 @@ export interface operations {
                 };
                 content: {
                     "image/jpeg": unknown;
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    stock_heat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockHeat"];
                 };
             };
             default: {

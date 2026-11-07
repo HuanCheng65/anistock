@@ -1606,6 +1606,429 @@
         ],
         "type": "object"
       },
+      "FuturesBookLevel": {
+        "properties": {
+          "orders": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "$ref": "#/components/schemas/IndexPrice"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "orders",
+          "price",
+          "quantity"
+        ],
+        "type": "object"
+      },
+      "FuturesContract": {
+        "properties": {
+          "average_so_far": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "change": {
+            "description": "last_price / prev_settle - 1",
+            "format": "double",
+            "type": "number"
+          },
+          "code": {
+            "type": "string"
+          },
+          "days_published": {
+            "description": "合约期内已公布的天数和它们的平均指数",
+            "format": "int64",
+            "type": "integer"
+          },
+          "days_total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "final_price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "first_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "initial_margin": {
+            "$ref": "#/components/schemas/Money",
+            "description": "一手的初始保证金"
+          },
+          "last_day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "last_price": {
+            "$ref": "#/components/schemas/IndexPrice"
+          },
+          "open_interest": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "period": {
+            "description": "k: weeks 4k-3 to 4k after the premiere",
+            "format": "int64",
+            "type": "integer"
+          },
+          "prev_settle": {
+            "$ref": "#/components/schemas/IndexPrice",
+            "description": "前结算价"
+          },
+          "status": {
+            "description": "开放枚举：listed、expiring（等待指数）、settled",
+            "type": "string"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "tick_value": {
+            "$ref": "#/components/schemas/Money",
+            "description": "一手每 0.01 点的价值"
+          },
+          "volume_today": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "work_id": {
+            "description": "the AniList work whose index it settles on",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "average_so_far",
+          "change",
+          "code",
+          "days_published",
+          "days_total",
+          "final_price",
+          "first_day",
+          "id",
+          "initial_margin",
+          "last_day",
+          "last_price",
+          "open_interest",
+          "period",
+          "prev_settle",
+          "status",
+          "stock",
+          "tick_value",
+          "volume_today",
+          "work_id"
+        ],
+        "type": "object"
+      },
+      "FuturesDayRow": {
+        "properties": {
+          "close": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "high": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "low": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "open": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "open_interest": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "settle": {
+            "$ref": "#/components/schemas/IndexPrice"
+          },
+          "settle_source": {
+            "description": "开放枚举：vwap（收盘前 30 分钟成交均价）、mid（做市报价中间价）、prev（沿用前结算价）、final（到期结算）",
+            "type": "string"
+          },
+          "volume": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "close",
+          "day",
+          "high",
+          "low",
+          "open",
+          "open_interest",
+          "settle",
+          "settle_source",
+          "volume"
+        ],
+        "type": "object"
+      },
+      "FuturesDetail": {
+        "properties": {
+          "asks": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesBookLevel"
+            },
+            "type": "array"
+          },
+          "bids": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesBookLevel"
+            },
+            "type": "array"
+          },
+          "contract": {
+            "$ref": "#/components/schemas/FuturesContract"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesDayRow"
+            },
+            "type": "array"
+          },
+          "index": {
+            "description": "合约期内已公布的指数",
+            "items": {
+              "$ref": "#/components/schemas/HeatDay"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "asks",
+          "bids",
+          "contract",
+          "days",
+          "index"
+        ],
+        "type": "object"
+      },
+      "FuturesList": {
+        "properties": {
+          "contracts": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesContract"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contracts"
+        ],
+        "type": "object"
+      },
+      "FuturesOrder": {
+        "properties": {
+          "contract_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "filled": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "frozen": {
+            "$ref": "#/components/schemas/Money",
+            "description": "冻结的保证金和手续费"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "side": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_id",
+          "created_at",
+          "filled",
+          "frozen",
+          "id",
+          "price",
+          "quantity",
+          "side",
+          "status",
+          "type"
+        ],
+        "type": "object"
+      },
+      "FuturesOrderResponse": {
+        "properties": {
+          "average_price": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/IndexPrice"
+              }
+            ]
+          },
+          "filled": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "order": {
+            "$ref": "#/components/schemas/FuturesOrder"
+          }
+        },
+        "required": [
+          "average_price",
+          "filled",
+          "order"
+        ],
+        "type": "object"
+      },
+      "FuturesPosition": {
+        "properties": {
+          "contract": {
+            "$ref": "#/components/schemas/FuturesContract"
+          },
+          "margin": {
+            "$ref": "#/components/schemas/Money",
+            "description": "占用的初始保证金"
+          },
+          "quantity": {
+            "description": "正数为多头，负数为空头",
+            "format": "int64",
+            "type": "integer"
+          },
+          "unsettled_pnl": {
+            "$ref": "#/components/schemas/Money",
+            "description": "自上次结算以来的盈亏（按最新价）；结算时划转"
+          }
+        },
+        "required": [
+          "contract",
+          "margin",
+          "quantity",
+          "unsettled_pnl"
+        ],
+        "type": "object"
+      },
+      "HeatDay": {
+        "properties": {
+          "cn": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "flags": {
+            "description": "市场 → missing、filled、negative、spike（补值或替换）"
+          },
+          "index": {
+            "description": "安易热度指数",
+            "format": "double",
+            "type": "number"
+          },
+          "jp": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "us": {
+            "description": "各市场当天的热度（校验后）；没有数据来源的市场为 null",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "version": {
+            "description": "编制方法版本",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cn",
+          "day",
+          "flags",
+          "index",
+          "jp",
+          "us",
+          "version"
+        ],
+        "type": "object"
+      },
       "Holders": {
         "properties": {
           "committee": {
@@ -1657,6 +2080,11 @@
           "value"
         ],
         "type": "object"
+      },
+      "IndexPrice": {
+        "description": "Hundredths of an index point (90.00 = 9000).",
+        "format": "int64",
+        "type": "integer"
       },
       "IndicesResponse": {
         "properties": {
@@ -2558,6 +2986,56 @@
         "description": "金额，单位：分（1 星辉 = 100 分）。显示时除以 100。",
         "format": "int64",
         "type": "integer"
+      },
+      "MyFutures": {
+        "properties": {
+          "available_margin": {
+            "$ref": "#/components/schemas/Money",
+            "description": "可用保证金"
+          },
+          "maintenance_margin": {
+            "$ref": "#/components/schemas/Money",
+            "description": "维持保证金"
+          },
+          "maintenance_ratio": {
+            "description": "信用账户的维持担保比例（计入期货）；没有负债和期货时为 null",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "margin_held": {
+            "$ref": "#/components/schemas/Money",
+            "description": "占用的初始保证金（持仓和委托）"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesOrder"
+            },
+            "type": "array"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/FuturesPosition"
+            },
+            "type": "array"
+          },
+          "unsettled_loss": {
+            "$ref": "#/components/schemas/Money",
+            "description": "自上次结算以来的亏损"
+          }
+        },
+        "required": [
+          "available_margin",
+          "maintenance_margin",
+          "maintenance_ratio",
+          "margin_held",
+          "orders",
+          "positions",
+          "unsettled_loss"
+        ],
+        "type": "object"
       },
       "MyTrade": {
         "properties": {
@@ -4350,6 +4828,20 @@
         ],
         "type": "object"
       },
+      "StockHeat": {
+        "properties": {
+          "works": {
+            "items": {
+              "$ref": "#/components/schemas/WorkHeat"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "works"
+        ],
+        "type": "object"
+      },
       "StockMargin": {
         "properties": {
           "eligible": {
@@ -4717,6 +5209,25 @@
           "schedule",
           "status",
           "title"
+        ],
+        "type": "object"
+      },
+      "WorkHeat": {
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/HeatDay"
+            },
+            "type": "array"
+          },
+          "work_id": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "work_id"
         ],
         "type": "object"
       },
@@ -5721,6 +6232,80 @@
         "summary": "为绑定的账号生成找回密码的验证码（机器人）",
         "tags": [
           "bot"
+        ]
+      }
+    },
+    "/api/v1/futures": {
+      "get": {
+        "operationId": "futures_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FuturesList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "期货合约",
+        "tags": [
+          "futures"
+        ]
+      }
+    },
+    "/api/v1/futures/{id}": {
+      "get": {
+        "operationId": "futures_detail",
+        "parameters": [
+          {
+            "description": "合约 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FuturesDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "期货合约详情",
+        "tags": [
+          "futures"
         ]
       }
     },
@@ -6736,6 +7321,111 @@
         ]
       }
     },
+    "/api/v1/me/futures": {
+      "get": {
+        "operationId": "my_futures",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyFutures"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的期货",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/futures/orders": {
+      "post": {
+        "operationId": "futures_place",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FuturesOrderResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "期货下单",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/futures/orders/{id}": {
+      "delete": {
+        "operationId": "futures_cancel",
+        "parameters": [
+          {
+            "description": "委托 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyFutures"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "期货撤单",
+        "tags": [
+          "account"
+        ]
+      }
+    },
     "/api/v1/me/ledger": {
       "get": {
         "operationId": "ledger",
@@ -7716,6 +8406,49 @@
         ]
       }
     },
+    "/api/v1/stocks/{id}/heat": {
+      "get": {
+        "operationId": "stock_heat",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockHeat"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "热度指数",
+        "tags": [
+          "stocks"
+        ]
+      }
+    },
     "/api/v1/stocks/{id}/intraday": {
       "get": {
         "operationId": "intraday",
@@ -8079,6 +8812,10 @@
     {
       "description": "新股",
       "name": "ipos"
+    },
+    {
+      "description": "期货",
+      "name": "futures"
     },
     {
       "description": "账户",

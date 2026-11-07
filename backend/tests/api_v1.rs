@@ -252,6 +252,8 @@ async fn reads_match_the_openapi_document() {
         ("/api/v1/news", "/api/v1/news"),
         ("/api/v1/ipos", "/api/v1/ipos?status=upcoming,open,allotted,listed"),
         ("/api/v1/leaderboard", "/api/v1/leaderboard?period=week"),
+        ("/api/v1/futures", "/api/v1/futures"),
+        ("/api/v1/stocks/{id}/heat", "/api/v1/stocks/1/heat"),
     ] {
         a.checked(t, p, None).await;
         a.checked(t, p, c).await;
@@ -264,6 +266,7 @@ async fn reads_match_the_openapi_document() {
         ("/api/v1/me/trades", "/api/v1/me/trades"),
         ("/api/v1/me/ledger", "/api/v1/me/ledger"),
         ("/api/v1/me/bindings", "/api/v1/me/bindings"),
+        ("/api/v1/me/futures", "/api/v1/me/futures"),
     ] {
         a.checked(t, p, c).await;
     }
@@ -323,6 +326,19 @@ async fn orders_and_their_errors() {
     let r = a.req("POST", "/api/v1/me/orders", None, &h).await;
     err(&r, 400, "invalid_json");
     err(&a.req("POST", "/api/v1/me/restructure", Some(json!({"confirm": true})), &h).await, 422, "restructure_not_eligible");
+}
+
+#[tokio::test]
+async fn futures_while_closed() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let order = json!({"contract_id": 1, "side": "buy", "type": "limit", "price": 9000, "quantity": 1});
+    err(&a.req("POST", "/api/v1/me/futures/orders", Some(order), &h).await, 422, "futures_closed");
+    err(&a.req("GET", "/api/v1/futures/1", None, &h).await, 404, "contract_not_found");
+    err(&a.req("DELETE", "/api/v1/me/futures/orders/1", None, &h).await, 404, "order_not_found");
+    let bad = json!({"contract_id": 1, "side": "buy", "type": "market", "price": 9000, "quantity": 1});
+    err(&a.req("POST", "/api/v1/me/futures/orders", Some(bad), &h).await, 400, "invalid_request");
 }
 
 /// A fresh register challenge with its answer, as the request's `pow`.
