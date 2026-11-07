@@ -129,8 +129,10 @@ impl Default for FuturesRules {
             mm_limit: 200,
             mm_size: 10,
             mm_levels: 3,
-            mm_spread_sd: 0.6, // the forecast revises 3.3% a day (rms) where sd / sqrt(days left) says 5.8% (2026-11-07 replay)
-            mm_min_half: 20,
+            // the narrowest spread the gate passes (docs/v3-futures.md §4.5, 2026-11-08): at 0.3 the momentum bot
+            // beats buy-and-hold by 8 points; 0.6 left the maker 11-14k a season
+            mm_spread_sd: 0.4,
+            mm_min_half: 10,
             mm_last_weight: 0.2,
             mm_skew: 1.0,
             npc: NpcRules::default(),
