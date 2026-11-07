@@ -1390,7 +1390,7 @@ def fit_drift_heat(shows, cal, history=None):
 
 
 def fit_drift_weekly(shows, cal, m):
-    """v0.6.8: market m's drift by period with each of the first four weeks on its own (weeks 0, 1, 2, 3, 4-7, 8+);
+    """v0.6.9: market m's drift by period with each of the first four weeks on its own (weeks 0, 1, 2, 3, 4-7, 8+);
     weeks 1, 2, 3 by maximum likelihood of the market's own filter (q, r, the outlier component and the other
     periods fixed at `cal`). One rate for
     weeks 0-3 projected the same fade into all four, while shows fade fastest right after the premiere: the value

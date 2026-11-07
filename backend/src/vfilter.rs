@@ -464,7 +464,7 @@ pub fn kf_update(mean: f64, var: f64, y: f64, r: f64, clip: f64) -> (f64, f64, f
 
 /// The in-season fade changes speed after these weeks since the premiere (Python `DRIFT_WEEKS`).
 pub const DRIFT_WEEKS: [i64; 2] = [4, 8];
-/// Six periods (v0.6.8): weeks 0, 1, 2, 3 each, then 4-7 and 8+ (Python `WEEKLY_CUTS`).
+/// Six periods (v0.6.9): weeks 0, 1, 2, 3 each, then 4-7 and 8+ (Python `WEEKLY_CUTS`).
 pub const WEEKLY_CUTS: [i64; 5] = [1, 2, 3, 4, 8];
 
 /// Index of week w's period in a drift-by-period list of length n: 3 periods (weeks 0-3, 4-7, 8+) or 6 (weeks 0, 1,

@@ -264,7 +264,7 @@ def kf_update_joint_robust(mean: list[float], cov: list[list[float]], m: int, y:
 
 DRIFT_WEEKS = (4, 8)   # the in-season fade changes speed after these weeks since the premiere (the heat class is
                        # set at the first)
-WEEKLY_CUTS = (1, 2, 3, 4, 8)   # six periods: weeks 0, 1, 2, 3 each, then 4-7 and 8+ (v0.6.8)
+WEEKLY_CUTS = (1, 2, 3, 4, 8)   # six periods: weeks 0, 1, 2, 3 each, then 4-7 and 8+ (v0.6.9)
 
 
 def drift_seg(n: int, w: int) -> int:
@@ -276,7 +276,7 @@ def drift_seg(n: int, w: int) -> int:
 
 def drift_at(fp: dict, m: str, w: int) -> float:
     """Market m's daily log drift in week w since the premiere: fitted by period (a show fades fast after its
-    premiere and more slowly later: weeks 0-3, 4-7, 8+; or since v0.6.8 each of the first four weeks on its own,
+    premiere and more slowly later: weeks 0-3, 4-7, 8+; or since v0.6.9 each of the first four weeks on its own,
     the fade being fastest right after the premiere), else one rate."""
     seg = fp.get("drift_by_week", {}).get(m)
     if not seg:
