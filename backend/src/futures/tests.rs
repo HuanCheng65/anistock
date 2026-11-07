@@ -554,6 +554,7 @@ fn forecast_of_a_period() {
     let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
     let p = crate::valuation::Params::from_config(&cfg).unwrap();
     let mut e = engine();
+    e.futures.horizon_drift = 0.0; // compared with the raw path below
     with_state(&mut e, 7.0, 0.04);
     let day = |s: &str| crate::vclose::day_no(s).unwrap();
     let (first, last, today) = (day("2026-11-07"), day("2026-12-04"), day("2026-11-06"));

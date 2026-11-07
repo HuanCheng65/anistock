@@ -37,6 +37,9 @@ pub struct FuturesRules {
     /// the realised average's spread around the model's expectation beyond the level's own uncertainty (the
     /// link, the index's daily noise), as a share of the expectation of the days still to come
     pub model_cv: f64,
+    /// the expectation of a day `h` days ahead is scaled by exp(-horizon_drift x h): the filter's paths run
+    /// about 6.5% high five weeks out and are unbiased within the period (2026-11-07 replays)
+    pub horizon_drift: f64,
     /// the market maker (one account, `fmm`): capital from world per contract listed (returned when it
     /// settles), position limit and quote size in lots, quote levels
     pub mm_capital: i64,
@@ -72,6 +75,7 @@ impl Default for FuturesRules {
             index_platform: [114628.0, 2168.0, 1542.0],
             index_scale: 11300.0,
             model_cv: 0.15,
+            horizon_drift: 0.002,
             mm_capital: 20_000_000,
             mm_limit: 200,
             mm_size: 10,

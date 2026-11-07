@@ -118,13 +118,14 @@ mod tests {
     #[test]
     fn quotes_widen_with_uncertainty_and_lean_against_inventory() {
         let r = FuturesRules::default();
+        let r = FuturesRules { mm_spread_sd: 1.0, ..r };
         let flat = quotes(&r, 9000, 100, 1, 9000, 0);
         assert_eq!(flat.mid, 9000);
         assert_eq!(flat.bids, [(8900, 10), (8800, 10), (8700, 10)]);
         assert_eq!(flat.asks, [(9100, 10), (9200, 10), (9300, 10)]);
         let tight = quotes(&r, 9000, 10, 1, 9000, 0);
         // 16 days left: a quarter of the period's uncertainty per day
-        assert_eq!(quotes(&r, 9000, 400, 16, 9000, 0).bids[0].0, 8900);
+        assert_eq!(quotes(&FuturesRules::default(), 9000, 400, 16, 9000, 0).bids[0].0, 9000 - 60); // 0.6 x 400 / 4
         assert_eq!((tight.bids[0].0, tight.asks[0].0), (8980, 9020), "at least mm_min_half");
         // long 100 of a 200 limit: the centre moves half a half-spread down
         let long = quotes(&r, 9000, 100, 1, 9000, 100);

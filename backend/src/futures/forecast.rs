@@ -1,6 +1,7 @@
 //! The model's forecast of a contract's average index (docs/v3-futures.md §4.3): what listing, the initial
 //! margin's floor and the market maker's quotes rest on. The same filter the stock values come from: each
-//! market's expected attention path (`vfilter::att_path`), turned into index points (`FuturesRules::index_per_att`, by weeks since the premiere).
+//! market's expected attention path (`vfilter::att_path`), turned into index points (`FuturesRules::index_per_att`, by weeks since the premiere), shrunk by
+//! `horizon_drift` per day ahead.
 //!
 //! mean = (published days + Σ expected days to come) / days. The spread of the days to come: the levels'
 //! uncertainty (the filter's covariance plus its random walk to the middle of the remaining days, lognormal,
@@ -57,7 +58,10 @@ impl Engine {
                     F::att_path(&fpc, p, m, js.mean[m], js.var(m), today, &sched, first_air, long, h, js.tail_mult);
                 let rules = &self.futures;
                 *gm = (from..=last)
-                    .map(|t| rules.index_per_att(m, (t - first_air).div_euclid(7)) * path[(t - today - 1) as usize])
+                    .map(|t| {
+                        let shrink = (-rules.horizon_drift * (t - today) as f64).exp();
+                        rules.index_per_att(m, (t - first_air).div_euclid(7)) * path[(t - today - 1) as usize] * shrink
+                    })
                     .sum();
             }
         }
