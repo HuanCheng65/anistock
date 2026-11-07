@@ -392,23 +392,44 @@ def _anilist_pages(http: Http, variables: dict) -> list[dict]:
         page += 1
 
 
+# AniList serves at most 25 nested trend nodes a page, and counts a request, not the media in it: one request
+# asks for many media by alias, up to the query complexity limit (500; about 12 per media)
+TRENDS_PER_PAGE = 25
+TRENDS_BATCH = 35
+
+
+def _trends_batch(pages: dict[int, int]) -> str:
+    parts = [f"m{mid}: Media(id: {mid}) {{ trends(sort: DATE_DESC, page: {page}, perPage: {TRENDS_PER_PAGE}) "
+             f"{{ pageInfo {{ hasNextPage }} nodes {{ date episode averageScore popularity inProgress trending releasing }} }} }}"
+             for mid, page in pages.items()]
+    return "query { " + " ".join(parts) + " }"
+
+
 def _backfill_trends(http: Http, store: Store, media_ids: list[int], since: date) -> int:
-    """Page through each media's daily trends (newest first) until older than `since`."""
+    """Each media's daily trends back to `since`, newest first, many media per request. Resumable: a media
+    whose trends were read back to `since` before (table trend_backfill) is skipped, so an interrupted
+    backfill starts again where it stopped."""
     cutoff = int(datetime.combine(since, datetime.min.time(), timezone.utc).timestamp())
+    store.db.execute("CREATE TABLE IF NOT EXISTS trend_backfill (media_id INTEGER PRIMARY KEY, since TEXT NOT NULL)")
+    done = {r[0] for r in store.db.execute("SELECT media_id FROM trend_backfill WHERE since <= ?", (since.isoformat(),))}
+    pages = {mid: 1 for mid in media_ids if mid not in done}
+    log.info("anilist backfill: %d media to read back to %s (%d done before)", len(pages), since, len(media_ids) - len(pages))
     filled = 0
-    for mid in media_ids:
-        page = 1
-        while True:
-            t = http.graphql(ANILIST, TRENDS_QUERY, {"id": mid, "page": page})["Media"]["trends"]
+    while pages:
+        batch = dict(list(pages.items())[:TRENDS_BATCH])
+        data = http.graphql(ANILIST, _trends_batch(batch))
+        for mid, page in batch.items():
+            t = ((data.get(f"m{mid}") or {}).get("trends")) or {"nodes": [], "pageInfo": {"hasNextPage": False}}
             for node in t["nodes"]:
                 store.trend(mid, node)
                 filled += 1
-            store.commit()
             oldest = min((n["date"] for n in t["nodes"]), default=0)
             if not t["pageInfo"]["hasNextPage"] or oldest < cutoff:
-                break
-            page += 1
-        log.info("anilist backfill media %s done", mid)
+                del pages[mid]
+                store.db.execute("INSERT OR REPLACE INTO trend_backfill VALUES (?,?)", (mid, since.isoformat()))
+            else:
+                pages[mid] = page + 1
+        store.commit()
     return filled
 
 
