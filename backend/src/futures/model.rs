@@ -97,7 +97,7 @@ pub struct FutOrder {
     pub price: Option<i64>,
     pub qty: i64,
     pub filled: i64,
-    /// cents of initial margin frozen for the part that opens a position
+    /// cents frozen: initial margin for the part that opens a position, and the commission
     pub frozen: i64,
     pub status: OrderStatus,
     pub created_at: String,
@@ -118,6 +118,8 @@ pub struct Position {
     pub contract_id: i64,
     pub qty: i64,
     pub basis: i64,
+    /// cents of initial margin held for it (part of the account's `cash_frozen`)
+    pub margin: i64,
 }
 
 impl Position {

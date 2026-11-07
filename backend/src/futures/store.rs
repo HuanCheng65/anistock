@@ -80,9 +80,9 @@ pub fn apply(conn: &Connection, c: &FuturesChange) -> rusqlite::Result<()> {
         }
         FuturesChange::Position(p) => {
             conn.prepare_cached(
-                "INSERT OR REPLACE INTO futures_positions(account_id, contract_id, qty, basis) VALUES (?,?,?,?)",
+                "INSERT OR REPLACE INTO futures_positions(account_id, contract_id, qty, basis, margin) VALUES (?,?,?,?,?)",
             )?
-            .execute(params![p.account_id, p.contract_id, p.qty, p.basis])?;
+            .execute(params![p.account_id, p.contract_id, p.qty, p.basis, p.margin])?;
         }
         FuturesChange::PositionDelete(a, c) => {
             conn.prepare_cached("DELETE FROM futures_positions WHERE account_id=? AND contract_id=?")?
@@ -187,11 +187,23 @@ pub fn load(conn: &Connection) -> rusqlite::Result<FuturesState> {
         .prepare(&format!("SELECT {cols} FROM futures_orders WHERE status='open' ORDER BY id"))?
         .query_map([], order)?
     {
-        s.insert_order(o?);
+        let o = o?;
+        let id = o.id;
+        s.insert_order(o);
+        s.rest(id);
     }
-    for p in conn.prepare("SELECT account_id, contract_id, qty, basis FROM futures_positions")?.query_map([], |r| {
-        Ok(Position { account_id: r.get(0)?, contract_id: r.get(1)?, qty: r.get(2)?, basis: r.get(3)? })
-    })? {
+    for p in conn.prepare("SELECT account_id, contract_id, qty, basis, margin FROM futures_positions")?.query_map(
+        [],
+        |r| {
+            Ok(Position {
+                account_id: r.get(0)?,
+                contract_id: r.get(1)?,
+                qty: r.get(2)?,
+                basis: r.get(3)?,
+                margin: r.get(4)?,
+            })
+        },
+    )? {
         let p = p?;
         s.positions.insert((p.account_id, p.contract_id), p);
     }

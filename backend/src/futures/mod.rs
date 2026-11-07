@@ -6,12 +6,14 @@
 //! - `store`: loading and saving them (migration V17)
 //! - `rules`: `[futures]` of game.toml
 //! - `calendar`, `listing`: the periods and listing them at the close
+//! - `trading`: orders, fills, positions and margin, the opening auction
 
 pub mod calendar;
 pub mod listing;
 pub mod model;
 pub mod rules;
 pub mod store;
+pub mod trading;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -45,25 +47,33 @@ pub struct FuturesState {
     pub today: HashMap<i64, (String, Vec<Tick>)>,
     /// contract -> the market maker's latest mid quote (the settlement price without trades)
     pub last_mid: HashMap<i64, i64>,
+    /// contract -> standard deviation of the forecast of its average (ticks; the initial margin's floor)
+    pub sd: HashMap<i64, i64>,
     pub last_contract_id: i64,
     pub last_order_id: i64,
     pub last_trade_id: i64,
 }
 
 impl FuturesState {
-    /// Track an order: by account, and on its contract's book while it is an open limit order.
+    /// Track an order (by account while it is open). It goes on the book only with `rest`.
     pub fn insert_order(&mut self, o: FutOrder) {
-        if let (Some(p), OrderStatus::Open) = (o.price, o.status) {
-            self.books.entry(o.contract_id).or_default().insert(o.side, p, o.id);
-        }
         if o.status == OrderStatus::Open {
             self.by_account.entry(o.account_id).or_default().insert(o.id);
         }
         self.orders.insert(o.id, o);
     }
 
-    /// Take an order that is no longer open off its book and its account's list (the row stays in `orders`
-    /// until the operation ends).
+    /// Put an open limit order on its contract's book.
+    pub fn rest(&mut self, id: i64) {
+        if let Some(o) = self.orders.get(&id).filter(|o| o.status == OrderStatus::Open) {
+            if let Some(p) = o.price {
+                self.books.entry(o.contract_id).or_default().insert(o.side, p, o.id);
+            }
+        }
+    }
+
+    /// Take an order off its book and its account's open orders (the row stays in `orders` until the
+    /// operation ends).
     pub fn unlist_order(&mut self, id: i64) {
         let Some(o) = self.orders.get(&id) else { return };
         if let (Some(p), Some(b)) = (o.price, self.books.get_mut(&o.contract_id)) {
@@ -72,6 +82,17 @@ impl FuturesState {
         if let Some(ids) = self.by_account.get_mut(&o.account_id) {
             ids.remove(&id);
         }
+    }
+
+    /// Drop the orders closed during the operation.
+    pub fn reap(&mut self) {
+        self.orders.retain(|_, o| o.status == OrderStatus::Open);
+    }
+
+    /// An account's open orders on a contract.
+    pub fn open_orders(&self, account_id: i64, contract_id: i64) -> impl Iterator<Item = &FutOrder> {
+        let ids = self.by_account.get(&account_id).into_iter().flatten();
+        ids.map(|id| &self.orders[id]).filter(move |o| o.contract_id == contract_id)
     }
 
     pub(crate) fn book(&self, contract_id: i64) -> &Book {

@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS futures_orders (
     price        INTEGER,
     qty          INTEGER NOT NULL,
     filled       INTEGER NOT NULL DEFAULT 0,
-    frozen       INTEGER NOT NULL DEFAULT 0,    -- cents of initial margin frozen for the opening part
+    frozen       INTEGER NOT NULL DEFAULT 0,    -- cents frozen: initial margin for the opening part, and commission
     status       TEXT NOT NULL,                 -- open | filled | cancelled
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
@@ -73,11 +73,13 @@ CREATE INDEX IF NOT EXISTS futures_trades_contract ON futures_trades(contract_id
 -- net position per account and contract: qty > 0 long, < 0 short. basis = the signed ticks paid since the last
 -- settlement (the settlement price for what was held then, the trade price for what traded since), so the
 -- variation margin at settlement price S is (qty * S - basis) * tick_value, and over all accounts it sums to zero.
+-- margin: cents of initial margin held for it (part of accounts.cash_frozen).
 CREATE TABLE IF NOT EXISTS futures_positions (
     account_id   INTEGER NOT NULL REFERENCES accounts(id),
     contract_id  INTEGER NOT NULL REFERENCES futures_contracts(id),
     qty          INTEGER NOT NULL,
     basis        INTEGER NOT NULL,
+    margin       INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (account_id, contract_id)
 );
 

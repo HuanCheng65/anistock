@@ -299,6 +299,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     let mut e = Engine::from_snapshot(snap, cfg.fees(), cfg.rules(), Box::new(tap.clone()));
     e.margin = cfg.margin.clone();
     e.corporate = cfg.corporate.clone();
+    e.futures = cfg.futures.clone();
     // value-only: nothing trades, so the price stays where the world left it and every capital-policy rule that
     // reads it (splits above 100, buybacks below value) would fire on a stale price
     if opts.history || opts.value_only {

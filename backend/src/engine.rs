@@ -121,6 +121,8 @@ pub struct Engine {
     pub margin: crate::margin::MarginRules,
     /// `[corporate]` of game.toml (crate::corporate)
     pub corporate: crate::corporate::CorporateRules,
+    /// `[futures]` of game.toml (crate::futures)
+    pub futures: crate::futures::FuturesRules,
     pub(crate) st: State,
 
     pub(crate) out: Vec<Change>,
@@ -159,6 +161,7 @@ impl Engine {
             rules,
             margin: crate::margin::MarginRules::default(),
             corporate: crate::corporate::CorporateRules::default(),
+            futures: crate::futures::FuturesRules::default(),
             st: State::from_snapshot_parts(&s),
             out: Vec::new(),
             dirty_accounts: BTreeSet::new(),
@@ -319,7 +322,8 @@ impl Engine {
                 return Err(format!("negative or over-frozen balance: account {} {} {}", a.id, a.cash, a.cash_frozen));
             }
         }
-        self.margin_invariants()
+        self.margin_invariants()?;
+        self.futures_invariants()
     }
 
     // ------------------------------------------------------------ change tracking
@@ -1114,6 +1118,7 @@ impl Engine {
             c.vcm_count = 0;
             self.dirty_companies.insert(id);
         }
+        self.futures_open(day, ts);
         self.do_set_state("auction_day", day);
     }
 }
