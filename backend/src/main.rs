@@ -221,6 +221,12 @@ fn main() {
         Ok(None) => {}
         Err(e) => eprintln!("valuation bootstrap failed (the filter starts at the next close): {e}"),
     }
+    // 热度期货: what the last close would list today (a deploy or a missed close lists without waiting a day)
+    match engine.futures_catch_up(&cfg) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("futures: listed {n} contracts due today"),
+        Err(e) => eprintln!("futures listing at startup failed (the next close lists): {e}"),
+    }
     engine.flush().unwrap_or_else(|e| fail(format!("persist: {e}"), 1));
     // v1: DIST = ROOT / "web" / "dist" with ROOT resolved; mounted only if it exists at startup
     let root = std::fs::canonicalize(&cfg.root).unwrap_or_else(|_| cfg.root.clone());

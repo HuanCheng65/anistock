@@ -93,6 +93,21 @@ pub fn day_range(first: &str, last: &str) -> Option<(i64, i64)> {
 }
 
 impl Engine {
+    /// At startup: list what the last close would list today (`futures_after_close` again for the last closed
+    /// day; periods already listed are skipped and the forecasts come out the same). With the listing week
+    /// (calendar::listed_on) a deploy or a missed close lists the periods starting within 7 days at once,
+    /// not at the next close. Returns the contracts listed.
+    pub fn futures_catch_up(&mut self, cfg: &crate::config::Config) -> Result<usize, String> {
+        if !self.futures.enabled {
+            return Ok(0);
+        }
+        let Some(day) = self.state("last_closed").filter(|d| !d.is_empty()).map(str::to_string) else { return Ok(0) };
+        let (fp, p) = (FilterParams::load(cfg)?, Params::from_config(cfg)?);
+        let before = self.st.futures.contracts.len();
+        self.futures_after_close(&fp, &p, &day);
+        Ok(self.st.futures.contracts.len() - before)
+    }
+
     /// After the day's valuation, in the close of `day`: refresh every listed contract's forecast (the market
     /// maker's reference, the initial margin's floor) and list the periods due tomorrow.
     pub(crate) fn futures_after_close(&mut self, fp: &FilterParams, p: &Params, day: &str) {
