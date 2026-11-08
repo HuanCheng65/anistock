@@ -287,6 +287,15 @@ class Store:
 BGM = "https://api.bgm.tv"
 
 
+def manual_bgm_ids(path: Path) -> list[int]:
+    """The Bangumi subjects sim/matches.json "manual" assigns (none when the file is missing or unreadable)."""
+    try:
+        manual = json.loads(path.read_text(encoding="utf-8")).get("manual") or {}
+    except (OSError, ValueError):
+        return []
+    return sorted({int(v["bgm"]) for v in manual.values() if isinstance(v, dict) and v.get("bgm")})
+
+
 def collect_bangumi(store: Store) -> str:
     http = Http(min_interval=0.4)
     cal = http.request("GET", f"{BGM}/calendar").json()
@@ -303,6 +312,11 @@ def collect_bangumi(store: Store) -> str:
         for sid in json.loads(extra_file.read_text(encoding="utf-8")).get("bgm", []):
             store.register("bgm", sid, None)
             discovered += 1
+    # hand matches (sim/matches.json "manual"): the matcher skips the shows they cover and their subject may be on
+    # no calendar (a web release), so nothing else registers it: no snapshot, no cover, no Bangumi inputs
+    for sid in manual_bgm_ids(Path(__file__).parent / "sim" / "matches.json"):
+        store.register("bgm", sid, None)
+        discovered += 1
     store.commit()
 
     recent = store.tracked("bgm")

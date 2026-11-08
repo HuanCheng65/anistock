@@ -70,3 +70,12 @@ def test_matches_once_from_the_calendar_then_by_search(tmp_path):
     B.match_new(db, "2026-11-15", curated, search, lambda sid: None)
     assert len(searched) == n + 2
     assert B.table(db) == {"1": 100, "2": 200}
+
+
+def test_manual_bgm_ids(tmp_path):
+    from collect import manual_bgm_ids
+    f = tmp_path / "matches.json"
+    f.write_text(json.dumps({"matches": {"1": {"bgm": 5}},
+                             "manual": {"2": {"bgm": 639938}, "3": {"title_cn": "x"}, "4": {"bgm": "612608"}}}))
+    assert manual_bgm_ids(f) == [612608, 639938]
+    assert manual_bgm_ids(tmp_path / "missing.json") == []
