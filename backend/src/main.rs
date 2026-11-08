@@ -227,6 +227,21 @@ fn main() {
         Ok(n) => eprintln!("futures: listed {n} contracts due today"),
         Err(e) => eprintln!("futures listing at startup failed (the next close lists): {e}"),
     }
+    // 新股: offers priced over what their data support are cut now, while players can still decide (the closes
+    // do it too)
+    match engine.reprice_offers(&cfg, &clock.today(), &clock.ts()) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("ipo: lowered {n} offer prices"),
+        Err(e) => eprintln!("ipo repricing at startup failed (the next close reprices): {e}"),
+    }
+    // external news: the items archived before [news] mode = publish, published once (`publish_backlog`)
+    if matches!(cfg.news_mode.as_str(), "publish" | "market") {
+        match anistock::api::v1::media::publish_backlog(&mut engine, &cfg.game_db, &clock.today(), &clock.ts()) {
+            Ok(0) => {}
+            Ok(n) => eprintln!("news: published {n} archived items"),
+            Err(e) => eprintln!("news: publishing the archived items failed: {e}"),
+        }
+    }
     engine.flush().unwrap_or_else(|e| fail(format!("persist: {e}"), 1));
     // v1: DIST = ROOT / "web" / "dist" with ROOT resolved; mounted only if it exists at startup
     let root = std::fs::canonicalize(&cfg.root).unwrap_or_else(|_| cfg.root.clone());

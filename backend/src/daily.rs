@@ -559,7 +559,9 @@ impl Engine {
         // 融资融券: manufactured dividends, interest and fees, maintenance (crate::margin)
         self.margin_post_close(&day, &ts);
 
-        // 8. allot subscriptions that closed today, then open new ones
+        // 8. offers priced over what their data support are cut (`reprice_offers`); allot the subscriptions that
+        // closed today, then open new ones
+        self.reprice_offers(cx.cfg, &day, &ts)?;
         let due: Vec<i64> = self
             .st
             .companies
@@ -1121,39 +1123,47 @@ impl Engine {
         self.allot_company(cx, &c)
     }
 
-    /// The offer price at allotment: lowered (never raised) to what the latest data support when the announced
-    /// price is more than `REPRICE_TOLERANCE` above it (a show whose pre-air estimate was too high; players chose
-    /// at the announced price, so only a cut is fair). Posts the notice. Applications froze cash at the announced
-    /// price; the allotment releases all of it and charges the new price.
-    fn reprice_offer(&mut self, cx: &mut Ctx, c: &Company) -> Result<i64, String> {
+    /// Offers in subscription priced more than `REPRICE_TOLERANCE` above what the latest data support (the value now
+    /// less the discount for the uncertainty left, `ipo_price_now`) are lowered to it, never raised: players chose at
+    /// the announced price, so only a cut is fair. Run at every close (before the allotment) and at startup, so a
+    /// cut shows while players can still decide. Applications froze cash at the price they were made at; the
+    /// allotment releases all of it and charges the price then. Posts a notice per cut; returns how many.
+    pub fn reprice_offers(&mut self, cfg: &crate::config::Config, day: &str, ts: &str) -> Result<usize, String> {
         const REPRICE_TOLERANCE: f64 = 0.05;
-        if cx.cfg.economy_v1 || c.fair_value <= 0 {
-            return Ok(c.ipo_price);
+        if cfg.economy_v1 {
+            return Ok(0);
         }
-        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
-        let Some(px) = self.ipo_price_now(&fp, &cx.p, c.id, c.fair_value) else { return Ok(c.ipo_price) };
-        if px as f64 >= c.ipo_price as f64 * (1.0 - REPRICE_TOLERANCE) {
-            return Ok(c.ipo_price);
+        let due: Vec<Company> = self.st.companies.values().filter(|c| c.status == "subscribing" && c.fair_value > 0).cloned().collect();
+        if due.is_empty() {
+            return Ok(0);
         }
-        let co = self.st.companies.get_mut(&c.id).unwrap();
-        co.ipo_price = px;
-        co.prev_close = px;
-        co.open_ref = Some(px);
-        co.last_price = px;
-        self.mark_company(c.id);
-        let (day, ts) = (cx.day.clone(), cx.ts.clone());
-        self.push_news(
-            &ts,
-            &day,
-            "ipo",
-            Some(c.id),
-            format!("《{}》发行价下调至 {} 星辉", c.title, fixed(px as f64 / 100.0, 2)),
-            format!(
-                "按最新数据重新定价，原发行价 {} 星辉。认购按新发行价配售，冻结的资金先全部解冻，再按中签数量扣款。",
-                fixed(c.ipo_price as f64 / 100.0, 2)
-            ),
-        );
-        Ok(px)
+        let (fp, p) = (crate::vfilter::FilterParams::load(cfg)?, Params::from_config(cfg)?);
+        let mut n = 0;
+        for c in due {
+            let Some(px) = self.ipo_price_now(&fp, &p, c.id, c.fair_value) else { continue };
+            if px as f64 >= c.ipo_price as f64 * (1.0 - REPRICE_TOLERANCE) {
+                continue;
+            }
+            let co = self.st.companies.get_mut(&c.id).unwrap();
+            co.ipo_price = px;
+            co.prev_close = px;
+            co.open_ref = Some(px);
+            co.last_price = px;
+            self.mark_company(c.id);
+            self.push_news(
+                ts,
+                day,
+                "ipo",
+                Some(c.id),
+                format!("《{}》发行价下调至 {} 星辉", c.title, fixed(px as f64 / 100.0, 2)),
+                format!(
+                    "按最新数据重新定价，原发行价 {} 星辉。已提交的认购不用重新提交，配售按新发行价扣款，多冻结的资金在配售时解冻。",
+                    fixed(c.ipo_price as f64 / 100.0, 2)
+                ),
+            );
+            n += 1;
+        }
+        Ok(n)
     }
 
     fn allot_company(&mut self, cx: &mut Ctx, c: &Company) -> Result<(), String> {
@@ -1162,7 +1172,7 @@ impl Engine {
         let company_acct =
             self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
         let committee = self.account_of("committee", c.id).ok_or_else(|| format!("no committee for {}", c.id))?;
-        let price = self.reprice_offer(cx, &c)?;
+        let price = c.ipo_price;
         let float_qty = pround(c.shares as f64 * cx.p.ipo_float);
         let base = pround(float_qty as f64 * cx.g().ipo_public_base);
         let mut apps: Vec<IpoApplication> =

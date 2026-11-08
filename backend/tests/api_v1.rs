@@ -960,6 +960,17 @@ async fn media_news_is_archived_and_published_by_mode() {
     err(&a.req("POST", "/api/v1/bot/news", Some(bad), &bot).await, 404, "stock_not_found");
     let r = a.get("/api/v1/news?category=media", None).await;
     assert_eq!(r.json["items"].as_array().unwrap().len(), 0, "{}", r.json);
+    // switching to publish publishes what shadow archived, once (at startup), with the day the source ran it
+    let db = a.st.cfg.game_db.clone();
+    let n = a.st.actor.call(move |ctx| anistock::api::v1::media::publish_backlog(&mut ctx.engine, &db, "2026-11-07", "2026-11-07T09:00:00+08:00")).await.unwrap().unwrap();
+    assert_eq!(n, 1);
+    let r = a.get("/api/v1/news?category=media", None).await;
+    let items = r.json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{}", r.json);
+    assert!(items[0]["body"].as_str().unwrap().contains("11月5日报道"), "{}", items[0]);
+    let db = a.st.cfg.game_db.clone();
+    let n = a.st.actor.call(move |ctx| anistock::api::v1::media::publish_backlog(&mut ctx.engine, &db, "2026-11-07", "2026-11-07T09:00:00+08:00")).await.unwrap().unwrap();
+    assert_eq!(n, 0);
 
     // publish: a game news item once; a refined judgement updates the archive, not the news
     let a = app_env("2026-11-05T10:00:00+08:00", true, &[("ANISTOCK_NEWS_MODE", "publish")]);

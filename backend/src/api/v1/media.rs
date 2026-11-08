@@ -31,6 +31,65 @@ fn credibility_label(c: &str) -> &'static str {
     }
 }
 
+/// A media news item's headline: the extension's, with the work's title in front when it lacks it.
+fn headline(title: &str, title_of: &str) -> String {
+    if title.contains(title_of) {
+        title.to_string()
+    } else {
+        format!("《{title_of}》{title}")
+    }
+}
+
+/// A media news item's body: the source, its credibility, (an item published late: the day the source ran it), the
+/// original title and the link.
+fn news_body(source: &str, credibility: &str, reported: Option<&str>, original_title: &str, url: &str) -> String {
+    let when = reported
+        .and_then(|d| chrono::NaiveDate::parse_from_str(d.get(..10)?, "%Y-%m-%d").ok())
+        .map(|d| format!("，{}月{}日报道", chrono::Datelike::month(&d), chrono::Datelike::day(&d)))
+        .unwrap_or_default();
+    format!("{source}，{}{when}。原文：{original_title}\n{url}", credibility_label(credibility))
+}
+
+/// Publish, once, the items archived while [news] mode was `shadow` (startup, mode `publish` or `market`): each
+/// not merged, not published, about a stock still listed, oldest first, dated today with the day the source ran
+/// it in the body. Later pushes publish as they come; an item published here is never published again.
+pub fn publish_backlog(engine: &mut crate::engine::Engine, game_db: &std::path::Path, day: &str, ts: &str) -> Result<usize, String> {
+    let c = rusqlite::Connection::open(game_db).map_err(|e| e.to_string())?;
+    let has = c
+        .query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_news'", [], |_| Ok(()))
+        .optional()
+        .map_err(|e| e.to_string())?
+        .is_some();
+    if !has {
+        return Ok(0);
+    }
+    type Row = (i64, i64, String, String, String, String, Option<String>, String);
+    let rows: Vec<Row> = {
+        let mut s = c
+            .prepare(
+                "SELECT id, company_id, source, url, title, original_title, coalesce(published_at, fetched_at), credibility
+                 FROM media_news WHERE news_id IS NULL AND status='stored' AND merged_into IS NULL ORDER BY received_at, id",
+            )
+            .map_err(|e| e.to_string())?;
+        let it = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))
+            .map_err(|e| e.to_string())?;
+        it.collect::<Result<_, _>>().map_err(|e| e.to_string())?
+    };
+    let mut n = 0;
+    for (id, company, source, url, title, original, reported, cred) in rows {
+        let Some(title_of) = engine.company(company).filter(|co| co.status == "listed").map(|co| co.title.clone()) else { continue };
+        engine.post_news(ts, day, "media", Some(company), headline(&title, &title_of), news_body(&source, &cred, reported.as_deref(), &original, &url));
+        let nid = engine.st.last_news_id;
+        // the news row first: the archive row points at it
+        engine.flush()?;
+        c.execute("UPDATE media_news SET news_id=?, status='published', updated_at=? WHERE id=?", params![nid, ts, id])
+            .map_err(|e| e.to_string())?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 fn rfc3339(b: &serde_json::Map<String, serde_json::Value>, k: &str, required: bool) -> R<Option<String>> {
     let v = body_str(b, k)?;
     match v {
@@ -165,9 +224,9 @@ pub async fn push(
 
     // publish once; a published item is never edited (players may have traded on it)
     if (mode == "publish" || mode == "market") && news_id.is_none() && status != "merged" {
-        let body_text = format!("{}，{}。原文：{}\n{}", source, credibility_label(&credibility), original_title, url);
+        let body_text = news_body(&source, &credibility, None, &original_title, &url);
         let (d, t) = (st.clock.today(), now.clone());
-        let headline = if title.contains(&title_of) { title.clone() } else { format!("《{title_of}》{title}") };
+        let headline = headline(&title, &title_of);
         let nid = engine(&st, move |ctx| -> R<i64> {
             ctx.engine.post_news(&t, &d, "media", Some(stock_id), headline, body_text);
             let id = ctx.engine.st.last_news_id;

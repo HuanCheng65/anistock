@@ -556,9 +556,9 @@ fn a_missing_episode_marker_is_not_a_finish_when_the_schedule_has_more() {
 }
 
 #[test]
-fn an_offer_priced_over_its_value_is_cut_at_allotment() {
-    // a show listed late from a pre-air estimate that its data have since brought down: the allotment charges
-    // the lower price (value less the discount for the uncertainty left) and posts the notice
+fn an_offer_priced_over_its_value_is_cut_before_allotment() {
+    // a show listed late from a pre-air estimate that its data have since brought down: the price is cut (value less
+    // the discount for the uncertainty left, a notice posted; at startup and at every close), the allotment charges it
     let cfg = cfg();
     let inp = empty_inputs();
     let mut e = fixture();
@@ -570,6 +570,9 @@ fn an_offer_priced_over_its_value_is_cut_at_allotment() {
     e.st.companies.get_mut(&2).unwrap().fair_value = 200;
     let a = apply(&mut e, "a", 600);
     let cash0 = e.account(a).unwrap().cash;
+    assert_eq!(e.reprice_offers(&cfg, DAY, TS).unwrap(), 1);
+    // (done: a second pass changes nothing)
+    assert_eq!(e.reprice_offers(&cfg, DAY, TS).unwrap(), 0);
     let mut cx = ctx(&e, &cfg, &inp);
     e.allot(&mut cx, 2).unwrap();
     let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
@@ -591,7 +594,6 @@ fn an_offer_priced_over_its_value_is_cut_at_allotment() {
     e.st.jstate.insert(2, js);
     e.st.companies.get_mut(&2).unwrap().fair_value = 510;
     apply(&mut e, "a", 600);
-    let mut cx = ctx(&e, &cfg, &inp);
-    e.allot(&mut cx, 2).unwrap();
+    assert_eq!(e.reprice_offers(&cfg, DAY, TS).unwrap(), 0);
     assert_eq!(e.company(2).unwrap().ipo_price, 500);
 }
