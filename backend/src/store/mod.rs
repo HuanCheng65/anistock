@@ -306,6 +306,8 @@ pub fn company_from_row(r: &rusqlite::Row) -> rusqlite::Result<Company> {
         profit_week: r.get("profit_week")?,
         low_weeks: r.get("low_weeks")?,
         delisted_on: r.get("delisted_on")?,
+        source: r.get("source")?,
+        genres: r.get("genres")?,
     })
 }
 

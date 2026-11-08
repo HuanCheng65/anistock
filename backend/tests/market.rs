@@ -49,6 +49,8 @@ fn world() -> Engine {
             profit_week: 0,
             low_weeks: 0,
             delisted_on: None,
+            source: None,
+            genres: String::new(),
         });
         let committee = e.create_account("committee", "c", None, None, Some(id), ts);
         let mm = e.create_account("mm", "mm", None, None, Some(id), ts);

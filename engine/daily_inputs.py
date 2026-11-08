@@ -56,6 +56,7 @@ File format (JSON, one object):
         score           AniList averageScore on D (null: not enough votes yet); the long tail's prior (phase 1)
         format          AniList format (TV, ONA, MOVIE, ...) (phase 1)
         source          AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...) (phase 1)
+        genres          AniList genres, then the theme tags the show carries (economy.THEME_TAGS: Isekai)
         prequel         itself a sequel: the relations known on D have a PREQUEL TV/ONA/film (phase 1)
         top_pop         top decile of popularity among the shows premiering within half a year of it (phase 1)
         sequel          an announced sequel not yet aired, from the relations known on D, else null (phase 1;
@@ -397,6 +398,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "score": E.at(s, s.score, day, None),
             "format": s.fmt,
             "source": s.source,
+            "genres": s.genres,
             **series_facts(s.id, relations, day, lags),
             "top_pop": top_decile(shows, s),
             "popularity": E.at(s, s.popularity, day, None),

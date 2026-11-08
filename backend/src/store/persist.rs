@@ -260,8 +260,8 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
             conn.prepare_cached(
                 "INSERT INTO companies(id, code, title, title_ja, title_en, studio, episodes, long_runner, first_air,
                    listed_on, status, sub_start, sub_end, shares, ipo_price, prev_close, open_ref, vcm_until, vcm_low,
-                   vcm_high, vcm_count, last_price, fair_value, profit_week, low_weeks, delisted_on)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   vcm_high, vcm_count, last_price, fair_value, profit_week, low_weeks, delisted_on, source, genres)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             )?
             .execute(params![
                 c.id,
@@ -289,7 +289,9 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 c.fair_value,
                 c.profit_week,
                 c.low_weeks,
-                c.delisted_on
+                c.delisted_on,
+                c.source,
+                c.genres
             ])?;
         }
         Change::CompanyUpdate(c) => {
@@ -297,7 +299,7 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 "UPDATE companies SET code=?, title=?, title_ja=?, title_en=?, studio=?, episodes=?, long_runner=?,
                    first_air=?, listed_on=?, status=?, sub_start=?, sub_end=?, shares=?, ipo_price=?, prev_close=?,
                    open_ref=?, vcm_until=?, vcm_low=?, vcm_high=?, vcm_count=?, last_price=?, fair_value=?,
-                   profit_week=?, low_weeks=?, delisted_on=? WHERE id=?",
+                   profit_week=?, low_weeks=?, delisted_on=?, source=?, genres=? WHERE id=?",
             )?
             .execute(params![
                 c.code,
@@ -325,6 +327,8 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
                 c.profit_week,
                 c.low_weeks,
                 c.delisted_on,
+                c.source,
+                c.genres,
                 c.id
             ])?;
         }

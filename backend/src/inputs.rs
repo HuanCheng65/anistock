@@ -70,6 +70,9 @@ pub struct ShowInputs {
     /// AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...) (phase 1: the sequel option)
     #[serde(default)]
     pub source: Option<String>,
+    /// AniList genres, plus the theme tags the indices use (Isekai) (the theme indices, docs/v3-funds.md §3)
+    #[serde(default)]
+    pub genres: Vec<String>,
     /// itself a sequel: a PREQUEL relation to a TV/ONA/film (phase 1)
     #[serde(default)]
     pub prequel: bool,

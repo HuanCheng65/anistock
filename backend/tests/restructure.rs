@@ -39,6 +39,8 @@ fn ipo_company(fx: &mut Fx) {
         profit_week: 0,
         low_weeks: 0,
         delisted_on: None,
+        source: None,
+        genres: String::new(),
     });
 }
 

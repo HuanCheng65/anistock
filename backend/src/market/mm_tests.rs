@@ -66,6 +66,8 @@ fn world() -> W {
         profit_week: 0,
         low_weeks: 0,
         delisted_on: None,
+        source: None,
+        genres: String::new(),
     });
     let world = e.special("world").unwrap();
     e.create_account("company", "company", None, None, Some(C), ts0);

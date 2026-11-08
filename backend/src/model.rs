@@ -119,6 +119,9 @@ pub struct Company {
     pub profit_week: i64,
     pub low_weeks: i64,
     pub delisted_on: Option<String>,
+    /// AniList source (MANGA, LIGHT_NOVEL, ...) and genres plus theme tags, comma-separated (V21; the theme indices)
+    pub source: Option<String>,
+    pub genres: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

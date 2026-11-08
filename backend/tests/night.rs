@@ -110,6 +110,8 @@ fn company(id: i64) -> Company {
         profit_week: 50_000,
         low_weeks: 0,
         delisted_on: None,
+        source: None,
+        genres: String::new(),
     }
 }
 

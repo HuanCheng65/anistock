@@ -546,12 +546,25 @@ impl Engine {
             self.futures_after_close(&fp, &p, &day);
         }
 
-        // refresh titles
+        // refresh titles, and the labels the theme indices select on (inputs without them leave them as they are)
         for (cid, name) in &cx.inp.cn_titles {
             if let Some(c) = self.st.companies.get_mut(cid) {
                 if &c.title != name {
                     c.title = name.clone();
                     self.mark_company(*cid);
+                }
+            }
+        }
+        for s in &cx.inp.shows {
+            if s.source.is_none() && s.genres.is_empty() {
+                continue;
+            }
+            let genres = s.genres.join(",");
+            if let Some(c) = self.st.companies.get_mut(&s.id) {
+                if c.source != s.source || c.genres != genres {
+                    c.source = s.source.clone();
+                    c.genres = genres;
+                    self.mark_company(s.id);
                 }
             }
         }
@@ -1371,6 +1384,8 @@ impl Engine {
             profit_week: 0,
             low_weeks: 0,
             delisted_on: None,
+            source: s.source.clone(),
+            genres: s.genres.join(","),
         };
         self.out.push(Change::CompanyInsert(company.clone()));
         self.st.companies.insert(s.id, company);

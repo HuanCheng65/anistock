@@ -47,6 +47,8 @@ fn company(id: i64, status: &str, shares: i64, first_air: &str, listed_on: &str)
         profit_week: 0,
         low_weeks: 0,
         delisted_on: None,
+        source: None,
+        genres: String::new(),
     }
 }
 

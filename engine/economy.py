@@ -46,6 +46,18 @@ class Show:
     adult: bool = False              # AniList isAdult or the Hentai genre: never listed
     promo: bool = False              # a PV / CM / teaser compilation, not a show (`is_promo`): never listed
     source: str | None = None        # AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...)
+    genres: list[str] = field(default_factory=list)  # AniList genres + THEME_TAGS it carries (the theme indices)
+
+
+# AniList tags the theme indices select on (docs/v3-funds.md §3), with the rank (how central the tag is to the
+# show, 0-100) from which a show counts
+THEME_TAGS = {"Isekai": 60}
+
+
+def show_genres(m: dict) -> list[str]:
+    """AniList genres, then the theme tags the show carries at their rank or above."""
+    tags = [t["name"] for t in (m.get("tags") or []) if t.get("name") in THEME_TAGS and (t.get("rank") or 0) >= THEME_TAGS[t["name"]]]
+    return list(m.get("genres") or []) + sorted(tags)
 
 
 # promotional material catalogued as an "anime": PVs, CMs, teasers, trailers (as a word, so "CMYK" or a
@@ -110,6 +122,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
             adult=bool(m.get("isAdult")) or "Hentai" in (m.get("genres") or []),
             promo=is_promo(mid, m),
             source=m.get("source"),
+            genres=show_genres(m),
         )
         _fill_grid(s, t, end, gaps)
         if not s.days:
