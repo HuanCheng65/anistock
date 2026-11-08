@@ -10,6 +10,7 @@ export const FILTERS: { key: string; label: string; test: (s: Quote, c: ListCtx)
   { key: 'watch', label: '自选', test: (s, c) => c.watch.has(s.stock.id) },
   { key: 'all', label: '全部', test: () => true },
   { key: 'season', label: '本季新番', test: (s, c) => !s.is_long_runner && s.first_air >= c.seasonStart },
+  { key: 'past', label: '往季番剧', test: (s, c) => !s.is_long_runner && s.first_air < c.seasonStart },
   { key: 'long', label: '长篇连载', test: (s) => s.is_long_runner },
   { key: 'done', label: '已完结', test: (s) => !s.is_long_runner && s.episodes != null && s.episodes_aired >= s.episodes },
   { key: 'new', label: '新上市', test: (s) => s.is_new },

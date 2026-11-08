@@ -55,6 +55,16 @@ pub fn quarter_start(day: &str) -> String {
     format!("{:04}-{:02}-01", d.year(), (d.month() - 1) / 3 * 3 + 1)
 }
 
+/// A show premiering this many days before a season starts belongs to that season (shows of the October season
+/// often start in the last week of September; the valuation's `prev_season_start(day + 14)` uses the same rule).
+pub const SEASON_EARLY_DAYS: i64 = 14;
+
+/// The earliest premiere counted in 本季新番 on `day`: the quarter's start less `SEASON_EARLY_DAYS`.
+pub fn season_from(day: &str) -> String {
+    let qs = quarter_start(day);
+    NaiveDate::parse_from_str(&qs, "%Y-%m-%d").map(|d| (d - chrono::Duration::days(SEASON_EARLY_DAYS)).to_string()).unwrap_or(qs)
+}
+
 pub fn cover_url(id: i64) -> String {
     format!("/api/v1/stocks/{id}/cover")
 }
@@ -500,6 +510,7 @@ pub enum IndexBasis {
 /// ends at the cash per share it returned instead of its close.
 pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: IndexBasis) -> R<IndicesResponse> {
     let qs = quarter_start(today);
+    let from = season_from(today);
     let cos: Vec<Co> = {
         let mut s = c
             .prepare_cached(
@@ -575,7 +586,7 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
     type Member<'a> = Box<dyn Fn(&Co) -> bool + 'a>;
     let defs: [(&str, &str, Member); 3] = [
         ("all", "番剧综合指数", Box::new(|_| true)),
-        ("season", "本季新番", Box::new(|co: &Co| !co.long && co.first_air.as_str() >= qs.as_str())),
+        ("season", "本季新番", Box::new(|co: &Co| !co.long && co.first_air.as_str() >= from.as_str())),
         ("long", "长篇连载", Box::new(|co: &Co| co.long)),
     ];
     let r4 = |v: f64| (v * 10000.0).round() / 10000.0;
@@ -656,6 +667,7 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
     Ok(IndicesResponse {
         trading_day: day(today),
         season_start: qs.clone(),
+        season_from: from.clone(),
         basis: match basis {
             IndexBasis::TotalReturn => "total_return".into(),
             IndexBasis::Price => "price".into(),

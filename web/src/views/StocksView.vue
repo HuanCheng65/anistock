@@ -35,7 +35,7 @@ watch([filter, sort, desc], () => router.replace({ query: { f: filter.value, s: 
 
 const ctx = computed<ListCtx>(() => ({
   watch: new Set(prefs.watchlist),
-  seasonStart: market.indices?.season_start ?? '9999',
+  seasonStart: market.indices?.season_from ?? '9999',
 }))
 const counts = computed(() => Object.fromEntries(FILTERS.map((f) => [f.key, (market.stocks ?? []).filter((s) => f.test(s, ctx.value)).length])))
 const rows = computed(() => listRows(market.stocks ?? [], filter.value, sort.value, desc.value, ctx.value))

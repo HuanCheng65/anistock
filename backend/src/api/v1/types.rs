@@ -475,8 +475,12 @@ pub struct MarketIndex {
 #[derive(Serialize, ToSchema)]
 pub struct IndicesResponse {
     pub trading_day: TradingDay,
+    /// 本季的第一天（季度第一天）
     #[schema(format = Date)]
     pub season_start: String,
+    /// 本季新番的最早首播日：季度第一天前 14 天（提前开播的新番算本季）
+    #[schema(format = Date)]
+    pub season_from: String,
     /// total_return（全收益：分红在当天加回）或 price（价格指数）
     pub basis: String,
     pub breadth: Breadth,

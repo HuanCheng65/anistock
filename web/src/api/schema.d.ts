@@ -1725,7 +1725,15 @@ export interface components {
             basis: string;
             breadth: components["schemas"]["Breadth"];
             items: components["schemas"]["MarketIndex"][];
-            /** Format: date */
+            /**
+             * Format: date
+             * @description 本季新番的最早首播日：季度第一天前 14 天（提前开播的新番算本季）
+             */
+            season_from: string;
+            /**
+             * Format: date
+             * @description 本季的第一天（季度第一天）
+             */
             season_start: string;
             trading_day: components["schemas"]["TradingDay"];
         };

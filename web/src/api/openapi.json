@@ -2268,7 +2268,13 @@
             },
             "type": "array"
           },
+          "season_from": {
+            "description": "本季新番的最早首播日：季度第一天前 14 天（提前开播的新番算本季）",
+            "format": "date",
+            "type": "string"
+          },
           "season_start": {
+            "description": "本季的第一天（季度第一天）",
             "format": "date",
             "type": "string"
           },
@@ -2280,6 +2286,7 @@
           "basis",
           "breadth",
           "items",
+          "season_from",
           "season_start",
           "trading_day"
         ],
