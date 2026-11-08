@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
 import RestructureEntry from '../components/RestructureEntry.vue'
 import Sparkline from '../components/Sparkline.vue'
+import SiteFooter from '../components/SiteFooter.vue'
 import Tabs from '../components/Tabs.vue'
 import { usePoll } from '../composables/usePoll'
 import { dir, money, num, pct, qty, signed, when } from '../format'
@@ -288,6 +289,7 @@ async function cancel(id: number) {
         </nav>
       </div>
     </div>
+    <div class="container"><SiteFooter class="flush" /></div>
   </main>
 </template>
 

@@ -1,0 +1,14 @@
+# AniEx 安易
+
+> 以动画作品为标的的模拟交易所。每部新番作为一家公司上市，玩家用虚拟资产“星辉”买卖股票、认购新股、交易热度期货和指数基金；股价随玩家交易和作品热度变化，收益来自价差和分红，按累计收益率排名。星辉与真实货币无关，不能充值或提现。
+
+## 文档
+
+- [规则](https://aniex.huanchengfly.top/rules.md)：公司与营收、交易时间、委托与成交、费用与税、冷静期、新股认购、拆股配股回购、退市、融资融券、热度期货、指数基金、账户、央行、指数、NPC
+- [开发者说明](https://aniex.huanchengfly.top/rules/api.md)：API 密钥、数据格式、频率限制、交易时段、常用接口、WebSocket 推送、Python 示例
+- [指数编制方法](https://aniex.huanchengfly.top/rules/heat-index.md)：安易热度指数的数据来源、计算、校验和公布
+
+## 接口
+
+- [OpenAPI 文档](https://aniex.huanchengfly.top/api/v1/openapi.json)：全部接口和字段的定义
+- [当前规则参数](https://aniex.huanchengfly.top/api/v1/rules)：交易时段、费率、冷静期等参数的 JSON

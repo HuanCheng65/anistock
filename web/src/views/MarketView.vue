@@ -12,6 +12,7 @@ import MarketClock from '../components/MarketClock.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import StartSteps from '../components/StartSteps.vue'
 import Sparkline from '../components/Sparkline.vue'
+import SiteFooter from '../components/SiteFooter.vue'
 import Tabs from '../components/Tabs.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
@@ -259,6 +260,7 @@ function remember(key: string, label: string, rows: Quote[]) {
         </RouterLink>
       </section>
     </div>
+    <div v-if="session.checked && !session.me" class="container"><SiteFooter class="flush" /></div>
   </main>
 </template>
 

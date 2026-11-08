@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
+import SiteFooter from '../components/SiteFooter.vue'
 import { api, ApiError, call, errorText, type ApiKey, type ApiKeyCreated, type BindCode } from '../api'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
@@ -247,7 +248,7 @@ async function unbind(id: number) {
     </section>
     <section v-if="session.me && !keysMissing" class="sec">
       <h2>API 密钥</h2>
-      <p class="hint">{{ trading?.enabled ? '用于脚本读取账户数据、接收成交推送和下单。' : '用于脚本读取账户数据和接收成交推送，目前不能下单。' }}使用方法见<a href="https://github.com/HuanCheng65/anistock/blob/main/docs/api-scripts.md" target="_blank" rel="noopener">开发者说明</a>，接口定义见 <a href="/api/v1/openapi.json" target="_blank" rel="noopener">OpenAPI 文档</a>。</p>
+      <p class="hint">{{ trading?.enabled ? '用于脚本读取账户数据、接收成交推送和下单。' : '用于脚本读取账户数据和接收成交推送，目前不能下单。' }}使用方法见<RouterLink to="/rules/api">开发者说明</RouterLink>。</p>
       <ul v-if="keys?.length" class="keys">
         <li v-for="k in keys" :key="k.id">
           <div class="keyhead">
@@ -346,7 +347,7 @@ async function unbind(id: number) {
         </template>
       </Modal>
     </section>
-    <p class="foot">星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。作品数据来自 AniList、Bangumi、Annict 的公开统计。</p>
+    <SiteFooter />
   </main>
 </template>
 

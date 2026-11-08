@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
+import { docs } from './docs.plugin.ts'
 
 // the app's version is the server's (backend/Cargo.toml): a mismatch at runtime means a new release.
 // APP_VERSION overrides it; without either the build still succeeds as 'dev' (the version check then
@@ -17,7 +18,7 @@ function serverVersion(): string {
 const version = serverVersion()
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), docs()],
   define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
     proxy: { '/api': { target: 'http://127.0.0.1:18620', ws: true }, '/covers': { target: 'http://127.0.0.1:18620' } },

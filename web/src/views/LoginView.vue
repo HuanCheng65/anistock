@@ -4,6 +4,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api'
 import BrandLockup from '../components/BrandLockup.vue'
 import Tabs from '../components/Tabs.vue'
+import SiteFooter from '../components/SiteFooter.vue'
 import { powSupported, solve, type PowSolution } from '../pow'
 import { useSession } from '../stores/session'
 
@@ -130,6 +131,7 @@ async function submit() {
       <template v-if="reg">注册后获得 100,000 星辉。</template>星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。
       <RouterLink to="/" class="look">去看市场</RouterLink>
     </p>
+    <SiteFooter no-notice class="lfoot" />
   </main>
 </template>
 
@@ -139,11 +141,12 @@ async function submit() {
 .tabs { padding-top: 20px; border-bottom: 0; }
 .form { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; }
 .form .btn { height: 48px; font-size: 16px; margin-top: 4px; }
-.foot { margin: auto 0 28px; padding-top: 28px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.foot { margin: auto 0 0; padding-top: 28px; font-size: 12px; line-height: 1.6; color: var(--muted); }
 .forgotlink { align-self: flex-end; margin-top: -6px; font-size: 13px; color: var(--ink-2); }
 .agree { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
 .agree input { width: 16px; height: 16px; margin: 2px 0 0; flex: none; accent-color: var(--ink); }
 .agree a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.lfoot { margin: 16px 0 calc(20px + env(safe-area-inset-bottom, 0px)); padding: 12px 0 0; }
 .look { margin-left: 4px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
 @media (min-width: 1024px) { .brand { padding-top: 120px; } }
 </style>

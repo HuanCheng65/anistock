@@ -4,6 +4,7 @@
 import { RouterLink, useRouter } from 'vue-router'
 import BackButton from '../components/BackButton.vue'
 import Icon from '../components/Icon.vue'
+import SiteFooter from '../components/SiteFooter.vue'
 import { KYC_UNLOCKS } from '../kyc'
 import { useGuide } from '../stores/guide'
 import { useMarket } from '../stores/market'
@@ -97,6 +98,7 @@ function replay() {
       <RouterLink to="/rules" class="btn ghost">规则</RouterLink>
       <button type="button" class="btn ghost" @click="replay">重看引导</button>
     </div>
+    <SiteFooter />
   </main>
 </template>
 

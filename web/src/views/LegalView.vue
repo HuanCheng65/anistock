@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, call, errorText } from '../api'
 import BackButton from '../components/BackButton.vue'
 import LegalText from '../components/LegalText.vue'
+import SiteFooter from '../components/SiteFooter.vue'
 import { DOCUMENTS, SIGNED, isDocKey } from '../legal/documents'
 import { useSession } from '../stores/session'
 
@@ -64,6 +65,7 @@ async function sign() {
         <button type="submit" class="btn block" :disabled="busy || !matches">签署</button>
       </form>
     </div>
+    <SiteFooter />
   </main>
 </template>
 
