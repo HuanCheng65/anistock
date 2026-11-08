@@ -1383,6 +1383,22 @@ impl Engine {
         min.max((v * (1.0 - discount) * 100.0).round_ties_even() as i64)
     }
 
+    /// The offer price for a show the filter has already valued (docs/v2-valuation.md: the IPO): its value now,
+    /// less a discount for the uncertainty left, through the same `ipo_risk` as the pre-air offer (the filter's
+    /// variance of the log level, averaged over the markets the show earns in). A show with weeks of data has
+    /// little left, so its discount is small. None: not valued yet.
+    pub(crate) fn ipo_price_now(&self, fp: &FilterParams, p: &Params, id: i64, value: i64) -> Option<i64> {
+        let js = self.st.jstate.get(&id)?;
+        let used: Vec<f64> = (0..3).filter(|m| js.active[*m]).map(|m| js.var(m).max(0.0)).collect();
+        if used.is_empty() || value <= 0 {
+            return None;
+        }
+        let sd = (used.iter().sum::<f64>() / used.len() as f64).sqrt();
+        let discount = 1.0 - (-fp.ipo_risk * sd).exp();
+        let min = (p.ipo_price_min * 100.0).round_ties_even() as i64;
+        Some(min.max((value as f64 * (1.0 - discount)).round_ties_even() as i64))
+    }
+
     /// A 热度快讯: the episode's comments `hours` after airing, as a noisy observation of the show's cn level
     /// (docs/v2-valuation.md §3.4). Updates the filter and the hidden value at once. None when the
     /// observation carries no information (no comparison base, too early, unknown company).

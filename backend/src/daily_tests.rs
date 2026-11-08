@@ -554,3 +554,44 @@ fn a_missing_episode_marker_is_not_a_finish_when_the_schedule_has_more() {
     // a season released at once: the schedule has nothing after the last episode seen
     assert_eq!(Engine::planned_episodes(Some(10), &aired, today, &aired), Some(8));
 }
+
+#[test]
+fn an_offer_priced_over_its_value_is_cut_at_allotment() {
+    // a show listed late from a pre-air estimate that its data have since brought down: the allotment charges
+    // the lower price (value less the discount for the uncertainty left) and posts the notice
+    let cfg = cfg();
+    let inp = empty_inputs();
+    let mut e = fixture();
+    let committee = subscribing(&mut e);
+    let mut js = crate::vclose::JState::empty(DAY);
+    js.active = [true, false, false];
+    js.cov[0][0] = 0.04;
+    e.st.jstate.insert(2, js);
+    e.st.companies.get_mut(&2).unwrap().fair_value = 200;
+    let a = apply(&mut e, "a", 600);
+    let cash0 = e.account(a).unwrap().cash;
+    let mut cx = ctx(&e, &cfg, &inp);
+    e.allot(&mut cx, 2).unwrap();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    let want = (200.0 * (-fp.ipo_risk * 0.2f64).exp()).round() as i64;
+    let c = e.company(2).unwrap();
+    assert_eq!(c.ipo_price, want);
+    assert_eq!(c.prev_close, want);
+    assert_eq!(e.available_shares(a, 2), 600);
+    assert_eq!(cash0 - e.account(a).unwrap().cash, 600 * want + Fees::default().commission_on(600 * want));
+    assert_eq!(frozen_players(&e), 0);
+    assert_eq!(e.available_shares(committee, 2), 7500 + 1900);
+    e.check_invariants().unwrap();
+
+    // an offer within 5% of the supported price is left alone
+    let mut e = fixture();
+    subscribing(&mut e);
+    let mut js = crate::vclose::JState::empty(DAY);
+    js.active = [true, false, false];
+    e.st.jstate.insert(2, js);
+    e.st.companies.get_mut(&2).unwrap().fair_value = 510;
+    apply(&mut e, "a", 600);
+    let mut cx = ctx(&e, &cfg, &inp);
+    e.allot(&mut cx, 2).unwrap();
+    assert_eq!(e.company(2).unwrap().ipo_price, 500);
+}

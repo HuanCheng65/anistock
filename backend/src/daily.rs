@@ -1117,13 +1117,52 @@ impl Engine {
     /// Close a subscription (v1 `allot`): pro rata with a ballot for the odd shares, payment, release,
     /// unsold shares to the rights holders, studio fee, listing.
     fn allot(&mut self, cx: &mut Ctx, company_id: i64) -> Result<(), String> {
-        let (day, ts) = (cx.day.clone(), cx.ts.clone());
         let c = self.st.companies[&company_id].clone();
+        self.allot_company(cx, &c)
+    }
+
+    /// The offer price at allotment: lowered (never raised) to what the latest data support when the announced
+    /// price is more than `REPRICE_TOLERANCE` above it (a show whose pre-air estimate was too high; players chose
+    /// at the announced price, so only a cut is fair). Posts the notice. Applications froze cash at the announced
+    /// price; the allotment releases all of it and charges the new price.
+    fn reprice_offer(&mut self, cx: &mut Ctx, c: &Company) -> Result<i64, String> {
+        const REPRICE_TOLERANCE: f64 = 0.05;
+        if cx.cfg.economy_v1 || c.fair_value <= 0 {
+            return Ok(c.ipo_price);
+        }
+        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+        let Some(px) = self.ipo_price_now(&fp, &cx.p, c.id, c.fair_value) else { return Ok(c.ipo_price) };
+        if px as f64 >= c.ipo_price as f64 * (1.0 - REPRICE_TOLERANCE) {
+            return Ok(c.ipo_price);
+        }
+        let co = self.st.companies.get_mut(&c.id).unwrap();
+        co.ipo_price = px;
+        co.prev_close = px;
+        co.open_ref = Some(px);
+        co.last_price = px;
+        self.mark_company(c.id);
+        let (day, ts) = (cx.day.clone(), cx.ts.clone());
+        self.push_news(
+            &ts,
+            &day,
+            "ipo",
+            Some(c.id),
+            format!("《{}》发行价下调至 {} 星辉", c.title, fixed(px as f64 / 100.0, 2)),
+            format!(
+                "按最新数据重新定价，原发行价 {} 星辉。认购按新发行价配售，冻结的资金先全部解冻，再按中签数量扣款。",
+                fixed(c.ipo_price as f64 / 100.0, 2)
+            ),
+        );
+        Ok(px)
+    }
+
+    fn allot_company(&mut self, cx: &mut Ctx, c: &Company) -> Result<(), String> {
+        let (day, ts) = (cx.day.clone(), cx.ts.clone());
         let world = cx.world;
         let company_acct =
             self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
         let committee = self.account_of("committee", c.id).ok_or_else(|| format!("no committee for {}", c.id))?;
-        let price = c.ipo_price;
+        let price = self.reprice_offer(cx, &c)?;
         let float_qty = pround(c.shares as f64 * cx.p.ipo_float);
         let base = pround(float_qty as f64 * cx.g().ipo_public_base);
         let mut apps: Vec<IpoApplication> =
@@ -1325,6 +1364,27 @@ impl Engine {
         };
         self.out.push(Change::CompanyInsert(company.clone()));
         self.st.companies.insert(s.id, company);
+        // a show that has already premiered (it reached the listing bar late): priced from what it has shown since,
+        // the value the closes will give it, not from the estimate frozen before its premiere
+        let mut ipo_price = ipo_price;
+        if let (Some(totals), false, true) = (cx.vtotals.clone(), cx.cfg.economy_v1, s.first_air.as_str() <= day.as_str()) {
+            let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+            let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
+            let today = crate::vclose::day_no(&day).ok_or("bad day")?;
+            self.valuation_step(&fp, &cx.p, s, &day, &ts);
+            if let Some(v) = self.valuation_value_of(&fp, &cx.p, s.id, today, &totals, rate, a_ref) {
+                if let Some(px) = self.ipo_price_now(&fp, &cx.p, s.id, v) {
+                    ipo_price = px;
+                    let co = self.st.companies.get_mut(&s.id).unwrap();
+                    co.ipo_price = px;
+                    co.prev_close = px;
+                    co.open_ref = Some(px);
+                    co.last_price = px;
+                    co.fair_value = v;
+                    self.mark_company(s.id);
+                }
+            }
+        }
         self.do_create_account("company", &format!("{title} 公司账户"), None, None, Some(s.id), &ts);
         let committee =
             self.do_create_account("committee", &format!("{title} 制作委员会"), None, None, Some(s.id), &ts);
