@@ -57,6 +57,8 @@
 
 ### 3.3 公布的内容和数据条款
 
+三家条款的逐条核对、结论和要改的地方见 `docs/v3-data-terms.md`（2026-11-08）。
+
 - 只公布我们计算出的聚合统计（每天的增量、指数），不公布各平台接口返回的原始数据。Annict 的接口条款（2026-11-25 起）第 6 条禁止在公开网址发布原始数据，聚合统计可以。上线前逐条核对 Annict、Bangumi、AniList 三家的条款，结论写进本文。
 - 不展示任何平台的用户名或评论（docs/game-design.md“数据合规”）。
 
@@ -343,7 +345,7 @@
 1. `bash deploy/update.sh`（在 main 上运行：脚本自己 pull，main 的最新提交就是 v0.7.0，装的是这个版本的程序；迁移 V19 自动执行，执行前自动备份）。
 2. 用第 1 版常数重算后台指数（11 月 5 日起用旧的滚动常数算过，还没公开、没结算过）：
    `mv data/derived/heat_index.db data/derived/heat_index.pre-v1.db && uv run engine/heat_index.py`
-3. 日本分项按账号去重的首次同步，约 2 分钟，避开 06:00 的采集：`uv run collect.py --annict-viewers`
+3. 日本分项按账号去重：每天的采集按预算逐步读完（Annict 要求全量拉取分成几小时到几天，不能并发，见 docs/v3-data-terms.md），不再单独跑 `--annict-viewers`
 4. 把部署之前的指数导入游戏数据库，股票页的热度页签从 11 月 5 日开始：`uv run python -m server.tools.import_heat`
 5. 再往前一年（2025-11 起）用回填的历史补上，页面上画得浅一些、标“回填”，期货不用它。在有回填数据的机器上导出（`uv run python -m server.tools.import_heat --export-backfill heat_backfill.csv.gz`，约 0.9 MB，采集到的数据不进仓库），复制到服务器后：`uv run python -m server.tools.import_heat --backfill heat_backfill.csv.gz`。要在第 4 步之后运行：回填只补每部作品第一个实时值之前的日子
 6. 合约在日结时挂牌：每部在播作品在下一个合约期开始前的那一周挂出（挂牌日那天的日结没跑时，这一周内的日结补挂），部署后 4 周内全部挂出；开播不到一周的作品在开播满一周那天挂第 1 期。

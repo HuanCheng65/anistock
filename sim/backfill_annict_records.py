@@ -87,7 +87,7 @@ def main() -> None:
     load_dotenv()
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--per-min", type=int, default=300)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=1)  # Annict: requests one at a time (docs/v3-data-terms.md)
     args = ap.parse_args()
     token = os.environ.get("ANNICT_TOKEN")
     if not token:

@@ -148,7 +148,7 @@ const taxText = computed(() => taxBrackets(r.value?.dividend_tax).map((x) => `${
       </ul>
     </section>
 
-    <p class="foot">星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。作品数据来自 AniList、Bangumi、Annict 的公开统计。</p>
+    <p class="foot">星辉是安易内的虚拟资产，与真实货币无关，不能充值或提现。作品数据来自 <a href="https://anilist.co" target="_blank" rel="noopener">AniList</a>、<a href="https://bgm.tv" target="_blank" rel="noopener">Bangumi</a>（条目信息 CC BY-SA）、<a href="https://annict.com" target="_blank" rel="noopener">Annict</a> 的公开统计。</p>
   </main>
 </template>
 

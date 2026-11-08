@@ -833,7 +833,7 @@ fn fetch_cover(st: &AppState, id: i64, path: &std::path::Path) -> Option<Vec<u8>
     std::fs::create_dir_all(dir).ok()?;
     let tmp = dir.join(format!(".{id}.part"));
     let status = std::process::Command::new("curl")
-        .args(["-sSfL", "--max-time", "20", "--max-filesize", "5000000", "-A", "AniEx/0.4 (cover cache)", "-o"])
+        .args(["-sSfL", "--max-time", "20", "--max-filesize", "5000000", "-A", "HuanCheng65/anistock (https://github.com/HuanCheng65/anistock)", "-o"])
         .arg(&tmp)
         .arg(&url)
         .status()

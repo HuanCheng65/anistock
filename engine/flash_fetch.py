@@ -31,7 +31,7 @@ import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 BGM = "https://api.bgm.tv"
-USER_AGENT = "anistock-collector/0.1 (anime club market game)"
+USER_AGENT = "HuanCheng65/anistock (https://github.com/HuanCheng65/anistock)"  # as collect.py
 JST = timezone(timedelta(hours=9))
 CST = timezone(timedelta(hours=8))
 

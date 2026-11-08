@@ -44,7 +44,8 @@ from zoneinfo import ZoneInfo
 import httpx
 
 TZ = ZoneInfo("Asia/Shanghai")  # "day" boundaries are defined in this zone
-USER_AGENT = "anistock-collector/0.1 (anime club market game)"
+# developer/app (url): Bangumi asks for a developer id and app name, the others for a way to reach us (docs/v3-data-terms.md)
+USER_AGENT = "HuanCheng65/anistock (https://github.com/HuanCheng65/anistock)"
 KEEP_TRACKING_DAYS = 180  # full snapshots (episode lists) this long after a work was last discovered; after that the
                           # work stays tracked for good in a lighter "tail" mode (docs/v2-series.md §4.2: revenue in the
                           # long tail needs daily data for as long as the company is listed)
@@ -584,12 +585,13 @@ def annict_records_query(cursors: dict[int, str | None], first: int) -> tuple[st
     return f"query ($first: Int!{params}) {{ {parts} }}", {"first": first, **{f"a{e}": c for e, c in cursors.items()}}
 
 
-# seconds per run for reading new records. The first sync of every tracked work takes a few minutes: run
-# `collect.py --annict-viewers` once (no limit); until then a work not fully synced reports no viewerPairs
-# and the index falls back to recordsCount.
+# seconds per run for reading new records. A work's first read happens here too, a budget a day: Annict asks for
+# full reads in pieces over hours or days (docs/v3-data-terms.md). `collect.py --annict-viewers` reads everything at
+# once, for a fresh database only; until a work is read its index falls back to recordsCount.
 ANNICT_VIEWER_BUDGET_S = float(os.environ.get("ANNICT_VIEWER_BUDGET_S", "600"))
-# the first sync reads side by side, each worker with its share of the budget (Annict allows 600 a minute)
-ANNICT_VIEWER_WORKERS, ANNICT_VIEWER_PER_MIN = 4, 300
+# one request at a time (Annict's rate limit page: 「リクエストは並列にせず、1件ずつ順番に送ってください」, made part of
+# the API terms by Art. 11; docs/v3-data-terms.md); each request still reads 20 episodes by alias
+ANNICT_VIEWER_WORKERS, ANNICT_VIEWER_PER_MIN = 1, 300
 
 
 @dataclass
@@ -886,7 +888,7 @@ def main() -> int:
     ap.add_argument("--db", default=os.environ.get("ANISTOCK_DB", str(Path(__file__).parent / "data" / "anistock.db")))
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--annict-viewers", action="store_true",
-                    help="one-off: the first full read of Annict records, each account once per episode (a few minutes)")
+                    help="one-off, fresh database only: read every Annict record at once (the daily run reads them a budget a day)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
