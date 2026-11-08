@@ -107,6 +107,10 @@ pub(crate) struct State {
     pub corp: crate::corporate::CorporateState,
     /// 热度期货 (crate::futures)
     pub futures: crate::futures::FuturesState,
+    /// 指数基金 (crate::funds; in memory only until the tables come, docs/v3-funds.md §9)
+    pub funds: crate::funds::FundsState,
+    /// per fund account: commission and stamp duty of its fills since `funds_confirm` / the close took them
+    pub funds_costs: BTreeMap<i64, i64>,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -123,6 +127,8 @@ pub struct Engine {
     pub corporate: crate::corporate::CorporateRules,
     /// `[futures]` of game.toml (crate::futures)
     pub futures: crate::futures::FuturesRules,
+    /// `[funds]` of game.toml (crate::funds)
+    pub funds: crate::funds::FundRules,
     pub(crate) st: State,
 
     pub(crate) out: Vec<Change>,
@@ -162,6 +168,7 @@ impl Engine {
             margin: crate::margin::MarginRules::default(),
             corporate: crate::corporate::CorporateRules::default(),
             futures: crate::futures::FuturesRules::default(),
+            funds: crate::funds::FundRules::default(),
             st: State::from_snapshot_parts(&s),
             out: Vec::new(),
             dirty_accounts: BTreeSet::new(),
@@ -1006,6 +1013,9 @@ impl Engine {
         let c_buy = self.fees.commission_on(notional);
         let c_sell = self.fees.commission_on(notional);
         let stamp = self.fees.stamp_on(notional);
+        self.funds_note_cost(buy.account_id, c_buy);
+        self.funds_note_fill(company_id, q, tp, buy.account_id, sell.account_id);
+        self.funds_note_cost(sell.account_id, c_sell + stamp);
         let world = self.special("world").expect("no world account");
         let gov = self.special("gov").expect("no gov account");
 

@@ -8,6 +8,7 @@ pub mod config;
 pub mod corporate;
 pub mod daily;
 pub mod futures;
+pub mod funds;
 pub mod engine;
 pub mod exchange;
 pub mod inputs;

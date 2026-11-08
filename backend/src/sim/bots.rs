@@ -21,6 +21,10 @@ pub mod corporate;
 #[path = "futures_bots.rs"]
 pub mod futures;
 
+/// 指数基金 bots (docs/v3-funds.md §6.1)
+#[path = "funds_bots.rs"]
+pub mod funds;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BotKind {
     /// buy every listed stock equally on day one, hold (the baseline)
@@ -145,10 +149,14 @@ pub enum BotKind {
     FutHedge,
     /// holds the stocks and buys the futures (the same direction twice)
     FutDouble,
+    /// 指数基金 (docs/v3-funds.md §6.1; sim/funds_bots.rs): subscribe everything to the 综合指数基金, hold
+    FundHold,
+    /// buy each new listing on its first session, sell it into the next opening auction (where the fund buys it)
+    IpoFrontRun,
 }
 
 impl BotKind {
-    pub fn all() -> [BotKind; 53] {
+    pub fn all() -> [BotKind; 55] {
         [
             BotKind::BuyHold,
             BotKind::BuyHoldCap,
@@ -203,6 +211,8 @@ impl BotKind {
             BotKind::FutFrontRun,
             BotKind::FutHedge,
             BotKind::FutDouble,
+            BotKind::FundHold,
+            BotKind::IpoFrontRun,
         ]
     }
     pub fn name(self) -> &'static str {
@@ -260,6 +270,8 @@ impl BotKind {
             BotKind::FutFrontRun => "fut_front_run",
             BotKind::FutHedge => "fut_hedge",
             BotKind::FutDouble => "fut_double",
+            BotKind::FundHold => "fund_hold",
+            BotKind::IpoFrontRun => "ipo_front_run",
         }
     }
     /// Error of the fan bot's foresight (None: not a fan bot).
@@ -402,7 +414,7 @@ impl Bot {
 
     /// Wealth at last prices, cents.
     pub fn wealth(&self, e: &Engine) -> i64 {
-        e.net_assets(self.account)
+        e.net_assets(self.account) + e.fund_value_of(self.account)
     }
 
     /// Buy up to `budget` cents of `c` (limit 0.5% over the last price).
@@ -583,6 +595,10 @@ impl Bot {
             self.exits.retain(|x| t < x.1 || e.holding(acct, x.0).is_some_and(|h| h.qty > 0));
             return;
         }
+        if funds::is_funds(self.kind) {
+            self.funds_minute(e, t);
+            return;
+        }
         if futures::is_futures(self.kind) {
             futures::on_minute(self, e, t, ctx);
             return;
@@ -600,7 +616,9 @@ impl Bot {
             | BotKind::FutMomentum
             | BotKind::FutFrontRun
             | BotKind::FutHedge
-            | BotKind::FutDouble => {} // handled above
+            | BotKind::FutDouble
+            | BotKind::FundHold
+            | BotKind::IpoFrontRun => {} // handled above
             BotKind::FadeFlash | BotKind::RideFlash | BotKind::PremiereRush => {
                 if !self.exits.is_empty() {
                     self.run_exits(e, t);

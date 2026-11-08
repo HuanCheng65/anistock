@@ -92,6 +92,7 @@ pub fn cli(args: &[String]) {
         no_night: false,
         open_at_value: false,
         history: true,
+        fund_flows: None,
     };
     let t0 = std::time::Instant::now();
     let res = run(&cfg, &opts).unwrap_or_else(|e| fail(e));

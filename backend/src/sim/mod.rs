@@ -5,6 +5,7 @@
 
 pub mod bots;
 pub mod data;
+pub mod funds;
 pub mod history;
 pub mod metrics;
 pub mod probe;
@@ -273,6 +274,8 @@ pub struct SimOptions {
     /// were none before the market opened), every listed company starts at the model's own value (like
     /// server/seed.py's opening price), and the result keeps what the closes wrote (`SimResult::history`).
     pub history: bool,
+    /// 指数基金 (`[funds]` on): the idle players' flows into a fund (docs/v3-funds.md §9 step 1)
+    pub fund_flows: Option<funds::FundFlows>,
 }
 
 pub struct SimResult {
@@ -300,10 +303,12 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
     e.margin = cfg.margin.clone();
     e.corporate = cfg.corporate.clone();
     e.futures = cfg.futures.clone();
+    e.funds = cfg.funds.clone();
     // value-only: nothing trades, so the price stays where the world left it and every capital-policy rule that
     // reads it (splits above 100, buybacks below value) would fire on a stale price
     if opts.history || opts.value_only {
         e.corporate.enabled = false;
+        e.funds.enabled = false;
     }
     let params = Params::from_config(cfg)?;
     let last_closed = e.state("last_closed").ok_or("world has no last_closed")?.to_string();
@@ -415,6 +420,12 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             e.transfer(world, acct, start_cash, "grant", &last_closed, &ts0, None, None);
         }
     }
+    e.funds_setup(&ts0);
+    let idle: Vec<(i64, i64)> = {
+        let start_cash = (cfg.game.initial_cash * 100.0).round() as i64;
+        e.accounts().filter(|a| a.kind == "player" && a.name.starts_with("idle")).map(|a| (a.id, start_cash)).collect()
+    };
+    let mut bench = funds::Bench::default();
     let mut probe = (opts.probe > 0).then(|| {
         let start_cash = (cfg.game.initial_cash * 100.0).round() as i64;
         probe::Probe::new(&mut e, opts.probe, start_cash, &last_closed, &ts0, opts.market.seed)
@@ -569,6 +580,30 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             t = next;
             rec.flash_tick(&e, t);
             let (_, s) = local(t);
+            // 指数基金: the requests into the opening auction (08:50), the bots' auction orders (08:55), the open and
+            // the confirmation at its prices (09:00), the batches after it, the idle players' requests (20:00)
+            if e.funds.enabled && !opts.value_only {
+                if s == 8 * 3600 + 50 * 60 {
+                    bench.morning(&e, day);
+                    e.funds_auction(day, &ts_of(t));
+                }
+                if s == 8 * 3600 + 55 * 60 && k >= bot_start {
+                    if let Some(b) = bot.as_mut() {
+                        b.funds_auction(&mut e, t);
+                    }
+                }
+                if s == 9 * 3600 {
+                    e.open_market(day, &ts_of(t));
+                    e.funds_confirm(day, &ts_of(t));
+                } else if t > t_cont && (s / 60) % e.funds.batch_every_min == 0 {
+                    e.funds_batch(day, &ts_of(t), (t - at_local(day, 0, 0)) / 60);
+                }
+                if s == 20 * 3600 && k >= bot_start {
+                    if let Some(ff) = &opts.fund_flows {
+                        funds::idle_flows(&mut e, ff, &idle, k - bot_start, opts.market.seed, day, &ts_of(t));
+                    }
+                }
+            }
             if s == 12 * 3600 {
                 m.subscribe_ipos(&mut e, t);
             }
@@ -609,6 +644,10 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         }
         e.check_invariants().map_err(|err| format!("after {day}: {err}"))?;
         fut_log.observe(&e, day);
+        if e.funds.enabled {
+            e.funds_close(day, &ts_close);
+            bench.evening(&e, day);
+        }
         if opts.history {
             let v: Vec<((i64, String), i64)> = e.companies().filter(|c| c.status == "listed").map(|c| ((c.id, day.clone()), c.fair_value)).collect();
             tap.0.lock().unwrap().history.as_mut().unwrap().values.extend(v);
@@ -767,6 +806,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                 };
                 *mm_counterparty.entry(label).or_default() += edge;
             }
+            if e.funds.enabled {
+                bench.trades(&e, &tp.trades);
+            }
             rec.absorb(&mut tp);
         }
         prev = inp;
@@ -844,6 +886,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         b
     });
     metrics["capital"] = capital;
+    if e.funds.enabled {
+        metrics["funds"] = funds::report(&e, &bench);
+    }
     if e.futures.enabled {
         metrics["futures"] = fut_log.report(&e);
     }

@@ -201,7 +201,7 @@ fn sd(x: &[f64]) -> f64 {
 }
 
 fn wealth(e: &Engine, acct: i64) -> i64 {
-    e.net_assets(acct)
+    e.net_assets(acct) + e.fund_value_of(acct)
 }
 
 impl Recorder {

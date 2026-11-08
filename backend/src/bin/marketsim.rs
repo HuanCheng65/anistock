@@ -3,6 +3,7 @@
 //!     marketsim --world WORLD.db --inputs DIR --out DIR [--collector anistock.db] [--days N]
 //!               [--set key=value ...] [--margin key=value ...] [--bots all|none|name,name] [--threshold PTS]
 //!               [--probe | --probe-players N] [--grow N_VALUE,DAYS,CASH_SCALE] [--bot-start auto|YYYY-MM-DD]
+//!               [--funds key=value ...] [--fund-flows KEY,SHARE,CHURN]
 //!
 //! WORLD.db: a launched game DB (read only). The baseline run has no bots; each bot strategy runs in its
 //! own season replay (same seed) on its own thread. Writes DIR/metrics.json, DIR/bots.json, DIR/report.html.
@@ -26,6 +27,8 @@ fn main() {
     let mut sets = Vec::new();
     let mut margin_sets: Vec<String> = Vec::new();
     let mut futures_sets: Vec<String> = Vec::new();
+    let mut funds_sets: Vec<String> = Vec::new();
+    let mut fund_flows = None;
     let mut bots_arg = "all".to_string();
     let mut threshold = 5.0;
     let mut probe = 0usize;
@@ -47,6 +50,8 @@ fn main() {
             "--set" => sets.push(v),
             "--margin" => margin_sets.push(v),
             "--futures" => futures_sets.push(v),
+            "--funds" => funds_sets.push(v),
+            "--fund-flows" => fund_flows = Some(anistock::sim::funds::FundFlows::parse(&v).expect("--fund-flows KEY,SHARE,CHURN")),
             "--bots" => bots_arg = v,
             "--threshold" => threshold = v.parse().expect("--threshold"),
             "--bot-start" => bot_start = Some(v),
@@ -88,6 +93,7 @@ fn main() {
     // --margin / --futures key=value: override [margin] (融资融券) / [futures] (热度期货) for this run
     cfg.margin = overridden(&cfg.margin, &margin_sets, "--margin");
     cfg.futures = overridden(&cfg.futures, &futures_sets, "--futures");
+    cfg.funds = overridden(&cfg.funds, &funds_sets, "--funds");
     let mut market = cfg.market.clone();
     for kv in &sets {
         market.set(kv).unwrap_or_else(|e| panic!("--set {kv}: {e}"));
@@ -127,6 +133,7 @@ fn main() {
         no_night,
         open_at_value,
         history: false,
+        fund_flows,
     };
     let bots: Vec<BotKind> = match if value_only { "none" } else { bots_arg.as_str() } {
         "none" => vec![],
