@@ -209,7 +209,7 @@ futures_disclosure = 1         # 热度期货风险揭示书: signed before trad
 [news]
 # external news from the news-feed stock extension (docs/v3-news.md): shadow = archived only (calibration);
 # publish = also a game news item (category 媒体), no effect on the market
-mode = "shadow"
+mode = "publish"
 
 [api]
 # API keys with the `trade` scope (docs/v2-api-access.md phase 2). Off: keys stay read-only, and existing
