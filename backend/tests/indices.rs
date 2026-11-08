@@ -56,3 +56,42 @@ fn total_return_adds_dividends_and_the_delisting_payout() {
     assert_eq!(&v[..3], &[1000.0, 1050.0, 1050.0]);
     assert!((v[3] - want).abs() < 1e-3, "{} vs {want}", v[3]);
 }
+
+/// A and B from before, A's committee holding 750 of its 1,000 shares; C listed on 11-06.
+fn reviews_world() -> (tempfile::TempDir, rusqlite::Connection) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("g.db");
+    store::migrate(&path).unwrap();
+    let c = store::connect(&path).unwrap();
+    c.execute_batch(
+        "INSERT INTO companies(id, code, title, first_air, listed_on, status, shares, ipo_price, prev_close, last_price)
+           VALUES (1, '100001', 'A', '2026-07-01', '2026-06-20', 'listed', 1000, 100, 110, 110),
+                  (2, '100002', 'B', '2026-07-01', '2026-06-20', 'listed', 1000, 100, 100, 100),
+                  (3, '100003', 'C', '2026-07-01', '2026-11-06', 'listed', 1000, 100, 200, 200);
+         INSERT INTO accounts(id, kind, name, company_id, created_at) VALUES (60, 'committee', 'A', 1, 't');
+         INSERT INTO holdings(account_id, company_id, qty, qty_frozen) VALUES (60, 1, 750, 0);
+         INSERT INTO candles(company_id, day, open, high, low, close, volume) VALUES
+           (1, '2026-11-05', 100, 100, 100, 100, 10), (1, '2026-11-06', 110, 110, 110, 110, 10),
+           (1, '2026-11-09', 110, 110, 110, 110, 10), (1, '2026-11-10', 110, 110, 110, 110, 10),
+           (2, '2026-11-05', 100, 100, 100, 100, 10), (2, '2026-11-06', 100, 100, 100, 100, 10),
+           (2, '2026-11-09', 100, 100, 100, 100, 10), (2, '2026-11-10', 100, 100, 100, 100, 10),
+           (3, '2026-11-06', 100, 100, 100, 100, 10), (3, '2026-11-09', 200, 200, 200, 200, 10),
+           (3, '2026-11-10', 200, 200, 200, 200, 10);",
+    )
+    .unwrap();
+    (dir, c)
+}
+
+#[test]
+fn free_float_weights_and_a_new_listing_joins_from_its_second_close() {
+    let (_d, c) = reviews_world();
+    let r = compute_indices(&c, "2026-11-10", true, IndexBasis::Price).unwrap();
+    let v: Vec<f64> = r.items[0].series.iter().map(|p| p.value).collect();
+    // 11-06: A +10% on its free float (250 shares) against B's 1,000: +2%, not the +5% of the total shares;
+    // C's first session is not in the index (no close the day before)
+    assert_eq!(v[1], 1020.0);
+    // 11-09: C doubles on 1,000 free-float shares of the 227,500 the day before
+    let want = 1020.0 * (250.0 * 110.0 + 1000.0 * 100.0 + 1000.0 * 200.0) / (250.0 * 110.0 + 1000.0 * 100.0 + 1000.0 * 100.0);
+    assert!((v[2] - want).abs() < 0.01, "{v:?} {want}");
+    assert_eq!(r.items[0].members, 3);
+}

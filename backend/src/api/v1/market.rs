@@ -502,7 +502,8 @@ pub enum IndexBasis {
     Price,
 }
 
-/// The three indices and the market breadth: cap-weighted (yesterday's market value), chain-linked day by day,
+/// The three indices and the market breadth: free-float cap-weighted (yesterday's market value of the shares not
+/// held by the production committee or the company), chain-linked day by day,
 /// today's point from last prices. Members are point in time: each day counts the stocks with a close that
 /// day and the day before (a delisted stock keeps its history up to its delisting; a new listing joins from
 /// its second close). Splits and rights issues are taken out with the 前复权 factors, so they move no index.
@@ -583,6 +584,22 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
             close as f64 + cash
         }
     };
+    // free float: the shares not held by the production committee or the company itself (today's counts, like
+    // the shares: weights are 前复权 closes × today's free float)
+    let mut locked: HashMap<i64, i64> = HashMap::new();
+    {
+        let mut s = c
+            .prepare_cached(
+                "SELECT h.company_id, SUM(h.qty) FROM holdings h JOIN accounts a ON a.id = h.account_id
+                 WHERE a.kind IN ('committee', 'company') GROUP BY h.company_id",
+            )
+            .map_err(sql)?;
+        let mut rows = s.query([]).map_err(sql)?;
+        while let Some(r) = rows.next().map_err(sql)? {
+            locked.insert(r.get(0).map_err(sql)?, r.get(1).map_err(sql)?);
+        }
+    }
+    let float = |id: i64| (by_id[&id].shares - locked.get(&id).copied().unwrap_or(0)).max(0) as f64;
     type Member<'a> = Box<dyn Fn(&Co) -> bool + 'a>;
     let defs: [(&str, &str, Member); 3] = [
         ("all", "番剧综合指数", Box::new(|_| true)),
@@ -601,15 +618,15 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
                 continue;
             }
             if let Some(p) = prev {
-                // weights: yesterday's market value in today's share terms (前复权 close × shares)
+                // weights: yesterday's free-float market value in today's share terms (前复权 close × free float)
                 let (mut num, mut den) = (0f64, 0f64);
                 for (id, close) in closes {
                     if let (true, Some(pc)) = (members.contains(id), p.get(id)) {
                         let a = adj.get(id);
                         let fwd = forward_factor(a, d);
-                        let sh = by_id[id].shares as f64;
-                        num += end_value(*id, d, *close) * fwd * sh;
-                        den += *pc as f64 * factor_on(a, d) * fwd * sh;
+                        let fl = float(*id);
+                        num += end_value(*id, d, *close) * fwd * fl;
+                        den += *pc as f64 * factor_on(a, d) * fwd * fl;
                     }
                 }
                 if den > 0.0 {
@@ -629,9 +646,9 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
             let lastc = &days[&last_day];
             for id in members.iter().filter(|id| by_id[*id].listed) {
                 if let Some(pc) = lastc.get(id) {
-                    let sh = by_id[id].shares as f64;
-                    num += by_id[id].last as f64 * sh;
-                    den += *pc as f64 * forward_factor(adj.get(id), &last_day) * sh;
+                    let fl = float(*id);
+                    num += by_id[id].last as f64 * fl;
+                    den += *pc as f64 * forward_factor(adj.get(id), &last_day) * fl;
                 }
             }
             if den > 0.0 {
