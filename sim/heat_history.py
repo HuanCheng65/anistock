@@ -44,11 +44,16 @@ def days_between(a: date, b: date):
         d += timedelta(days=1)
 
 
-def bgm_daily(db: sqlite3.Connection, table: str = "bgm_weekly", col: Path | None = None) -> dict[int, dict[str, float]]:
-    """subject -> day -> people who started it that day (a week's change spread over its days). After the last
-    weekly dump, the collector's daily subject snapshots (from 2026-11-05) continue the series: the days between
-    the last dump and the first snapshot are measured, not left empty."""
-    out: dict[int, dict[str, float]] = defaultdict(dict)
+Segment = tuple[date, date, float]   # [first day, day after the last), people who started the show in it
+
+# a day's floor in the spread: this share of the segment's mean, so a sparse shape cannot pile a week on one day
+FLOOR = 0.1
+
+
+def bgm_segments(db: sqlite3.Connection, table: str = "bgm_weekly", col: Path | None = None) -> dict[int, list[Segment]]:
+    """subject -> the changes between consecutive counts: the weekly archive dumps (Tuesdays 21:04 UTC, so each
+    segment runs Wednesday to Wednesday, Beijing dates), then after the last dump the collector's daily subject
+    snapshots (from 2026-11-05), so the days between the last dump and the first snapshot are measured too."""
     rows = defaultdict(list)
     for sid, at, done, doing, hold, dropped in db.execute(
             f"SELECT subject_id, at, done, doing, on_hold, dropped FROM {table} ORDER BY subject_id, at"):
@@ -63,14 +68,26 @@ def bgm_daily(db: sqlite3.Connection, table: str = "bgm_weekly", col: Path | Non
             local = datetime.fromisoformat(fetched).astimezone(timezone(timedelta(hours=8))).date()
             if rows.get(sid) and local > rows[sid][-1][0]:
                 rows[sid].append((local, sum(c.get(k, 0) for k in ("collect", "doing", "on_hold", "dropped"))))
+    out: dict[int, list[Segment]] = {}
     for sid, pts in rows.items():
-        for (d0, n0), (d1, n1) in zip(pts, pts[1:]):
-            span = (d1 - d0).days
-            if span <= 0:
-                continue
-            per = max(0.0, (n1 - n0) / span)    # a week's net fall is a source correction, not negative activity
-            for d in days_between(d0, d1 - timedelta(days=1)):
-                out[sid][d.isoformat()] = per
+        # a net fall is a source correction, not negative activity
+        out[sid] = [(d0, d1, max(0.0, n1 - n0)) for (d0, n0), (d1, n1) in zip(pts, pts[1:]) if (d1 - d0).days > 0]
+    return out
+
+
+def spread(segments: list[Segment], shape: dict[str, float]) -> dict[str, float]:
+    """day -> cn: each segment's total over its days in proportion to `shape` (the show's daily activity on another
+    platform: viewers in China watch fansubs within hours of the Japanese airing, so the week has the same rhythm),
+    each day at least FLOOR of the mean; evenly where the shape has nothing in the segment."""
+    out: dict[str, float] = {}
+    for d0, d1, total in segments:
+        days = [d.isoformat() for d in days_between(d0, d1 - timedelta(days=1))]
+        w = [max(0.0, shape.get(d, 0.0)) for d in days]
+        mean = sum(w) / len(w)
+        w = [x + FLOOR * mean for x in w] if mean > 0 else [1.0] * len(days)
+        sw = sum(w)
+        for d, x in zip(days, w):
+            out[d] = total * x / sw
     return out
 
 
@@ -96,13 +113,14 @@ def main() -> None:
     if args.archive:
         for aid, sid in json.loads((DB.parent / "archive_matches.json").read_text()).items():
             matches.setdefault(aid, {}).setdefault("bgm", sid)
-    cn = bgm_daily(db, table, col)
+    segs = bgm_segments(db, table, col)
     jp: dict[int, dict[str, int]] = defaultdict(dict)
     for aid, day, n in db.execute("SELECT annict_id, day, records FROM annict_daily"):
         jp[aid][day] = n
     jp_seen = {r[0] for r in db.execute("SELECT DISTINCT annict_id FROM annict_done")}
     cn_seen = {r[0] for r in db.execute(f"SELECT DISTINCT subject_id FROM {table}")}
-    cn_last = max((max(v) for v in cn.values() if v), default="")   # after the last dump: not measured yet
+    # after the last count: not measured yet
+    cn_last = max(((v[-1][1] - timedelta(days=1)).isoformat() for v in segs.values() if v), default="")
 
     db.execute("CREATE TABLE IF NOT EXISTS heat_history (work_id INTEGER NOT NULL, day TEXT NOT NULL, us REAL, cn REAL, jp REAL, PRIMARY KEY (work_id, day))")
     db.execute("DELETE FROM heat_history")
@@ -113,10 +131,16 @@ def main() -> None:
         r = matches.get(str(s.id)) or {}
         b = int(r["bgm"]) if r.get("bgm") else None
         a = int(r["annict"]) if r.get("annict") else None
-        for d in days_between(max(start, s.days[0]), end):
+        # the week's rhythm: Annict's records (Beijing dates, like the segments), else AniList's attention
+        days = list(days_between(max(start, s.days[0]), end))
+        shape = {k: float(v) for k, v in jp.get(a, {}).items()} if a else {}
+        if not any(shape.values()):
+            shape = {d.isoformat(): E.attention(s, d, p["revenue"]) for d in days}
+        cn = spread(segs.get(b, []), shape) if b else {}
+        for d in days:
             ds = d.isoformat()
             us = E.attention(s, d, p["revenue"])
-            c = cn.get(b, {}).get(ds, 0.0 if b in cn_seen else None) if b and ds <= cn_last else None
+            c = cn.get(ds, 0.0 if b in cn_seen else None) if b and ds <= cn_last else None
             j = jp.get(a, {}).get(ds, 0 if a in jp_seen else None) if a else None
             hist.append((s.id, ds, us, c, j))
     with db:

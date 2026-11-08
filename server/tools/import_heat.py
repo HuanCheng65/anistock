@@ -12,8 +12,8 @@ The live index needs a snapshot on each side of a day, so it starts when the col
 `--backfill` adds the history before: each work's days from sim/heat_history.py (AniList trends, Bangumi's weekly
 archive spread over the week, Annict's records), turned into the index with the method v1 constants, version
 `v1-backfill`, only for days before the work's first live value. A day missing a market the work has on other
-days is left out rather than drawn low (the Bangumi archive is weekly: the days after its last dump have no
-cn), and such rows from an earlier import are removed. The stock page draws them lighter; futures
+days is left out rather than drawn low. The backfill is not published-and-frozen like the live index: each
+`--backfill` run replaces the backfilled rows of an earlier one (the live rows are never touched). The stock page draws them lighter; futures
 never use them (a contract's days are all after its listing). `--export-backfill` writes that history as a small
 gzipped CSV (work_id, day, us, cn, jp) from data/derived/heat_backfill.db, to copy to the server.
 
@@ -74,14 +74,10 @@ def backfill_rows(path: str, game: sqlite3.Connection) -> list[tuple]:
     return out
 
 
-def prune_incomplete(game: sqlite3.Connection) -> int:
-    """Remove backfilled rows missing a market their work has on other backfilled days (an earlier import)."""
+def drop_backfill(game: sqlite3.Connection) -> int:
+    """Remove the backfilled rows of an earlier import (never a live row)."""
     with game:
-        return game.execute("""
-            DELETE FROM heat_index WHERE version LIKE '%backfill' AND (
-                (us IS NULL AND EXISTS (SELECT 1 FROM heat_index h WHERE h.work_id=heat_index.work_id AND h.version LIKE '%backfill' AND h.us IS NOT NULL)) OR
-                (cn IS NULL AND EXISTS (SELECT 1 FROM heat_index h WHERE h.work_id=heat_index.work_id AND h.version LIKE '%backfill' AND h.cn IS NOT NULL)) OR
-                (jp IS NULL AND EXISTS (SELECT 1 FROM heat_index h WHERE h.work_id=heat_index.work_id AND h.version LIKE '%backfill' AND h.jp IS NOT NULL)))""").rowcount
+        return game.execute("DELETE FROM heat_index WHERE version LIKE '%backfill'").rowcount
 
 
 def export_backfill(out: str) -> int:
@@ -112,11 +108,11 @@ def main() -> int:
         print("the game database has no heat_index table yet: start the new server once (it migrates), then run this",
               file=sys.stderr)
         return 1
-    if args.backfill and not args.dry_run:
-        pruned = prune_incomplete(game)
-        if pruned:
-            print(f"removed {pruned} incomplete backfilled rows from an earlier import")
     rows = backfill_rows(args.backfill, game) if args.backfill else live_rows(args.src)
+    if args.backfill and not args.dry_run:
+        dropped = drop_backfill(game)
+        if dropped:
+            print(f"replacing {dropped} backfilled rows of an earlier import")
     have = {(w, d) for w, d in game.execute("SELECT work_id, day FROM heat_index")}
     new = [r for r in rows if (r[0], r[1]) not in have]
     days = sorted({r[1] for r in new})
