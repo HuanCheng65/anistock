@@ -1,24 +1,37 @@
 <script setup lang="ts">
 // 热度: the AniEx heat index by day (docs/v3-futures.md §3), the work's (or the works' summed) published values,
-// with the episodes under the days they aired. Pointing at (or focusing, or tapping) a day shows it in the
-// readout; without a choice the readout shows the latest day and its change on the week before. ←/→ move.
+// with the episodes under the days they aired, in fixed slots ending on the latest day (a day without a value is an
+// empty slot). Days rebuilt from the archives before the live index began are lighter and say 回填. Pointing at (or
+// focusing, or tapping) a day shows it in the readout; without a choice the readout shows the latest day and its
+// change on the week before. ←/→ move.
 import { computed, ref, watch } from 'vue'
 import type { StockDetail } from '../../api'
-import { dayLabel, dir, num, pct } from '../../format'
+import { addDays, dayLabel, dir, num, pct } from '../../format'
 
-const props = defineProps<{ s: StockDetail; days: { day: string; index: number }[] | null; failed: boolean; today?: string; desk: boolean }>()
+type Day = { day: string; index: number; backfill: boolean }
+const props = defineProps<{ s: StockDetail; days: Day[] | null; failed: boolean; today?: string; desk: boolean }>()
 const emit = defineEmits<{ retry: [] }>()
 
 const n = computed(() => (props.desk ? 56 : 28))
-const shown = computed(() => (props.days ?? []).slice(-n.value))
-const max = computed(() => Math.max(1, ...shown.value.map((d) => d.index)))
+/** n slots ending on the latest day: the value, or null for a day without one */
+const shown = computed<{ day: string; v: Day | null }[]>(() => {
+  const all = props.days ?? []
+  if (!all.length) return []
+  const by = new Map(all.map((d) => [d.day, d]))
+  const last = all[all.length - 1].day
+  return Array.from({ length: n.value }, (_, i) => {
+    const day = addDays(last, i - n.value + 1)
+    return { day, v: by.get(day) ?? null }
+  })
+})
+const max = computed(() => Math.max(1, ...shown.value.map((d) => d.v?.index ?? 0)))
 const eps = computed(() => new Map(props.s.episode_days.map((e) => [e.trading_day, e.episode])))
 
 const picked = ref<number | null>(null)
 const hovering = ref(false)
 watch(() => props.days?.length, () => (picked.value = null))
 const cur = computed(() => picked.value ?? shown.value.length - 1)
-const d = computed(() => shown.value[cur.value] ?? null)
+const d = computed(() => shown.value[cur.value]?.v ?? null)
 /** the mean of the 7 days to `i` over the 7 before them */
 const week = computed(() => {
   const all = props.days ?? []
@@ -68,16 +81,17 @@ function leave() {
     <div v-else class="top">
       <div class="chart">
       <div class="read" aria-live="polite">
-        <span class="dl">{{ d ? dayLabel(d.day, today) : '' }}</span>
-        <span class="num v">{{ d ? num(d.index) : '' }}</span>
+        <span class="dl">{{ shown[cur] ? dayLabel(shown[cur].day, today) : '' }}<template v-if="d?.backfill"> · 回填</template></span>
+        <span class="num v">{{ d ? num(d.index) : '–' }}</span>
         <span v-if="picked == null && week != null" class="num wk" :class="dir(week)">比上周 {{ pct(week, 1) }}</span>
       </div>
       <div ref="bars" class="bars" :class="{ dim: picked != null || hovering }" role="group" aria-label="每日热度"
            @pointerleave="leave" @keydown="onKey">
         <button v-for="(x, i) in shown" :key="x.day" type="button" class="col" :class="{ on: i === cur }"
-                :tabindex="i === cur ? 0 : -1" :aria-label="`${dayLabel(x.day, today)}，热度 ${num(x.index)}${eps.has(x.day) ? `，第 ${eps.get(x.day)} 集播出` : ''}`"
+                :tabindex="i === cur ? 0 : -1"
+                :aria-label="`${dayLabel(x.day, today)}，${x.v ? `热度 ${num(x.v.index)}${x.v.backfill ? '（回填）' : ''}` : '没有数据'}${eps.has(x.day) ? `，第 ${eps.get(x.day)} 集播出` : ''}`"
                 :aria-pressed="i === cur" @pointerenter="hovering = true; picked = i" @focus="picked = i" @click="picked = i">
-          <span class="bar" :style="{ height: `calc((100% - 18px) * ${x.index / max})` }"></span>
+          <span v-if="x.v" class="bar" :class="{ bf: x.v.backfill }" :style="{ height: `calc((100% - 18px) * ${x.v.index / max})` }"></span>
           <span class="ep num">{{ eps.get(x.day) ?? '' }}</span>
         </button>
       </div>
@@ -107,6 +121,7 @@ function leave() {
 .col:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .dim .col:not(.on) { opacity: 0.4; }
 .bar { display: block; background: var(--ink); min-height: 1px; transition: height var(--dur-2) var(--ease-out); }
+.bar.bf { background: var(--muted); opacity: 0.55; }
 .ep { height: 12px; font-size: 9px; line-height: 12px; color: var(--muted); text-align: center; padding-top: 2px; box-sizing: content-box; }
 @media (min-width: 1024px) {
   .top { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: start; }

@@ -4,7 +4,7 @@ import Icon from './Icon.vue'
 const route = useRoute()
 const items = [
   { key: 'market', to: '/', label: '市场', icon: 'market' },
-  { key: 'stocks', to: '/stocks', label: '股票', icon: 'stocks' },
+  { key: 'stocks', to: '/stocks', label: '行情', icon: 'stocks' },
   { key: 'ipo', to: '/ipo', label: '新股', icon: 'ipo' },
   { key: 'news', to: '/news', label: '资讯', icon: 'news' },
   { key: 'me', to: '/me', label: '我的', icon: 'me' },

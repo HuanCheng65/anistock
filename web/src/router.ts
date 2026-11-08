@@ -6,7 +6,7 @@ const router = createRouter({
   scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },
   routes: [
     { path: '/', name: 'market', component: () => import('./views/MarketView.vue'), meta: { tab: 'market', title: '市场' } },
-    { path: '/stocks', name: 'stocks', component: () => import('./views/StocksView.vue'), meta: { tab: 'stocks', title: '股票' } },
+    { path: '/stocks', name: 'stocks', component: () => import('./views/StocksView.vue'), meta: { tab: 'stocks', title: '行情' } },
     { path: '/stocks/:id(\\d+)', name: 'stock', component: () => import('./views/StockView.vue'), meta: { tab: 'stocks', title: '股票', noNav: true } },
     { path: '/stock/:id', redirect: (to) => `/stocks/${to.params.id}` },
     { path: '/futures', name: 'futures', component: () => import('./views/FuturesListView.vue'), meta: { tab: 'stocks', title: '热度期货' } },

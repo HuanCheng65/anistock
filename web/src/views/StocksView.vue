@@ -81,7 +81,7 @@ function remember() {
 <template>
   <main class="page stockspage">
     <header class="pagehead phone-only">
-      <h1>股票</h1>
+      <h1>行情</h1>
       <button type="button" class="iconbtn sbtn" aria-label="搜索" @click="searching = true"><Icon name="search" :size="20" /></button>
     </header>
     <div v-if="searching" class="searchsheet phone-only">
@@ -92,7 +92,7 @@ function remember() {
     </div>
 
     <div class="container">
-      <h1 class="pagetitle desk-only">股票</h1>
+      <h1 class="pagetitle desk-only">行情</h1>
       <nav v-if="fut.list?.length" class="seg" aria-label="品种">
         <span aria-current="page">股票</span>
         <RouterLink to="/futures">热度期货</RouterLink>

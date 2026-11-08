@@ -23,13 +23,15 @@ pub fn listing_day(premiere: NaiveDate, k: i64, weeks: i64) -> NaiveDate {
     }
 }
 
-/// The period listed on `day`, if any.
+/// The period that lists on `day`, if any: period 1 on its first day; a later one on its listing day or on any day
+/// of the week after, before it starts, so a close that did not run (or a deploy mid-week) only delays it. The
+/// caller skips a period already listed.
 pub fn listed_on(premiere: NaiveDate, day: NaiveDate, weeks: i64) -> Option<i64> {
     let since = (day - premiere).num_days();
     if since == 7 {
         return Some(1);
     }
-    (since > 7 && since % (7 * weeks) == 0).then(|| since / (7 * weeks) + 1)
+    (since > 7 && since % (7 * weeks) < 7).then(|| since / (7 * weeks) + 1)
 }
 
 #[cfg(test)]
@@ -51,17 +53,24 @@ mod tests {
     }
 
     #[test]
-    fn one_listing_day_per_period() {
+    fn each_period_lists_before_it_starts() {
         let p = d("2026-10-03");
-        let mut listed = vec![];
+        let mut first_seen = std::collections::BTreeMap::new();
         for n in -10..120 {
             let day = p + Duration::days(n);
             if let Some(k) = listed_on(p, day, 4) {
-                assert_eq!(listing_day(p, k, 4), day);
-                listed.push(k);
+                assert!(day >= listing_day(p, k, 4), "not before its listing day");
+                assert!(k == 1 || day < period_days(p, k, 4).0, "a later period only before it starts");
+                first_seen.entry(k).or_insert(day);
             }
         }
-        assert_eq!(listed, [1, 2, 3, 4, 5]); // on days 7, 28, 56, 84, 112
+        // each first on its listing day (days 7, 28, 56, 84, 112)
+        assert_eq!(first_seen.keys().copied().collect::<Vec<_>>(), [1, 2, 3, 4, 5]);
+        assert!(first_seen.iter().all(|(k, day)| *day == listing_day(p, *k, 4)));
         assert_eq!(listed_on(p, p, 4), None, "nothing in week 0");
+        assert_eq!(listed_on(p, p + Duration::days(8), 4), None, "period 1 only on its first day");
+        // a missed listing day: still listed later that week, not once period 2 has begun (day 35)
+        assert_eq!(listed_on(p, p + Duration::days(31), 4), Some(2));
+        assert_eq!(listed_on(p, p + Duration::days(35), 4), None);
     }
 }

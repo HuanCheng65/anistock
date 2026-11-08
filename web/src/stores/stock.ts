@@ -30,8 +30,9 @@ export const useStock = defineStore('stock', () => {
   /** the cursor of the next older page of `news` (null: no more) */
   const newsMore = ref<Record<number, string | null>>({})
   const works = ref<Record<number, WorksResponse>>({})
-  /** the AniEx heat index by day, summed over the company's works (docs/v3-futures.md §3) */
-  const heat = ref<Record<number, { day: string; index: number }[]>>({})
+  /** the AniEx heat index by day, summed over the company's works (docs/v3-futures.md §3); `backfill`: a day
+   *  before the live index, rebuilt from the platforms' archives (server/tools/import_heat.py --backfill) */
+  const heat = ref<Record<number, { day: string; index: number; backfill: boolean }[]>>({})
   const candles = ref<Record<number, Candle[]>>({})
   const intraday = ref<Record<number, IntradayPoint[]>>({})
   // corporate actions (docs/v2-corporate.md): split / ex-rights days of the K-line, the open rights issue
@@ -167,9 +168,14 @@ export const useStock = defineStore('stock', () => {
     if (!force && heat.value[id] && now - (heatAt[id] ?? 0) < 300_000) return
     heatAt[id] = now
     const r = await call(api.GET('/api/v1/stocks/{id}/heat', { params: { path: { id } } }))
-    const by = new Map<string, number>()
-    for (const w of r.works) for (const d of w.days) by.set(d.day, (by.get(d.day) ?? 0) + d.index)
-    heat.value[id] = [...by].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([day, index]) => ({ day, index }))
+    const by = new Map<string, { index: number; backfill: boolean }>()
+    for (const w of r.works) {
+      for (const d of w.days) {
+        const x = by.get(d.day) ?? { index: 0, backfill: false }
+        by.set(d.day, { index: x.index + d.index, backfill: x.backfill || d.version.endsWith('-backfill') })
+      }
+    }
+    heat.value[id] = [...by].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([day, x]) => ({ day, ...x }))
   }
 
   return {

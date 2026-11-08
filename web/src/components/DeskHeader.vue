@@ -9,7 +9,7 @@ const route = useRoute()
 const session = useSession()
 const nav = [
   { key: 'market', to: '/', label: '市场' },
-  { key: 'stocks', to: '/stocks', label: '股票' },
+  { key: 'stocks', to: '/stocks', label: '行情' },
   { key: 'ipo', to: '/ipo', label: '新股' },
   { key: 'news', to: '/news', label: '资讯' },
   { key: 'me', to: '/me', label: '我的' },
