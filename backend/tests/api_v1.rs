@@ -62,10 +62,8 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
     })
     .unwrap();
     cfg.always_open = always_open;
-    // 指数基金 on (server/game.toml may have them off)
-    if funds_on {
-        cfg.funds.enabled = true;
-    }
+    // 指数基金 only where a test asks for them (whatever server/game.toml says)
+    cfg.funds.enabled = funds_on;
     // alice has accepted every current document
     {
         let c = rusqlite::Connection::open(&db).unwrap();
