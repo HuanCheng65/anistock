@@ -1,6 +1,6 @@
 # 安易 AniEx 公开接口 v1（设计）
 
-状态：**已实现（v0.4.0）**。决定记录见 §8，实现时和设计不同的地方见 §9。对象：网页前端（`web/`）和以后的 QQ 机器人（Koishi 插件）。机器可读的版本由代码生成：服务器上的 `/api/v1/openapi.json`，仓库里的 `web/src/api/openapi.json`（`cd web && npm run gen:api` 重新生成，同时生成 TS 类型 `web/src/api/schema.d.ts`）。评审用的手写 yaml 已删除。
+状态：**已实现（v0.4.0）**。决定记录见 §8，实现时和设计不同的地方见 §9。对象：网页前端（`web/`）和以后的 QQ 机器人（Koishi 插件）。机器可读的版本由代码生成：服务器上的 `/api/v1/openapi.json`，仓库里的 `web/src/api/openapi.json`（`cd web && pnpm gen:api` 重新生成，同时生成 TS 类型 `web/src/api/schema.d.ts`）。评审用的手写 yaml 已删除。
 
 > 命名提醒：本文的 **API v1** 指新的 `/api/v1/*` 接口。它和“v1 Python 服务器”（`server/app.py`，FastAPI）不是一回事。下文把后者称为 **Python 服务器**，把现在 `/api/*` 下逐字节兼容它的 21 个接口称为**旧接口**，`/api/v2/*` 和 `/api/covers` 称为 **v2 只读接口**。
 
@@ -1856,7 +1856,7 @@ Koishi 本身是常驻进程，主动连出去不需要公网地址或回调鉴�
 - **个股 `full`**：连接在全量快照发出时才进入这支股票的推送名单，所以不会先收到增量再收到全量。`trades` 是本交易日最近 30 笔（W5：开发中的实现原来不带，已补上）。
 - **`events` 的 `seq`**：启动时从 Unix 秒 × 1000 开始，重启后仍然递增；重启前的序号都在新进程的补发缓冲之外，带 `since` 重连会收到 `reset`。
 - **`/me/orders` 里的 `average_fill_price`** 从这笔委托的成交算；WebSocket 的 `order` 消息里，只有服务器从启动起看到了这笔委托的全部成交时才给出，否则为 null（客户端以 REST 为准）。
-- **CI**：重新生成 `openapi.json` 并和仓库里的比较；`schema.d.ts` 由前端的 `npm run gen:api` 生成，CI 的后端任务里没有 Node，不检查。
+- **CI**：重新生成 `openapi.json` 并和仓库里的比较；`schema.d.ts` 由前端的 `pnpm gen:api` 生成，CI 的后端任务里没有 Node，不检查。
 - **压测**：`bench/loadgen` 压的是 `bench/` 下的原型服务器（`/ws?sym=`），不连游戏服务器，所以不需要改成 v1 格式；v1 推送的行为用脚本化客户端检查（§7.3 第 4 项）。
 
 ### 9.3 新旧等价核对的结果（§7.3，第 6 步，一次性）

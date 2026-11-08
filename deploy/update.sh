@@ -34,11 +34,16 @@ check_env() {
 }
 
 # Build the frontend with local Node.js 20+, or else inside a throwaway Node container.
-# Override the image with NODE_IMAGE=..., the npm registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com),
+# Packages come through pnpm (web/pnpm-lock.yaml). Override the image with NODE_IMAGE=..., the registry with NPM_REGISTRY=... (e.g. https://registry.npmmirror.com),
 # and the docker command with DOCKER="sudo docker" if your user is not in the docker group.
 build_web() {
   if command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ]; then
-    ( cd web && npm ci && npm run build )
+    # pnpm if installed, else the one Node ships through corepack (Node 16.9–24), else a one-off download
+    local pnpm="pnpm"
+    if ! command -v pnpm >/dev/null; then
+      if command -v corepack >/dev/null; then pnpm="corepack pnpm"; else pnpm="npx --yes pnpm@10.12.4"; fi
+    fi
+    ( cd web && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 $pnpm install --frozen-lockfile && $pnpm run build )
   elif command -v docker >/dev/null; then
     local image="${NODE_IMAGE:-node:24-alpine}"
     echo "本机没有 Node.js 20+，用容器 $image 构建前端"
@@ -48,11 +53,12 @@ build_web() {
     fi
     mkdir -p "$HOME/.cache/anistock-npm"
     ${DOCKER:-docker} run --rm --network host -u "$(id -u):$(id -g)" \
-      -e HOME=/tmp -e npm_config_cache=/tmp/.npm \
+      -e HOME=/tmp -e npm_config_cache=/tmp/.npm -e npm_config_store_dir=/tmp/.npm/pnpm-store \
+      -e COREPACK_HOME=/tmp/.npm/corepack -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
       ${NPM_REGISTRY:+-e npm_config_registry="$NPM_REGISTRY"} \
       ${https_proxy:+-e https_proxy="$https_proxy"} ${HTTPS_PROXY:+-e HTTPS_PROXY="$HTTPS_PROXY"} \
       -v "$PWD:/repo" -v "$HOME/.cache/anistock-npm:/tmp/.npm" -w /repo/web \
-      "$image" sh -c "npm ci && npm run build"
+      "$image" sh -c "corepack pnpm install --frozen-lockfile && corepack pnpm run build"
   else
     echo "既没有 Node.js 20+，也没有 Docker：装其中一个再运行" >&2
     return 1

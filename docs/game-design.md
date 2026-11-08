@@ -127,6 +127,6 @@ NPC、发行价、热度快讯都用同一个估值。完整说明见 `docs/desi
 - **经济引擎**：`engine/` 包，营收、估值、账本、央行逻辑。仿真（`sim/`）和游戏服务共用同一份代码。
 - **时钟**：实时模式（每天 06:30 日结，接在采集器之后）；回放模式用于测试和开服前生成历史 K 线。
 - **并发**：所有写操作（玩家下单、NPC 挂单、日结）经过同一把异步锁，事务很短。
-- **前端**：Vue 3 + Vite + TypeScript，vue-router 管页面，Pinia 管状态；图表用 lightweight-charts（npm 安装、打包进产物，不依赖 CDN）。行情每几秒轮询一次。服务器装一次 Node 即可构建（`npm ci && npm run build`），FastAPI 直接托管构建出的静态文件。
+- **前端**：Vue 3 + Vite + TypeScript，vue-router 管页面，Pinia 管状态；图表用 lightweight-charts（npm 安装、打包进产物，不依赖 CDN）。行情每几秒轮询一次。服务器装一次 Node 即可构建（`pnpm install --frozen-lockfile && pnpm build`），FastAPI 直接托管构建出的静态文件。
 - **作品匹配**：每季开始时手动运行 `uv run sim/match.py --search` 并提交 `sim/matches.json`、`tracked_extra.json`；服务器的每日结算只刷新 Annict 播出时间并重建市场序列，不改任何 git 跟踪的文件。
 - **数据合规**：页面只展示聚合统计，不展示任何平台的用户名或评论；封面图不转存。

@@ -1,5 +1,5 @@
 // The typed API v1 client (docs/api-v1.md). Types come from the server's OpenAPI document:
-// `npm run gen:api` regenerates src/api/openapi.json and src/api/schema.d.ts. Amounts are integer cents
+// `pnpm gen:api` regenerates src/api/openapi.json and src/api/schema.d.ts. Amounts are integer cents
 // (`Money`); format them with format.ts.
 import createClient, { type Middleware } from 'openapi-fetch'
 import type { components, paths } from './schema'

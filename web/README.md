@@ -3,9 +3,10 @@
 Vue 3 + Vite + TypeScript，vue-router、Pinia，图表用 lightweight-charts 4.1.3（打包进产物，不依赖 CDN）。
 
 ```bash
-npm ci            # 国内慢的话：npm ci --registry=https://registry.npmmirror.com
-npm run dev       # 开发：/api 代理到 http://127.0.0.1:8080
-npm run build     # 产物在 web/dist，FastAPI 会直接托管（先 build 再启动服务）
+pnpm install --frozen-lockfile   # 国内慢的话：加 --registry=https://registry.npmmirror.com
+pnpm dev          # 开发：/api 代理到 http://127.0.0.1:18620
+pnpm build        # 产物在 web/dist
+pnpm gen:api      # 接口改动后重新生成 src/api/openapi.json 和 schema.d.ts
 ```
 
 页面：行情、个股（K 线 / 五档盘口 / 下单 / 基本面）、我的、排行、新闻、更多（新手指南、规则、宏观）。

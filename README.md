@@ -155,14 +155,14 @@ bash deploy/update.sh                           # 拉代码 → 下载程序 →
 
 回滚：服务启动时执行数据库迁移之前会自动备份到 `data/backups/`。要退回上一个版本，先停服，把迁移前的备份拷回 `data/game.db`，再用 `ANISTOCK_VERSION=上一个版本 bash deploy/update.sh` 装回旧程序（会丢掉升级之后的所有交易，所以只在升级后很短的时间内有意义）。Python 版服务器（`server/app.py`）已经不能在当前数据库上运行，不再作为回退手段。
 
-构建前端需要 Node.js 20+；本机没有 Node 但有 Docker 时，脚本会自动用 `node:24-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换 npm 源）。
+构建前端需要 Node.js 20+，包管理器是 pnpm（`web/pnpm-lock.yaml`）。没装 pnpm 时脚本用 Node 自带的 corepack 运行 pnpm，不用另装；本机没有 Node 但有 Docker 时，脚本会自动用 `node:24-alpine` 容器构建（可用 `NODE_IMAGE=...` 换镜像、`NPM_REGISTRY=https://registry.npmmirror.com` 换源）。
 
 想在本机装 Node.js 的话（Ubuntu）：
 
 ```bash
 curl -fsSL https://fnm.vercel.app/install | bash   # 需要代理时先 export https_proxy=...
 fnm install 24 && fnm default 24
-npm config set registry https://registry.npmmirror.com   # npm 下载慢时
+pnpm config set registry https://registry.npmmirror.com   # 下载慢时（装了 pnpm 的话）
 ```
 
 游戏服务默认只监听本机 `127.0.0.1:18620`（端口在 `.env` 的 `ANISTOCK_PORT` 里改），对外通过反向代理绑定域名。国内服务器的域名走 80/443 端口需要先备案。
@@ -228,8 +228,8 @@ git add sim/matches.json tracked_extra.json && git commit -m "Match new season" 
 
 ```bash
 cd backend && ANISTOCK_ALWAYS_OPEN=1 cargo run --release   # 后端，忽略交易时间（端口 18620）
-cd web && npm run dev                                      # 前端，/api 代理到 18620
-cd web && npm run gen:api                                  # 接口改动后重新生成 src/api/openapi.json 和 schema.d.ts
+cd web && pnpm dev                                          # 前端，/api 代理到 18620
+cd web && pnpm gen:api                                      # 接口改动后重新生成 src/api/openapi.json 和 schema.d.ts
 cd backend && cargo test                                   # 后端测试
 uv run pytest                                              # 经济模型和采集器的单元测试
 ```
