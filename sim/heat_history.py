@@ -26,7 +26,7 @@ import statistics as st
 import sys
 from bisect import bisect_right
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -44,14 +44,25 @@ def days_between(a: date, b: date):
         d += timedelta(days=1)
 
 
-def bgm_daily(db: sqlite3.Connection, table: str = "bgm_weekly") -> dict[int, dict[str, float]]:
-    """subject -> day -> people who started it that day (a week's change spread over its days)."""
+def bgm_daily(db: sqlite3.Connection, table: str = "bgm_weekly", col: Path | None = None) -> dict[int, dict[str, float]]:
+    """subject -> day -> people who started it that day (a week's change spread over its days). After the last
+    weekly dump, the collector's daily subject snapshots (from 2026-11-05) continue the series: the days between
+    the last dump and the first snapshot are measured, not left empty."""
     out: dict[int, dict[str, float]] = defaultdict(dict)
     rows = defaultdict(list)
     for sid, at, done, doing, hold, dropped in db.execute(
             f"SELECT subject_id, at, done, doing, on_hold, dropped FROM {table} ORDER BY subject_id, at"):
         local = (datetime.fromisoformat(at.replace("Z", "+00:00")) + timedelta(hours=8)).date()
         rows[sid].append((local, sum(x or 0 for x in (done, doing, hold, dropped))))
+    if col is not None and col.exists():
+        cdb = sqlite3.connect(f"file:{col}?mode=ro", uri=True)
+        for ext, fetched, data in cdb.execute(
+                "SELECT external_id, fetched_at, data FROM snapshots WHERE source='bgm' AND kind='subject' ORDER BY fetched_at"):
+            sid = int(ext)
+            c = json.loads(data).get("collection") or {}
+            local = datetime.fromisoformat(fetched).astimezone(timezone(timedelta(hours=8))).date()
+            if rows.get(sid) and local > rows[sid][-1][0]:
+                rows[sid].append((local, sum(c.get(k, 0) for k in ("collect", "doing", "on_hold", "dropped"))))
     for sid, pts in rows.items():
         for (d0, n0), (d1, n1) in zip(pts, pts[1:]):
             span = (d1 - d0).days
@@ -85,7 +96,7 @@ def main() -> None:
     if args.archive:
         for aid, sid in json.loads((DB.parent / "archive_matches.json").read_text()).items():
             matches.setdefault(aid, {}).setdefault("bgm", sid)
-    cn = bgm_daily(db, table)
+    cn = bgm_daily(db, table, col)
     jp: dict[int, dict[str, int]] = defaultdict(dict)
     for aid, day, n in db.execute("SELECT annict_id, day, records FROM annict_daily"):
         jp[aid][day] = n
