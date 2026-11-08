@@ -53,8 +53,9 @@ export const useMarket = defineStore('market', () => {
   async function refreshTonight() {
     try {
       tonight.value = (await call(api.GET('/api/v1/market/airings'))).items
-    } catch {
+    } catch (e) {
       tonight.value = tonight.value ?? []
+      throw e // usePoll retries soon
     }
   }
   async function refreshNews(limit = 50) {
@@ -63,8 +64,9 @@ export const useMarket = defineStore('market', () => {
   async function refreshMacro() {
     try {
       macro.value = (await call(api.GET('/api/v1/market/macro'))).items
-    } catch {
-      /* the block shows – */
+    } catch (e) {
+      // the block shows – until usePoll's retry
+      throw e
     }
   }
 
