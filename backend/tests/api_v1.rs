@@ -332,12 +332,17 @@ async fn orders_and_their_errors() {
 }
 
 #[tokio::test]
-async fn futures_while_closed() {
+async fn futures_need_their_steps() {
+    // server/game.toml turns futures on; a player without the steps (credit, the test, the disclosure) is refused
     let a = app("2026-11-05T10:00:00+08:00", true);
     let ck = a.login().await;
     let h = [("cookie", ck.as_str())];
     let order = json!({"contract_id": 1, "side": "buy", "type": "limit", "price": 9000, "quantity": 1});
-    err(&a.req("POST", "/api/v1/me/futures/orders", Some(order), &h).await, 422, "futures_closed");
+    let r = a.req("POST", "/api/v1/me/futures/orders", Some(order), &h).await;
+    err(&r, 422, "futures_not_eligible");
+    let me = a.req("GET", "/api/v1/me", None, &h).await;
+    assert_eq!(me.json["futures_steps"]["credit_open"], json!(false));
+    assert_eq!(me.json["futures_steps"]["quiz_passed"], json!(false));
     err(&a.req("GET", "/api/v1/futures/1", None, &h).await, 404, "contract_not_found");
     err(&a.req("DELETE", "/api/v1/me/futures/orders/1", None, &h).await, 404, "order_not_found");
     let bad = json!({"contract_id": 1, "side": "buy", "type": "market", "price": 9000, "quantity": 1});
