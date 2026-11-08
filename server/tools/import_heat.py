@@ -11,7 +11,9 @@ the live days computed before that (from the first collected day to the deploy).
 The live index needs a snapshot on each side of a day, so it starts when the collector started taking them.
 `--backfill` adds the history before: each work's days from sim/heat_history.py (AniList trends, Bangumi's weekly
 archive spread over the week, Annict's records), turned into the index with the method v1 constants, version
-`v1-backfill`, only for days before the work's first live value. The stock page draws them lighter; futures
+`v1-backfill`, only for days before the work's first live value. A day missing a market the work has on other
+days is left out rather than drawn low (the Bangumi archive is weekly: the days after its last dump have no
+cn), and such rows from an earlier import are removed. The stock page draws them lighter; futures
 never use them (a contract's days are all after its listing). `--export-backfill` writes that history as a small
 gzipped CSV (work_id, day, us, cn, jp) from data/derived/heat_backfill.db, to copy to the server.
 
@@ -53,18 +55,33 @@ def live_rows(src: str) -> list[tuple]:
 
 
 def backfill_rows(path: str, game: sqlite3.Connection) -> list[tuple]:
-    """The backfilled days before each work's first value in the game database."""
-    first = dict(game.execute("SELECT work_id, MIN(day) FROM heat_index GROUP BY work_id"))
+    """The complete backfilled days before each work's first live value in the game database."""
+    first = dict(game.execute("SELECT work_id, MIN(day) FROM heat_index WHERE version NOT LIKE '%backfill' GROUP BY work_id"))
     num = lambda x: float(x) if x not in (None, "") else None  # noqa: E731
-    out = []
     with gzip.open(path, "rt", newline="") as f:
-        for r in csv.DictReader(f):
-            w, day = int(r["work_id"]), r["day"]
-            if w in first and day >= first[w]:
-                continue
-            us, cn, jp = num(r["us"]), num(r["cn"]), num(r["jp"])
-            out.append((w, day, round(index_v1(us, cn, jp), 6), us, cn, jp, "{}", "v1-backfill"))
+        days = [(int(r["work_id"]), r["day"], num(r["us"]), num(r["cn"]), num(r["jp"])) for r in csv.DictReader(f)]
+    # the markets each work has on some day: a day without one of them is incomplete
+    has: dict[int, set[int]] = {}
+    for w, _, *vals in days:
+        has.setdefault(w, set()).update(i for i, v in enumerate(vals) if v is not None)
+    out = []
+    for w, day, us, cn, jp in days:
+        if w in first and day >= first[w]:
+            continue
+        if any((us, cn, jp)[i] is None for i in has[w]):
+            continue
+        out.append((w, day, round(index_v1(us, cn, jp), 6), us, cn, jp, "{}", "v1-backfill"))
     return out
+
+
+def prune_incomplete(game: sqlite3.Connection) -> int:
+    """Remove backfilled rows missing a market their work has on other backfilled days (an earlier import)."""
+    with game:
+        return game.execute("""
+            DELETE FROM heat_index WHERE version LIKE '%backfill' AND (
+                (us IS NULL AND EXISTS (SELECT 1 FROM heat_index h WHERE h.work_id=heat_index.work_id AND h.version LIKE '%backfill' AND h.us IS NOT NULL)) OR
+                (cn IS NULL AND EXISTS (SELECT 1 FROM heat_index h WHERE h.work_id=heat_index.work_id AND h.version LIKE '%backfill' AND h.cn IS NOT NULL)) OR
+                (jp IS NULL AND EXISTS (SELECT 1 FROM heat_index h WHERE h.work_id=heat_index.work_id AND h.version LIKE '%backfill' AND h.jp IS NOT NULL)))""").rowcount
 
 
 def export_backfill(out: str) -> int:
@@ -95,6 +112,10 @@ def main() -> int:
         print("the game database has no heat_index table yet: start the new server once (it migrates), then run this",
               file=sys.stderr)
         return 1
+    if args.backfill and not args.dry_run:
+        pruned = prune_incomplete(game)
+        if pruned:
+            print(f"removed {pruned} incomplete backfilled rows from an earlier import")
     rows = backfill_rows(args.backfill, game) if args.backfill else live_rows(args.src)
     have = {(w, d) for w, d in game.execute("SELECT work_id, day FROM heat_index")}
     new = [r for r in rows if (r[0], r[1]) not in have]
