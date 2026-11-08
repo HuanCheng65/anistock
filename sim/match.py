@@ -8,6 +8,9 @@ AniList <-> Annict: shared MyAnimeList id.
 AniList <-> Bangumi: normalised Japanese titles (+ aliases), then first-air date as a tie-breaker.
 The output only holds id pairs, so it can be committed and hand-corrected:
 entries under "manual" override anything automatic.
+
+Day to day the collector matches the shows it meets (engine/bgm_match.py, collect.py job `bgm_match`, kept in
+the collector database); this script is the full re-run for review, and its file wins over the collector's.
 """
 
 from __future__ import annotations

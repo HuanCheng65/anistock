@@ -289,8 +289,9 @@ def fundamental(s: Show, d: date, weekly_div: float, book: float, rate: float, p
 def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
     """AniList id (str) -> {"bgm": id, "annict": id, ...}: sim/matches.json, plus an Annict work for every
     AniList show without one whose MAL id an Annict work in the collector carries (the `works` table, where
-    the collector registers works it discovers by title, and the Annict work snapshots), plus the `manual`
-    corrections, which win. So the server picks up newly collected works without re-running sim/match.py."""
+    the collector registers works it discovers by title, and the Annict work snapshots), plus the Bangumi subject the
+    collector matched for a show sim/matches.json has none for (`bgm_matches`, engine/bgm_match.py), plus the
+    `manual` corrections, which win. So the server picks up newly collected works without re-running sim/match.py."""
     data = json.loads((ROOT / "sim" / "matches.json").read_text(encoding="utf-8"))
     out = {k: dict(v) for k, v in data["matches"].items()}
     path = db_path or Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db"))
@@ -314,6 +315,12 @@ def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
                 mal = json.loads(x).get("malAnimeId")
                 if mal:
                     annict_of_mal.setdefault(str(mal), int(ext))
+            from engine.bgm_match import table as bgm_table
+            for aid, sid in bgm_table(db).items():
+                r = out.setdefault(aid, {"anilist": int(aid)})
+                if not r.get("bgm"):
+                    r["bgm"] = sid
+                    r["bgm_via"] = "collector"
         finally:
             db.close()
         for aid, mal in mal_of.items():
@@ -385,12 +392,13 @@ def mapped_sources(db_path: Path | None = None) -> dict[int, dict[str, bool]]:
 
 
 def load_cn_titles(db_path: Path) -> dict[int, str]:
-    """Chinese title per AniList id: a manual `title_cn` in sim/matches.json wins, else Bangumi's name_cn."""
+    """Chinese title per AniList id: a manual `title_cn` in sim/matches.json wins, else the name_cn of the Bangumi
+    subject `effective_matches` gives it."""
     mfile = ROOT / "sim" / "matches.json"
     if not mfile.exists():
         return {}
     data = json.loads(mfile.read_text(encoding="utf-8"))
-    matches, manual = data["matches"], data.get("manual", {})
+    matches, manual = effective_matches(db_path), data.get("manual", {})
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     bg = {int(i): json.loads(x).get("name_cn") for i, x in db.execute(
         "SELECT external_id, data FROM snapshots WHERE source='bgm' AND kind='subject' ORDER BY day")}

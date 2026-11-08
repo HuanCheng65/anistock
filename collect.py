@@ -748,6 +748,31 @@ def discover_annict(http: "Http", store: Store) -> int:
     return new
 
 
+def match_bangumi(store: Store) -> str:
+    """Match the tracked AniList shows that have no Bangumi subject yet (engine/bgm_match.py): against the subjects
+    collected so far, else Bangumi's search (once a week per show at most); a new match is registered for the daily
+    Bangumi collection and snapshotted now."""
+    from engine import bgm_match
+    http = Http(min_interval=1.0)
+
+    def search(keyword: str) -> list[dict]:
+        r = http.request("POST", f"{BGM}/v0/search/subjects", params={"limit": 10},
+                         json={"keyword": keyword, "filter": {"type": [2]}})
+        r.raise_for_status()
+        return r.json().get("data", [])
+
+    def fetch(sid: int) -> dict | None:
+        r = http.request("GET", f"{BGM}/v0/subjects/{sid}")
+        return r.json() if r.status_code == 200 else None
+
+    out = bgm_match.match_new(store.db, store.day, Path(__file__).parent / "sim" / "matches.json", search, fetch)
+    for aid, sid in store.db.execute("SELECT anilist_id, bgm_id FROM bgm_matches WHERE matched_on=?", (store.day,)):
+        store.register("bgm", sid, None)
+        log.info("bgm: matched AniList %s -> subject %s", aid, sid)
+    store.commit()
+    return " ".join(f"{k}={v}" for k, v in out.items())
+
+
 def annict_http(token: str, min_interval: float = 0.3) -> Http:
     return Http(min_interval=min_interval, remaining_header="ratelimit-remaining", reset_header="ratelimit-reset",
                 headers={"Authorization": f"Bearer {token}"})
@@ -881,7 +906,7 @@ def print_stats(store: Store) -> None:
 def main() -> int:
     load_dotenv(Path(__file__).parent / ".env")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=["bgm", "anilist", "annict", "all"], default="all")
+    ap.add_argument("--source", choices=["bgm", "anilist", "bgm_match", "annict", "all"], default="all")
     ap.add_argument("--backfill", action="store_true", help="backfill AniList trends history")
     ap.add_argument("--season", metavar="YYYY-season",
                     help="one-off: add a past AniList season (e.g. 2026-summer) and backfill its trends")
@@ -919,6 +944,7 @@ def main() -> int:
     jobs = {
         "bgm": lambda: collect_bangumi(store),
         "anilist": lambda: collect_anilist(store, args.backfill),
+        "bgm_match": lambda: match_bangumi(store),
         "annict": lambda: collect_annict(store),
     }
     failures = 0

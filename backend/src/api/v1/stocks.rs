@@ -89,7 +89,8 @@ fn audiences(cfg: &Config, id: i64) -> Audiences {
     out
 }
 
-/// `sim/matches.json` "matches" merged with "manual" (AniList id -> {bgm, annict, ...}).
+/// `sim/matches.json` "matches", the Bangumi subjects the collector matched for shows it has none for
+/// (`bgm_matches`, engine/bgm_match.py), then "manual" over both (AniList id -> {bgm, annict, ...}).
 pub fn matches(cfg: &Config) -> std::collections::HashMap<String, Value> {
     let mut out = std::collections::HashMap::new();
     let Ok(text) = std::fs::read_to_string(cfg.root.join("sim").join("matches.json")) else { return out };
@@ -97,6 +98,19 @@ pub fn matches(cfg: &Config) -> std::collections::HashMap<String, Value> {
     if let Some(m) = all.get("matches").and_then(Value::as_object) {
         for (k, v) in m {
             out.insert(k.clone(), v.clone());
+        }
+    }
+    if let Some(cdb) = super::market::collector(cfg) {
+        if let Ok(mut s) = cdb.prepare("SELECT anilist_id, bgm_id FROM bgm_matches") {
+            let rows = s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)));
+            for (a, b) in rows.into_iter().flatten().flatten() {
+                let e = out.entry(a.to_string()).or_insert_with(|| serde_json::json!({}));
+                if let Some(e) = e.as_object_mut() {
+                    if e.get("bgm").is_none_or(Value::is_null) {
+                        e.insert("bgm".into(), Value::from(b));
+                    }
+                }
+            }
         }
     }
     if let Some(m) = all.get("manual").and_then(Value::as_object) {
