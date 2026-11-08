@@ -8,6 +8,8 @@ import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { usePoll } from '../composables/usePoll'
 import { num, qty } from '../format'
+
+const md = (d: string) => `${Number(d.slice(5, 7))}月${Number(d.slice(8))}日`
 import { useFutures } from '../stores/futures'
 import { useSession } from '../stores/session'
 
@@ -59,7 +61,7 @@ const rows = computed(() => {
           <Cover :id="c.stock.id" :title="c.stock.title" :w="30" :h="42" :spine="false" />
           <span class="nm">
             <span class="serif clamp1 t">{{ c.stock.title }}</span>
-            <span class="sub">第 {{ c.period }} 期<template v-if="c.average_so_far != null"> · 已公布平均 <span class="num">{{ num(c.average_so_far) }}</span></template> · {{ c.status === 'expiring' ? '等待结算' : `还剩 ${c.days_total - c.days_published} 天` }}<template v-if="held.has(c.id)"> · 持有</template></span>
+            <span class="sub">第 {{ c.period }} 期<template v-if="c.average_so_far != null"> · 已公布平均 <span class="num">{{ num(c.average_so_far) }}</span></template> · {{ c.status === 'expiring' ? '等待结算' : (session.status && c.first_day > session.status.trading_day) ? `${md(c.first_day)}开始` : `还剩 ${c.days_total - c.days_published} 天` }}<template v-if="held.has(c.id)"> · 持有</template></span>
           </span>
           <span class="px">
             <span v-flash="c.last_price" class="num v">{{ num(c.last_price / 100) }}</span>

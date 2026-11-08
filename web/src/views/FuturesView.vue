@@ -81,7 +81,7 @@ function back() {
           <section class="q gutter">
             <div class="meta">
               <span class="desk-only serif">{{ c.stock.title }}</span>
-              <span>第 {{ c.period }} 期 · {{ span(c.first_day, c.last_day) }}<template v-if="c.status === 'listed' && left"> · 还剩 {{ left }} 天</template></span>
+              <span>第 {{ c.period }} 期 · {{ span(c.first_day, c.last_day) }}<template v-if="c.status === 'listed' && today && c.first_day > today"> · 还没开始</template><template v-else-if="c.status === 'listed' && left"> · 还剩 {{ left }} 天</template></span>
               <RouterLink v-if="sibling" :to="`/futures/${sibling.id}`" class="sib">第 {{ sibling.period }} 期</RouterLink>
             </div>
             <h1 v-if="c.status === 'settled' && c.final_price != null" class="serif">这 4 周的平均热度是 <span class="num">{{ num(c.final_price / 100) }}</span></h1>
