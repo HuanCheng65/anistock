@@ -3,7 +3,9 @@
 // published, an empty dashed box until then; the market's expectation of the period average (the price) as a
 // line across the whole period, and the average so far as a dotted line over the published days. Settlement
 // is the average of all the bars, so the picture is the whole rule. To the left, lighter, the work's heat in the
-// days before the period (`before`), what a player has to go on before the period begins.
+// days before the period (`before`), what a player has to go on before the period begins. The expectation's path:
+// each day's settlement price (`settles`) as a line, then the price now flat to the period's end, so the line
+// shows the market revising toward the answer as the days come out.
 import { computed } from 'vue'
 import type { FuturesContract, HeatDay } from '../../api'
 import { addDays, num } from '../../format'
@@ -13,6 +15,8 @@ const props = defineProps<{
   index: HeatDay[]
   /** the work's index on the days before the period (oldest first) */
   before?: { day: string; index: number }[]
+  /** each closed day's settlement price, in hundredths of a point (oldest first) */
+  settles?: { day: string; settle: number }[]
   today?: string
   wide?: boolean
 }>()
@@ -26,7 +30,9 @@ const byDay = computed(() => new Map(props.index.map((d) => [d.day, d.index])))
 const price = computed(() => props.c.last_price / 100)
 const avg = computed(() => props.c.average_so_far)
 const prior = computed(() => props.before ?? [])
-const max = computed(() => Math.max(price.value, ...props.index.map((d) => d.index), ...prior.value.map((d) => d.index), 1) * 1.18)
+const path = computed(() => (props.settles ?? []).map((s) => ({ day: s.day, v: s.settle / 100 })))
+const max = computed(() =>
+  Math.max(price.value, ...props.index.map((d) => d.index), ...prior.value.map((d) => d.index), ...path.value.map((p) => p.v), 1) * 1.18)
 const y = (v: number) => base - (v / max.value) * (base - top)
 const GAP = 10
 const slot = computed(() => (W.value - 52 - (prior.value.length ? GAP : 0)) / (days.value.length + prior.value.length))
@@ -36,6 +42,16 @@ const x = (i: number) => o.value + i * slot.value
 const px = (i: number) => i * slot.value
 const bw = computed(() => Math.max(2, slot.value - (props.wide ? 4 : 3)))
 const known = computed(() => days.value.filter((d) => byDay.value.has(d)).length)
+/** the middle of a day's slot, in the period or among the days before it (null: off the chart) */
+function xOf(day: string): number | null {
+  const i = days.value.indexOf(day)
+  if (i >= 0) return x(i) + bw.value / 2
+  const j = prior.value.findIndex((d) => d.day === day)
+  return j >= 0 ? px(j) + bw.value / 2 : null
+}
+const pts = computed(() => path.value.map((p) => ({ x: xOf(p.day), y: y(p.v) })).filter((p): p is { x: number; y: number } => p.x != null))
+/** where the flat line of the price now begins: after the last settlement drawn, else the period's start */
+const nowX = computed(() => (pts.value.length ? pts.value[pts.value.length - 1].x : o.value))
 const left = computed(() => days.value.length - known.value)
 /** where today falls: after the last published day */
 const cut = computed(() => x(known.value) - (slot.value - bw.value) / 2)
@@ -65,9 +81,10 @@ const aria = computed(() => {
         <rect v-else class="todo" :x="x(i) + 0.5" :y="base - 28" :width="bw - 1" height="28" />
       </template>
     </g>
-    <text v-if="left" class="t muted" :x="(cut + x(days.length)) / 2" :y="base - 36" text-anchor="middle">还有 {{ left }} 天未公布</text>
+    <text v-if="left && x(days.length) - cut > 100" class="t muted" :x="(cut + x(days.length)) / 2" :y="base - 36" text-anchor="middle">还有 {{ left }} 天未公布</text>
     <line v-if="avg != null && known" class="avg" :x1="o" :y1="y(avg)" :x2="cut" :y2="y(avg)" />
-    <line class="mkt" :x1="o" :y1="y(price)" :x2="x(days.length)" :y2="y(price)" />
+    <polyline v-if="pts.length > 1" class="mkt path" :points="[...pts.map((p) => `${p.x},${p.y}`), `${nowX},${y(price)}`].join(' ')" />
+    <line class="mkt" :x1="nowX" :y1="y(price)" :x2="x(days.length)" :y2="y(price)" />
     <text class="t up" :x="x(days.length) + 4" :y="y(price) - 3">市场预期</text>
     <text class="t up num" :x="x(days.length) + 4" :y="y(price) + 11">{{ num(price) }}</text>
     <template v-if="known && left && (!prior.length || known >= 5)">
@@ -86,7 +103,8 @@ const aria = computed(() => {
 .start { stroke: var(--rule); }
 .pub rect.todo { fill: none; stroke: var(--hair); stroke-dasharray: 2 2; }
 .avg { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 1 3; }
-.mkt { stroke: var(--up); stroke-width: 2; }
+.mkt { stroke: var(--up); stroke-width: 2; fill: none; }
+.mkt.path { stroke-width: 1.5; stroke-linejoin: round; }
 .now { stroke: var(--hair); }
 .t { font-size: 11px; fill: var(--ink-2); font-family: var(--font); }
 .t.num { font-family: var(--font-num); }

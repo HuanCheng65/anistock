@@ -110,7 +110,7 @@ function back() {
           </section>
 
           <section class="chart gutter">
-            <FutChart :c="c" :index="d.index" :before="before" :today="today" :wide="desk" />
+            <FutChart :c="c" :index="d.index" :before="before" :settles="d.days.map((r) => ({ day: r.day, settle: r.settle }))" :today="today" :wide="desk" />
             <dl class="two">
               <div v-if="c.days_published"><dt>已公布 {{ c.days_published }} 天，平均</dt><dd class="num">{{ c.average_so_far != null ? num(c.average_so_far) : '–' }}</dd></div>
               <div v-else><dt>最近 7 天平均</dt><dd class="num">{{ week != null ? num(week) : '–' }}</dd></div>
