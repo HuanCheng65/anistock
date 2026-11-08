@@ -22,6 +22,9 @@ export interface Book {
   auction: AuctionIndication | null
 }
 
+/** a day of the heat index, summed over a company's works: the index and each market's heat (null: no source) */
+export type HeatPoint = { day: string; index: number; backfill: boolean; us: number | null; cn: number | null; jp: number | null }
+
 export const useStock = defineStore('stock', () => {
   const detail = ref<Record<number, StockDetail>>({})
   const book = ref<Record<number, Book>>({})
@@ -32,7 +35,7 @@ export const useStock = defineStore('stock', () => {
   const works = ref<Record<number, WorksResponse>>({})
   /** the AniEx heat index by day, summed over the company's works (docs/v3-futures.md §3); `backfill`: a day
    *  before the live index, rebuilt from the platforms' archives (server/tools/import_heat.py --backfill) */
-  const heat = ref<Record<number, { day: string; index: number; backfill: boolean }[]>>({})
+  const heat = ref<Record<number, HeatPoint[]>>({})
   const candles = ref<Record<number, Candle[]>>({})
   const intraday = ref<Record<number, IntradayPoint[]>>({})
   // corporate actions (docs/v2-corporate.md): split / ex-rights days of the K-line, the open rights issue
@@ -168,14 +171,20 @@ export const useStock = defineStore('stock', () => {
     if (!force && heat.value[id] && now - (heatAt[id] ?? 0) < 300_000) return
     heatAt[id] = now
     const r = await call(api.GET('/api/v1/stocks/{id}/heat', { params: { path: { id } } }))
-    const by = new Map<string, { index: number; backfill: boolean }>()
+    const by = new Map<string, HeatPoint>()
+    const add = (a: number | null, b: number | null | undefined) => (b == null ? a : (a ?? 0) + b)
     for (const w of r.works) {
       for (const d of w.days) {
-        const x = by.get(d.day) ?? { index: 0, backfill: false }
-        by.set(d.day, { index: x.index + d.index, backfill: x.backfill || d.version.endsWith('-backfill') })
+        const x = by.get(d.day) ?? { day: d.day, index: 0, backfill: false, us: null, cn: null, jp: null }
+        by.set(d.day, {
+          day: d.day,
+          index: x.index + d.index,
+          backfill: x.backfill || d.version.endsWith('-backfill'),
+          us: add(x.us, d.us), cn: add(x.cn, d.cn), jp: add(x.jp, d.jp),
+        })
       }
     }
-    heat.value[id] = [...by].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([day, x]) => ({ day, ...x }))
+    heat.value[id] = [...by.values()].sort((a, b) => (a.day < b.day ? -1 : 1))
   }
 
   return {

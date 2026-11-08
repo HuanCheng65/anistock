@@ -192,6 +192,11 @@ pub fn rules_of(cfg: &Config) -> Rules {
         },
         order_quantity_max: ORDER_QTY_MAX,
         contact: RulesContact { qq_bot: cfg.qq_bot_url.clone(), email: cfg.contact_email.clone() },
+        heat_index: {
+            let f = &cfg.futures;
+            let by = |x: [f64; 3]| ByMarketF { us: x[0], cn: x[1], jp: x[2] };
+            HeatIndexMethod { version: f.index_version.clone(), weights: by(f.index_weights), platform: by(f.index_platform), scale: f.index_scale }
+        },
     }
 }
 

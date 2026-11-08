@@ -18,6 +18,7 @@ const router = createRouter({
     { path: '/rank', name: 'rank', component: () => import('./views/RankView.vue'), meta: { tab: 'me', title: '排行' } },
     { path: '/macro', name: 'macro', component: () => import('./views/MacroView.vue'), meta: { tab: 'market', title: '宏观' } },
     { path: '/guide', name: 'guide', component: () => import('./views/GuideView.vue'), meta: { tab: 'me', title: '新手指南' } },
+    { path: '/rules/heat-index', name: 'heat-method', component: () => import('./views/HeatMethodView.vue'), meta: { tab: 'me', title: '指数编制方法' } },
     { path: '/rules', name: 'rules', component: () => import('./views/RulesView.vue'), meta: { tab: 'me', title: '规则' } },
     { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue'), meta: { tab: 'me', title: '设置' } },
     { path: '/forgot', name: 'forgot', component: () => import('./views/ForgotView.vue'), meta: { title: '找回密码', bare: true } },

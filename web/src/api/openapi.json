@@ -843,6 +843,29 @@
         ],
         "type": "object"
       },
+      "ByMarketF": {
+        "description": "按市场的数值（us 欧美、cn 中国、jp 日本）",
+        "properties": {
+          "cn": {
+            "format": "double",
+            "type": "number"
+          },
+          "jp": {
+            "format": "double",
+            "type": "number"
+          },
+          "us": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "cn",
+          "jp",
+          "us"
+        ],
+        "type": "object"
+      },
       "Candle": {
         "properties": {
           "close": {
@@ -2142,6 +2165,34 @@
           "jp",
           "us",
           "version"
+        ],
+        "type": "object"
+      },
+      "HeatIndexMethod": {
+        "description": "安易热度指数的编制方法（docs/v3-futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模",
+        "properties": {
+          "platform": {
+            "$ref": "#/components/schemas/ByMarketF",
+            "description": "各市场的平台规模：一年里每天在播作品热度总和的平均"
+          },
+          "scale": {
+            "description": "使在播作品的中位数为 100 的常数",
+            "format": "double",
+            "type": "number"
+          },
+          "version": {
+            "type": "string"
+          },
+          "weights": {
+            "$ref": "#/components/schemas/ByMarketF",
+            "description": "各市场的权重"
+          }
+        },
+        "required": [
+          "platform",
+          "scale",
+          "version",
+          "weights"
         ],
         "type": "object"
       },
@@ -4475,6 +4526,9 @@
           "fees": {
             "$ref": "#/components/schemas/RulesFees"
           },
+          "heat_index": {
+            "$ref": "#/components/schemas/HeatIndexMethod"
+          },
           "initial_cash": {
             "$ref": "#/components/schemas/Money"
           },
@@ -4506,6 +4560,7 @@
           "contact",
           "dividend_tax",
           "fees",
+          "heat_index",
           "initial_cash",
           "ipo",
           "order_quantity_max",

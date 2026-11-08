@@ -1233,6 +1233,15 @@ export interface components {
             jp: components["schemas"]["Money"];
             us: components["schemas"]["Money"];
         };
+        /** @description 按市场的数值（us 欧美、cn 中国、jp 日本） */
+        ByMarketF: {
+            /** Format: double */
+            cn: number;
+            /** Format: double */
+            jp: number;
+            /** Format: double */
+            us: number;
+        };
         Candle: {
             close: components["schemas"]["Money"];
             high: components["schemas"]["Money"];
@@ -1657,6 +1666,19 @@ export interface components {
             us: number | null;
             /** @description 编制方法版本 */
             version: string;
+        };
+        /** @description 安易热度指数的编制方法（docs/v3-futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模 */
+        HeatIndexMethod: {
+            /** @description 各市场的平台规模：一年里每天在播作品热度总和的平均 */
+            platform: components["schemas"]["ByMarketF"];
+            /**
+             * Format: double
+             * @description 使在播作品的中位数为 100 的常数
+             */
+            scale: number;
+            version: string;
+            /** @description 各市场的权重 */
+            weights: components["schemas"]["ByMarketF"];
         };
         Holders: {
             /** Format: int64 */
@@ -2322,6 +2344,7 @@ export interface components {
             contact: components["schemas"]["RulesContact"];
             dividend_tax: components["schemas"]["DividendTaxBand"][];
             fees: components["schemas"]["RulesFees"];
+            heat_index: components["schemas"]["HeatIndexMethod"];
             initial_cash: components["schemas"]["Money"];
             ipo: components["schemas"]["RulesIpo"];
             /** Format: int64 */

@@ -34,6 +34,8 @@ pub struct FuturesRules {
     pub index_link: [[f64; 4]; 3],
     pub index_platform: [f64; 3],
     pub index_scale: f64,
+    /// the index method's version these constants belong to (engine/heat_index.py VERSION)
+    pub index_version: String,
     /// the realised average's spread around the model's expectation beyond the level's own uncertainty (the
     /// link, the index's daily noise), as a share of the expectation of the days still to come
     pub model_cv: f64,
@@ -123,6 +125,7 @@ impl Default for FuturesRules {
             // the index method v1 (engine/heat_index.py PLATFORM, SCALE)
             index_platform: [116352.0, 1772.0, 1649.0],
             index_scale: 14437.0,
+            index_version: "v1".into(),
             model_cv: 0.15,
             horizon_drift: 0.002,
             mm_capital: 20_000_000,

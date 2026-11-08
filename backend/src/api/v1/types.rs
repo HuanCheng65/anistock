@@ -404,6 +404,27 @@ pub struct Rules {
     pub ipo: RulesIpo,
     pub order_quantity_max: i64,
     pub contact: RulesContact,
+    pub heat_index: HeatIndexMethod,
+}
+
+/// 安易热度指数的编制方法（docs/v3-futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模
+#[derive(Serialize, ToSchema)]
+pub struct HeatIndexMethod {
+    pub version: String,
+    /// 各市场的权重
+    pub weights: ByMarketF,
+    /// 各市场的平台规模：一年里每天在播作品热度总和的平均
+    pub platform: ByMarketF,
+    /// 使在播作品的中位数为 100 的常数
+    pub scale: f64,
+}
+
+/// 按市场的数值（us 欧美、cn 中国、jp 日本）
+#[derive(Serialize, ToSchema)]
+pub struct ByMarketF {
+    pub us: f64,
+    pub cn: f64,
+    pub jp: f64,
 }
 
 /// 官方 QQ 机器人（加好友链接）和运营者邮箱；未配置时为 null

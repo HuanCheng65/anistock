@@ -753,9 +753,12 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "ipo": {"subscription_days": 3, "public_base": 0.5,
           "clawback": [{"oversubscribed": 15, "public_share": 0.7}, {"oversubscribed": 50, "public_share": 0.8},
                        {"oversubscribed": 100, "public_share": 0.9}]},
-  "order_quantity_max": 10000000
+  "order_quantity_max": 10000000,
+  "heat_index": {"version": "v1", "weights": {"us": 0.3, "cn": 0.5, "jp": 0.2},
+                 "platform": {"us": 116352.0, "cn": 1772.0, "jp": 1649.0}, "scale": 14437.0}
 }
 ```
+- `heat_index`：安易热度指数的编制方法（docs/v3-futures.md §3.7）。一天的指数 = `scale` × Σ `weights[m]` × 当天市场 m 的热度 ÷ `platform[m]`；当天热度见 `/stocks/{id}/heat` 的 `us`、`cn`、`jp`（没有数据来源的市场不计）。
 - 分红税档：`max_holding_days` 含端点，按游戏时间的持有天数；最后一档为 null（无上限），代替配置里的 `100000`。
 - `initial_cash` 是金额（分）：100,000 币 = `10000000`。
 - `price_limit_multiple`、`stamp_duty_on` 等字段以实现时的真实配置为准；这里列的是字段形状。

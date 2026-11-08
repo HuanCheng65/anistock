@@ -3,14 +3,27 @@
 // with the episodes under the days they aired, in fixed slots ending on the latest day (a day without a value is an
 // empty slot). Days rebuilt from the archives before the live index began are lighter and say 回填. Pointing at (or
 // focusing, or tapping) a day shows it in the readout; without a choice the readout shows the latest day and its
-// change on the week before. ←/→ move.
+// change on the week before. ←/→ move. Each bar is stacked by market, each market's index points from the method's
+// constants (GET /rules heat_index), and the readout's line under the chart splits the chosen day the same way.
 import { computed, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import type { StockDetail } from '../../api'
 import { addDays, dayLabel, dir, num, pct } from '../../format'
+import type { HeatPoint } from '../../stores/stock'
+import { useSession } from '../../stores/session'
 
-type Day = { day: string; index: number; backfill: boolean }
+type Day = HeatPoint
+const MARKETS = [['us', '欧美'], ['cn', '中国'], ['jp', '日本']] as const
 const props = defineProps<{ s: StockDetail; days: Day[] | null; failed: boolean; today?: string; desk: boolean }>()
 const emit = defineEmits<{ retry: [] }>()
+const session = useSession()
+session.loadRules()
+/** a day's index points per market (null without the method's constants) */
+function parts(v: Day): { k: 'us' | 'cn' | 'jp'; label: string; pts: number }[] | null {
+  const h = session.rules?.heat_index
+  if (!h) return null
+  return MARKETS.filter(([k]) => v[k] != null).map(([k, label]) => ({ k, label, pts: (h.scale * h.weights[k] * (v[k] as number)) / h.platform[k] }))
+}
 
 const n = computed(() => (props.desk ? 56 : 28))
 /** n slots ending on the latest day: the value, or null for a day without one */
@@ -91,9 +104,17 @@ function leave() {
                 :tabindex="i === cur ? 0 : -1"
                 :aria-label="`${dayLabel(x.day, today)}，${x.v ? `热度 ${num(x.v.index)}${x.v.backfill ? '（回填）' : ''}` : '没有数据'}${eps.has(x.day) ? `，第 ${eps.get(x.day)} 集播出` : ''}`"
                 :aria-pressed="i === cur" @pointerenter="hovering = true; picked = i" @focus="picked = i" @click="picked = i">
-          <span v-if="x.v" class="bar" :class="{ bf: x.v.backfill }" :style="{ height: `calc((100% - 18px) * ${x.v.index / max})` }"></span>
+          <span v-if="x.v" class="bar" :class="{ bf: x.v.backfill }" :style="{ height: `calc((100% - 18px) * ${x.v.index / max})` }">
+            <template v-if="parts(x.v)">
+              <span v-for="p in [...parts(x.v)!].reverse()" :key="p.k" :class="p.k" :style="{ flexGrow: p.pts }"></span>
+            </template>
+          </span>
           <span class="ep num">{{ eps.get(x.day) ?? '' }}</span>
         </button>
+      </div>
+      <div class="split">
+        <span v-for="p in d ? parts(d) ?? [] : []" :key="p.k"><i :class="p.k"></i>{{ p.label }} <b class="num">{{ num(p.pts) }}</b></span>
+        <RouterLink to="/rules/heat-index" class="how">指数编制方法</RouterLink>
       </div>
       </div>
       <dl class="facts kpis">
@@ -120,8 +141,17 @@ function leave() {
 }
 .col:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .dim .col:not(.on) { opacity: 0.4; }
-.bar { display: block; background: var(--ink); min-height: 1px; transition: height var(--dur-2) var(--ease-out); }
-.bar.bf { background: var(--muted); opacity: 0.55; }
+.bar { display: flex; flex-direction: column; background: var(--ink); min-height: 1px; transition: height var(--dur-2) var(--ease-out); }
+.bar > span { flex: 1 1 0; min-height: 0; }
+.bar.bf { opacity: 0.4; }
+.us { background: var(--mk-us); }
+.cn { background: var(--mk-cn); }
+.jp { background: var(--mk-jp); }
+.split { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 12px; color: var(--ink-2); min-height: 18px; }
+.split span { display: inline-flex; align-items: center; gap: 6px; }
+.split i { width: 10px; height: 10px; display: inline-block; }
+.split b { font-weight: 400; color: var(--ink); }
+.how { margin-left: auto; color: var(--accent); }
 .ep { height: 12px; font-size: 9px; line-height: 12px; color: var(--muted); text-align: center; padding-top: 2px; box-sizing: content-box; }
 @media (min-width: 1024px) {
   .top { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: start; }

@@ -118,9 +118,11 @@ function back() {
             </dl>
           </section>
 
+          <p class="how gutter"><RouterLink to="/rules/heat-index">指数编制方法</RouterLink></p>
+
           <section v-if="pos && pos.quantity" class="mine gutter">
             <p>押<b :class="pos.quantity > 0 ? 'up' : 'down'">{{ pos.quantity > 0 ? '更热' : '更冷' }}</b> {{ qty(Math.abs(pos.quantity)) }} 手，成本 <span class="num">{{ num(pos.average_price / 100) }}</span>。按现在的预期，{{ pos.pnl >= 0 ? '赚' : '亏' }} <span class="num" :class="dir(pos.pnl)">{{ money(Math.abs(pos.pnl), 0) }}</span> 星辉。</p>
-            <p class="sub">占用保证金 <span class="num">{{ money(pos.margin) }}</span> · 每天日结按结算价划转盈亏</p>
+            <p class="sub">初始保证金 <span class="num">{{ money(pos.margin) }}</span></p>
           </section>
 
           <section class="stats gutter">
@@ -128,8 +130,8 @@ function back() {
               <div><dt>前结算</dt><dd class="num">{{ num(c.prev_settle / 100) }}</dd></div>
               <div><dt>持仓量</dt><dd class="num">{{ qty(c.open_interest) }} 手</dd></div>
               <div><dt>成交</dt><dd class="num">{{ qty(c.volume_today) }} 手</dd></div>
-              <div><dt>每手保证金</dt><dd class="num">{{ money(c.initial_margin, 0) }}</dd></div>
-              <div><dt>每点每手</dt><dd class="num">{{ money(c.tick_value * 100, 0) }} 星辉</dd></div>
+              <div><dt>每手初始保证金</dt><dd class="num">{{ money(c.initial_margin, 0) }}</dd></div>
+              <div><dt>每手每点</dt><dd class="num">{{ money(c.tick_value * 100, 0) }}</dd></div>
             </dl>
             <div class="book term phone-only">
               <div><div v-for="(l, i) in d.bids.slice(0, 3)" :key="`b${i}`" class="lv"><span class="k">买{{ i + 1 }}</span><span class="num tup">{{ num(l.price / 100) }}</span><span class="num">{{ l.quantity }}</span></div></div>
@@ -210,6 +212,8 @@ function back() {
 .two dt { font-size: 12px; color: var(--muted); }
 .two dd { font-size: 22px; font-weight: 600; }
 .chg { font-size: 13px; font-weight: 400; }
+.how { font-size: 12px; text-align: right; margin-top: 4px; }
+.how a { color: var(--accent); }
 .mine { margin-top: 16px; padding-top: 14px; padding-bottom: 14px; background: var(--ground-2); display: flex; flex-direction: column; gap: 4px; }
 .mine p { font-size: 15px; line-height: 1.6; }
 .mine .sub { font-size: 12px; color: var(--muted); }

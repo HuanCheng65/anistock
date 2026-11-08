@@ -161,7 +161,7 @@ async function cancel(id: number) {
       <input type="range" aria-label="假设的最终平均热度" :min="Math.floor(p * 0.6)" :max="Math.ceil(p * 1.4)" step="1" v-model.number="finalAt" />
     </label>
 
-    <div class="kv"><span>占用保证金</span><span class="num v">{{ money(margin) }}</span></div>
+    <div class="kv"><span>初始保证金</span><span class="num v">{{ money(margin) }}</span></div>
     <div class="kv"><span>手续费</span><span class="num v">{{ money(fee) }}</span></div>
     <div v-if="fut.mine" class="kv"><span>可用保证金</span><span class="num v">{{ money(fut.mine.available_margin) }}</span></div>
 
