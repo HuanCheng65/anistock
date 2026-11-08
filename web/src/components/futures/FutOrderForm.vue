@@ -13,6 +13,7 @@ import { useFutures } from '../../stores/futures'
 import { usePrefs } from '../../stores/prefs'
 import { useSession } from '../../stores/session'
 import { markEditing } from '../../version'
+import Icon from '../Icon.vue'
 import Modal from '../Modal.vue'
 
 const props = defineProps<{ c: FuturesContract; d: FuturesDetail | null; pos: FuturesPosition | null; initialSide?: 'buy' | 'sell' }>()
@@ -175,7 +176,7 @@ async function cancel(id: number) {
     <div v-else-if="!allowed" class="steps">
       <p class="note">交易热度期货前完成：</p>
       <component :is="x.ok ? 'span' : RouterLink" v-for="x in steps" :key="x.k" :to="x.ok ? undefined : x.to" class="step" :class="{ ok: x.ok }">
-        <span class="mk">{{ x.ok ? '✓' : '' }}</span><span>{{ x.label }}</span><span v-if="!x.ok" class="go">›</span>
+        <span class="mk"><Icon v-if="x.ok" name="check" :size="14" /></span><span>{{ x.label }}</span><span v-if="!x.ok" class="go"><Icon name="chevron" :size="14" /></span>
       </component>
     </div>
     <button v-else type="submit" class="tbtn cta" :class="side === 'buy' ? 'buy' : 'sell'" :disabled="busy || !!problem || closed">
