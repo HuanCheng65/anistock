@@ -96,7 +96,7 @@ impl Bench {
             let m: BTreeMap<i64, f64> = e
                 .companies()
                 .filter(|c| member(&f.key, c, day, &qs) && c.prev_close > 0)
-                .map(|c| (c.id, c.prev_close as f64 * c.shares as f64))
+                .map(|c| (c.id, c.prev_close as f64 * e.free_float(c.id) as f64))
                 .collect();
             let total: f64 = m.values().sum::<f64>().max(1.0);
             let wi: BTreeMap<i64, f64> = m.iter().map(|(c, v)| (*c, v / total)).collect();
@@ -146,14 +146,15 @@ impl Bench {
             let (mut num, mut den) = (0.0, 0.0);
             for (&c, &v0) in m {
                 let Some(co) = e.company(c) else { continue };
-                let div = e.company_day(c, day).map_or(0, |d| d.dividend_ps) as f64 * co.shares as f64;
+                let fl = e.free_float(c) as f64;
+                let div = e.company_day(c, day).map_or(0, |d| d.dividend_ps) as f64 * fl;
                 if co.status != "listed" {
                     self.irregular.push((day.into(), c, "delisted"));
                 }
                 if adj.contains(&c) {
                     self.irregular.push((day.into(), c, "adjusted"));
                 }
-                num += co.last_price as f64 * co.shares as f64 + div;
+                num += co.last_price as f64 * fl + div;
                 den += v0;
             }
             let prev = self.nav.insert(f.key.clone(), f.nav);

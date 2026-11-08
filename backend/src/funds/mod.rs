@@ -224,6 +224,17 @@ impl Engine {
         }
     }
 
+    /// A company's free float: its shares less those its production committee and the company itself hold (the
+    /// market indices' weights, `api::v1::market::compute_indices`).
+    pub fn free_float(&self, company: i64) -> i64 {
+        let locked: i64 = ["committee", "company"]
+            .iter()
+            .filter_map(|k| self.account_of(k, company))
+            .map(|a| self.holding(a, company).map_or(0, |h| h.qty))
+            .sum();
+        self.company(company).map_or(0, |c| (c.shares - locked).max(0))
+    }
+
     /// A company's operating row of trading day `day` (its dividend per share).
     pub fn company_day(&self, company: i64, day: &str) -> Option<&crate::model::CompanyDay> {
         self.st.company_days.get(&(company, day.to_string()))
@@ -306,7 +317,7 @@ impl Engine {
             .companies
             .values()
             .filter(|c| member(key, c, day, &qs))
-            .map(|c| (c.id, price(c) as i128 * c.shares as i128))
+            .map(|c| (c.id, price(c) as i128 * self.free_float(c.id) as i128))
             .collect();
         let sum: i128 = caps.iter().map(|x| x.1).sum::<i128>().max(1);
         caps.into_iter().map(|(id, cap)| (id, (total.max(0) as i128 * cap / sum) as i64)).collect()
