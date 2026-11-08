@@ -276,4 +276,4 @@ enabled = true
 # 指数基金 (docs/v3-funds.md): the eight funds of crate::indices, the other values the code's defaults
 # (backend/src/funds/mod.rs, the ones the replay ran). Turn on with a server binary that has the fund tables (V24).
 [funds]
-enabled = false
+enabled = true
