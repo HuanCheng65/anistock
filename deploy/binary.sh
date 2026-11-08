@@ -27,6 +27,14 @@ release_version() {
   python3 -c 'import json,sys; print(json.loads(sys.argv[1])["tag_name"])' "$json"
 }
 
+# One asset of release `version` through the GitHub API (asset id from the release, then the asset itself).
+fetch_api_asset() {
+  local repo="$1" version="$2" name="$3" out="$4" json id
+  json="$(fetch "https://api.github.com/repos/$repo/releases/tags/$version")" || return 1
+  id="$(python3 -c 'import json,sys; print(next(a["id"] for a in json.loads(sys.argv[1])["assets"] if a["name"] == sys.argv[2]))' "$json" "$name")" || return 1
+  fetch -H "Accept: application/octet-stream" -o "$out" "https://api.github.com/repos/$repo/releases/assets/$id"
+}
+
 # Download the release binary, check its sha256, install it to bin/anistock atomically. `install_binary stage`
 # puts it at bin/anistock.next instead, for `activate_binary` to move into place when the server restarts (update.sh:
 # a failure between the download and the restart leaves the running install as it was).
@@ -46,7 +54,13 @@ install_binary() {
   mkdir -p bin
   tmp="$(mktemp -d bin/.download.XXXXXX)"
   if ! fetch -o "$tmp/$BIN_ASSET" "$url/$BIN_ASSET" || ! fetch -o "$tmp/$BIN_ASSET.sha256" "$url/$BIN_ASSET.sha256"; then
-    rm -rf "$tmp"; echo "下载失败：$url/$BIN_ASSET" >&2; return 1
+    # the release download links answer 504 for a while after a release (seen on v0.7.10); the API serves the
+    # same files
+    echo "直接下载失败，改用 GitHub API 下载" >&2
+    if ! fetch_api_asset "$repo" "$version" "$BIN_ASSET" "$tmp/$BIN_ASSET" ||
+       ! fetch_api_asset "$repo" "$version" "$BIN_ASSET.sha256" "$tmp/$BIN_ASSET.sha256"; then
+      rm -rf "$tmp"; echo "下载失败：$url/$BIN_ASSET" >&2; return 1
+    fi
   fi
   if ! (cd "$tmp" && sha256sum -c "$BIN_ASSET.sha256" >/dev/null); then
     rm -rf "$tmp"; echo "校验失败（sha256 不符），没有安装" >&2; return 1
