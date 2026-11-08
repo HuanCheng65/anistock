@@ -230,6 +230,11 @@ fn main() {
     }
     // 指数基金: the funds of [funds] keys that do not exist yet
     engine.funds_setup(&clock.ts());
+    // the theme and source indices' labels, for companies no close has labelled yet
+    let n = engine.labels_backfill(&cfg.collector_db);
+    if n > 0 {
+        eprintln!("labels: {n} companies labelled from the collector database");
+    }
     // 新股: offers priced over what their data support are cut now, while players can still decide (the closes
     // do it too)
     match engine.reprice_offers(&cfg, &clock.today(), &clock.ts()) {

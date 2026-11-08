@@ -24,7 +24,8 @@ const GROUPS = [
 ]
 const held = computed(() => new Set((funds.mine?.holdings ?? []).map((h) => h.fund.key)))
 const groups = computed(() =>
-  GROUPS.map((g) => ({ ...g, rows: (funds.list ?? []).filter((f) => f.group === g.key) })).filter((g) => g.rows.length),
+  // (a fund whose index has no members yet and nobody holds is left out)
+  GROUPS.map((g) => ({ ...g, rows: (funds.list ?? []).filter((f) => f.group === g.key && (f.members > 0 || f.units > 0)) })).filter((g) => g.rows.length),
 )
 </script>
 

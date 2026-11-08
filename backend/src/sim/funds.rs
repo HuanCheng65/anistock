@@ -34,31 +34,7 @@ impl FundFlows {
 /// The labels the theme funds select on (source, genres plus the Isekai tag at rank 60, as engine/economy.py
 /// `show_genres`), from the collector's latest AniList snapshots: replay inputs written before they carried them.
 pub fn labels_from_collector(path: &std::path::Path) -> HashMap<i64, (Option<String>, Vec<String>)> {
-    let mut out = HashMap::new();
-    let Ok(c) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {
-        return out;
-    };
-    let Ok(mut st) =
-        c.prepare("SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day")
-    else {
-        return out;
-    };
-    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
-    for (id, data) in rows.into_iter().flatten().flatten() {
-        let (Ok(id), Ok(m)) = (id.parse::<i64>(), serde_json::from_str::<serde_json::Value>(&data)) else { continue };
-        let mut g: Vec<String> =
-            m["genres"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
-        if m["tags"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|t| t["name"] == "Isekai" && t["rank"].as_i64().unwrap_or(0) >= 60)
-        {
-            g.push("Isekai".into());
-        }
-        out.insert(id, (m["source"].as_str().map(String::from), g));
-    }
-    out
+    crate::funds::labels_from_collector(path).into_iter().collect()
 }
 
 fn unit(seed: u64, a: i64, day: &str, salt: u32) -> f64 {

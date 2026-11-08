@@ -240,6 +240,37 @@ pub fn fund_name(key: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Each AniList work's source and genres (plus the theme tags the indices use: Isekai at rank 60 or above, as
+/// `engine/economy.py` `show_genres`), from its latest media snapshot in the collector database.
+pub fn labels_from_collector(path: &std::path::Path) -> BTreeMap<i64, (Option<String>, Vec<String>)> {
+    let mut out = BTreeMap::new();
+    let Ok(c) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return out;
+    };
+    let Ok(mut st) = c.prepare(
+        "SELECT s.external_id, s.data FROM snapshots s WHERE s.source='anilist' AND s.kind='media'
+         AND s.day = (SELECT MAX(day) FROM snapshots WHERE source='anilist' AND kind='media' AND external_id=s.external_id)",
+    ) else {
+        return out;
+    };
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+    for (id, data) in rows.into_iter().flatten().flatten() {
+        let (Ok(id), Ok(m)) = (id.parse::<i64>(), serde_json::from_str::<serde_json::Value>(&data)) else { continue };
+        let mut g: Vec<String> =
+            m["genres"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
+        if m["tags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|t| t["name"] == "Isekai" && t["rank"].as_i64().unwrap_or(0) >= 60)
+        {
+            g.push("Isekai".into());
+        }
+        out.insert(id, (m["source"].as_str().map(String::from), g));
+    }
+    out
+}
+
 /// Whether company `c` belongs to index `key` on trading day `day` (docs/api-v1.md §4.1.4: `all`, `long`; `season`
 /// from `season_start`): listed, with a close before `day` (a new listing joins the day after its first session).
 pub fn member(key: &str, c: &crate::model::Company, day: &str, season_from: &str) -> bool {
@@ -279,6 +310,31 @@ impl Engine {
             self.fund_dirty(&key);
         }
         self.commit();
+    }
+
+    /// Companies without labels (none yet: the closes write them, V21) take them from the collector database now,
+    /// so the theme and source funds have their members before the next close. Returns how many were labelled.
+    pub fn labels_backfill(&mut self, collector_db: &std::path::Path) -> usize {
+        let missing: Vec<i64> =
+            self.st.companies.values().filter(|c| c.source.is_none() && c.genres.is_empty()).map(|c| c.id).collect();
+        if missing.is_empty() {
+            return 0;
+        }
+        let labels = labels_from_collector(collector_db);
+        let mut n = 0;
+        for id in missing {
+            let Some((source, genres)) = labels.get(&id) else { continue };
+            if source.is_none() && genres.is_empty() {
+                continue;
+            }
+            let c = self.st.companies.get_mut(&id).unwrap();
+            c.source = source.clone();
+            c.genres = genres.join(",");
+            self.mark_company(id);
+            n += 1;
+        }
+        self.commit();
+        n
     }
 
     /// A company's free float: its shares less those its production committee and the company itself hold (the
