@@ -12,7 +12,7 @@ import Icon from '../components/Icon.vue'
 import { DESK, useMedia } from '../composables/useMedia'
 import { usePoll } from '../composables/usePoll'
 import { useTopic } from '../live'
-import { errorText } from '../api'
+import { api, call, errorText } from '../api'
 import { dir, money, num, pct, qty } from '../format'
 import { useFutures } from '../stores/futures'
 import { useSession } from '../stores/session'
@@ -40,12 +40,32 @@ usePoll(() => (session.me ? fut.refreshMine() : null), 15000, 60000)
 usePoll(() => (fut.list ? null : fut.refreshList()), 60000)
 
 const d = computed(() => fut.detail[id.value] ?? null)
+// the work's heat before the period: what a player has to go on before it begins (the chart's lighter bars)
+const workHeat = ref<{ day: string; index: number }[]>([])
+async function loadHeat() {
+  const k = d.value?.contract
+  if (!k) return
+  const r = await call(api.GET('/api/v1/stocks/{id}/heat', { params: { path: { id: k.stock.id } } }))
+  workHeat.value = (r.works.find((w) => w.work_id === k.work_id)?.days ?? []).map((x) => ({ day: x.day, index: x.index }))
+}
+watch(() => d.value?.contract.id, () => loadHeat().catch(() => {}), { immediate: true })
+usePoll(() => loadHeat().catch(() => {}), 300000)
 const c = computed(() => d.value?.contract ?? null)
 const today = computed(() => session.status?.trading_day)
 const pos = computed(() => (fut.mine?.positions ?? []).find((p) => p.contract.id === id.value) ?? null)
 const left = computed(() => (c.value ? c.value.days_total - c.value.days_published : 0))
 const span = (a: string, b: string) => `${Number(a.slice(5, 7))}月${Number(a.slice(8))}日–${Number(b.slice(5, 7))}月${Number(b.slice(8))}日`
 const price = computed(() => (c.value ? c.value.last_price / 100 : 0))
+const before = computed(() => {
+  const k = c.value
+  if (!k) return []
+  return workHeat.value.filter((x) => x.day < k.first_day).slice(desk.value ? -28 : -14)
+})
+/** the last 7 days of the work's index (shown in place of the period's average before it has one) */
+const week = computed(() => {
+  const xs = workHeat.value.slice(-7)
+  return xs.length ? xs.reduce((a, x) => a + x.index, 0) / xs.length : null
+})
 /** day by day, newest first: the day's index, the settlement, the trading */
 const rows = computed(() => {
   if (!d.value) return []
@@ -90,9 +110,10 @@ function back() {
           </section>
 
           <section class="chart gutter">
-            <FutChart :c="c" :index="d.index" :today="today" :wide="desk" />
+            <FutChart :c="c" :index="d.index" :before="before" :today="today" :wide="desk" />
             <dl class="two">
-              <div><dt>已公布 {{ c.days_published }} 天，平均</dt><dd class="num">{{ c.average_so_far != null ? num(c.average_so_far) : '–' }}</dd></div>
+              <div v-if="c.days_published"><dt>已公布 {{ c.days_published }} 天，平均</dt><dd class="num">{{ c.average_so_far != null ? num(c.average_so_far) : '–' }}</dd></div>
+              <div v-else><dt>最近 7 天平均</dt><dd class="num">{{ week != null ? num(week) : '–' }}</dd></div>
               <div><dt>市场预期 {{ c.days_total }} 天平均</dt><dd class="num up">{{ num(price) }} <span class="chg" :class="dir(c.change)">今日 {{ pct(c.change, 1) }}</span></dd></div>
             </dl>
           </section>
