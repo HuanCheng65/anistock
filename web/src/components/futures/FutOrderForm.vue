@@ -152,9 +152,9 @@ async function cancel(id: number) {
     </label>
     <div class="row">数量
       <span class="stepper">
-        <button type="button" class="tbtn plain" aria-label="减少" @click="lots = Math.max(1, lots - 1)">−</button>
+        <button type="button" class="tbtn plain" aria-label="减少" @click="lots = Math.max(1, lots - 1)"><Icon name="minus" :size="18" /></button>
         <span class="num lots">{{ lots }} 手</span>
-        <button type="button" class="tbtn plain" aria-label="增加" @click="lots++">+</button>
+        <button type="button" class="tbtn plain" aria-label="增加" @click="lots++"><Icon name="plus" :size="18" /></button>
       </span>
     </div>
 
@@ -222,7 +222,7 @@ async function cancel(id: number) {
 .counter.buy { color: var(--t-up); }
 .counter.sell { color: var(--t-down); }
 .stepper { display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; align-items: center; border: 1px solid var(--t-field-border); height: 36px; }
-.stepper .tbtn { height: 34px; border: 0; font-size: 18px; }
+.stepper .tbtn { height: 34px; border: 0; font-size: 18px; display: inline-flex; align-items: center; justify-content: center; }
 .lots { text-align: center; font-size: 15px; color: var(--t-ink); }
 .whatif { position: relative; display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--t-ink-2); border-top: 1px solid var(--t-line); padding-top: 10px; cursor: ew-resize; }
 .whatif .at { font-size: 17px; color: var(--t-ink); border-bottom: 1px dashed var(--t-ink-2); }

@@ -2,6 +2,7 @@
 // 融资融券: a margin call, a forced liquidation or a default, on every page until it is resolved.
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import Icon from './Icon.vue'
 import { useSession } from '../stores/session'
 
 const session = useSession()
@@ -22,6 +23,7 @@ const text = computed(() => {
 
 <template>
   <div v-if="text" class="mb gutter" role="alert">
+    <Icon name="warning" :size="16" class="w" />
     <span class="t">{{ text }}</span>
     <RouterLink v-if="route.name !== 'me'" to="/me" class="go">查看</RouterLink>
   </div>
@@ -29,11 +31,12 @@ const text = computed(() => {
 
 <style scoped>
 .mb {
-  display: flex; align-items: baseline; gap: 12px; padding-top: 10px; padding-bottom: 10px;
+  display: flex; align-items: baseline; gap: 8px; padding-top: 10px; padding-bottom: 10px;
   border-bottom: 1px solid var(--hair); background: var(--ground); color: var(--danger); font-size: 13px; line-height: 1.5;
 }
+.w { align-self: center; }
 .t { min-width: 0; }
-.go { margin-left: auto; flex: none; color: var(--danger); text-decoration: underline; text-underline-offset: 3px; }
+.go { margin-left: auto; padding-left: 4px; flex: none; color: var(--danger); text-decoration: underline; text-underline-offset: 3px; }
 @media (min-width: 1024px) {
   .mb { max-width: calc(var(--container) + 64px); margin: 0 auto; padding-left: 32px; padding-right: 32px; }
 }
