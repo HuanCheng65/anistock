@@ -712,10 +712,11 @@ async fn closed_market_and_rate_limits() {
         .await;
     err(&r, 422, "auction_limit_only");
 
-    // the anonymous bucket: 20 at once, then 429 with Retry-After
+    // the anonymous bucket: 20 at once, then 429 with Retry-After (refilling slowly enough that a slow CI machine
+    // cannot earn a token back during the 21 requests)
     let c = app("2026-11-05T10:00:00+08:00", true);
     let mut limits = c.st.v1.limits.clone();
-    limits.anon = (10.0, 20.0);
+    limits.anon = (0.01, 20.0);
     let st = Arc::new(AppState {
         actor: c.st.actor.clone(),
         cfg: c.st.cfg.clone(),
