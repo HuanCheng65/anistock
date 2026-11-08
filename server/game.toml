@@ -204,6 +204,7 @@ privacy = 1
 disclosure = 1
 margin_disclosure = 1          # 融资融券风险揭示书: signed before opening credit
 api_disclosure = 1             # 程序化交易风险揭示书: signed before an API key may trade
+futures_disclosure = 1         # 热度期货风险揭示书: signed before trading futures
 
 [api]
 # API keys with the `trade` scope (docs/v2-api-access.md phase 2). Off: keys stay read-only, and existing
@@ -256,3 +257,8 @@ buyback_adv = 0.25           # a day at most this share of the average daily vol
 buyback_adv_days = 20
 buyback_every_min = 10
 buyback_quiet_min = 30       # no buying this long after the open and before the close
+
+# 热度期货 (docs/v3-futures.md §4): the other values are the code's defaults (backend/src/futures/rules.rs), the ones
+# the replay gate passed. Needs a server binary with futures (v0.7.0+): an older one cannot read this table.
+[futures]
+enabled = true

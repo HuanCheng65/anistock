@@ -336,6 +336,17 @@
 | 7 | 做市 NPC、检验机器人、回放检验 | 6 |
 | 8 | 界面、知识测试、风险揭示书、规则页 | 7 |
 
+### 6.1 上线步骤（v0.7.0）
+
+`server/game.toml` 的 `[futures] enabled = true` 和带期货的服务程序在同一个版本里发布：`update.sh` 用检出的 tag 对应的程序，配置和程序一致。
+
+1. `git fetch && git checkout v0.7.0 && bash deploy/update.sh`（迁移 V19 自动执行，执行前自动备份）。
+2. 用第 1 版常数重算后台指数（11 月 5 日起用旧的滚动常数算过，还没公开、没结算过）：
+   `mv data/derived/heat_index.db data/derived/heat_index.pre-v1.db && uv run engine/heat_index.py`
+3. 日本分项按账号去重的首次同步，约 2 分钟，避开 06:00 的采集：`uv run collect.py --annict-viewers`
+4. 把部署之前的指数导入游戏数据库，股票页的热度页签从 11 月 5 日开始：`uv run python -m server.tools.import_heat`
+5. 合约在日结时挂牌：每部在播作品在下一个合约期的挂牌日（下一期开始前 7 天）出现，部署后 4 周内全部挂出；开播不到一周的作品在开播满一周那天挂第 1 期。
+
 ## 7. 待定
 
 | 参数 | 建议值 |
