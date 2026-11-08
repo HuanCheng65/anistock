@@ -1886,7 +1886,7 @@ export interface components {
             base_day: components["schemas"]["TradingDay"];
             /** Format: double */
             change: number;
-            /** @description 开放枚举：all、season、long */
+            /** @description 开放枚举：all、season、long；set=all 时还有 top20、manga、light_novel、isekai、romance、action */
             key: string;
             /** Format: int64 */
             members: number;
@@ -3387,6 +3387,8 @@ export interface operations {
                 series?: boolean;
                 /** @description total_return（默认，全收益）或 price（价格指数） */
                 basis?: string;
+                /** @description market（默认，行情页的 3 个）或 all（加上基金跟踪的指数） */
+                set?: string;
             };
             header?: never;
             path?: never;

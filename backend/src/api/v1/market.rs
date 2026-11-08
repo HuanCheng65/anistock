@@ -477,6 +477,8 @@ struct Co {
     first_air: String,
     listed: bool,
     delisted_on: Option<String>,
+    source: Option<String>,
+    genres: String,
 }
 
 /// Price adjustments (V10 `price_adjustments`, crate::corporate): company -> (first day in new terms, price
@@ -527,13 +529,18 @@ pub enum IndexBasis {
 /// On the total-return basis each dividend per share is added back on its day, and a stock's delisting day
 /// ends at the cash per share it returned instead of its close.
 pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: IndexBasis) -> R<IndicesResponse> {
+    compute_index_set(c, today, with_series, basis, false)
+}
+
+/// `compute_indices` with the funds' indices too (`all_sets`; crate::indices::DEFS) or only the market page's.
+pub fn compute_index_set(c: &Connection, today: &str, with_series: bool, basis: IndexBasis, all_sets: bool) -> R<IndicesResponse> {
     let qs = quarter_start(today);
     let from = season_from(today);
     let cos: Vec<Co> = {
         let mut s = c
             .prepare_cached(
-                "SELECT id, shares, last_price, prev_close, long_runner, first_air, status, delisted_on FROM companies
-                 WHERE status IN ('listed', 'delisted')",
+                "SELECT id, shares, last_price, prev_close, long_runner, first_air, status, delisted_on, source, genres
+                 FROM companies WHERE status IN ('listed', 'delisted')",
             )
             .map_err(sql)?;
         let rows = s
@@ -547,6 +554,8 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
                     first_air: r.get(5)?,
                     listed: r.get::<_, String>(6)? == "listed",
                     delisted_on: r.get(7)?,
+                    source: r.get(8)?,
+                    genres: r.get(9)?,
                 })
             })
             .map_err(sql)?;
@@ -617,68 +626,89 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
         }
     }
     let float = |id: i64| (by_id[&id].shares - locked.get(&id).copied().unwrap_or(0)).max(0) as f64;
-    type Member<'a> = Box<dyn Fn(&Co) -> bool + 'a>;
-    let defs: [(&str, &str, Member); 3] = [
-        ("all", "番剧综合指数", Box::new(|_| true)),
-        ("season", "本季新番", Box::new(|co: &Co| !co.long && co.first_air.as_str() >= from.as_str())),
-        ("long", "长篇连载", Box::new(|co: &Co| co.long)),
-    ];
+    let labels = |id: i64| {
+        let co = by_id[&id];
+        crate::indices::Labels { long: co.long, first_air: &co.first_air, source: co.source.as_deref(), genres: &co.genres }
+    };
     let r4 = |v: f64| (v * 10000.0).round() / 10000.0;
     let mut items = Vec::new();
-    for (key, name, member) in defs.iter() {
-        let members: HashSet<i64> = cos.iter().filter(|co| member(co)).map(|co| co.id).collect();
+    for d in crate::indices::DEFS.iter().filter(|d| all_sets || d.market) {
+        let in_universe = |id: i64| crate::indices::eligible(d.rule, &labels(id), &from);
+        // Top: the members chosen at the last review
+        let mut chosen: HashSet<i64> = HashSet::new();
         let mut series: Vec<(String, f64)> = Vec::new();
-        let mut prev: Option<&HashMap<i64, i64>> = None;
+        let mut prev: Option<(&String, &HashMap<i64, i64>)> = None;
+        let mut last_any: Option<&String> = None;
         let mut level = 1000.0;
-        for (d, closes) in &days {
-            if !closes.keys().any(|id| members.contains(id)) {
+        for (dd, closes) in &days {
+            if let crate::indices::Rule::Top(n) = d.rule {
+                if crate::indices::is_review(dd, last_any.map(|x| x.as_str())) {
+                    // the values of the day before (the first day: its own): the stocks trading then
+                    let base = last_any.map_or(closes, |x| &days[x]);
+                    let on = last_any.map_or(dd.as_str(), |x| x.as_str());
+                    let values: Vec<(i64, f64)> = base
+                        .iter()
+                        .map(|(id, c)| (*id, *c as f64 * forward_factor(adj.get(id), on) * float(*id)))
+                        .collect();
+                    chosen = crate::indices::top(values, n).into_iter().collect();
+                }
+            }
+            last_any = Some(dd);
+            let member = |id: i64| in_universe(id) && (!matches!(d.rule, crate::indices::Rule::Top(_)) || chosen.contains(&id));
+            if !closes.keys().any(|id| member(*id)) {
                 continue;
             }
-            if let Some(p) = prev {
-                // weights: yesterday's free-float market value in today's share terms (前复权 close × free float)
-                let (mut num, mut den) = (0f64, 0f64);
+            if let Some((_, p)) = prev {
+                // each member's value the day before in today's share terms (前复权 close × free float), and its
+                // return over the day (its close plus what it paid, against the close before)
+                let mut parts: Vec<(i64, f64, f64)> = Vec::new();
                 for (id, close) in closes {
-                    if let (true, Some(pc)) = (members.contains(id), p.get(id)) {
+                    if let (true, Some(pc)) = (member(*id), p.get(id)) {
                         let a = adj.get(id);
-                        let fwd = forward_factor(a, d);
-                        let fl = float(*id);
-                        num += end_value(*id, d, *close) * fwd * fl;
-                        den += *pc as f64 * factor_on(a, d) * fwd * fl;
+                        let fwd = forward_factor(a, dd);
+                        let before = *pc as f64 * factor_on(a, dd) * fwd;
+                        if before > 0.0 {
+                            parts.push((*id, before * float(*id), end_value(*id, dd, *close) * fwd / before));
+                        }
                     }
                 }
-                if den > 0.0 {
-                    level *= num / den;
+                let w = crate::indices::weights(&parts.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(), d.cap);
+                if !parts.is_empty() {
+                    level *= parts.iter().zip(&w).map(|(x, w)| x.2 * w.1).sum::<f64>();
                 }
             }
-            series.push((d.clone(), level));
-            prev = Some(closes);
+            series.push((dd.clone(), level));
+            prev = Some((dd, closes));
         }
         if series.is_empty() {
             continue;
         }
         let last_day = series.last().map(|s| s.0.clone()).unwrap_or_default();
+        let member = |id: i64| in_universe(id) && (!matches!(d.rule, crate::indices::Rule::Top(_)) || chosen.contains(&id));
         if last_day.as_str() < today {
             // today from last prices: the stocks listed now with a close on the last day
-            let (mut num, mut den) = (0f64, 0f64);
             let lastc = &days[&last_day];
-            for id in members.iter().filter(|id| by_id[*id].listed) {
-                if let Some(pc) = lastc.get(id) {
-                    let fl = float(*id);
-                    num += by_id[id].last as f64 * fl;
-                    den += *pc as f64 * forward_factor(adj.get(id), &last_day) * fl;
+            let mut parts: Vec<(i64, f64, f64)> = Vec::new();
+            for id in cos.iter().filter(|co| co.listed && member(co.id)).map(|co| co.id) {
+                if let Some(pc) = lastc.get(&id) {
+                    let before = *pc as f64 * forward_factor(adj.get(&id), &last_day);
+                    if before > 0.0 {
+                        parts.push((id, before * float(id), by_id[&id].last as f64 / before));
+                    }
                 }
             }
-            if den > 0.0 {
-                series.push((today.to_string(), level * num / den));
+            if !parts.is_empty() {
+                let w = crate::indices::weights(&parts.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(), d.cap);
+                series.push((today.to_string(), level * parts.iter().zip(&w).map(|(x, w)| x.2 * w.1).sum::<f64>()));
             }
         }
         let n = series.len();
         let value = series[n - 1].1;
         let prev_v = if n >= 2 { series[n - 2].1 } else { value };
         items.push(MarketIndex {
-            key: key.to_string(),
-            name: name.to_string(),
-            members: cos.iter().filter(|co| co.listed && members.contains(&co.id)).count() as i64,
+            key: d.key.to_string(),
+            name: d.name.to_string(),
+            members: cos.iter().filter(|co| co.listed && member(co.id)).count() as i64,
             base_day: day(series[0].0.clone()),
             value: r4(value),
             prev_close: r4(prev_v),
@@ -714,7 +744,8 @@ pub fn compute_indices(c: &Connection, today: &str, with_series: bool, basis: In
 /// 指数与涨跌家数
 #[utoipa::path(get, path = "/api/v1/market/indices", tag = "market",
     params(("series" = Option<bool>, Query, description = "false 时不带走势"),
-        ("basis" = Option<String>, Query, description = "total_return（默认，全收益）或 price（价格指数）")),
+        ("basis" = Option<String>, Query, description = "total_return（默认，全收益）或 price（价格指数）"),
+        ("set" = Option<String>, Query, description = "market（默认，行情页的 3 个）或 all（加上基金跟踪的指数）")),
     responses((status = 200, body = IndicesResponse), (status = "default", body = ErrorBody)))]
 pub async fn indices(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> R<Json<IndicesResponse>> {
     let q = Q::parse(q.as_deref());
@@ -724,15 +755,20 @@ pub async fn indices(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> 
         Some("price") => IndexBasis::Price,
         Some(_) => return Err(error::invalid(vec![error::not_allowed("basis")])),
     };
+    let all_sets = match q.get("set") {
+        None | Some("market") => false,
+        Some("all") => true,
+        Some(_) => return Err(error::invalid(vec![error::not_allowed("set")])),
+    };
     let today = st.clock.today();
     let st2 = st.clone();
     read(&st, move |c| {
         let fp = super::cache::market_fingerprint(c, &today)?;
-        let key = (with_series, basis == IndexBasis::TotalReturn);
+        let key = (with_series, basis == IndexBasis::TotalReturn, all_sets);
         if let Some(hit) = st2.v1.caches.indices.get(&key, &fp) {
             return Ok(IndicesResponse::clone(&hit));
         }
-        let built = compute_indices(c, &today, with_series, basis)?;
+        let built = compute_index_set(c, &today, with_series, basis, all_sets)?;
         st2.v1.caches.indices.put(key, fp, Arc::new(built.clone()));
         Ok(built)
     })

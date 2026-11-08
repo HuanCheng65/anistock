@@ -461,7 +461,7 @@ pub struct IndexPoint {
 
 #[derive(Serialize, ToSchema, Clone)]
 pub struct MarketIndex {
-    /// 开放枚举：all、season、long
+    /// 开放枚举：all、season、long；set=all 时还有 top20、manga、light_novel、isekai、romance、action
     pub key: String,
     pub name: String,
     pub members: i64,

@@ -64,7 +64,7 @@ pub fn market_fingerprint(c: &Connection, today: &str) -> R<String> {
 pub struct Caches {
     pub quotes: Memo<(), super::types::QuotesResponse>,
     /// (with_series, total_return)
-    pub indices: Memo<(bool, bool), super::types::IndicesResponse>,
+    pub indices: Memo<(bool, bool, bool), super::types::IndicesResponse>,
     /// period
     pub leaderboard: Memo<String, super::types::Leaderboard>,
 }

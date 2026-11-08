@@ -823,6 +823,8 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 - **复权**：拆股、配股按复权因子换算（和 K 线前复权一致），除权本身不改变指数。权重用前复权收盘价 × 现在的流通股数（不含制作委员会和公司自己持有的股份，即按流通市值加权）。
 - **本季新番** `season`：首播在 `season_from` 及以后的非长篇。`season_from` 是季度第一天（`season_start`）前 14 天：10 月季的新番常在 9 月最后一周开播，算本季（和估值的季度划分一致）。
 - 参数 `series=false` 去掉走势（机器人只要点位时用）。
+- 参数 `set`：`market`（默认）只返回行情页的 3 个；`all` 再加上指数基金跟踪的 6 个（docs/v3-funds.md §3）：`top20` 安易 20（每月第一个交易日按前一天的流通市值取前 20，月中不变，退市即移出）、`manga` 漫改、`light_novel` 轻改（AniList 原作类型）、`isekai` 异世界、`romance` 恋爱、`action` 热血（AniList 类型和标签）。
+- **权重上限**：`long` 和基金跟踪的 6 个指数，单只股票的权重不超过 25%，超出的部分按市值比例分给其他成分股（`all`、`season` 不设上限）。规则在 backend/src/indices.rs，基金调仓用的是同一份。
 - 旧字段 `prev` 改 `prev_close`；`series` 从 `[day, value]` 二元数组改成对象（体积大约翻倍，3 条 × 约 130 点，可以接受；换来自描述）。
 
 #### 4.1.5 `GET /api/v1/market/airings`
