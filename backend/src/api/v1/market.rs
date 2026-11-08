@@ -66,7 +66,7 @@ pub fn season_from(day: &str) -> String {
 }
 
 pub fn cover_url(id: i64) -> String {
-    format!("/api/v1/stocks/{id}/cover")
+    format!("/covers/{id}.jpg")
 }
 
 /// `StockRef` for every company (any status).

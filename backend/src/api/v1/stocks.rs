@@ -802,7 +802,22 @@ fn fetch_slots() -> &'static tokio::sync::Semaphore {
     responses((status = 200, description = "图片", content_type = "image/jpeg"), (status = "default", body = ErrorBody)))]
 pub async fn cover(State(st): State<Arc<AppState>>, Path(raw): Path<String>) -> Response<Body> {
     let Ok(id) = raw.trim().parse::<i64>() else { return no_cover() };
-    let path = covers_dir(&st).join(format!("{id}.img"));
+    cover_of(&st, id).await
+}
+
+/// `/covers/{id}.jpg`: the same image as a static file, outside the API (no rate limit, no API headers),
+/// so the browser and Cloudflare's edge keep it (`.jpg` is cached by default) and a page of covers never
+/// spends the API budget. `cover_url` points here.
+pub async fn cover_file(st: &Arc<AppState>, name: &str) -> Response<Body> {
+    let id = name.strip_suffix(".jpg").filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())).and_then(|s| s.parse::<i64>().ok());
+    match id {
+        Some(id) => cover_of(st, id).await,
+        None => crate::api::spa::plain(404, "Not Found"),
+    }
+}
+
+async fn cover_of(st: &Arc<AppState>, id: i64) -> Response<Body> {
+    let path = covers_dir(st).join(format!("{id}.img"));
     if let Ok(bytes) = tokio::fs::read(&path).await {
         return image_reply(bytes);
     }
@@ -817,7 +832,15 @@ pub async fn cover(State(st): State<Arc<AppState>>, Path(raw): Path<String>) -> 
     match tokio::task::spawn_blocking(move || fetch_cover(&st2, id, &path)).await.ok().flatten() {
         Some(bytes) => image_reply(bytes),
         None => {
-            misses().lock().unwrap().insert(id, Instant::now());
+            // the static path has no rate limit: made-up ids must not grow this without bound
+            let mut m = misses().lock().unwrap();
+            if m.len() >= 4096 {
+                m.retain(|_, t| t.elapsed() < Duration::from_secs(6 * 3600));
+                if m.len() >= 4096 {
+                    m.clear();
+                }
+            }
+            m.insert(id, Instant::now());
             no_cover()
         }
     }

@@ -86,7 +86,8 @@ impl ReadPool {
 
 // ---------------------------------------------------------------- everything outside the v1 router
 
-/// Unknown `/api/*` paths: 404 `not_found` (v1 format); `/assets/*` and other GETs: the SPA.
+/// Unknown `/api/*` paths: 404 `not_found` (v1 format); `/covers/{id}.jpg`: the cover images (static, no
+/// rate limit); `/assets/*` and other GETs: the SPA.
 pub async fn fallback(st: Arc<AppState>, req: Request) -> Response<Body> {
     let (parts, _) = req.into_parts();
     let path = parts.uri.path();
@@ -94,6 +95,12 @@ pub async fn fallback(st: Arc<AppState>, req: Request) -> Response<Body> {
         let mut r = v1::error::not_found().into_response();
         r.headers_mut().insert("aniex-version", HeaderValue::from_static(v1::VERSION));
         return r;
+    }
+    if let Some(name) = path.strip_prefix("/covers/") {
+        if parts.method != Method::GET && parts.method != Method::HEAD {
+            return spa::plain(405, "Method Not Allowed");
+        }
+        return v1::stocks::cover_file(&st, name).await;
     }
     let Some(dist) = &st.dist else { return spa::plain(404, "Not Found") };
     if let Some(rest) = path.strip_prefix("/assets/") {

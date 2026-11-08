@@ -20,7 +20,7 @@ export default defineConfig({
   plugins: [vue()],
   define: { __APP_VERSION__: JSON.stringify(version) },
   server: {
-    proxy: { '/api': { target: 'http://127.0.0.1:18620', ws: true } },
+    proxy: { '/api': { target: 'http://127.0.0.1:18620', ws: true }, '/covers': { target: 'http://127.0.0.1:18620' } },
   },
   build: {
     outDir: 'dist',

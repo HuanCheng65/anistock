@@ -335,7 +335,7 @@ GET /api/v1/news?after=c_8890             比 8890 更新的全部（最多 limi
 | 账户数据 | `/me/*` | `Cache-Control: no-store` |
 | 实时行情 | `/market/status`、`/market/quotes`、`/stocks/{id}/book` | `Cache-Control: no-cache` + `ETag`（内容哈希）；客户端带 `If-None-Match` 时没变就回 304 |
 | 日内不变的数据 | `/rules`、`/stocks/{id}/candles?to=<昨天>`、`/market/macro`、指数历史 | `Cache-Control: public, max-age=60` + `ETag`；在 06:30 日结后内容才变 |
-| 封面 | `/stocks/{id}/cover` | `Cache-Control: public, max-age=604800, immutable`（沿用） |
+| 封面 | `/stocks/{id}/cover`，静态路径 `/covers/{id}.jpg` | `Cache-Control: public, max-age=604800, immutable`（沿用）；静态路径不经过 API 层、不计入限流，Cloudflare 按扩展名默认缓存 |
 | OpenAPI | `/openapi.json` | `ETag`，按服务器版本 |
 
 ETag 主要是给机器人和轮询的客户端省流量；网页连上 WebSocket 后基本不轮询。
@@ -614,7 +614,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 | `vcm_active` | boolean | | 正在冷静期（`cooling`） |
 | `sparkline` | Money[] | | 最近 20 个交易日收盘价，旧到新（`spark`） |
 | `ratios` | Ratios | | 见下（原 `/api/v2/ratios`） |
-| `cover_url` | string | | `/api/v1/stocks/21/cover` |
+| `cover_url` | string | | `/covers/21.jpg` |
 
 #### `Ratios`
 
@@ -791,7 +791,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
       "sparkline": [21803, 21950, 22045],
       "ratios": {"pe_ttm": 31.2, "pe_dynamic": 24.8, "dividend_yield_ttm": 0.021,
                  "dividend_yield_dynamic": 0.034, "pb": 2.7, "book_value_per_share": 8165},
-      "cover_url": "/api/v1/stocks/21/cover"
+      "cover_url": "/covers/21.jpg"
     }
   ]
 }
@@ -953,7 +953,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
     "annict": {"id": 2534, "watchers": 4210}
   },
   "ipo": null,
-  "cover_url": "/api/v1/stocks/21/cover"
+  "cover_url": "/covers/21.jpg"
 }
 ```
 
@@ -1074,6 +1074,8 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 #### 4.2.6 `GET /api/v1/stocks/{id}/cover`
 
 作品封面图片（Bangumi 200px），首次请求时下载并缓存在磁盘（沿用 `v2.rs` 的实现）。成功返回图片本身（`image/jpeg` 等）；没有封面返回 404 `cover_not_found`（JSON），`Cache-Control: public, max-age=3600`。
+
+同一张图也在 `/covers/{id}.jpg`（`cover_url` 给的就是它）：不在 `/api` 下，不计入限流、不带 API 响应头，浏览器和 Cloudflare 边缘都按 `Cache-Control` 缓存。网页用这个路径；`/stocks/{id}/cover` 保留给已有的调用方。
 
 ---
 

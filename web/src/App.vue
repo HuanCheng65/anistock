@@ -60,9 +60,10 @@ function tick() {
   market.refreshIndices()
 }
 onMounted(() => {
+  // the first status and indices (tick() would fetch the status a second time while it is still loading)
   session.loadStatus()
   session.loadRules()
-  tick()
+  market.refreshIndices()
   timer = window.setInterval(tick, 30000)
   prefetchViews()
 })

@@ -126,7 +126,10 @@ impl App {
         let (parts, body) = r.into_parts();
         let bytes = axum::body::to_bytes(body, 1 << 24).await.unwrap();
         let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-        assert_eq!(parts.headers.get("aniex-version").unwrap(), v1::VERSION, "{path}");
+        // the static cover files are outside the API (no API headers)
+        if !path.starts_with("/covers/") {
+            assert_eq!(parts.headers.get("aniex-version").unwrap(), v1::VERSION, "{path}");
+        }
         Resp { status: parts.status, headers: parts.headers, json }
     }
 
@@ -668,6 +671,10 @@ async fn auth_bindings_and_routing_errors() {
     err(&a.get("/api/v1/ipos/1", None).await, 404, "ipo_not_found");
     err(&a.get("/api/v1/news/999", None).await, 404, "news_not_found");
     err(&a.get("/api/v1/stocks/1/cover", None).await, 404, "cover_not_found");
+    // the static path (`cover_url`): the same answer, outside the API; anything but `<digits>.jpg` is not a cover
+    err(&a.get("/covers/1.jpg", None).await, 404, "cover_not_found");
+    assert_eq!(a.get("/covers/1.png", None).await.status, 404);
+    assert_eq!(a.get("/covers/../game.db", None).await.status, 404);
 
     let ck = a.login().await;
     let h = [("cookie", ck.as_str())];

@@ -22,8 +22,17 @@ const loaded = ref(false)
 watch(() => props.id, (id) => {
   failed.value = missing.has(id)
   loaded.value = false
+  retried.value = false
 })
+// the static file (backend /covers, cached by the edge); one retry a few seconds later before the spine
+// stays for the session, so a dropped request is not taken for a missing cover
+const retried = ref(false)
+const src = computed(() => `/covers/${props.id}.jpg${retried.value ? '?r=1' : ''}`)
 function onError() {
+  if (!retried.value) {
+    window.setTimeout(() => (retried.value = true), 4000)
+    return
+  }
   missing.add(props.id)
   failed.value = true
 }
@@ -38,7 +47,7 @@ function spineText(t: string): string {
 <template>
   <span class="cover" :style="{ width: w + 'px', height: h + 'px', background: tone }">
     <span v-if="spine && !loaded" class="spine serif" :style="{ fontSize: size + 'px', maxHeight: h - 20 + 'px' }" aria-hidden="true">{{ short }}</span>
-    <img v-if="!failed" :src="`/api/v1/stocks/${id}/cover`" :alt="title" loading="lazy" decoding="async" :class="{ on: loaded }" @load="loaded = true" @error="onError" />
+    <img v-if="!failed" :src="src" :alt="title" loading="lazy" decoding="async" :class="{ on: loaded }" @load="loaded = true" @error="onError" />
     <slot />
   </span>
 </template>
