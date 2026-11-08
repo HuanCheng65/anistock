@@ -1,14 +1,16 @@
 <script setup lang="ts">
-// Account opening (docs/design/account.md §7). Right after registering (?new=1): what AniEx is, the risk
-// disclosure, the receipt. After a sign-in with documents pending (existing players, a new version):
+// Account opening (docs/design/account.md §7). Right after registering (?new=1): what AniEx is (with three
+// stocks trading now), the risk disclosure, the receipt. After a sign-in with documents pending (existing players, a new version):
 // accept the updated documents, sign the disclosure. Nothing here places an order.
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, call, errorText } from '../api'
+import Cover from '../components/Cover.vue'
 import Icon from '../components/Icon.vue'
 import LegalText from '../components/LegalText.vue'
-import { money, when } from '../format'
+import { dir, money, pct, when } from '../format'
 import { DOCUMENTS, isDocKey } from '../legal/documents'
+import { useMarket } from '../stores/market'
 import { useSession } from '../stores/session'
 
 type Step = 'intro' | 'accept' | 'sign' | 'done'
@@ -30,6 +32,13 @@ const steps: Step[] = [
   ...(isNew ? (['done'] as const) : []),
 ]
 if (!steps.length) router.replace(next)
+
+// the intro shows the three stocks with the most turnover today: real works being traded, not a diagram
+const market = useMarket()
+const busiest = computed(() => [...(market.stocks ?? [])].sort((a, b) => b.turnover - a.turnover).slice(0, 3))
+onMounted(() => {
+  if (isNew && !market.stocks) market.refreshQuotes().catch(() => {})
+})
 
 const at = ref(0)
 const step = computed(() => steps[at.value])
@@ -91,20 +100,17 @@ async function sign() {
     <Transition name="step" mode="out-in">
       <section :key="step" ref="body" class="body">
         <template v-if="step === 'intro'">
-          <h1 class="serif">每部作品都是一支股票</h1>
-          <p class="lede">公司的营收来自真实观众的观看和讨论。作品越受欢迎，营收越高，股价随大家对营收的预期涨跌。每周日，公司把利润作为分红发给股东。</p>
-          <svg viewBox="0 0 350 180" class="demo" role="img" aria-label="热度上升时股价随之上涨">
-            <line x1="0" y1="160" x2="350" y2="160" class="b" />
-            <path d="M0 140 L50 132 L100 120 L150 104 L200 96 L250 70 L300 56 L350 40" class="heat" />
-            <path d="M0 150 L50 146 L100 128 L150 118 L200 110 L250 80 L300 72 L350 50" class="px" />
-            <line x1="250" y1="20" x2="250" y2="160" class="ep" />
-            <rect x="226" y="164" width="48" height="16" class="tag" />
-            <text x="250" y="176" text-anchor="middle">第 5 集</text>
-          </svg>
-          <div class="legend">
-            <span><i class="lp"></i>股价</span>
-            <span><i class="lh"></i>热度</span>
-          </div>
+          <h1 class="serif">动画作品交易所</h1>
+          <p class="lede">安易是动画作品的模拟交易所。每部在播或即将开播的作品都有一支股票，价格由玩家之间的买卖决定。看好一部作品就买入，不看好就卖出，和其他玩家比较收益。</p>
+          <p class="lede">熟悉以后，还可以认购新股、交易热度期货、申购指数基金。</p>
+          <ul v-if="busiest.length" class="live">
+            <li v-for="x in busiest" :key="x.stock.id">
+              <Cover :id="x.stock.id" :title="x.stock.title" :w="30" :h="42" :spine="false" />
+              <span class="serif clamp1 t">{{ x.stock.title }}</span>
+              <span class="num p">{{ money(x.price) }}</span>
+              <span class="num c" :class="dir(x.change)">{{ pct(x.change) }}</span>
+            </li>
+          </ul>
         </template>
 
         <template v-else-if="step === 'accept'">
@@ -137,9 +143,9 @@ async function sign() {
             <div><dt>初始资金</dt><dd>{{ money(session.me?.initial_cash, 0) }}</dd></div>
           </dl>
           <nav class="rows">
+            <RouterLink to="/guide" class="row"><span>新手指南</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
             <RouterLink to="/settings" class="row"><span>身份验证</span><span class="v">财政补贴、新股认购等</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
             <RouterLink to="/assessment/risk" class="row"><span>风险测评</span><span class="v">开通融资融券需要</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
-            <RouterLink to="/guide" class="row"><span>新手指南</span><Icon name="chevron" :size="16" class="chev" /></RouterLink>
           </nav>
         </template>
       </section>
@@ -164,17 +170,12 @@ async function sign() {
 .body { display: flex; flex-direction: column; gap: 14px; padding: 30px 0 8px; flex: 1; min-height: 0; }
 h1 { font-size: 30px; font-weight: 900; line-height: 1.25; }
 .lede { font-size: 15px; line-height: 1.7; color: var(--ink-2); text-wrap: pretty; }
-.demo { width: 100%; height: auto; margin-top: 8px; }
-.demo .b { stroke: var(--base-line); }
-.demo .heat { fill: none; stroke: var(--hold-npc); stroke-width: 2; stroke-dasharray: 4 4; }
-.demo .px { fill: none; stroke: var(--up); stroke-width: 2.4; stroke-linejoin: round; }
-.demo .ep { stroke: var(--accent); stroke-dasharray: 2 3; }
-.demo .tag { fill: var(--accent); }
-.demo text { font-size: 11px; fill: #fff; font-family: var(--font); }
-.legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); }
-.legend span { display: flex; align-items: center; gap: 6px; }
-.lp { width: 14px; border-top: 2px solid var(--up); }
-.lh { width: 14px; border-top: 2px dashed var(--hold-npc); }
+.live { margin-top: 10px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.live li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto 64px; gap: 12px; align-items: center; padding: 8px 0; }
+.live li + li { border-top: 1px solid var(--hair-2); }
+.live .t { font-size: 15px; font-weight: 600; }
+.live .p { font-size: 14px; text-align: right; }
+.live .c { font-size: 13px; text-align: right; }
 /* the disclosure reads in its own scroll area, ruled above and below like a printed form */
 .paper {
   flex: 1; min-height: 220px; max-height: 52vh; overflow-y: auto; overscroll-behavior: contain;
