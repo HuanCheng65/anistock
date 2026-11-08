@@ -934,7 +934,7 @@ pub struct Watchlist {
 pub struct Announcement {
     pub id: i64,
     pub title: String,
-    /// 纯文本，空行分段
+    /// Markdown 正文（CommonMark；单个换行即换行，不支持 HTML）。旧公告是纯文本，按 Markdown 显示时效果相同
     pub body: String,
     pub published_at: Timestamp,
 }

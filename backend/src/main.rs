@@ -86,7 +86,7 @@ fn reset_code(cfg: &Config, username: &str) {
 /// `anistock announce <title> <body-file> [--no-popup]`: post an announcement (shown once to each player as a
 /// popup after sign-in, docs/api-v1.md `Me.announcement`). Works while the server runs (a side table).
 fn announce(cfg: &Config, args: &[String]) {
-    let usage = || fail("usage: anistock announce <title> <body-file> [--no-popup]", 2);
+    let usage = || fail("usage: anistock announce <title> <body-file (Markdown)> [--no-popup]", 2);
     let (Some(title), Some(file)) = (args.first(), args.get(1)) else { usage() };
     let popup = !args.iter().any(|a| a == "--no-popup");
     let body = std::fs::read_to_string(file).unwrap_or_else(|e| fail(format!("{file}: {e}"), 1));

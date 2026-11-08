@@ -455,9 +455,9 @@ X-Act-As: qq:123456789
 
 #### `POST /api/v1/me/announcements/{id}/read`
 
-运营公告的已读标记。`Me.announcement` 是登录后要弹出的公告：开户之后发布、还没有标记已读的最新一条（`id`、`title`、`body` 纯文本空行分段、`published_at`），没有时为 `null`。标记已读后返回 `Me`，下一条未读的公告（如果有）出现在 `Me.announcement`。重复标记不报错；公告不存在时 404 `not_found`。
+运营公告的已读标记。`Me.announcement` 是登录后要弹出的公告：开户之后发布、还没有标记已读的最新一条（`id`、`title`、`body` 是 Markdown（CommonMark，单个换行即换行，不支持 HTML，链接在新窗口打开）、`published_at`），没有时为 `null`。标记已读后返回 `Me`，下一条未读的公告（如果有）出现在 `Me.announcement`。重复标记不报错；公告不存在时 404 `not_found`。
 
-公告由运营者在服务器上发布：`anistock announce <标题> <正文文件> [--no-popup]`（服务运行时也可以执行；`--no-popup` 只记录、不弹出）。公告和已读记录是数据库的旁表（`announcements`、`announcement_reads`，迁移 V14），不在引擎状态里。
+公告由运营者在服务器上发布：`anistock announce <标题> <正文文件> [--no-popup]`，正文文件用 Markdown 书写（服务运行时也可以执行；`--no-popup` 只记录、不弹出）。公告和已读记录是数据库的旁表（`announcements`、`announcement_reads`，迁移 V14），不在引擎状态里。
 
 #### 自选与新手引导
 

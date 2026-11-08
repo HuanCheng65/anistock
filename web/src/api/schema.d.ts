@@ -1218,7 +1218,7 @@ export interface components {
         };
         /** @description 运营公告 */
         Announcement: {
-            /** @description 纯文本，空行分段 */
+            /** @description Markdown 正文（CommonMark；单个换行即换行，不支持 HTML）。旧公告是纯文本，按 Markdown 显示时效果相同 */
             body: string;
             /** Format: int64 */
             id: number;
