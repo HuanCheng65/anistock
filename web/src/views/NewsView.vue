@@ -58,7 +58,7 @@ const held = computed(() => new Set((account.positions ?? []).map((p) => p.stock
 const chips = computed(() => {
   const out = [{ key: 'all', label: '全部' }]
   if (session.me && held.value.size) out.push({ key: 'mine', label: '持仓相关' })
-  for (const [k, v] of Object.entries(NEWS_CATEGORY)) out.push({ key: k, label: v.label })
+  for (const [k, v] of Object.entries(NEWS_CATEGORY)) if (v.chip !== false) out.push({ key: k, label: v.label })
   return out
 })
 const items = computed(() =>
@@ -136,6 +136,7 @@ const quote = (n: NewsItem) => (n.stock ? market.byId.get(n.stock.id) ?? null : 
 .kind.notice { color: var(--ink); }
 .kind.air { color: var(--mk-us); }
 .kind.close { color: var(--ink-2); }
+.kind.media { color: var(--mk-jp); }
 .mine { font-size: 11px; color: var(--accent); }
 .title { font-size: 15px; line-height: 1.5; }
 .text { font-size: 13px; color: var(--ink-2); line-height: 1.55; }

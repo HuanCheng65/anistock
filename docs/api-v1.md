@@ -181,7 +181,7 @@
 | `StockStatus` | `subscribing`、`listed`、`delisted` | 开放 |
 | `IpoStatus` | `upcoming`（认购未开始）、`open`（认购中）、`allotted`（已配售、未上市）、`listed`（已上市）、`cancelled`（取消发行） | 开放 |
 | `NewsKind` | `system`、`ipo`、`allotment`、`premiere`、`finale`、`dividend`、`rate`、`delisting`、`warning`、`vcm`、`flash`、`sequel`、`delay`、`hiatus`、`split`、`rights`、`buyback` | 开放 |
-| `NewsCategory` | `flash`（快讯）、`notice`（公告）、`airing`（放送）、`close`（日结） | 封闭 |
+| `NewsCategory` | `flash`（快讯）、`notice`（公告）、`airing`（放送）、`close`（日结）、`media`（媒体，外部新闻，docs/v3-news.md） | 封闭 |
 | `LedgerReason` | 见 §4.5.8 | 开放 |
 | `HolderKind` | `player`、`npc`、`market_maker`、`committee`、`unissued` | 开放 |
 | `NpcStyle` | `value`（价值型）、`trend`（趋势型）、`news`（消息型）、`retail`（散户型） | 开放 |
@@ -197,6 +197,7 @@
 | `notice` | 公告 | `system`、`ipo`、`allotment`、`delisting`、`warning`、`sequel`、`split`、`rights`、`buyback`，以及任何未知的新 kind |
 | `airing` | 放送 | `premiere`、`finale`、`delay`、`hiatus` |
 | `close` | 日结 | `dividend`、`rate` |
+| `media` | 媒体 | `media`（外部新闻，docs/v3-news.md） |
 
 ### 2.8 空值
 
@@ -251,6 +252,7 @@
 | 404 | `news_not_found` | 资讯不存在 | `id` |
 | 404 | `cover_not_found` | 没有封面 | — |
 | 404 | `binding_not_found` | 绑定不存在 | — |
+| 404 | `media_news_not_found` | 没有这条新闻 | — |
 | 405 | `method_not_allowed` | 不支持这个操作 | `allow` |
 | 409 | `username_taken` | 用户名已有人使用 | — |
 | 409 | `order_finished` | 委托已结束，无法撤单 | `status` |
@@ -542,6 +544,7 @@ POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
 
 - `POST /api/v1/me/password`（玩家）：`{"current_password", "new_password"}`。200，返回 `Me`，换发 cookie。错误：`invalid_request`（`current_password` 不正确、新密码不足 6 位）。
 - `POST /api/v1/bot/password-resets`（机器人令牌）：`{"platform": "qq", "external_id": "<openid>"}`。201，`{"code": "K7Q3-9MZD", "expires_at", "account": {"id", "username"}}`。错误：`not_bound`、`rate_limited`（同一 QQ 每小时 5 次）。
+- `POST /api/v1/bot/news`（机器人令牌）：news-feed 股市扩展推送一条判断过的外部新闻。格式、合并和三档模式见 `docs/v3-news.md` §2–3。
 - `POST /api/v1/auth/password-reset`（无需登录）：`{"username", "code", "new_password"}`。200，返回 `Me`，设置 cookie。错误：422 `reset_code_invalid`（验证码不正确、过期、用过或输错 5 次）。按 IP 计入登录限额。
 - 改密码或重设后，签发时间早于这次修改的 cookie 不再有效（`docs/v2-account.md` §13）。
 

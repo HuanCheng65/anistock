@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, assess, bind, keys, password, corporate, credit, futures, market, search, stocks, works};
+use super::{account, assess, bind, keys, media, password, corporate, credit, futures, market, search, stocks, works};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -29,7 +29,7 @@ use super::{account, assess, bind, keys, password, corporate, credit, futures, m
         futures::list, futures::detail, futures::heat, futures::mine, futures::place, futures::cancel,
         account::challenge, account::register, account::login, account::logout, password::reset, password::change, password::bot_issue,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
-        keys::list, keys::create, keys::revoke,
+        keys::list, keys::create, keys::revoke, media::push,
     ),
     components(schemas(
         super::error::ErrorBody, super::error::FieldError, Money, TradingDay, Timestamp,
@@ -46,7 +46,7 @@ pub struct ApiDoc;
 /// Request bodies: optional fields stay optional.
 const REQUESTS: &[&str] = &[
     "PlaceOrderRequest", "SubscriptionRequest", "RestructureRequest", "RegisterRequest", "LoginRequest",
-    "BindCodeRequest", "ApiKeyRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest",
+    "BindCodeRequest", "ApiKeyRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest", "MediaNewsRequest",
 ];
 
 fn require_all(v: &mut Value) {

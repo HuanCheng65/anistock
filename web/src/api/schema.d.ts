@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bot/news": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 推送一条外部新闻（机器人） */
+        post: operations["push"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/bot/password-resets": {
         parameters: {
             query?: never;
@@ -1932,6 +1949,53 @@ export interface components {
         MeEnvelope: {
             me: components["schemas"]["Me"];
         };
+        /** @description 外部新闻：news-feed 股市扩展的一次判断（docs/v3-news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并 */
+        MediaNewsRequest: {
+            /** @description official、media、rumor */
+            credibility?: string | null;
+            /** @description positive、negative、neutral */
+            direction?: string | null;
+            /** @description sequel、movie、delay、hiatus、sales、award、collab、controversy、staff、rumor、denial、other */
+            event?: string | null;
+            /** @description news-feed 的事件 id；同一个 id 再推是更新判断 */
+            event_id: string;
+            /** @description news-feed 抓到的时间 */
+            fetched_at?: string | null;
+            /**
+             * Format: double
+             * @description 0–10
+             */
+            magnitude?: number | null;
+            /** @description 这个事件被合并进的事件 id */
+            merged_into?: string | null;
+            /** @description 判断用的模型，如 jev-1.14.0 */
+            model?: string | null;
+            original_title?: string | null;
+            /** @description 每个问题的完整概率分布 */
+            probabilities: Record<string, never>;
+            /** @description 信源给出的发布时间 */
+            published_at?: string | null;
+            /** @description 信源，如 animeanime、ann */
+            source?: string | null;
+            /** Format: int64 */
+            stock_id?: number | null;
+            /** @description 中文标题（最多 60 字） */
+            title?: string | null;
+            url?: string | null;
+        };
+        MediaNewsResponse: {
+            /** Format: int64 */
+            id: number;
+            /** @description 服务器当前的模式：shadow、publish */
+            mode: string;
+            /**
+             * Format: int64
+             * @description 发布成游戏资讯时的资讯 id
+             */
+            news_id: number | null;
+            /** @description stored、published、merged */
+            status: string;
+        };
         /**
          * Format: int64
          * @description 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
@@ -1983,7 +2047,7 @@ export interface components {
          * @description 资讯分组（封闭）：由 kind 推出
          * @enum {string}
          */
-        NewsCategory: "flash" | "notice" | "airing" | "close";
+        NewsCategory: "flash" | "notice" | "airing" | "close" | "media";
         NewsItem: {
             at: components["schemas"]["Timestamp"];
             body: string | null;
@@ -2992,6 +3056,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    push: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaNewsRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaNewsResponse"];
+                };
             };
             default: {
                 headers: {

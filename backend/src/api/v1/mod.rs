@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod futures;
 pub mod keys;
+pub mod media;
 pub mod market;
 pub mod openapi;
 pub mod assess;
@@ -668,6 +669,7 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/api-keys", get(keys::list).post(keys::create))
         .route("/me/api-keys/{id}", delete(keys::revoke))
         .route("/bot/bindings", post(bind::redeem))
+        .route("/bot/news", post(media::push))
         .route("/bot/bindings/{platform}/{external_id}", delete(bind::bot_remove))
         .route("/openapi.json", get(openapi::serve))
         .fallback(|| async { error::not_found() })

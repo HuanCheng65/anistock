@@ -95,6 +95,8 @@ pub enum NewsCategory {
     Notice,
     Airing,
     Close,
+    /// 外部媒体的新闻（docs/v3-news.md）
+    Media,
 }
 
 impl NewsCategory {
@@ -103,6 +105,7 @@ impl NewsCategory {
             "flash" | "vcm" => NewsCategory::Flash,
             "premiere" | "finale" | "delay" | "hiatus" => NewsCategory::Airing,
             "dividend" | "rate" => NewsCategory::Close,
+            "media" => NewsCategory::Media,
             _ => NewsCategory::Notice,
         }
     }
@@ -112,6 +115,7 @@ impl NewsCategory {
             "notice" => NewsCategory::Notice,
             "airing" => NewsCategory::Airing,
             "close" => NewsCategory::Close,
+            "media" => NewsCategory::Media,
             _ => return None,
         })
     }
@@ -122,6 +126,7 @@ impl NewsCategory {
             NewsCategory::Notice => &["system", "ipo", "allotment", "delisting", "warning", "sequel", "split", "rights", "buyback"],
             NewsCategory::Airing => &["premiere", "finale", "delay", "hiatus"],
             NewsCategory::Close => &["dividend", "rate"],
+            NewsCategory::Media => &["media"],
         }
     }
 }
@@ -1314,6 +1319,50 @@ pub struct Binding {
 #[derive(Serialize, ToSchema)]
 pub struct BindingsResponse {
     pub items: Vec<Binding>,
+}
+
+/// 外部新闻：news-feed 股市扩展的一次判断（docs/v3-news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并
+#[derive(Deserialize, ToSchema)]
+pub struct MediaNewsRequest {
+    /// news-feed 的事件 id；同一个 id 再推是更新判断
+    pub event_id: String,
+    /// 这个事件被合并进的事件 id
+    pub merged_into: Option<String>,
+    /// 信源，如 animeanime、ann
+    pub source: Option<String>,
+    pub url: Option<String>,
+    /// 中文标题（最多 60 字）
+    pub title: Option<String>,
+    pub original_title: Option<String>,
+    /// 信源给出的发布时间
+    pub published_at: Option<String>,
+    /// news-feed 抓到的时间
+    pub fetched_at: Option<String>,
+    pub stock_id: Option<i64>,
+    /// sequel、movie、delay、hiatus、sales、award、collab、controversy、staff、rumor、denial、other
+    pub event: Option<String>,
+    /// positive、negative、neutral
+    pub direction: Option<String>,
+    /// 0–10
+    pub magnitude: Option<f64>,
+    /// official、media、rumor
+    pub credibility: Option<String>,
+    /// 判断用的模型，如 jev-1.14.0
+    pub model: Option<String>,
+    /// 每个问题的完整概率分布
+    #[schema(value_type = Object)]
+    pub probabilities: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct MediaNewsResponse {
+    pub id: i64,
+    /// stored、published、merged
+    pub status: String,
+    /// 发布成游戏资讯时的资讯 id
+    pub news_id: Option<i64>,
+    /// 服务器当前的模式：shadow、publish
+    pub mode: String,
 }
 
 #[derive(Deserialize, ToSchema)]
