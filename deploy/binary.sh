@@ -15,7 +15,8 @@ release_repo() {
 }
 
 # curl, through $https_proxy when it is set
-fetch() { curl -fsSL --retry 3 --connect-timeout 20 ${https_proxy:+--proxy "$https_proxy"} "$@"; }
+# (GitHub's release downloads answer 504 now and then: retried 6 times, 10 s apart)
+fetch() { curl -fsSL --retry 6 --retry-delay 10 --connect-timeout 20 ${https_proxy:+--proxy "$https_proxy"} "$@"; }
 
 release_version() {
   if [ -n "${ANISTOCK_VERSION:-}" ]; then echo "$ANISTOCK_VERSION"; return; fi
@@ -26,11 +27,15 @@ release_version() {
   python3 -c 'import json,sys; print(json.loads(sys.argv[1])["tag_name"])' "$json"
 }
 
-# Download the release binary, check its sha256, install it to bin/anistock atomically.
+# Download the release binary, check its sha256, install it to bin/anistock atomically. `install_binary stage`
+# puts it at bin/anistock.next instead, for `activate_binary` to move into place when the server restarts (update.sh:
+# a failure between the download and the restart leaves the running install as it was).
 install_binary() {
-  local version repo url tmp
+  local version repo url tmp dest="bin/anistock"
+  [ "${1:-}" = stage ] && dest="bin/anistock.next"
   version="$(release_version)" || { echo "查不到最新的发布版本（GitHub 需要代理时先 export https_proxy=...，或者用 ANISTOCK_VERSION=vX.Y.Z 指定）" >&2; return 1; }
   [ -n "$version" ] || { echo "没有可用的发布版本" >&2; return 1; }
+  rm -f bin/anistock.next bin/anistock.next.version
   if [ -x bin/anistock ] && [ "$(cat bin/anistock.version 2>/dev/null)" = "$version" ]; then
     echo "游戏服务程序已是 $version"
     return 0
@@ -47,10 +52,18 @@ install_binary() {
     rm -rf "$tmp"; echo "校验失败（sha256 不符），没有安装" >&2; return 1
   fi
   chmod 755 "$tmp/$BIN_ASSET"
-  mv -f "$tmp/$BIN_ASSET" bin/anistock          # same directory: an atomic rename
-  echo "$version" > bin/anistock.version
+  mv -f "$tmp/$BIN_ASSET" "$dest"          # same directory: an atomic rename
+  echo "$version" > "$dest.version"
   rm -rf "$tmp"
-  echo "已安装 bin/anistock $version"
+  echo "已下载 $dest $version"
+}
+
+# Move a staged binary (`install_binary stage`) into place.
+activate_binary() {
+  [ -f bin/anistock.next ] || return 0
+  mv -f bin/anistock.next bin/anistock
+  mv -f bin/anistock.next.version bin/anistock.version
+  echo "已安装 bin/anistock $(cat bin/anistock.version)"
 }
 
 # Is the installed systemd unit still the v1 Python server (an install from before v0.2.0)? It is replaced

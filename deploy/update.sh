@@ -61,6 +61,11 @@ build_web() {
 say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 UV="$(command -v uv)"
 
+# the binary first: a failed download (GitHub answers 504 now and then) leaves everything as it was, instead of new
+# code and frontend against the old server
+say "下载游戏服务程序"
+install_binary stage
+
 say "拉取代码"
 git pull --ff-only
 check_env || exit 1
@@ -68,9 +73,6 @@ check_env || exit 1
 say "更新依赖、构建前端"
 "$UV" sync
 build_web
-
-say "下载游戏服务程序"
-install_binary
 
 if installed_unit_is_v1; then
   say "第一次从 v1 切换到 v2：停服并备份数据库"
@@ -91,6 +93,7 @@ say "重启游戏服务"
 if port_taken_by_other; then
   echo "端口 $(game_port) 被别的程序占用：在 .env 里设置 ANISTOCK_PORT=其他端口" >&2; exit 1
 fi
+activate_binary
 systemctl --user restart anistock-server
 if wait_ours; then
   printf '\033[1;32m更新完成（%s，端口 %s）\033[0m\n' "$(cat bin/anistock.version 2>/dev/null)" "$(game_port)"
