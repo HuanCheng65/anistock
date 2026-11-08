@@ -17,13 +17,32 @@ export const useMarket = defineStore('market', () => {
 
   async function refreshQuotes() {
     try {
-      stocks.value = (await call(api.GET('/api/v1/market/quotes'))).items
+      merge((await call(api.GET('/api/v1/market/quotes'))).items)
       error.value = ''
     } catch (e: any) {
       error.value = e?.message ?? '无法加载行情'
       throw e
     }
   }
+  /** Fold a fresh quotes list into the rows already shown: an unchanged field (sparklines and ratios included)
+   *  keeps its value, so a poll re-renders only what moved. A new or removed stock replaces the list. */
+  function merge(items: Quote[]) {
+    const cur = stocks.value
+    if (!cur || cur.length !== items.length || items.some((q, i) => q.stock.id !== cur[i].stock.id)) {
+      stocks.value = items
+      return
+    }
+    items.forEach((q, i) => {
+      const x = cur[i] as unknown as Record<string, unknown>
+      for (const [k, v] of Object.entries(q)) {
+        const old = x[k]
+        if (old === v) continue
+        if (v !== null && typeof v === 'object' && JSON.stringify(old) === JSON.stringify(v)) continue
+        x[k] = v
+      }
+    })
+  }
+
   async function refreshIndices() {
     try {
       indices.value = await call(api.GET('/api/v1/market/indices'))
@@ -73,6 +92,10 @@ export const useMarket = defineStore('market', () => {
       x.turnover = row[iT] as number
       x.vcm_active = row[iC] as boolean
     }
+  })
+  // the server could not replay what the socket missed (too far behind): read the headlines again
+  onLive('reset', (m) => {
+    if (m.topic === 'news' && news.value) refreshNews(Math.max(news.value.length, 40)).catch(() => {})
   })
   /** ids of items that arrived over the push channel (the views slide them in) */
   const fresh = ref(new Set<number>())

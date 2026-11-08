@@ -184,11 +184,12 @@ pub async fn read_announcement(
     if !exists {
         return Err(error::not_found());
     }
-    super::bind::side_exec(
-        &st,
-        "INSERT OR IGNORE INTO announcement_reads(account_id, announcement_id, read_at) VALUES (?,?,?)",
-        rusqlite::params![id, ann, st.clock.ts()],
-    )?;
+    let at = st.clock.ts();
+    super::bind::side(&st, move |c| {
+        c.execute("INSERT OR IGNORE INTO announcement_reads(account_id, announcement_id, read_at) VALUES (?,?,?)", rusqlite::params![id, ann, at])
+            .map_err(sql)
+    })
+    .await?;
     load_me(&st, id).await.map(Json)
 }
 
@@ -211,13 +212,21 @@ pub async fn require_signed(st: &Arc<AppState>, id: i64) -> R<()> {
     if pending.is_empty() { Ok(()) } else { Err(error::agreement_required()) }
 }
 
-fn record_agreement(st: &AppState, id: i64, doc: &str, version: i64, signature: Option<&str>) -> R<()> {
-    super::bind::side_exec(
-        st,
-        "INSERT OR IGNORE INTO account_agreements(account_id, doc, version, signed_at, signature) VALUES (?,?,?,?,?)",
-        rusqlite::params![id, doc, version, st.clock.ts(), signature],
-    )?;
-    Ok(())
+/// Accept `docs` ((doc, version, signature)) in one transaction.
+async fn record_agreements(st: &Arc<AppState>, id: i64, docs: Vec<(String, i64, Option<String>)>) -> R<()> {
+    let at = st.clock.ts();
+    super::bind::side(st, move |c| {
+        let tx = c.transaction().map_err(sql)?;
+        for (doc, version, signature) in &docs {
+            tx.execute(
+                "INSERT OR IGNORE INTO account_agreements(account_id, doc, version, signed_at, signature) VALUES (?,?,?,?,?)",
+                rusqlite::params![id, doc, version, at, signature],
+            )
+            .map_err(sql)?;
+        }
+        tx.commit().map_err(sql)
+    })
+    .await
 }
 
 /// 同意或签署文件
@@ -255,7 +264,7 @@ pub async fn sign(
     } else {
         None
     };
-    record_agreement(&st, id, &doc, version, signature.as_deref())?;
+    record_agreements(&st, id, vec![(doc, version, signature)]).await?;
     load_me(&st, id).await.map(Json)
 }
 
@@ -727,11 +736,12 @@ async fn place_new(st: &Arc<AppState>, who: super::Trader, headers: &HeaderMap, 
     }
     if let Some(key) = who.key {
         // the 程序化 mark and the surveillance reports (docs/design/api-access.md §6)
-        super::bind::side_exec(
-            st,
-            "INSERT OR IGNORE INTO api_orders(order_id, account_id, key_id, day) VALUES (?,?,?,?)",
-            rusqlite::params![order_id, me, key, d],
-        )?;
+        let d = d.clone();
+        super::bind::side(st, move |c| {
+            c.execute("INSERT OR IGNORE INTO api_orders(order_id, account_id, key_id, day) VALUES (?,?,?,?)", rusqlite::params![order_id, me, key, d])
+                .map_err(sql)
+        })
+        .await?;
     }
     let st2 = st.clone();
     read(st, move |c| {
@@ -1083,13 +1093,13 @@ pub async fn unsubscribe(
 
 // ---------------------------------------------------------------- leaderboard
 
-/// Every player's (id, username, total assets, current return index, restructures).
-fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i64)>> {
+/// Every player's (id, username, total assets, current return index, restructures, created_at).
+fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i64, String)>> {
     let mut s = c
         .prepare_cached(
             &format!("SELECT a.id, a.username, a.cash + COALESCE((SELECT SUM(h.qty*co.last_price) FROM holdings h
                JOIN companies co ON co.id=h.company_id WHERE h.account_id=a.id), 0) - {},
-               COALESCE(p.return_factor, 1.0), COALESCE(p.segment_base, ?), COALESCE(p.restructures, 0)
+               COALESCE(p.return_factor, 1.0), COALESCE(p.segment_base, ?), COALESCE(p.restructures, 0), a.created_at
              FROM accounts a LEFT JOIN player_returns p ON p.account_id=a.id WHERE a.kind='player' ORDER BY a.id",
             super::credit::liabilities_expr("a.id")),
         )
@@ -1097,7 +1107,7 @@ fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i6
     let rows = s
         .query_map([initial], |r| {
             let (total, factor, base): (i64, f64, i64) = (r.get(2)?, r.get(3)?, r.get(4)?);
-            Ok((r.get(0)?, r.get(1)?, total, crate::restructure::linked_return(factor, base, total) + 1.0, r.get(5)?))
+            Ok((r.get(0)?, r.get(1)?, total, crate::restructure::linked_return(factor, base, total) + 1.0, r.get(5)?, r.get(6)?))
         })
         .map_err(sql)?;
     rows.collect::<Result<_, _>>().map_err(sql)
@@ -1110,11 +1120,9 @@ fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i6
 pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>, gate: Option<(&crate::kyc::Rules, &str)>) -> R<Vec<LeaderRow>> {
     let mut rows: Vec<(f64, LeaderRow)> = Vec::new();
     let verified = crate::kyc::verified_ids(c).map_err(sql)?;
-    for (id, username, total, idx, count) in players_now(c, initial)? {
+    for (id, username, total, idx, count, created) in players_now(c, initial)? {
         // only players who meet the 排行榜 gate are ranked (crate::kyc::rank_gate)
         if let Some((rules, today)) = gate {
-            let created: String =
-                c.query_row("SELECT created_at FROM accounts WHERE id=?", [id], |r| r.get(0)).map_err(sql)?;
             let g = crate::kyc::rank_gate(c, rules, id, verified.contains(&id), &created, today).map_err(sql)?;
             if g != crate::kyc::Gate::Open {
                 continue;
@@ -1157,9 +1165,25 @@ pub fn ranked(c: &Connection, initial: i64, period_start: Option<&str>, gate: Op
         .collect())
 }
 
-/// The leaderboard for `period` (`all`, `week`, `season`).
+/// The leaderboard for `period` (`all`, `week`, `season`): built at most once per `cache.leaderboard_secs`
+/// (it reads every player; every client polls it), the viewer's row picked out per request.
 pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Option<i64>) -> R<Leaderboard> {
     let today = st.clock.today();
+    let board = match st.v1.caches.leaderboard.get(&period.to_string(), &today) {
+        Some(hit) => hit,
+        None => {
+            let built = std::sync::Arc::new(build_leaderboard(st, c, period, &today)?);
+            st.v1.caches.leaderboard.put(period.to_string(), today, built.clone());
+            built
+        }
+    };
+    let mut out = Leaderboard::clone(&board);
+    out.viewer = viewer.and_then(|v| out.items.iter().find(|r| r.user.id == v)).map(|r| LeaderViewer { rank: r.rank, r#return: r.r#return });
+    Ok(out)
+}
+
+fn build_leaderboard(st: &AppState, c: &Connection, period: &str, today: &str) -> R<Leaderboard> {
+    let today = today.to_string();
     let t = date(&today)?;
     let from_day = match period {
         "week" => Some(iso(t - chrono::Duration::days(t.weekday().num_days_from_monday() as i64))),
@@ -1168,8 +1192,7 @@ pub fn leaderboard_of(st: &AppState, c: &Connection, period: &str, viewer: Optio
     };
     let start = if period == "all" { None } else { from_day.as_deref() };
     let items = ranked(c, initial_cents(&st.cfg), start, Some((&st.cfg.eligibility, today.as_str())))?;
-    let viewer = viewer.and_then(|v| items.iter().find(|r| r.user.id == v)).map(|r| LeaderViewer { rank: r.rank, r#return: r.r#return });
-    Ok(Leaderboard { period: period.into(), from_day: from_day.map(day), to_day: day(today), as_of: ts(st.clock.ts()), items, viewer })
+    Ok(Leaderboard { period: period.into(), from_day: from_day.map(day), to_day: day(today), as_of: ts(st.clock.ts()), items, viewer: None })
 }
 
 /// 排行榜
@@ -1302,10 +1325,9 @@ pub async fn register(
         Ok(id)
     })
     .await??;
-    for (doc, version) in st.cfg.documents.iter().filter(|(d, _)| d != "disclosure") {
-        record_agreement(&st, id, doc, *version, None)?;
-    }
-    record_login(&st, id, &ip.0);
+    let docs = st.cfg.documents.iter().filter(|(d, _)| d != "disclosure").map(|(d, v)| (d.clone(), *v, None)).collect();
+    record_agreements(&st, id, docs).await?;
+    record_login(&st, id, &ip.0).await;
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(super::created(me), &auth::session_cookie(&token)))
@@ -1313,15 +1335,16 @@ pub async fn register(
 
 /// One sign-in (or registration) from `ip` (the limit key), kept 6 months: the wash-trade report reads
 /// it (crate::surveil), and the logs are kept as 网络安全法 §21 asks.
-fn record_login(st: &AppState, id: i64, ip: &str) {
+async fn record_login(st: &Arc<AppState>, id: i64, ip: &str) {
     let ip = super::ratelimit::ip_key(ip);
-    let cutoff = st.clock.now() - chrono::Duration::days(183);
-    let res = super::bind::with_side(st, |c| {
-        c.execute("INSERT INTO account_logins(account_id, ip, at) VALUES (?,?,?)", rusqlite::params![id, ip, st.clock.ts()])
-            .map_err(sql)?;
-        c.execute("DELETE FROM account_logins WHERE at < ?", [cutoff.format("%Y-%m-%dT%H:%M:%S").to_string()]).map_err(sql)?;
+    let cutoff = (st.clock.now() - chrono::Duration::days(183)).format("%Y-%m-%dT%H:%M:%S").to_string();
+    let at = st.clock.ts();
+    let res = super::bind::side(st, move |c| {
+        c.execute("INSERT INTO account_logins(account_id, ip, at) VALUES (?,?,?)", rusqlite::params![id, ip, at]).map_err(sql)?;
+        c.execute("DELETE FROM account_logins WHERE at < ?", [cutoff]).map_err(sql)?;
         Ok(())
-    });
+    })
+    .await;
     if let Err(e) = res {
         eprintln!("account_logins: {}", e.message);
     }
@@ -1354,7 +1377,7 @@ pub async fn login(
     if !ok {
         return Err(error::bad_credentials());
     }
-    record_login(&st, id, &ip.0);
+    record_login(&st, id, &ip.0).await;
     let me = load_me(&st, id).await?;
     let token = auth::make_session(&st.secret, id, st.unix_now());
     Ok(with_cookie(Json(me).into_response(), &auth::session_cookie(&token)))

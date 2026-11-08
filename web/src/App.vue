@@ -15,6 +15,7 @@ import { useMarket } from './stores/market'
 import { usePrefs } from './stores/prefs'
 import { useSession } from './stores/session'
 import { useStock } from './stores/stock'
+import { navigating, prefetchViews } from './router'
 
 const route = useRoute()
 const session = useSession()
@@ -63,11 +64,13 @@ onMounted(() => {
   session.loadRules()
   tick()
   timer = window.setInterval(tick, 30000)
+  prefetchViews()
 })
 onBeforeUnmount(() => window.clearInterval(timer))
 </script>
 
 <template>
+  <div class="navbar" :class="{ on: navigating }" aria-hidden="true"></div>
   <DeskHeader v-if="!bare" />
   <MarginBanner v-if="!bare" />
   <AgreementBanner v-if="!bare" />
@@ -79,3 +82,10 @@ onBeforeUnmount(() => window.clearInterval(timer))
   <Toaster />
   <UpdateBanner />
 </template>
+
+<style>
+/* a navigation waiting for its view: a thin bar creeping along the top (router.ts `navigating`) */
+.navbar { position: fixed; top: 0; left: 0; height: 2px; width: 0; z-index: 100; background: var(--accent); opacity: 0; pointer-events: none; }
+.navbar.on { opacity: 1; width: 80%; transition: width 2.5s cubic-bezier(0.1, 0.6, 0.3, 1), opacity 0.1s; }
+@media (prefers-reduced-motion: reduce) { .navbar.on { transition: none; width: 100%; } }
+</style>

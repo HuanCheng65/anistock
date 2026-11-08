@@ -23,7 +23,8 @@ export const useFutures = defineStore('futures', () => {
   }
   async function place(body: { contract_id: number; side: 'buy' | 'sell'; quantity: number; price: number }) {
     const r = await call(api.POST('/api/v1/me/futures/orders', { body: { ...body, type: 'limit' } }))
-    await Promise.all([refresh(body.contract_id), refreshMine()])
+    // the answer is shown at once; the book and the player's futures catch up behind it
+    Promise.all([refresh(body.contract_id), refreshMine()]).catch(() => {})
     return r
   }
   async function cancel(orderId: number) {

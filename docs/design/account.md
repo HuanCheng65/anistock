@@ -68,8 +68,8 @@ v1.0 公开前的准备（`docs/roadmap.md`「公开前：开放注册、去掉�
 |---|---|---|
 | 注册 | 和登录共用 `auth_per_min = 10` | 另外设 `register_per_ip_day = 20`（已实现） |
 | 登录 | `auth_per_min = 10` | 不变 |
-| 同一 IP 的 WebSocket 连接数 | `ws_per_ip = 8` | 32（已实现） |
-| 全站 WebSocket 连接数 | 不限 | `ws_total = 2000`（已实现，按压测结果调整） |
+| 同一 IP 的 WebSocket 连接数 | `ws_per_ip = 8` | 64（已实现） |
+| 全站 WebSocket 连接数 | 不限 | `ws_total = 5000`（已实现，按压测结果调整） |
 | scrypt 同时计算数 | 不限（`spawn_blocking`） | `hash_concurrency = 2`，最多等 5 秒，等不到返回 503 `busy`（已实现） |
 | IPv6 | 按完整地址计数 | 按 /64 合并计数（已实现） |
 

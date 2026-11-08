@@ -10,6 +10,7 @@
 
 pub mod account;
 pub mod bind;
+pub mod cache;
 pub mod corporate;
 pub mod credit;
 pub mod error;
@@ -74,6 +75,8 @@ pub struct V1State {
     /// account -> (trading day, orders placed that day), for `orders_per_day` (kept in memory: a restart
     /// forgets the day's count)
     pub orders_today: Mutex<HashMap<i64, (String, i64)>>,
+    /// shared answers for the polled endpoints (quotes, indices, leaderboard)
+    pub caches: cache::Caches,
 }
 
 impl V1State {
@@ -90,6 +93,7 @@ impl V1State {
             hashing: tokio::sync::Semaphore::new(ratelimit::Limits::from_config(cfg).hash_concurrency),
             pw_changed: std::sync::RwLock::new(None),
             orders_today: Mutex::new(HashMap::new()),
+            caches: cache::Caches::from_config(cfg),
         }
     }
 }

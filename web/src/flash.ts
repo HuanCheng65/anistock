@@ -6,12 +6,31 @@ import type { Directive } from 'vue'
 const timers = new WeakMap<HTMLElement, number>()
 const CLASSES = ['flash-up', 'flash-down', 'flash-neutral']
 
+// Restarting a CSS animation needs a style flush between removing and re-adding the class. One push flashes
+// many cells: they are restarted together in the next frame with a single flush, not one forced layout each.
+const queue = new Map<HTMLElement, string>()
+let scheduled = false
+
+function restart() {
+  scheduled = false
+  const batch = [...queue]
+  queue.clear()
+  for (const [el] of batch) el.classList.remove(...CLASSES)
+  void document.body.offsetWidth
+  for (const [el, kind] of batch) {
+    el.classList.add('flash-' + kind)
+    timers.set(el, window.setTimeout(() => el.classList.remove(...CLASSES), 700))
+  }
+}
+
 export function flash(el: HTMLElement, kind: 'up' | 'down' | 'neutral') {
+  if (document.hidden) return // no frames run in a hidden tab; nobody would see it
   window.clearTimeout(timers.get(el))
-  el.classList.remove(...CLASSES)
-  void el.offsetWidth // restart the animation
-  el.classList.add('flash-' + kind)
-  timers.set(el, window.setTimeout(() => el.classList.remove(...CLASSES), 700))
+  queue.set(el, kind)
+  if (!scheduled) {
+    scheduled = true
+    requestAnimationFrame(restart)
+  }
 }
 
 export const vFlash: Directive<HTMLElement, number | null | undefined> = {

@@ -1516,26 +1516,36 @@ impl Engine {
 
     /// One copy per closed day in `<db dir>/backups/`; the newest 7 are kept (v1 `daily_backup`).
     pub fn daily_backup(&mut self, game_db: &Path, day: &str) -> Result<PathBuf, String> {
-        const KEPT: usize = 7;
-        let folder = game_db.parent().map(Path::to_path_buf).unwrap_or_default().join("backups");
-        let stem = game_db.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let dest = self.backup_to(&folder.join(format!("{stem}-{day}.db")))?;
-        let prefix = format!("{stem}-2");
-        let mut old: Vec<PathBuf> = std::fs::read_dir(&folder)
-            .map_err(|e| e.to_string())?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".db"))
-            })
-            .collect();
-        old.sort();
-        if old.len() > KEPT {
-            for p in &old[..old.len() - KEPT] {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-        Ok(dest)
+        self.flush()?;
+        let source = self.db_path().ok_or("no database")?.to_path_buf();
+        daily_backup_of(&source, game_db, day)
     }
+}
+
+/// [`Engine::daily_backup`] without the engine, after its `flush`: the server runs it on the blocking pool so
+/// the copy (one read transaction; WAL lets the persister keep writing) does not stop trading.
+pub fn daily_backup_of(source: &Path, game_db: &Path, day: &str) -> Result<PathBuf, String> {
+    const KEPT: usize = 7;
+    let folder = game_db.parent().map(Path::to_path_buf).unwrap_or_default().join("backups");
+    let stem = game_db.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let dest = folder.join(format!("{stem}-{day}.db"));
+    let conn = crate::store::connect(source).map_err(|e| e.to_string())?;
+    let dest = crate::store::backup(&conn, &dest).map_err(|e| e.to_string())?;
+    let prefix = format!("{stem}-2");
+    let mut old: Vec<PathBuf> = std::fs::read_dir(&folder)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".db"))
+        })
+        .collect();
+    old.sort();
+    if old.len() > KEPT {
+        for p in &old[..old.len() - KEPT] {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    Ok(dest)
 }
 
 #[cfg(test)]

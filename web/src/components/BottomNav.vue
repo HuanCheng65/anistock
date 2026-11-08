@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute } from 'vue-router'
 import Icon from './Icon.vue'
+import { pendingTab } from '../router'
 const route = useRoute()
 const items = [
   { key: 'market', to: '/', label: '市场', icon: 'market' },
@@ -13,7 +14,7 @@ const items = [
 
 <template>
   <nav class="bottom" aria-label="主导航">
-    <RouterLink v-for="n in items" :key="n.key" :to="n.to" :aria-current="route.meta.tab === n.key ? 'page' : undefined">
+    <RouterLink v-for="n in items" :key="n.key" :to="n.to" :aria-current="(pendingTab ?? route.meta.tab) === n.key ? 'page' : undefined">
       <Icon :name="n.icon" />
       <span>{{ n.label }}</span>
     </RouterLink>

@@ -18,7 +18,8 @@
 //!   contract with subscribers gets one snapshot of the contract and its book (a few dozen contracts, small
 //!   messages: no deltas). A player's futures orders and positions send `futures_mine` on `me`.
 //! - `news`, `events` and `me` go out as they happen. `news` and `events` keep the last 24 hours (at most
-//!   2000 each) for `since` on reconnect; outside that window the client gets `reset`.
+//!   2000 each) for `since` on reconnect; outside that window, or more than `QUEUE / 2` messages behind (a
+//!   longer replay would overflow the queue), the client gets `reset`.
 //! - `time` every 20 s and at once on a phase change, the 04:00 day change and a finished close.
 //! - Sessions: logout (`Ctl::Logout`), a revoked API key (`Ctl::Revoke`) and cookie or key expiry
 //!   (checked with `time`) close with 4001.
@@ -52,6 +53,8 @@ pub const MAX_STOCKS: usize = 16;
 const TIME_TICKS: u64 = 200;
 const REPLAY_MAX: usize = 2000;
 const REPLAY_AGE: Duration = Duration::from_secs(24 * 3600);
+/// A replay longer than this is answered with `reset` (the client reads the gap over REST).
+const REPLAY_SEND_MAX: usize = QUEUE / 2;
 pub const QUOTE_COLS: [&str; 6] = ["id", "price", "prev_close", "volume", "turnover", "vcm_active"];
 
 /// Copies the changes the fan-out cares about, then hands every change to the real sink.
@@ -157,6 +160,8 @@ pub struct Fanout {
     changes: Receiver<Vec<Change>>,
     pub ctl: Receiver<Ctl>,
     clients: HashMap<u64, Client>,
+    /// account -> its connections (a few each): `me` pushes and logouts without a pass over every client
+    by_account: HashMap<i64, Vec<u64>>,
     stock_subs: HashMap<i64, Vec<u64>>,
     slots: [Vec<u64>; 10],
     dirty: HashSet<i64>,
@@ -209,6 +214,7 @@ impl Fanout {
             changes,
             ctl,
             clients: HashMap::new(),
+            by_account: HashMap::new(),
             stock_subs: HashMap::new(),
             slots: Default::default(),
             dirty: HashSet::new(),
@@ -267,6 +273,9 @@ impl Fanout {
         match c {
             Ctl::Add { id, account, bot, key, exp, tx, kill } => {
                 self.slots[(id % 10) as usize].push(id);
+                if let Some(a) = account {
+                    self.by_account.entry(a).or_default().push(id);
+                }
                 self.clients.insert(
                     id,
                     Client {
@@ -344,8 +353,14 @@ impl Fanout {
             Ctl::Del(id) => self.remove(id, None),
             Ctl::Logout { account } => {
                 // a connection opened with an API key lives as long as the key, not the browser session
-                let ids: Vec<u64> =
-                    self.clients.iter().filter(|(_, c)| c.account == Some(account) && c.key.is_none()).map(|(i, _)| *i).collect();
+                let ids: Vec<u64> = self
+                    .by_account
+                    .get(&account)
+                    .into_iter()
+                    .flatten()
+                    .filter(|i| self.clients.get(i).is_some_and(|c| c.key.is_none()))
+                    .copied()
+                    .collect();
                 for id in ids {
                     self.rm.push((id, 4001));
                 }
@@ -485,6 +500,14 @@ impl Fanout {
 
     fn remove(&mut self, id: u64, code: Option<u16>) {
         if let Some(mut c) = self.clients.remove(&id) {
+            if let Some(a) = c.account {
+                if let Some(v) = self.by_account.get_mut(&a) {
+                    v.retain(|x| *x != id);
+                    if v.is_empty() {
+                        self.by_account.remove(&a);
+                    }
+                }
+            }
             for cid in &c.stocks {
                 if let Some(v) = self.stock_subs.get_mut(cid) {
                     v.retain(|x| *x != id);
@@ -551,6 +574,12 @@ impl Fanout {
             return;
         }
         let msgs: Vec<Utf8Bytes> = self.news_replay.iter().filter(|r| r.seq as i64 > since).map(|r| r.text.clone()).collect();
+        // more than half a queue behind: replaying would fill the queue and drop the client (4008)
+        if msgs.len() > REPLAY_SEND_MAX {
+            let m = text(&M::Reset { topic: "news".into() });
+            self.send_to(id, &m);
+            return;
+        }
         for m in msgs {
             self.send_to(id, &m);
         }
@@ -573,6 +602,11 @@ impl Fanout {
             .filter(|r| r.seq as i64 > since && kind.is_none_or(|k| k == r.kind))
             .map(|r| r.text.clone())
             .collect();
+        if msgs.len() > REPLAY_SEND_MAX {
+            let m = text(&M::Reset { topic: "events".into() });
+            self.send_to(id, &m);
+            return;
+        }
         for m in msgs {
             self.send_to(id, &m);
         }
@@ -621,7 +655,8 @@ impl Fanout {
     }
 
     fn to_account(&mut self, account: i64, make: impl FnOnce(u64) -> M) {
-        let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.me && c.account == Some(account)).map(|(id, _)| *id).collect();
+        let Some(conns) = self.by_account.get(&account) else { return };
+        let ids: Vec<u64> = conns.iter().filter(|i| self.clients.get(i).is_some_and(|c| c.me)).copied().collect();
         if ids.is_empty() {
             return; // nobody listening: no encoding (the seq only has to be consecutive per connection)
         }

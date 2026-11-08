@@ -91,16 +91,20 @@ const bars = computed<Bar[]>(() => {
 
 const minuteTime = (m: string) => (Date.parse(m.slice(0, 16) + ':00Z') / 1000) as UTCTimestamp
 
+// read once per theme (getComputedStyle on every push is a style recalculation each time)
+let palette: Record<'up' | 'down' | 'grid' | 'ground' | 'muted' | 'brand' | 'base' | 'ink2', string> | null = null
 function colors() {
-  return {
+  return (palette ??= {
     up: cssVar('--up'), down: cssVar('--down'), grid: cssVar('--grid'), ground: cssVar('--ground'),
     muted: cssVar('--muted'), brand: cssVar('--brand'), base: cssVar('--base-line'), ink2: cssVar('--ink-2'),
-  }
+  })
 }
 
-function draw() {
+/** `fit`: show everything (a new period); otherwise new data keeps the reader's pan and zoom. */
+function draw(fit = true) {
   const ch = chart.value
   if (!ch || !candle || !vol || !line) return
+  const view = fit ? null : ch.timeScale().getVisibleLogicalRange()
   const c = colors()
   ch.applyOptions({
     layout: { background: { color: 'transparent' }, textColor: c.muted, fontSize: 10, fontFamily: cssVar('--font-num') },
@@ -144,7 +148,8 @@ function draw() {
       color: k.volume ? hexA(k.close >= k.open ? c.up : c.down, k.replay ? 0.18 : 0.35) : 'transparent',
     })))
   }
-  ch.timeScale().fitContent()
+  if (fit || !view) ch.timeScale().fitContent()
+  else ch.timeScale().setVisibleLogicalRange(view)
   place()
   floor()
 }
@@ -294,8 +299,19 @@ onMounted(() => {
   width.value = host.value.clientWidth
   draw()
 })
-watch(() => [props.candles, props.period, props.intraday, props.episodes, props.dividends], () => {
-  draw()
+// what the chart shows, by content: a poll that brings the same candles (new arrays) draws nothing
+const candleSig = () => {
+  const k = props.candles
+  const last = k[k.length - 1]
+  return `${k.length}|${k[0]?.trading_day}|${last ? `${last.trading_day}:${last.open}:${last.high}:${last.low}:${last.close}:${last.volume}` : ''}`
+}
+watch(() => props.period, () => {
+  draw(true)
+  shown = props.intraday?.length ?? 0
+  laterDot()
+})
+watch(() => [candleSig(), props.intraday, JSON.stringify(props.episodes ?? []), JSON.stringify(props.dividends ?? [])], () => {
+  draw(false)
   shown = props.intraday?.length ?? 0
   laterDot()
 })
@@ -304,7 +320,10 @@ watch(() => {
   return p && p.length ? `${p.length}|${p[p.length - 1].price}|${p[p.length - 1].volume}` : ''
 }, extend)
 watch(() => props.live, laterDot)
-watch(tick, draw)
+watch(tick, () => {
+  palette = null
+  draw(false)
+})
 onBeforeUnmount(() => {
   ro?.disconnect()
   chart.value?.remove()

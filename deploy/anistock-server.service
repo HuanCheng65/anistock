@@ -14,6 +14,8 @@ Environment=ANISTOCK_ROOT=%h/anistock
 EnvironmentFile=%h/anistock/.env
 ExecStart=%h/anistock/bin/anistock
 # SIGTERM: stop accepting requests, write everything to the database, exit
+# one descriptor per WebSocket and per request: the default soft limit (1024) is below ws_total
+LimitNOFILE=65536
 KillSignal=SIGTERM
 TimeoutStopSec=30
 Restart=always

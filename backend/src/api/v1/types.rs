@@ -439,14 +439,14 @@ pub struct RulesContact {
     pub email: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Clone)]
 pub struct QuotesResponse {
     pub trading_day: TradingDay,
     pub as_of: Timestamp,
     pub items: Vec<Quote>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Clone)]
 pub struct Breadth {
     pub up: i64,
     pub flat: i64,
@@ -459,7 +459,7 @@ pub struct IndexPoint {
     pub value: f64,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Clone)]
 pub struct MarketIndex {
     /// 开放枚举：all、season、long
     pub key: String,
@@ -472,7 +472,7 @@ pub struct MarketIndex {
     pub series: Vec<IndexPoint>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Clone)]
 pub struct IndicesResponse {
     pub trading_day: TradingDay,
     /// 本季的第一天（季度第一天）

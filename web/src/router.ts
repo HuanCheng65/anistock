@@ -1,9 +1,16 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { ref } from 'vue'
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
 import { useSession } from './stores/session'
+
+/** a navigation is waiting (its view's chunk or the first /me) for longer than a moment: App.vue shows a bar */
+export const navigating = ref(false)
+/** the tab of the page being opened, highlighted at once (BottomNav) */
+export const pendingTab = ref<string | null>(null)
 
 const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },
+  // a sort or filter tap changes only the query: stay where the list is
+  scrollBehavior: (to, from, saved) => saved ?? (to.path === from.path ? false : { top: 0 }),
   routes: [
     { path: '/', name: 'market', component: () => import('./views/MarketView.vue'), meta: { tab: 'market', title: '市场' } },
     { path: '/stocks', name: 'stocks', component: () => import('./views/StocksView.vue'), meta: { tab: 'stocks', title: '行情' } },
@@ -31,9 +38,22 @@ const router = createRouter({
   ],
 })
 
+/** Start downloading the views of `to` now (the router would only after the guards). */
+function preload(to: RouteLocationNormalized) {
+  for (const r of to.matched) {
+    const c = r.components?.default
+    if (typeof c === 'function') Promise.resolve((c as () => unknown)()).catch(() => {})
+  }
+}
+
+let slow: number | undefined
 router.beforeEach(async (to) => {
+  window.clearTimeout(slow)
+  slow = window.setTimeout(() => (navigating.value = true), 120)
+  pendingTab.value = (to.meta.tab as string | undefined) ?? null
   const s = useSession()
   if (!s.checked) {
+    preload(to)
     try {
       await s.loadMe()
     } catch {
@@ -43,8 +63,35 @@ router.beforeEach(async (to) => {
   if (to.meta.auth && !s.me) return { name: 'login', query: { next: to.fullPath } }
 })
 
+function settled() {
+  window.clearTimeout(slow)
+  navigating.value = false
+  pendingTab.value = null
+}
 router.afterEach((to) => {
+  settled()
   document.title = to.name === 'market' ? 'AniEx 安易' : `${(to.meta.title as string) ?? ''} · AniEx 安易`
 })
+
+router.onError(settled)
+
+// the main views, fetched while the browser is idle after the first page, so a tap does not wait for a chunk
+const PREFETCH = ['stocks', 'stock', 'market', 'news', 'ipo', 'me']
+export function prefetchViews() {
+  const conn = (navigator as { connection?: { saveData?: boolean } }).connection
+  if (conn?.saveData) return
+  const idle = (f: () => void) =>
+    typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(f, { timeout: 4000 }) : globalThis.setTimeout(f, 1500)
+  const names = [...PREFETCH]
+  const next = () => {
+    const name = names.shift()
+    if (!name) return
+    const c = router.getRoutes().find((r) => r.name === name)?.components?.default
+    Promise.resolve(typeof c === 'function' ? (c as () => unknown)() : null)
+      .catch(() => {})
+      .finally(() => idle(next))
+  }
+  idle(next)
+}
 
 export default router

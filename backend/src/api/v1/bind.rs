@@ -19,6 +19,13 @@ use crate::api::AppState;
 pub const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_MINUTES: i64 = 10;
 
+/// `with_side` on the blocking pool, for request handlers: the write may wait for SQLite's write lock
+/// (the persister's batches; busy_timeout 5 s), which must not hold a tokio worker.
+pub async fn side<T: Send + 'static>(st: &Arc<AppState>, f: impl FnOnce(&mut Connection) -> R<T> + Send + 'static) -> R<T> {
+    let st2 = st.clone();
+    tokio::task::spawn_blocking(move || with_side(&st2, f)).await.map_err(|e| error::internal(format!("side write: {e}")))?
+}
+
 /// Run one write on the side connection (opened on first use).
 pub fn side_exec(st: &AppState, q: &str, p: impl rusqlite::Params) -> R<usize> {
     with_side(st, |c| c.execute(q, p).map_err(sql))

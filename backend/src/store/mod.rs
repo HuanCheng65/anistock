@@ -134,7 +134,16 @@ pub fn backup(conn: &Connection, dest: &Path) -> DbResult<PathBuf> {
     let mut out = Connection::open(dest)?;
     {
         let b = rusqlite::backup::Backup::new(conn, &mut out)?;
-        b.run_to_completion(256, std::time::Duration::from_millis(0), None)?;
+        // every page in one step, under one read transaction: a step-wise copy restarts whenever another
+        // connection writes between steps (the persister does, every 50 ms, while the server runs)
+        // (`run_to_completion` refuses -1)
+        use rusqlite::backup::StepResult;
+        loop {
+            match b.step(-1)? {
+                StepResult::Done => break,
+                _ => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
     }
     Ok(dest.to_path_buf())
 }

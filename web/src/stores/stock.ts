@@ -49,21 +49,20 @@ export const useStock = defineStore('stock', () => {
   const worksAt: Record<number, number> = {}
   const heatAt: Record<number, number> = {}
 
-  async function refresh(id: number, force = false) {
-    try {
-      const [d, b, t] = await Promise.all([
-        call(api.GET('/api/v1/stocks/{id}', { params: { path: { id } } })),
-        call(api.GET('/api/v1/stocks/{id}/book', { params: { path: { id } } })),
-        call(api.GET('/api/v1/stocks/{id}/trades', { params: { path: { id }, query: { limit: 30 } } })),
-      ])
-      detail.value[id] = d
-      book.value[id] = { bids: b.bids, asks: b.asks, auction: b.auction }
-      trades.value[id] = t.items
-      error.value[id] = ''
-    } catch (e) {
-      error.value[id] = e instanceof ApiError ? (e.status === 404 ? '股票不存在' : e.message) : '无法加载'
-      throw e
-    }
+  // one load per stock at a time: the list starts it on tap, the page's first poll then joins it
+  const inflight = new Map<number, Promise<void>>()
+  function refresh(id: number, force = false): Promise<void> {
+    const running = inflight.get(id)
+    if (running && !force) return running
+    const p = load(id, force).finally(() => {
+      if (inflight.get(id) === p) inflight.delete(id)
+    })
+    inflight.set(id, p)
+    return p
+  }
+
+  async function load(id: number, force: boolean) {
+    // candles and news go out with the detail, not after it
     const now = Date.now()
     const jobs: Promise<unknown>[] = []
     if (force || !candles.value[id] || now - (candleAt[id] ?? 0) > 30000) {
@@ -94,7 +93,23 @@ export const useStock = defineStore('stock', () => {
           .catch(() => {}),
       )
     }
-    await Promise.all(jobs)
+    const side = Promise.all(jobs)
+    side.catch(() => {}) // a failed detail below throws first; this one is awaited at the end
+    try {
+      const [d, b, t] = await Promise.all([
+        call(api.GET('/api/v1/stocks/{id}', { params: { path: { id } } })),
+        call(api.GET('/api/v1/stocks/{id}/book', { params: { path: { id } } })),
+        call(api.GET('/api/v1/stocks/{id}/trades', { params: { path: { id }, query: { limit: 30 } } })),
+      ])
+      detail.value[id] = d
+      book.value[id] = { bids: b.bids, asks: b.asks, auction: b.auction }
+      trades.value[id] = t.items
+      error.value[id] = ''
+    } catch (e) {
+      error.value[id] = e instanceof ApiError ? (e.status === 404 ? '股票不存在' : e.message) : '无法加载'
+      throw e
+    }
+    await side
   }
 
   async function moreNews(id: number) {

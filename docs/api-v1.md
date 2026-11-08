@@ -359,7 +359,7 @@ ETag 主要是给机器人和轮询的客户端省流量；网页连上 WebSocke
 - 每日委托的计数在内存里，服务重启后从 0 开始。挂单超限返回 409 `too_many_open_orders`，每日超限返回 429 `daily_order_limit`。
 - 响应头采用 IETF 草案 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`；超限返回 429 `rate_limited` 和 `Retry-After`。
 - 按 IP 计数时，IPv6 地址按所在的 /64 合并（一个用户通常有整个 /64，可以随意换地址）；IPv4 映射地址按 IPv4 计。
-- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 32，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 2000，`ws_total`）、每个账号用 API 密钥打开的连接（默认 3，`ws_per_account`，浏览器不计）和每条连接的订阅数（§5.2）。
+- WebSocket 不按消息计数，只限制每个 IP 的并发连接（默认 64，`ws_per_ip`；校园网等共用出口的用户多）、全站并发连接（默认 5000，`ws_total`）、每个账号用 API 密钥打开的连接（默认 3，`ws_per_account`，浏览器不计）和每条连接的订阅数（§5.2）。
 - API 密钥和网页共用账号的桶（“已登录玩家”那一行），不按密钥分别计数。
 - 密码哈希（scrypt，每次约 50 ms）同时最多算 `hash_concurrency` 个（默认 2）。登录、注册最多等 5 秒，等不到返回 503 `busy`，撮合和推送不受影响。
 
@@ -1579,7 +1579,7 @@ v1（三种消息共用 `me` 主题的 `seq`）：
 **断线重连**：
 
 - 按 1、2、5、10 秒（加随机抖动，上限 10 秒）退避重连。
-- 重连后带上 `since`。服务器为 `news` 和 `events` 保留最近 24 小时（最多 2000 条）的消息：`since` 在范围内就按顺序补发，之后照常推送；超出范围回 `{"t": "reset", "topic": "events"}`，客户端用 REST `?after=` 补齐。
+- 重连后带上 `since`。服务器为 `news` 和 `events` 保留最近 24 小时（最多 2000 条）的消息：`since` 在范围内就按顺序补发，之后照常推送；超出范围，或者要补发的超过 128 条（发送队列的一半），回 `{"t": "reset", "topic": "events"}`，客户端用 REST `?after=` 补齐。
 - `me` 不保留历史（每个账号单独的缓冲不值得），重连后直接重新请求 `/me`、`/me/orders?status=open`、`/me/trades?after=<最后见到的成交 id>`。
 - 状态主题重新订阅时自然先收到 `full`。
 

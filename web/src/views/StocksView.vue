@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 股票: every listed stock in one sortable, filterable table (table frame).
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import type { Quote } from '../api'
 import ChangePill from '../components/ChangePill.vue'
@@ -10,6 +10,8 @@ import Icon from '../components/Icon.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import Sparkline from '../components/Sparkline.vue'
 import { usePoll } from '../composables/usePoll'
+import { DESK, useMedia } from '../composables/useMedia'
+import { useStock } from '../stores/stock'
 import { FILTERS, listRows, SORTS, sortValue, type ListCtx, type SortKey } from '../composables/stockList'
 import { bigMoney, dir, episodeText, money, pct, share } from '../format'
 import { useFutures } from '../stores/futures'
@@ -38,7 +40,34 @@ const ctx = computed<ListCtx>(() => ({
   seasonStart: market.indices?.season_from ?? '9999',
 }))
 const counts = computed(() => Object.fromEntries(FILTERS.map((f) => [f.key, (market.stocks ?? []).filter((s) => f.test(s, ctx.value)).length])))
-const rows = computed(() => listRows(market.stocks ?? [], filter.value, sort.value, desc.value, ctx.value))
+const live = computed(() => listRows(market.stocks ?? [], filter.value, sort.value, desc.value, ctx.value))
+const desk = useMedia(DESK)
+
+// pushes re-sort the list every second or so: while a finger is down or the list scrolls, rows keep their
+// places (values still update) so a tap lands on the row it aimed at; the order catches up 1.2 s after
+const held = ref<number[] | null>(null)
+let release: number | undefined
+function hold() {
+  if (!held.value) held.value = live.value.map((s) => s.stock.id)
+  window.clearTimeout(release)
+  release = window.setTimeout(() => (held.value = null), 1200)
+}
+watch([filter, sort, desc], () => (held.value = null))
+onMounted(() => {
+  window.addEventListener('pointerdown', hold, { passive: true })
+  window.addEventListener('scroll', hold, { passive: true, capture: true }) // scroll does not bubble
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', hold)
+  window.removeEventListener('scroll', hold, { capture: true })
+  window.clearTimeout(release)
+})
+const rows = computed(() => {
+  const ids = held.value
+  if (!ids) return live.value
+  const by = new Map(live.value.map((s) => [s.stock.id, s]))
+  return ids.map((id) => by.get(id)).filter((s): s is Quote => !!s)
+})
 const filterLabel = computed(() => FILTERS.find((f) => f.key === filter.value)?.label ?? '全部')
 
 function setSort(k: SortKey) {
@@ -73,8 +102,11 @@ function fmt(s: Quote, k: SortKey): string {
 }
 const label = (k: SortKey) => SORTS.find((x) => x.key === k)!.label
 
-function remember() {
+const stock = useStock()
+function remember(id: number) {
   prefs.context = { key: filter.value, label: filterLabel.value, ids: rows.value.map((s) => s.stock.id) }
+  // the page's data starts loading with its chunk, not after it
+  stock.refresh(id).catch(() => {})
 }
 </script>
 
@@ -106,7 +138,7 @@ function remember() {
       <EmptyState v-if="market.error && !market.stocks" :text="market.error" action="重试" tone="error" @act="refresh" />
       <template v-else-if="market.stocks">
         <!-- phone list -->
-        <div class="phone-only plist">
+        <div v-if="!desk" class="plist">
           <div class="phead">
             <span class="muted">{{ rows.length }} 支</span>
             <button type="button" class="sorth" :aria-sort="ariaSort('price')" @click="setSort('price')">现价{{ arrow('price') }}</button>
@@ -115,7 +147,7 @@ function remember() {
               <button type="button" class="sorth arr" :aria-label="desc ? '改为升序' : '改为降序'" @click="setSort(metric)">{{ sort === metric ? (desc ? '↓' : '↑') : '↕' }}</button>
             </span>
           </div>
-          <RouterLink v-for="s in rows" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="prow" @click="remember">
+          <RouterLink v-for="s in rows" :key="s.stock.id" :to="`/stocks/${s.stock.id}`" class="prow" @click="remember(s.stock.id)">
             <Cover :id="s.stock.id" :title="s.stock.title" :w="30" :h="42" :spine="false" />
             <span class="nm">
               <span class="serif clamp1 t">{{ s.stock.title }}</span>
@@ -128,7 +160,7 @@ function remember() {
         </div>
 
         <!-- desktop table -->
-        <table class="table dt desk-only">
+        <table v-else class="table dt">
           <thead>
             <tr>
               <th>名称</th>
@@ -141,7 +173,7 @@ function remember() {
           <tbody>
             <tr v-for="s in rows" :key="s.stock.id">
               <td class="namecell">
-                <RouterLink :to="`/stocks/${s.stock.id}`" class="nm2" @click="remember">
+                <RouterLink :to="`/stocks/${s.stock.id}`" class="nm2" @click="remember(s.stock.id)">
                   <Cover :id="s.stock.id" :title="s.stock.title" :w="24" :h="34" :spine="false" />
                   <span class="serif clamp1 t">{{ s.stock.title }}</span>
                   <span class="num code">{{ s.stock.code }}</span>

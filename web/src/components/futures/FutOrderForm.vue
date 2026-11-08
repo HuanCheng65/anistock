@@ -117,12 +117,17 @@ async function place() {
     busy.value = false
   }
 }
+const cancelling = ref(new Set<number>())
 async function cancel(id: number) {
+  if (cancelling.value.has(id)) return
+  cancelling.value.add(id)
   try {
     await fut.cancel(id)
     msg.value = { kind: 'ok', text: '已撤单' }
   } catch (e) {
     msg.value = { kind: 'error', text: errorText(e, '无法撤单') }
+  } finally {
+    cancelling.value.delete(id)
   }
 }
 </script>
@@ -184,7 +189,7 @@ async function cancel(id: number) {
         <span :class="o.side === 'buy' ? 'tup' : 'tdown'" class="sans">{{ o.side === 'buy' ? '热' : '冷' }}</span>
         <span>{{ o.price != null ? num(o.price / 100) : '市价' }}</span>
         <span>{{ o.filled }}/{{ o.quantity }}</span>
-        <button type="button" class="cx" @click="cancel(o.id)">撤单</button>
+        <button type="button" class="cx" :disabled="cancelling.has(o.id)" @click="cancel(o.id)">{{ cancelling.has(o.id) ? '撤单中' : '撤单' }}</button>
       </div>
     </div>
 

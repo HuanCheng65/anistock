@@ -436,13 +436,30 @@ pub async fn quotes(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> R
     let st2 = st.clone();
     read(&st, move |c| {
         let today = st2.clock.today();
-        let items = load_quotes(&st2, c, ids.as_ref())?;
-        let as_of: Option<String> =
-            c.query_row("SELECT ts FROM trades ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).optional().map_err(sql)?;
-        Ok(QuotesResponse {
-            as_of: ts(as_of.unwrap_or_else(|| format!("{today}T{}:00+08:00", st2.cfg.game.day_rollover))),
-            trading_day: day(today),
-            items,
+        // every client polls this: the whole market is built once per change (cache.rs), `ids` filters it
+        let fp = super::cache::market_fingerprint(c, &today)?;
+        let all = match st2.v1.caches.quotes.get(&(), &fp) {
+            Some(hit) => hit,
+            None => {
+                let items = load_quotes(&st2, c, None)?;
+                let as_of: Option<String> =
+                    c.query_row("SELECT ts FROM trades ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).optional().map_err(sql)?;
+                let built = Arc::new(QuotesResponse {
+                    as_of: ts(as_of.unwrap_or_else(|| format!("{today}T{}:00+08:00", st2.cfg.game.day_rollover))),
+                    trading_day: day(today),
+                    items,
+                });
+                st2.v1.caches.quotes.put((), fp, built.clone());
+                built
+            }
+        };
+        Ok(match ids {
+            None => QuotesResponse::clone(&all),
+            Some(ids) => QuotesResponse {
+                trading_day: all.trading_day.clone(),
+                as_of: all.as_of.clone(),
+                items: all.items.iter().filter(|q| ids.contains(&q.stock.id)).cloned().collect(),
+            },
         })
     })
     .await
@@ -708,7 +725,19 @@ pub async fn indices(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> 
         Some(_) => return Err(error::invalid(vec![error::not_allowed("basis")])),
     };
     let today = st.clock.today();
-    read(&st, move |c| compute_indices(c, &today, with_series, basis)).await.map(Json)
+    let st2 = st.clone();
+    read(&st, move |c| {
+        let fp = super::cache::market_fingerprint(c, &today)?;
+        let key = (with_series, basis == IndexBasis::TotalReturn);
+        if let Some(hit) = st2.v1.caches.indices.get(&key, &fp) {
+            return Ok(IndicesResponse::clone(&hit));
+        }
+        let built = compute_indices(c, &today, with_series, basis)?;
+        st2.v1.caches.indices.put(key, fp, Arc::new(built.clone()));
+        Ok(built)
+    })
+    .await
+    .map(Json)
 }
 
 // ---------------------------------------------------------------- airings (collector snapshots)

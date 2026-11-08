@@ -171,16 +171,24 @@ pub async fn catch_up(st: &Arc<AppState>) -> Result<Option<usize>, String> {
         d += chrono::Duration::days(1);
     }
     if any {
-        // v1 backs up whenever catch_up went through at least one day
+        // v1 backs up whenever catch_up went through at least one day. The engine only flushes; the copy
+        // runs on the blocking pool so orders and ticks go on meanwhile.
         let r = st
             .actor
-            .call(move |ctx| {
-                let db = ctx.cfg.game_db.clone();
-                ctx.engine.daily_backup(&db, &yesterday_s)
+            .call(|ctx| -> Result<Option<(std::path::PathBuf, std::path::PathBuf)>, String> {
+                ctx.engine.flush()?;
+                Ok(ctx.engine.db_path().map(|p| (p.to_path_buf(), ctx.cfg.game_db.clone())))
             })
             .await;
-        if let Ok(Err(e)) = r {
-            return Err(format!("backup: {e}"));
+        match r {
+            Ok(Err(e)) => return Err(format!("backup: {e}")),
+            Ok(Ok(Some((source, game_db)))) => {
+                let r = tokio::task::spawn_blocking(move || crate::daily::daily_backup_of(&source, &game_db, &yesterday_s)).await;
+                if let Ok(Err(e)) = r {
+                    return Err(format!("backup: {e}"));
+                }
+            }
+            _ => {}
         }
     }
     Ok(Some(closed))
