@@ -511,8 +511,16 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
         rec.watch_account(b.account);
     }
 
+    // the theme funds' labels, for inputs written before they carried them
+    let labels = if e.funds.enabled { opts.collector_db.as_deref().map(funds::labels_from_collector).unwrap_or_default() } else { Default::default() };
     for (k, day) in days.iter().enumerate() {
         let mut inp = load(day)?;
+        for s in inp.shows.iter_mut().filter(|s| s.genres.is_empty()) {
+            // (genres only: the source feeds the valuation, and the inputs have carried it since phase 1)
+            if let Some((_, g)) = labels.get(&s.id) {
+                s.genres = g.clone();
+            }
+        }
         if let Some(n) = reveal_days {
             reveal_schedules(&mut inp, n);
         }
@@ -808,6 +816,8 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             }
             if e.funds.enabled {
                 bench.trades(&e, &tp.trades);
+                bench.ledger(&e, &tp.ledger);
+                bench.reconcile(&e, day);
             }
             rec.absorb(&mut tp);
         }

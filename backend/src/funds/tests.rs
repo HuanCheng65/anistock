@@ -191,11 +191,40 @@ fn a_redemption_sells_and_pays_the_holder() {
     let c = f.confirmed.iter().find(|c| c.units < 0).unwrap();
     assert_eq!(f.units, 0);
     assert!(f.owed.is_empty(), "{:?}", f.owed);
-    // paid the net value less the sells' commission and stamp duty
+    // held one day: paid the net value less the sells' commission and stamp duty and the 1.5% redemption fee,
+    // which stays in the fund
     let got = w.e.account(w.a).unwrap().cash - cash0;
     assert_eq!(got, -c.cash);
-    assert!(got > 89_500 && got < 90_000, "{got}");
+    assert!(got > 88_100 && got < 88_700, "{got}");
+    let left = w.e.account(f.account).unwrap().cash;
+    assert!((1_200..1_500).contains(&left), "{left}");
 }
+
+#[test]
+fn units_held_a_week_redeem_without_the_fee_and_small_subscriptions_are_refused() {
+    let mut w = world();
+    assert!(w.e.fund_subscribe(w.a, "all", 9_999, D1, &ts(D1, "20:00")).is_err());
+    w.e.fund_subscribe(w.a, "all", 90_000, D1, &ts(D1, "20:00")).unwrap();
+    session(&mut w, D2, "sell");
+    let units = w.e.fund("all").unwrap().units_of(w.a);
+    // a week after the confirmation: no fee
+    w.e.fund_redeem(w.a, "all", units, "2026-11-13").unwrap();
+    let r = w.e.fund("all").unwrap().pending[0].clone();
+    assert_eq!(r.young, 0);
+    // two lots, the newer one young: only it pays
+    let mut w = world();
+    w.e.fund_subscribe(w.a, "all", 60_000, D1, &ts(D1, "20:00")).unwrap();
+    session(&mut w, D2, "sell");
+    w.e.fund_subscribe(w.a, "all", 30_000, "2026-11-12", &ts("2026-11-12", "20:00")).unwrap();
+    session(&mut w, "2026-11-13", "sell");
+    let f = w.e.fund("all").unwrap();
+    let (old, new) = (f.lots[&w.a][0].1, f.lots[&w.a][1].1);
+    w.e.fund_redeem(w.a, "all", old + new / 2, "2026-11-14").unwrap();
+    let f = w.e.fund("all").unwrap();
+    assert_eq!(f.pending[0].young, new / 2);
+    assert_eq!(f.lots[&w.a], vec![("2026-11-13".to_string(), new - new / 2)]);
+}
+
 
 #[test]
 fn the_requests_pay_for_the_prices_they_moved() {

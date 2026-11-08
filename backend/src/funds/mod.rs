@@ -49,8 +49,13 @@ pub struct FundRules {
     /// the batches run from / to these minutes after midnight (the night session counts on past 24:00)
     pub batch_from: i64,
     pub batch_to: i64,
-    /// a fund trades at most this share of a stock's average daily volume (the last 5 sessions; a stock without
-    /// history: of its volume so far today) per session; what it cannot buy stays cash until the next session
+    /// units held fewer than `redeem_fee_days` days are redeemed less this share (it stays in the fund)
+    pub redeem_fee: f64,
+    pub redeem_fee_days: i64,
+    /// the smallest subscription, cents
+    pub min_subscribe: i64,
+    /// the funds together trade at most this share of a stock's average daily volume (the last 5 sessions; a stock
+    /// without history: of its volume so far today) per session; what it cannot buy stays cash until the next session
     /// (the 建仓期 of a new fund, a large subscription)
     pub max_volume_share: f64,
     /// a stock is traded only when it is off its target by more than this share of the fund's assets (rounding,
@@ -62,7 +67,7 @@ impl Default for FundRules {
     fn default() -> Self {
         FundRules {
             enabled: false,
-            keys: vec!["all".into(), "long".into()],
+            keys: ["all", "top20", "long", "manga", "light_novel", "isekai", "romance", "action"].map(String::from).to_vec(),
             fee_rate: 0.005,
             auction_limit: 0.03,
             batch_limit: -0.003,
@@ -72,6 +77,9 @@ impl Default for FundRules {
             batch_to: 23 * 60 + 30,
             drift: 0.0005,
             max_volume_share: 0.1,
+            redeem_fee: 0.015,
+            redeem_fee_days: 7,
+            min_subscribe: 10_000,
         }
     }
 }
@@ -100,6 +108,8 @@ pub struct Request {
     pub kind: ReqKind,
     /// the trading day it was submitted on: executed at the next day's open
     pub day: String,
+    /// a redemption: how many of its units (hundredths) were held fewer than `redeem_fee_days` days
+    pub young: i64,
 }
 
 /// One executed request (the replay's record; `fund_requests` rows later).
@@ -152,6 +162,8 @@ pub struct Fund {
     pub units: i64,
     /// account -> hundredths
     pub holders: BTreeMap<i64, i64>,
+    /// account -> its units by the day they were confirmed, oldest first (the redemption fee)
+    pub lots: BTreeMap<i64, Vec<(String, i64)>>,
     pub pending: Vec<Request>,
     /// subscribed cash in the fund's account that is not the fund's yet
     pub pending_cash: i64,
@@ -179,6 +191,8 @@ pub struct FundsState {
     pub vol_days: BTreeMap<i64, std::collections::VecDeque<i64>>,
     /// (fund account, stock) -> shares the fund traded this session
     pub fund_today: BTreeMap<(i64, i64), i64>,
+    /// `Top` funds: the month they were chosen in (its first session) and the members
+    pub top: BTreeMap<String, (String, std::collections::BTreeSet<i64>)>,
     /// the funds' fills since their last confirmation: (fund account, stock, + bought / − sold shares, price)
     pub fills: Vec<(i64, i64, i64, i64)>,
 }
@@ -196,12 +210,9 @@ pub fn member(key: &str, c: &crate::model::Company, day: &str, season_from: &str
     if c.status != "listed" || c.listed_on.as_str() >= day {
         return false;
     }
-    match key {
-        "all" => true,
-        "long" => c.long_runner != 0,
-        "season" => c.long_runner == 0 && c.first_air.as_str() >= season_from,
-        _ => false,
-    }
+    let Some(d) = crate::indices::def(key) else { return false };
+    let l = crate::indices::Labels { long: c.long_runner != 0, first_air: &c.first_air, source: c.source.as_deref(), genres: &c.genres };
+    crate::indices::eligible(d.rule, &l, season_from)
 }
 
 /// The earliest premiere in the 本季新番 index on `day` (`crate::api::v1::market::season_from`).
@@ -276,7 +287,10 @@ impl Engine {
     pub fn fund_subscribe(&mut self, account: i64, key: &str, amount: i64, day: &str, ts: &str) -> Result<i64, String> {
         let Some(f) = self.st.funds.funds.get(key) else { return Err("no such fund".into()) };
         let fund_acct = f.account;
-        if amount <= 0 || self.available_cash(account) < amount {
+        if amount < self.funds.min_subscribe {
+            return Err("below the minimum subscription".into());
+        }
+        if self.available_cash(account) < amount {
             return Err("not enough cash".into());
         }
         self.transfer(account, fund_acct, amount, "fund_subscribe", day, ts, None, None);
@@ -284,7 +298,7 @@ impl Engine {
         let id = self.st.funds.last_request_id;
         let f = self.st.funds.funds.get_mut(key).unwrap();
         f.pending_cash += amount;
-        f.pending.push(Request { id, account, kind: ReqKind::Subscribe(amount), day: day.into() });
+        f.pending.push(Request { id, account, kind: ReqKind::Subscribe(amount), day: day.into(), young: 0 });
         Ok(id)
     }
 
@@ -298,7 +312,22 @@ impl Engine {
             return Err("not enough units".into());
         }
         *f.holders.get_mut(&account).unwrap() -= units;
-        f.pending.push(Request { id, account, kind: ReqKind::Redeem(units), day: day.into() });
+        // oldest units first; those confirmed fewer than redeem_fee_days days ago pay the redemption fee
+        let since = crate::vclose::day_no(day).unwrap_or(0) - self.funds.redeem_fee_days;
+        let lots = f.lots.entry(account).or_default();
+        let (mut left, mut young) = (units, 0);
+        while left > 0 && !lots.is_empty() {
+            let take = left.min(lots[0].1);
+            if crate::vclose::day_no(&lots[0].0).unwrap_or(0) > since {
+                young += take;
+            }
+            lots[0].1 -= take;
+            left -= take;
+            if lots[0].1 == 0 {
+                lots.remove(0);
+            }
+        }
+        f.pending.push(Request { id, account, kind: ReqKind::Redeem(units), day: day.into(), young });
         Ok(id)
     }
 
@@ -312,15 +341,37 @@ impl Engine {
     /// Target value per member stock for `total` cents of assets (cap-weighted at `price`).
     fn fund_targets(&self, key: &str, day: &str, total: i64, price: impl Fn(&crate::model::Company) -> i64) -> BTreeMap<i64, i64> {
         let qs = season_from(day);
-        let caps: Vec<(i64, i128)> = self
+        let Some(def) = crate::indices::def(key) else { return BTreeMap::new() };
+        let chosen = self.st.funds.top.get(key).map(|x| &x.1);
+        let values: Vec<(i64, f64)> = self
             .st
             .companies
             .values()
             .filter(|c| member(key, c, day, &qs))
-            .map(|c| (c.id, price(c) as i128 * self.free_float(c.id) as i128))
+            .filter(|c| !matches!(def.rule, crate::indices::Rule::Top(_)) || chosen.is_some_and(|s| s.contains(&c.id)))
+            .map(|c| (c.id, price(c) as f64 * self.free_float(c.id) as f64))
             .collect();
-        let sum: i128 = caps.iter().map(|x| x.1).sum::<i128>().max(1);
-        caps.into_iter().map(|(id, cap)| (id, (total.max(0) as i128 * cap / sum) as i64)).collect()
+        crate::indices::weights(&values, def.cap).into_iter().map(|(id, w)| (id, (total.max(0) as f64 * w) as i64)).collect()
+    }
+
+    /// The first session of a month: the `Top` funds' members for the month, by free-float value at the last close
+    /// (`crate::indices`: the published index chooses the same way, from the same closes).
+    fn funds_review(&mut self, day: &str) {
+        for key in self.st.funds.funds.keys().cloned().collect::<Vec<_>>() {
+            let Some(crate::indices::Rule::Top(n)) = crate::indices::def(&key).map(|d| d.rule) else { continue };
+            if self.st.funds.top.get(&key).is_some_and(|x| x.0.get(..7) == day.get(..7)) {
+                continue;
+            }
+            let values: Vec<(i64, f64)> = self
+                .st
+                .companies
+                .values()
+                .filter(|c| c.status == "listed" && c.listed_on.as_str() < day && c.prev_close > 0)
+                .map(|c| (c.id, c.prev_close as f64 * self.free_float(c.id) as f64))
+                .collect();
+            let chosen = crate::indices::top(values, n).into_iter().collect();
+            self.st.funds.top.insert(key, (day.to_string(), chosen));
+        }
     }
 
     /// The requests a day executes and the cash / units they bring: (subscribed cents net of their estimated
@@ -390,8 +441,17 @@ impl Engine {
             Some(d) => d.iter().sum::<i64>() as f64 / d.len() as f64,
             None => fs.vol_today.get(&company).copied().unwrap_or(0) as f64,
         };
-        let done = fs.fund_today.get(&(acct, company)).copied().unwrap_or(0);
-        ((adv * self.funds.max_volume_share) as i64 - done).max(0)
+        // every fund together: what they traded today and what they have resting
+        let _ = acct;
+        let funds: Vec<i64> = fs.funds.values().map(|f| f.account).collect();
+        let traded: i64 = funds.iter().map(|a| fs.fund_today.get(&(*a, company)).copied().unwrap_or(0)).sum();
+        let resting: i64 = funds
+            .iter()
+            .flat_map(|a| self.open_orders_of(*a))
+            .filter(|o| o.company_id == company)
+            .map(|o| o.qty - o.filled)
+            .sum();
+        ((adv * self.funds.max_volume_share) as i64 - traded - resting).max(0)
     }
 
     /// A fill (called by the engine): the session's volume per stock, and the funds' part of it.
@@ -422,6 +482,7 @@ impl Engine {
             return;
         }
         let rules = self.funds.clone();
+        self.funds_review(day);
         for key in self.st.funds.funds.keys().cloned().collect::<Vec<_>>() {
             let f = self.st.funds.funds.get_mut(&key).unwrap();
             let (now, later): (Vec<Request>, Vec<Request>) = f.pending.drain(..).partition(|r| r.day.as_str() < day);
@@ -539,7 +600,9 @@ impl Engine {
                 }
                 ReqKind::Redeem(u) => {
                     new_units -= u;
-                    out.push(Confirmed { account: r.account, day: day.into(), amount: -u, units: -u, cash: -(g - cost), cost, nav });
+                    // the redemption fee stays in the fund (its other holders')
+                    let fee = (*g as f64 * r.young as f64 / u.max(1) as f64 * self.funds.redeem_fee).round() as i64;
+                    out.push(Confirmed { account: r.account, day: day.into(), amount: -u, units: -u, cash: -(g - cost - fee), cost, nav });
                 }
             }
         }
@@ -549,6 +612,7 @@ impl Engine {
         for c in &out {
             if c.units > 0 {
                 *f.holders.entry(c.account).or_default() += c.units;
+                f.lots.entry(c.account).or_default().push((day.to_string(), c.units));
             } else {
                 *f.owed.entry(c.account).or_default() += -c.cash;
             }

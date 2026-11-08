@@ -119,6 +119,24 @@ fn dividend_tax_by_lot_age_and_founders_leave() {
 }
 
 #[test]
+fn an_index_fund_takes_its_dividends_untaxed() {
+    let cfg = cfg();
+    let inp = empty_inputs();
+    let mut e = fixture();
+    let world = e.special("world").unwrap();
+    let (company_acct, committee) = (e.account_of("company", 1).unwrap(), e.account_of("committee", 1).unwrap());
+    let fund = e.create_account("fund", "fund:all", None, None, None, TS);
+    e.add_shares(committee, 1, 750, 500, "2026-06-10");
+    e.add_shares(fund, 1, 250, 500, "2026-11-08"); // bought today: a player would pay 20%
+    e.transfer(world, company_acct, 10_000, "revenue", DAY, TS, Some(1), None);
+    e.st.companies.get_mut(&1).unwrap().profit_week = 10_000;
+    let mut cx = ctx(&e, &cfg, &inp);
+    e.pay_dividends(&mut cx).unwrap();
+    assert_eq!(cash(&e, fund), 9 * 250);
+    e.check_invariants().unwrap();
+}
+
+#[test]
 fn holding_tax_schedule() {
     let cfg = cfg();
     assert_eq!(holding_tax_rate(&cfg.game, "2026-11-08", "2026-11-08").unwrap(), 0.20);

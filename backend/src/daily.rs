@@ -766,8 +766,13 @@ impl Engine {
                     cx.sum.exported += gross;
                 } else {
                     let mut tax = 0;
-                    let lots: Vec<(i64, String)> =
-                        self.lots_of(holder, c.id).iter().map(|l| (l.qty, l.acquired_on.clone())).collect();
+                    // an index fund's dividends are not taxed (passed through to its holders; the short-term
+                    // holder's side is its redemption fee, docs/design/funds.md §4.3)
+                    let lots: Vec<(i64, String)> = if kind == "fund" {
+                        vec![]
+                    } else {
+                        self.lots_of(holder, c.id).iter().map(|l| (l.qty, l.acquired_on.clone())).collect()
+                    };
                     for (lq, acquired) in lots {
                         tax += ((dps * lq) as f64 * holding_tax_rate(cx.g(), &acquired, &day)?).floor() as i64;
                     }
