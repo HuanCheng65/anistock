@@ -868,9 +868,11 @@ pub struct Me {
     pub frozen_cash: Money,
     pub available_cash: Money,
     pub stock_value: Money,
+    /// 基金市值：份额按最新净值，加上未确认的申购和赎回、未到账的赎回款
+    pub fund_value: Money,
     /// 融资融券负债
     pub liabilities: Money,
-    /// 净资产：现金 + 持仓市值 − 负债
+    /// 净资产：现金 + 持仓市值 + 基金市值 − 负债
     pub total_assets: Money,
     pub initial_cash: Money,
     /// 链接收益率（时间加权）
@@ -1120,6 +1122,7 @@ pub struct PortfolioSummary {
     pub frozen_cash: Money,
     pub available_cash: Money,
     pub stock_value: Money,
+    pub fund_value: Money,
     pub liabilities: Money,
     pub total_assets: Money,
 }
@@ -1135,6 +1138,7 @@ pub struct Portfolio {
 pub struct AssetDay {
     pub trading_day: TradingDay,
     pub cash: Money,
+    /// 证券市值：股票和基金
     pub stock_value: Money,
     pub liabilities: Money,
     pub total_assets: Money,

@@ -214,9 +214,29 @@ pub struct FundsState {
 }
 
 impl Fund {
+    /// The requests executing in this session (from `funds_auction` to their confirmation).
+    pub fn executing(&self) -> &[Request] {
+        &self.executing
+    }
+
     /// Hundredths of a unit held by `account`.
     pub fn units_of(&self, account: i64) -> i64 {
         self.holders.get(&account).copied().unwrap_or(0)
+    }
+}
+
+/// A fund's name (the index's short name) and its group on the fund list: 市场, 原作 (source), 题材 (theme).
+pub fn fund_name(key: &str) -> (&'static str, &'static str) {
+    match key {
+        "all" => ("综合", "market"),
+        "top20" => ("安易 20", "market"),
+        "long" => ("长篇", "market"),
+        "manga" => ("漫改", "source"),
+        "light_novel" => ("轻改", "source"),
+        "isekai" => ("异世界", "theme"),
+        "romance" => ("恋爱", "theme"),
+        "action" => ("热血", "theme"),
+        _ => ("", "market"),
     }
 }
 
@@ -309,6 +329,15 @@ impl Engine {
             .sum()
     }
 
+    /// Whether `account` has anything in a fund: units, a request not confirmed, a redemption not paid.
+    pub fn fund_involved(&self, account: i64) -> bool {
+        self.st.funds.funds.values().any(|f| {
+            f.units_of(account) > 0
+                || f.pending.iter().chain(&f.executing).any(|r| r.account == account)
+                || f.owed.contains_key(&account)
+        })
+    }
+
     /// Subscribe `amount` cents to fund `key`: the cash moves now, the units come at the next open.
     pub fn fund_subscribe(&mut self, account: i64, key: &str, amount: i64, day: &str, ts: &str) -> Result<i64, String> {
         let Some(f) = self.st.funds.funds.get(key) else { return Err("no such fund".into()) };
@@ -340,13 +369,13 @@ impl Engine {
 
     /// Redeem `units` hundredths of fund `key`: they leave the holder now, the cash comes at the next open.
     pub fn fund_redeem(&mut self, account: i64, key: &str, units: i64, day: &str, ts: &str) -> Result<i64, String> {
-        self.st.funds.last_request_id += 1;
-        let id = self.st.funds.last_request_id;
-        let Some(f) = self.st.funds.funds.get_mut(key) else { return Err("no such fund".into()) };
-        let have = f.units_of(account);
-        if units <= 0 || units > have {
+        let Some(f) = self.st.funds.funds.get(key) else { return Err("no such fund".into()) };
+        if units <= 0 || units > f.units_of(account) {
             return Err("not enough units".into());
         }
+        self.st.funds.last_request_id += 1;
+        let id = self.st.funds.last_request_id;
+        let f = self.st.funds.funds.get_mut(key).unwrap();
         *f.holders.get_mut(&account).unwrap() -= units;
         // oldest units first; those confirmed fewer than redeem_fee_days days ago pay the redemption fee
         let since = crate::vclose::day_no(day).unwrap_or(0) - self.funds.redeem_fee_days;
@@ -457,15 +486,21 @@ impl Engine {
     ) -> BTreeMap<i64, i64> {
         let qs = season_from(day);
         let Some(def) = crate::indices::def(key) else { return BTreeMap::new() };
-        let chosen = self.st.funds.top.get(key).map(|x| &x.1);
-        let values: Vec<(i64, f64)> = self
+        let mut values: Vec<(i64, f64)> = self
             .st
             .companies
             .values()
             .filter(|c| member(key, c, day, &qs))
-            .filter(|c| !matches!(def.rule, crate::indices::Rule::Top(_)) || chosen.is_some_and(|s| s.contains(&c.id)))
             .map(|c| (c.id, price(c) as f64 * self.index_float(c.id)))
             .collect();
+        if let crate::indices::Rule::Top(n) = def.rule {
+            // the month's members; before the first review (a fund not traded yet), the largest now
+            let chosen: std::collections::BTreeSet<i64> = match self.st.funds.top.get(key) {
+                Some(x) => x.1.clone(),
+                None => crate::indices::top(values.clone(), n).into_iter().collect(),
+            };
+            values.retain(|v| chosen.contains(&v.0));
+        }
         crate::indices::weights(&values, def.cap)
             .into_iter()
             .map(|(id, w)| (id, (total.max(0) as f64 * w) as i64))

@@ -1456,10 +1456,12 @@ impl Engine {
             .values()
             .filter(|a| a.kind == "player")
             .map(|a| {
+                // (securities: the stocks and the fund units)
                 let stock: i64 = self
                     .holdings_of(a.id)
                     .map(|h| h.qty * self.st.companies.get(&h.company_id).map_or(0, |c| c.last_price))
-                    .sum();
+                    .sum::<i64>()
+                    + self.fund_value_of(a.id);
                 let pr = self.st.player_returns.get(&a.id);
                 let (factor, base) = pr.map_or((1.0, initial), |p| (p.return_factor, p.segment_base));
                 let liabilities = self.liabilities(a.id);

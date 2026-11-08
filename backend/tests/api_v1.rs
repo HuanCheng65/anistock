@@ -35,6 +35,7 @@ fn app(at: &str, always_open: bool) -> App {
 
 /// `app` with extra environment variables for `Config::load_from`.
 fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) -> App {
+    let funds_on = extra.iter().any(|(k, _)| *k == "TEST_FUNDS");
     let extra: Vec<(&'static str, &'static str)> = extra.to_vec();
     let mut fx = Fx::new();
     let pw = anistock::auth::hash_pw_with_salt("secret1", &[7u8; 16]);
@@ -61,6 +62,10 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
     })
     .unwrap();
     cfg.always_open = always_open;
+    // 指数基金 on (server/game.toml may have them off)
+    if funds_on {
+        cfg.funds.enabled = true;
+    }
     // alice has accepted every current document
     {
         let c = rusqlite::Connection::open(&db).unwrap();
@@ -74,7 +79,10 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
     }
     let cfg = Arc::new(cfg);
     let clock = Clock::fixed(cfg.tz, at).with_rollover(&cfg.game.day_rollover);
-    let Fx { dir, e } = fx;
+    let Fx { dir, mut e } = fx;
+    e.funds = cfg.funds.clone();
+    e.funds_setup(TS);
+    e.flush().unwrap();
     let (actor, _h) = Actor::start(Ctx { engine: e, cfg: cfg.clone(), ops: Box::new(EngineOps::default()) });
     let mut v1s = V1State::new(&cfg);
     v1s.bots = v1::parse_bot_tokens(&format!("koishi:{BOT}"));
@@ -351,6 +359,47 @@ async fn futures_need_their_steps() {
     err(&a.req("DELETE", "/api/v1/me/futures/orders/1", None, &h).await, 404, "order_not_found");
     let bad = json!({"contract_id": 1, "side": "buy", "type": "market", "price": 9000, "quantity": 1});
     err(&a.req("POST", "/api/v1/me/futures/orders", Some(bad), &h).await, 400, "invalid_request");
+}
+
+#[tokio::test]
+async fn funds_take_requests_until_they_execute() {
+    let off = app("2026-11-05T10:00:00+08:00", true);
+    err(&off.get("/api/v1/funds", None).await, 404, "funds_closed");
+    let a = app_env("2026-11-05T10:00:00+08:00", true, &[("TEST_FUNDS", "1")]);
+    let list = a.checked("/api/v1/funds", "/api/v1/funds", None).await;
+    let keys: Vec<&str> = list["funds"].as_array().unwrap().iter().map(|f| f["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, ["all", "top20", "long", "manga", "light_novel", "isekai", "romance", "action"]);
+    assert_eq!(list["funds"][0]["name"], "综合");
+    assert_eq!(list["funds"][0]["nav"], 1.0);
+    a.checked("/api/v1/funds/{key}", "/api/v1/funds/manga", None).await;
+    err(&a.get("/api/v1/funds/nope", None).await, 404, "fund_not_found");
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let cash0 = a.req("GET", "/api/v1/me", None, &h).await.json["cash"].as_i64().unwrap();
+    let post = |b: Value| a.req("POST", "/api/v1/me/fund-requests", Some(b), &h);
+    let r = post(json!({"fund": "all", "kind": "subscribe", "amount": 50_000})).await;
+    assert_eq!(r.status, 201, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/fund-requests", 201), &r.json, "subscribe");
+    // before the session's requests start executing (08:50): counted on the day before, executed today
+    assert_eq!((r.json["request"]["status"].as_str(), r.json["request"]["day"].as_str()), (Some("pending"), Some("2026-11-04")));
+    let id = r.json["request"]["id"].as_i64().unwrap();
+    let me = a.req("GET", "/api/v1/me", None, &h).await.json;
+    assert_eq!((me["cash"].as_i64().unwrap(), me["fund_value"].as_i64().unwrap()), (cash0 - 50_000, 50_000));
+    let r = post(json!({"fund": "all", "kind": "subscribe", "amount": 100})).await;
+    err(&r, 400, "invalid_request");
+    assert_eq!(r.json["message"], "申购金额不能低于 100 星辉");
+    err(&post(json!({"fund": "all", "kind": "redeem", "units": 100})).await, 422, "insufficient_units");
+    err(&post(json!({"fund": "all", "kind": "subscribe", "amount": 999_999_999})).await, 422, "insufficient_cash");
+    err(&post(json!({"fund": "nope", "kind": "subscribe", "amount": 50_000})).await, 404, "fund_not_found");
+    err(&post(json!({"fund": "all", "kind": "swap", "amount": 50_000})).await, 400, "invalid_request");
+    let mine = a.checked("/api/v1/me/funds", "/api/v1/me/funds", Some(&ck)).await;
+    assert_eq!(mine["fund_value"], 50_000);
+    let r = a.req("DELETE", &format!("/api/v1/me/fund-requests/{id}"), None, &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("DELETE", "/api/v1/me/fund-requests/{id}", 200), &r.json, "cancel");
+    assert_eq!(r.json["requests"][0]["status"], "cancelled");
+    assert_eq!(a.req("GET", "/api/v1/me", None, &h).await.json["cash"].as_i64().unwrap(), cash0);
+    err(&a.req("DELETE", &format!("/api/v1/me/fund-requests/{id}"), None, &h).await, 404, "request_not_cancellable");
 }
 
 /// A fresh register challenge with its answer, as the request's `pow`.

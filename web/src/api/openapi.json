@@ -428,7 +428,8 @@
             "type": "number"
           },
           "stock_value": {
-            "$ref": "#/components/schemas/Money"
+            "$ref": "#/components/schemas/Money",
+            "description": "证券市值：股票和基金"
           },
           "total_assets": {
             "$ref": "#/components/schemas/Money"
@@ -1654,6 +1655,395 @@
           "price",
           "quantity",
           "trade_id"
+        ],
+        "type": "object"
+      },
+      "FundDetail": {
+        "properties": {
+          "cash_weight": {
+            "description": "现金占基金资产的比例",
+            "format": "double",
+            "type": "number"
+          },
+          "fund": {
+            "$ref": "#/components/schemas/FundView"
+          },
+          "history": {
+            "description": "每个交易日收盘后的净值",
+            "items": {
+              "$ref": "#/components/schemas/FundNavPoint"
+            },
+            "type": "array"
+          },
+          "holdings": {
+            "description": "前十大持仓",
+            "items": {
+              "$ref": "#/components/schemas/FundHolding"
+            },
+            "type": "array"
+          },
+          "terms": {
+            "$ref": "#/components/schemas/FundTerms"
+          }
+        },
+        "required": [
+          "cash_weight",
+          "fund",
+          "history",
+          "holdings",
+          "terms"
+        ],
+        "type": "object"
+      },
+      "FundHolding": {
+        "properties": {
+          "index_weight": {
+            "description": "在指数里的权重",
+            "format": "double",
+            "type": "number"
+          },
+          "quantity": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRef"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "weight": {
+            "description": "占基金资产的比例",
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "index_weight",
+          "quantity",
+          "stock",
+          "value",
+          "weight"
+        ],
+        "type": "object"
+      },
+      "FundList": {
+        "properties": {
+          "funds": {
+            "items": {
+              "$ref": "#/components/schemas/FundView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "funds"
+        ],
+        "type": "object"
+      },
+      "FundNavPoint": {
+        "properties": {
+          "aum": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "day": {
+            "$ref": "#/components/schemas/TradingDay"
+          },
+          "nav": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "aum",
+          "day",
+          "nav"
+        ],
+        "type": "object"
+      },
+      "FundRequest": {
+        "properties": {
+          "amount": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "申购金额；赎回为 null"
+              }
+            ]
+          },
+          "cash": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "确认金额：申购为扣除成本后投入的金额，赎回为到账金额"
+              }
+            ]
+          },
+          "confirmed_on": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay"
+              }
+            ]
+          },
+          "cost": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "计入这笔申购或赎回的交易成本"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "day": {
+            "$ref": "#/components/schemas/TradingDay",
+            "description": "提交时所在的交易日；下一个交易日成交"
+          },
+          "fee": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "赎回费（确认前为估算）"
+              }
+            ]
+          },
+          "fund": {
+            "type": "string"
+          },
+          "fund_name": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "开放枚举：subscribe、redeem",
+            "type": "string"
+          },
+          "nav": {
+            "description": "确认净值",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "开放枚举：pending（等待成交）、executing（成交中）、confirmed、cancelled",
+            "type": "string"
+          },
+          "units": {
+            "description": "赎回份额，0.01 份；申购在确认前为 null",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "amount",
+          "cash",
+          "confirmed_on",
+          "cost",
+          "created_at",
+          "day",
+          "fee",
+          "fund",
+          "fund_name",
+          "id",
+          "kind",
+          "nav",
+          "status",
+          "units"
+        ],
+        "type": "object"
+      },
+      "FundRequestBody": {
+        "description": "The body of 申购 / 赎回 (documentation: the handler reads the fields itself).",
+        "properties": {
+          "amount": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Money",
+                "description": "申购金额，分"
+              }
+            ]
+          },
+          "fund": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "subscribe | redeem",
+            "type": "string"
+          },
+          "units": {
+            "description": "赎回份额，0.01 份",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "fund",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "FundRequestResponse": {
+        "properties": {
+          "funds": {
+            "$ref": "#/components/schemas/MyFunds"
+          },
+          "request": {
+            "$ref": "#/components/schemas/FundRequest"
+          }
+        },
+        "required": [
+          "funds",
+          "request"
+        ],
+        "type": "object"
+      },
+      "FundTerms": {
+        "properties": {
+          "fee_rate": {
+            "description": "管理费，年化",
+            "format": "double",
+            "type": "number"
+          },
+          "min_subscribe": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "redeem_fee": {
+            "description": "赎回费：持有不满 redeem_fee_days 天的份额收取",
+            "format": "double",
+            "type": "number"
+          },
+          "redeem_fee_days": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fee_rate",
+          "min_subscribe",
+          "redeem_fee",
+          "redeem_fee_days"
+        ],
+        "type": "object"
+      },
+      "FundView": {
+        "properties": {
+          "aum": {
+            "$ref": "#/components/schemas/Money",
+            "description": "基金规模（按最新价）"
+          },
+          "cap": {
+            "description": "单只成分股的权重上限；null 为不设上限",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "estimate": {
+            "description": "今日估算：跟踪的指数今天的涨跌",
+            "format": "double",
+            "type": "number"
+          },
+          "group": {
+            "description": "开放枚举：market（市场）、source（原作）、theme（题材）",
+            "type": "string"
+          },
+          "index_name": {
+            "description": "跟踪的指数的全称，如「安易漫改指数」",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "members": {
+            "description": "成分股数量",
+            "format": "int64",
+            "type": "integer"
+          },
+          "month_change": {
+            "description": "近一月净值涨跌；成立不满一个月为 null",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "基金名（跟踪的指数的简称）",
+            "type": "string"
+          },
+          "nav": {
+            "description": "单位净值，星辉",
+            "format": "double",
+            "type": "number"
+          },
+          "nav_day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay",
+                "description": "净值日期；成立后第一次收盘前为 null"
+              }
+            ]
+          },
+          "since_start": {
+            "description": "成立以来净值涨跌（从 1.0000 起）",
+            "format": "double",
+            "type": "number"
+          },
+          "units": {
+            "description": "总份额，0.01 份",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "aum",
+          "cap",
+          "estimate",
+          "group",
+          "index_name",
+          "key",
+          "members",
+          "month_change",
+          "name",
+          "nav",
+          "nav_day",
+          "since_start",
+          "units"
         ],
         "type": "object"
       },
@@ -3073,6 +3463,10 @@
           "frozen_cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "fund_value": {
+            "$ref": "#/components/schemas/Money",
+            "description": "基金市值：份额按最新净值，加上未确认的申购和赎回、未到账的赎回款"
+          },
           "futures_steps": {
             "$ref": "#/components/schemas/FuturesSteps",
             "description": "交易热度期货还需要的步骤"
@@ -3114,7 +3508,7 @@
           },
           "total_assets": {
             "$ref": "#/components/schemas/Money",
-            "description": "净资产：现金 + 持仓市值 − 负债"
+            "description": "净资产：现金 + 持仓市值 + 基金市值 − 负债"
           },
           "total_return": {
             "description": "链接收益率（时间加权）",
@@ -3144,6 +3538,7 @@
           "dividends",
           "eligibility",
           "frozen_cash",
+          "fund_value",
           "futures_steps",
           "id",
           "initial_cash",
@@ -3314,6 +3709,82 @@
         "description": "金额，单位：分（1 星辉 = 100 分）。显示时除以 100。",
         "format": "int64",
         "type": "integer"
+      },
+      "MyFundHolding": {
+        "properties": {
+          "cost": {
+            "$ref": "#/components/schemas/Money",
+            "description": "持有成本（申购金额，赎回时按份额比例扣除）"
+          },
+          "free_from": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TradingDay",
+                "description": "全部份额免赎回费的日期；没有这样的份额为 null"
+              }
+            ]
+          },
+          "fund": {
+            "$ref": "#/components/schemas/FundView"
+          },
+          "units": {
+            "description": "0.01 份",
+            "format": "int64",
+            "type": "integer"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Money",
+            "description": "按最新净值"
+          },
+          "young_units": {
+            "description": "持有不满 7 天、赎回要收赎回费的份额，0.01 份",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cost",
+          "free_from",
+          "fund",
+          "units",
+          "value",
+          "young_units"
+        ],
+        "type": "object"
+      },
+      "MyFunds": {
+        "properties": {
+          "fund_value": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "holdings": {
+            "items": {
+              "$ref": "#/components/schemas/MyFundHolding"
+            },
+            "type": "array"
+          },
+          "owed": {
+            "$ref": "#/components/schemas/Money",
+            "description": "赎回已确认、还没到账的金额"
+          },
+          "requests": {
+            "description": "未结束的申购和赎回，以及最近 30 笔已结束的",
+            "items": {
+              "$ref": "#/components/schemas/FundRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "fund_value",
+          "holdings",
+          "owed",
+          "requests"
+        ],
+        "type": "object"
       },
       "MyFutures": {
         "properties": {
@@ -3833,6 +4304,9 @@
           "frozen_cash": {
             "$ref": "#/components/schemas/Money"
           },
+          "fund_value": {
+            "$ref": "#/components/schemas/Money"
+          },
           "liabilities": {
             "$ref": "#/components/schemas/Money"
           },
@@ -3847,6 +4321,7 @@
           "available_cash",
           "cash",
           "frozen_cash",
+          "fund_value",
           "liabilities",
           "stock_value",
           "total_assets"
@@ -6683,6 +7158,79 @@
         ]
       }
     },
+    "/api/v1/funds": {
+      "get": {
+        "operationId": "funds_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FundList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "指数基金",
+        "tags": [
+          "funds"
+        ]
+      }
+    },
+    "/api/v1/funds/{key}": {
+      "get": {
+        "operationId": "funds_detail",
+        "parameters": [
+          {
+            "description": "基金，如 manga",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FundDetail"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "基金详情",
+        "tags": [
+          "funds"
+        ]
+      }
+    },
     "/api/v1/futures": {
       "get": {
         "operationId": "futures_list",
@@ -7773,6 +8321,121 @@
           }
         },
         "summary": "直接还款",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/fund-requests": {
+      "post": {
+        "operationId": "fund_request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FundRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FundRequestResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "申购或赎回",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/fund-requests/{id}": {
+      "delete": {
+        "operationId": "fund_request_cancel",
+        "parameters": [
+          {
+            "description": "申购或赎回的 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyFunds"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "撤销申购或赎回（开始成交前）",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/funds": {
+      "get": {
+        "operationId": "my_funds",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyFunds"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "我的基金",
         "tags": [
           "account"
         ]
@@ -9283,6 +9946,10 @@
     {
       "description": "期货",
       "name": "futures"
+    },
+    {
+      "description": "指数基金",
+      "name": "funds"
     },
     {
       "description": "账户",

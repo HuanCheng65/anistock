@@ -6,6 +6,7 @@ import { RouterLink } from 'vue-router'
 import ChangePill from '../components/ChangePill.vue'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
+import MarketSeg from '../components/MarketSeg.vue'
 import { usePoll } from '../composables/usePoll'
 import { num, qty } from '../format'
 
@@ -46,10 +47,7 @@ const rows = computed(() => {
     <header class="pagehead phone-only"><h1>行情</h1></header>
     <div class="container">
       <h1 class="pagetitle desk-only">行情</h1>
-      <nav class="seg" aria-label="品种">
-        <RouterLink to="/stocks">股票</RouterLink>
-        <span aria-current="page">热度期货</span>
-      </nav>
+      <MarketSeg current="futures" />
       <div class="chips" role="group" aria-label="排序">
         <button v-for="s in SORTS" :key="s.key" type="button" :aria-pressed="sort === s.key" @click="sort = s.key">{{ s.label }}</button>
       </div>
@@ -76,9 +74,6 @@ const rows = computed(() => {
 </template>
 
 <style scoped>
-.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--rule); margin-top: 4px; max-width: 360px; }
-.seg a, .seg span { height: 36px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: var(--ink-2); }
-.seg [aria-current] { background: var(--ink); color: var(--ground); font-weight: 700; }
 .chips { display: flex; gap: 8px; padding: 12px 0; overflow-x: auto; scrollbar-width: none; }
 .chips button { flex: none; height: 32px; padding: 0 12px; font-size: 13px; border: 1px solid var(--base-line); background: transparent; color: var(--ink); }
 .chips button[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }

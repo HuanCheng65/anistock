@@ -174,6 +174,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/funds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 指数基金 */
+        get: operations["funds_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/funds/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 基金详情 */
+        get: operations["funds_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/futures": {
         parameters: {
             query?: never;
@@ -563,6 +597,57 @@ export interface paths {
         put?: never;
         /** 直接还款 */
         post: operations["repay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/fund-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 申购或赎回 */
+        post: operations["fund_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/fund-requests/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 撤销申购或赎回（开始成交前） */
+        delete: operations["fund_request_cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/funds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的基金 */
+        get: operations["my_funds"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1147,6 +1232,7 @@ export interface components {
             restructured: boolean;
             /** Format: double */
             return_index: number;
+            /** @description 证券市值：股票和基金 */
             stock_value: components["schemas"]["Money"];
             total_assets: components["schemas"]["Money"];
             /** Format: double */
@@ -1516,6 +1602,150 @@ export interface components {
             quantity: number;
             /** Format: int64 */
             trade_id: number;
+        };
+        FundDetail: {
+            /**
+             * Format: double
+             * @description 现金占基金资产的比例
+             */
+            cash_weight: number;
+            fund: components["schemas"]["FundView"];
+            /** @description 每个交易日收盘后的净值 */
+            history: components["schemas"]["FundNavPoint"][];
+            /** @description 前十大持仓 */
+            holdings: components["schemas"]["FundHolding"][];
+            terms: components["schemas"]["FundTerms"];
+        };
+        FundHolding: {
+            /**
+             * Format: double
+             * @description 在指数里的权重
+             */
+            index_weight: number;
+            /** Format: int64 */
+            quantity: number;
+            stock: components["schemas"]["StockRef"];
+            value: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 占基金资产的比例
+             */
+            weight: number;
+        };
+        FundList: {
+            funds: components["schemas"]["FundView"][];
+        };
+        FundNavPoint: {
+            aum: components["schemas"]["Money"];
+            day: components["schemas"]["TradingDay"];
+            /** Format: double */
+            nav: number;
+        };
+        FundRequest: {
+            amount: null | components["schemas"]["Money"];
+            cash: null | components["schemas"]["Money"];
+            confirmed_on: null | components["schemas"]["TradingDay"];
+            cost: null | components["schemas"]["Money"];
+            created_at: components["schemas"]["Timestamp"];
+            /** @description 提交时所在的交易日；下一个交易日成交 */
+            day: components["schemas"]["TradingDay"];
+            fee: null | components["schemas"]["Money"];
+            fund: string;
+            fund_name: string;
+            /** Format: int64 */
+            id: number;
+            /** @description 开放枚举：subscribe、redeem */
+            kind: string;
+            /**
+             * Format: double
+             * @description 确认净值
+             */
+            nav: number | null;
+            /** @description 开放枚举：pending（等待成交）、executing（成交中）、confirmed、cancelled */
+            status: string;
+            /**
+             * Format: int64
+             * @description 赎回份额，0.01 份；申购在确认前为 null
+             */
+            units: number | null;
+        };
+        /** @description The body of 申购 / 赎回 (documentation: the handler reads the fields itself). */
+        FundRequestBody: {
+            amount?: null | components["schemas"]["Money"];
+            fund: string;
+            /** @description subscribe | redeem */
+            kind: string;
+            /**
+             * Format: int64
+             * @description 赎回份额，0.01 份
+             */
+            units?: number | null;
+        };
+        FundRequestResponse: {
+            funds: components["schemas"]["MyFunds"];
+            request: components["schemas"]["FundRequest"];
+        };
+        FundTerms: {
+            /**
+             * Format: double
+             * @description 管理费，年化
+             */
+            fee_rate: number;
+            min_subscribe: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 赎回费：持有不满 redeem_fee_days 天的份额收取
+             */
+            redeem_fee: number;
+            /** Format: int64 */
+            redeem_fee_days: number;
+        };
+        FundView: {
+            /** @description 基金规模（按最新价） */
+            aum: components["schemas"]["Money"];
+            /**
+             * Format: double
+             * @description 单只成分股的权重上限；null 为不设上限
+             */
+            cap: number | null;
+            /**
+             * Format: double
+             * @description 今日估算：跟踪的指数今天的涨跌
+             */
+            estimate: number;
+            /** @description 开放枚举：market（市场）、source（原作）、theme（题材） */
+            group: string;
+            /** @description 跟踪的指数的全称，如「安易漫改指数」 */
+            index_name: string;
+            key: string;
+            /**
+             * Format: int64
+             * @description 成分股数量
+             */
+            members: number;
+            /**
+             * Format: double
+             * @description 近一月净值涨跌；成立不满一个月为 null
+             */
+            month_change: number | null;
+            /** @description 基金名（跟踪的指数的简称） */
+            name: string;
+            /**
+             * Format: double
+             * @description 单位净值，星辉
+             */
+            nav: number;
+            nav_day: null | components["schemas"]["TradingDay"];
+            /**
+             * Format: double
+             * @description 成立以来净值涨跌（从 1.0000 起）
+             */
+            since_start: number;
+            /**
+             * Format: int64
+             * @description 总份额，0.01 份
+             */
+            units: number;
         };
         FuturesBookLevel: {
             /** Format: int64 */
@@ -1930,6 +2160,8 @@ export interface components {
             /** @description 财政补贴、新股认购、排行榜的资格 */
             eligibility: components["schemas"]["EligibilityState"];
             frozen_cash: components["schemas"]["Money"];
+            /** @description 基金市值：份额按最新净值，加上未确认的申购和赎回、未到账的赎回款 */
+            fund_value: components["schemas"]["Money"];
             /** @description 交易热度期货还需要的步骤 */
             futures_steps: components["schemas"]["FuturesSteps"];
             /** Format: int64 */
@@ -1942,7 +2174,7 @@ export interface components {
             restructure: components["schemas"]["RestructureState"];
             risk: null | components["schemas"]["RiskResult"];
             stock_value: components["schemas"]["Money"];
-            /** @description 净资产：现金 + 持仓市值 − 负债 */
+            /** @description 净资产：现金 + 持仓市值 + 基金市值 − 负债 */
             total_assets: components["schemas"]["Money"];
             /**
              * Format: double
@@ -2009,6 +2241,32 @@ export interface components {
          * @description 金额，单位：分（1 星辉 = 100 分）。显示时除以 100。
          */
         Money: number;
+        MyFundHolding: {
+            /** @description 持有成本（申购金额，赎回时按份额比例扣除） */
+            cost: components["schemas"]["Money"];
+            free_from: null | components["schemas"]["TradingDay"];
+            fund: components["schemas"]["FundView"];
+            /**
+             * Format: int64
+             * @description 0.01 份
+             */
+            units: number;
+            /** @description 按最新净值 */
+            value: components["schemas"]["Money"];
+            /**
+             * Format: int64
+             * @description 持有不满 7 天、赎回要收赎回费的份额，0.01 份
+             */
+            young_units: number;
+        };
+        MyFunds: {
+            fund_value: components["schemas"]["Money"];
+            holdings: components["schemas"]["MyFundHolding"][];
+            /** @description 赎回已确认、还没到账的金额 */
+            owed: components["schemas"]["Money"];
+            /** @description 未结束的申购和赎回，以及最近 30 笔已结束的 */
+            requests: components["schemas"]["FundRequest"][];
+        };
         MyFutures: {
             /** @description 可用保证金 */
             available_margin: components["schemas"]["Money"];
@@ -2160,6 +2418,7 @@ export interface components {
             available_cash: components["schemas"]["Money"];
             cash: components["schemas"]["Money"];
             frozen_cash: components["schemas"]["Money"];
+            fund_value: components["schemas"]["Money"];
             liabilities: components["schemas"]["Money"];
             stock_value: components["schemas"]["Money"];
             total_assets: components["schemas"]["Money"];
@@ -3137,6 +3396,63 @@ export interface operations {
             };
         };
     };
+    funds_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FundList"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    funds_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 基金，如 manga */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FundDetail"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     futures_list: {
         parameters: {
             query?: never;
@@ -3934,6 +4250,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepayResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    fund_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FundRequestBody"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FundRequestResponse"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    fund_request_cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 申购或赎回的 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyFunds"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    my_funds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyFunds"];
                 };
             };
             default: {

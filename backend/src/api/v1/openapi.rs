@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, assess, bind, keys, media, password, corporate, credit, futures, market, search, stocks, works};
+use super::{account, assess, bind, keys, media, password, corporate, credit, funds, futures, market, search, stocks, works};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -27,6 +27,7 @@ use super::{account, assess, bind, keys, media, password, corporate, credit, fut
         account::cancel, account::my_trades, account::ledger, account::restructure,
         account::leaderboard, account::sign, account::read_announcement, account::close, assess::questions, assess::submit, credit::credit, credit::open, credit::repay, credit::stock_margin,
         futures::list, futures::detail, futures::heat, futures::mine, futures::place, futures::cancel,
+        funds::list, funds::detail, funds::mine, funds::submit, funds::cancel,
         account::challenge, account::register, account::login, account::logout, password::reset, password::change, password::bot_issue,
         bind::create_code, bind::list, bind::remove, bind::redeem, bind::bot_remove,
         keys::list, keys::create, keys::revoke, media::push,
@@ -37,7 +38,7 @@ use super::{account, assess, bind, keys, media, password, corporate, credit, fut
     )),
     tags(
         (name = "market", description = "市场"), (name = "stocks", description = "股票"), (name = "news", description = "资讯"),
-        (name = "ipos", description = "新股"), (name = "futures", description = "期货"), (name = "account", description = "账户"), (name = "leaderboard", description = "排行"),
+        (name = "ipos", description = "新股"), (name = "futures", description = "期货"), (name = "funds", description = "指数基金"), (name = "account", description = "账户"), (name = "leaderboard", description = "排行"),
         (name = "auth", description = "认证"), (name = "bindings", description = "绑定"), (name = "bot", description = "机器人"),
     )
 )]
@@ -46,7 +47,7 @@ pub struct ApiDoc;
 /// Request bodies: optional fields stay optional.
 const REQUESTS: &[&str] = &[
     "PlaceOrderRequest", "SubscriptionRequest", "RestructureRequest", "RegisterRequest", "LoginRequest",
-    "BindCodeRequest", "ApiKeyRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest", "MediaNewsRequest",
+    "BindCodeRequest", "ApiKeyRequest", "RedeemRequest", "AgreementRequest", "AnswersRequest", "CloseAccountRequest", "ChangePasswordRequest", "ResetPasswordRequest", "BotResetRequest", "WsClientMessage", "RepayRequest", "RightsRequest", "MediaNewsRequest", "FundRequestBody",
 ];
 
 fn require_all(v: &mut Value) {

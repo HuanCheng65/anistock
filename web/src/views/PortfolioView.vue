@@ -12,6 +12,7 @@ import Tabs from '../components/Tabs.vue'
 import { usePoll } from '../composables/usePoll'
 import { dir, money, num, pct, qty, signed, when } from '../format'
 import { useAccount } from '../stores/account'
+import { useFunds } from '../stores/funds'
 import { useFutures } from '../stores/futures'
 import { MODE_LABEL } from '../stores/credit'
 import { useIpo } from '../stores/ipo'
@@ -63,6 +64,31 @@ const me = computed(() => session.me)
 const fut = useFutures()
 usePoll(() => (session.me ? fut.refreshMine().catch(() => {}) : null), 30000, 60000)
 const futPos = computed(() => (fut.mine?.positions ?? []).filter((p) => p.quantity))
+// 指数基金: units held, and the requests not confirmed yet (cancellable until they start executing)
+const funds = useFunds()
+usePoll(() => (session.me ? funds.refreshMine().catch(() => {}) : null), 30000, 60000)
+const fundHold = computed(() => funds.mine?.holdings ?? [])
+const fundOpen = computed(() => (funds.mine?.requests ?? []).filter((r) => r.status === 'pending' || r.status === 'executing'))
+const md = (x: string) => `${x.slice(5, 7)}-${x.slice(8)}`
+const nextDay = (x: string) => {
+  const d = new Date(`${x}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+const cancellingFund = ref<number | null>(null)
+async function cancelFund(id: number) {
+  cancellingFund.value = id
+  error.value = ''
+  try {
+    await funds.cancel(id)
+    await session.loadMe()
+    actionMsg.value = '已撤单'
+  } catch (e) {
+    error.value = errorText(e, '无法撤单')
+  } finally {
+    cancellingFund.value = null
+  }
+}
 function rememberHold() {
   prefs.context = { key: 'hold', label: '持仓', ids: positions.value.map((p) => p.stock.id) }
 }
@@ -166,7 +192,21 @@ async function cancel(id: number) {
                 </tr>
               </tbody>
             </table>
-            <EmptyState v-if="!positions.length && !futPos.length" text="暂无持仓" action="去看股票" to="/stocks" />
+            <EmptyState v-if="!positions.length && !futPos.length && !fundHold.length && !fundOpen.length" text="暂无持仓" action="去看股票" to="/stocks" />
+            <section v-if="fundHold.length || fundOpen.length" class="funds" aria-labelledby="funds-h">
+              <h2 id="funds-h" class="h2 gutter">基金<span class="num fm">{{ money(funds.mine!.fund_value) }}</span></h2>
+              <RouterLink v-for="h in fundHold" :key="h.fund.key" :to="`/funds/${h.fund.key}`" class="fund gutter">
+                <span class="t">{{ h.fund.name }}</span>
+                <span class="num r" :class="dir(h.value - h.cost)">{{ signed(h.value - h.cost) }}</span>
+                <span class="num m">{{ money(h.units) }} 份 · 成本 {{ h.units ? num(h.cost / h.units, 4) : '–' }} · 净值 {{ num(h.fund.nav, 4) }}</span>
+                <span class="num r m">市值 {{ money(h.value) }}</span>
+              </RouterLink>
+              <div v-for="r in fundOpen" :key="r.id" class="freq gutter">
+                <span class="t">{{ r.kind === 'subscribe' ? `申购${r.fund_name} ${money(r.amount, 0)}` : `赎回${r.fund_name} ${money(r.units)} 份` }}</span>
+                <span class="m">{{ r.status === 'executing' ? '成交中，收盘后确认' : `${md(nextDay(r.day))} 成交，收盘后确认` }}</span>
+                <button v-if="r.status === 'pending'" type="button" class="linkbtn" :disabled="cancellingFund === r.id" @click="cancelFund(r.id)">{{ cancellingFund === r.id ? '撤单中' : '撤单' }}</button>
+              </div>
+            </section>
             <section v-if="futPos.length" class="futs" aria-labelledby="futs-h">
               <h2 id="futs-h" class="h2 gutter">热度期货<span class="num fm">保证金 {{ money(fut.mine!.margin_held) }}</span></h2>
               <RouterLink v-for="p in futPos" :key="p.contract.id" :to="`/futures/${p.contract.id}`" class="fut gutter">
@@ -278,6 +318,13 @@ async function cancel(id: number) {
 .fm { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
 .fut { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 12px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
 .fut .m { grid-column: 1 / -1; }
+.funds { margin-top: 18px; border-top: 1px solid var(--rule); padding-top: 12px; }
+.funds .h2 { display: flex; align-items: baseline; gap: 10px; }
+.fund { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 12px; padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--hair-2); color: var(--ink); }
+.fund .t { font-size: 15px; font-weight: 600; }
+.freq { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 2px; column-gap: 12px; align-items: center; padding-top: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--hair-2); font-size: 14px; }
+.freq .m { grid-column: 1; font-size: 12px; color: var(--muted); }
+.freq button { grid-column: 2; grid-row: 1 / span 2; }
 .ord { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 12px; padding: 12px var(--gutter); border-bottom: 1px solid var(--hair-2); align-items: center; }
 .oside { font-size: 13px; text-align: right; }
 .tt { max-width: 0; width: 50%; }

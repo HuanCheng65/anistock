@@ -37,6 +37,7 @@ fn restructure_reason(r: &crate::restructure::Refusal) -> (&'static str, String)
         ThisSeason => ("this_season", "本季已经重整过一次".into()),
         MarketClosed => ("market_closed", "连续交易时段才能申请重整".into()),
         Margin => ("margin_debt", "先了结融资融券负债才能申请重整".into()),
+        Funds => ("fund_units", "基金全部赎回到账后才能申请重整".into()),
         Broken(_) => ("broken", "暂时无法申请重整".into()),
     }
 }
@@ -53,6 +54,23 @@ pub fn player_return(c: &Connection, id: i64, initial: i64) -> R<(f64, i64, i64,
         .optional()
         .map_err(sql)?;
     Ok(row.unwrap_or((1.0, initial, 0, None)))
+}
+
+/// SQL for the fund value of the account in `col` (`Engine::fund_value_of`): units at the last net value, the
+/// requests not confirmed (subscriptions at their amount, redemptions at the last net value), redemptions not paid.
+pub fn fund_value_expr(col: &str) -> String {
+    format!(
+        "(COALESCE((SELECT SUM(CAST(ROUND(fh.units * fu.nav / 100.0) AS INTEGER)) FROM fund_holders fh
+            JOIN funds fu ON fu.key=fh.fund WHERE fh.account_id={col}), 0)
+          + COALESCE((SELECT SUM(CASE WHEN fr.kind='subscribe' THEN fr.amount ELSE CAST(ROUND(fr.amount * fu.nav / 100.0) AS INTEGER) END)
+            FROM fund_requests fr JOIN funds fu ON fu.key=fr.fund
+            WHERE fr.account_id={col} AND fr.status IN ('pending', 'executing')), 0)
+          + COALESCE((SELECT SUM(cents) FROM fund_owed WHERE account_id={col}), 0))"
+    )
+}
+
+pub fn fund_value(c: &Connection, id: i64) -> R<i64> {
+    c.query_row(&format!("SELECT {}", fund_value_expr("?1")), [id], |r| r.get(0)).map_err(sql)
 }
 
 pub fn stock_value(c: &Connection, id: i64) -> R<i64> {
@@ -86,8 +104,9 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
     };
     let futures_steps = super::assess::futures_steps(st, c, id)?;
     let stock = stock_value(c, id)?;
+    let funds = fund_value(c, id)?;
     let (liab, bad_debt, credit_status) = super::credit::liabilities(c, id)?;
-    let total = cash + stock - liab;
+    let total = cash + stock + funds - liab;
     let initial = initial_cents(&st.cfg);
     let (factor, base, count, last_day) = player_return(c, id, initial)?;
     let today = st.clock.today();
@@ -96,6 +115,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
     let season_day = if defaulted { None } else { last_day.clone() };
     let eligible = crate::restructure::check(total, initial, st.cfg.game.restructure_threshold, season_day.as_deref(), &today)
         .and_then(|()| if liab > bad_debt { Err(crate::restructure::Refusal::Margin) } else { Ok(()) })
+        .and_then(|()| if funds > 0 { Err(crate::restructure::Refusal::Funds) } else { Ok(()) })
         .and_then(|()| match st.phase() {
             CPhase::Continuous => Ok(()),
             _ => Err(crate::restructure::Refusal::MarketClosed),
@@ -120,6 +140,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         frozen_cash: m(frozen),
         available_cash: m(cash - frozen),
         stock_value: m(stock),
+        fund_value: m(funds),
         liabilities: m(liab),
         total_assets: m(total),
         initial_cash: m(initial),
@@ -335,6 +356,7 @@ pub async fn portfolio(State(st): State<Arc<AppState>>, Extension(caller): Exten
                 frozen_cash: me.frozen_cash,
                 available_cash: me.available_cash,
                 stock_value: me.stock_value,
+                fund_value: me.fund_value,
                 liabilities: me.liabilities,
                 total_assets: me.total_assets,
             },
@@ -395,7 +417,7 @@ pub async fn asset_history(
             items.push(AssetDay {
                 trading_day: day(today.clone()),
                 cash: me.cash,
-                stock_value: me.stock_value,
+                stock_value: m(me.stock_value.0 + me.fund_value.0),
                 liabilities: me.liabilities,
                 total_assets: me.total_assets,
                 return_index: r6(me.total_return + 1.0),
@@ -876,6 +898,9 @@ pub fn reason_label(reason: &str) -> String {
         "lending_fee" => "融券费用",
         "short_dividend" => "分红补偿",
         "short_settle" => "融券了结",
+        "fund_subscribe" => "基金申购",
+        "fund_redeem" => "基金赎回",
+        "fund_cancel" => "基金撤单退款",
         _ => "其他",
     }
     .to_string()
@@ -1098,10 +1123,10 @@ fn players_now(c: &Connection, initial: i64) -> R<Vec<(i64, String, i64, f64, i6
     let mut s = c
         .prepare_cached(
             &format!("SELECT a.id, a.username, a.cash + COALESCE((SELECT SUM(h.qty*co.last_price) FROM holdings h
-               JOIN companies co ON co.id=h.company_id WHERE h.account_id=a.id), 0) - {},
+               JOIN companies co ON co.id=h.company_id WHERE h.account_id=a.id), 0) + {} - {},
                COALESCE(p.return_factor, 1.0), COALESCE(p.segment_base, ?), COALESCE(p.restructures, 0), a.created_at
              FROM accounts a LEFT JOIN player_returns p ON p.account_id=a.id WHERE a.kind='player' ORDER BY a.id",
-            super::credit::liabilities_expr("a.id")),
+            fund_value_expr("a.id"), super::credit::liabilities_expr("a.id")),
         )
         .map_err(sql)?;
     let rows = s
@@ -1414,6 +1439,7 @@ pub async fn close(
         match r {
             Ok(()) => Ok(()),
             Err(crate::restructure::Refusal::Margin) => Err(E::new(422, "close_not_allowed", "还清融资融券负债后才能注销")),
+            Err(crate::restructure::Refusal::Funds) => Err(E::new(422, "close_not_allowed", "基金全部赎回到账后才能注销")),
             Err(e) => Err(error::internal(format!("{e:?}"))),
         }
     })

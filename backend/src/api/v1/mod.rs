@@ -15,6 +15,7 @@ pub mod corporate;
 pub mod credit;
 pub mod error;
 pub mod events;
+pub mod funds;
 pub mod futures;
 pub mod keys;
 pub mod media;
@@ -659,6 +660,11 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/futures", get(futures::mine))
         .route("/me/futures/orders", post(futures::place))
         .route("/me/futures/orders/{id}", delete(futures::cancel))
+        .route("/funds", get(funds::list))
+        .route("/funds/{key}", get(funds::detail))
+        .route("/me/funds", get(funds::mine))
+        .route("/me/fund-requests", post(funds::submit))
+        .route("/me/fund-requests/{id}", delete(funds::cancel))
         .route("/leaderboard", get(account::leaderboard))
         .route("/auth/challenge", get(account::challenge))
         .route("/auth/register", post(account::register))

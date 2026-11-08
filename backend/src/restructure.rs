@@ -22,6 +22,8 @@ pub enum Refusal {
     MarketClosed,
     /// still owes for margin trading (融资融券) other than a default's shortfall
     Margin,
+    /// holds fund units, or has a fund request or redemption not settled (crate::funds)
+    Funds,
     /// the engine's state is inconsistent (lots do not cover a holding): nothing was changed
     Broken(String),
 }
@@ -38,6 +40,7 @@ impl Refusal {
             Refusal::ThisSeason => "本季已经重整过一次".into(),
             Refusal::MarketClosed => "休市时不能申请".into(),
             Refusal::Margin => "先了结融资融券负债".into(),
+            Refusal::Funds => "基金全部赎回到账后才能申请".into(),
             Refusal::Broken(why) => why.clone(),
         }
     }
@@ -83,9 +86,10 @@ pub fn linked_return(factor: f64, base_cents: i64, total_cents: i64) -> f64 {
 }
 
 impl Engine {
-    /// Net assets: cash (frozen included) plus holdings at the last price, minus margin liabilities, cents.
+    /// Net assets: cash (frozen included) plus holdings at the last price and fund units at the last net value
+    /// (with the requests not confirmed), minus margin liabilities, cents.
     pub fn total_assets(&self, account_id: i64) -> i64 {
-        self.net_assets(account_id)
+        self.net_assets(account_id) + self.fund_value_of(account_id)
     }
 
     /// A player's chain-linked return state, if they have ever restructured.
@@ -105,6 +109,9 @@ impl Engine {
             return Err(Refusal::Broken(format!("account {account_id} is not a player")));
         }
         self.margin_restructure_check(account_id).map_err(|()| Refusal::Margin)?;
+        if self.fund_involved(account_id) {
+            return Err(Refusal::Funds);
+        }
         let orders: Vec<i64> = self.open_orders_of(account_id).iter().map(|o| o.id).collect();
         for id in orders {
             self.close(id, OrderStatus::Cancelled, ts);
@@ -160,6 +167,10 @@ impl Engine {
         let defaulted = self.margin_restructure_check(account_id).map_err(|()| Refusal::Margin)?;
         let last_day = if defaulted { None } else { self.player_return(account_id).map(|p| p.last_day.clone()) };
         check(assets_before, initial_cents, threshold, last_day.as_deref(), day)?;
+        // fund units cannot be sold to the world account at once: they are redeemed first
+        if self.fund_involved(account_id) {
+            return Err(Refusal::Funds);
+        }
         let holdings: Vec<(i64, i64)> = self.holdings_of(account_id).map(|h| (h.company_id, h.qty)).collect();
         for &(cid, qty) in &holdings {
             let lots: i64 = self.lots_of(account_id, cid).iter().map(|l| l.qty).sum();

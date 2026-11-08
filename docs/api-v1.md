@@ -1342,6 +1342,22 @@ CREATE TABLE player_days (
 
 错误码：`futures_closed`、`futures_not_eligible`（还没开通期货：信用账户、风险测评、知识测试、风险揭示书，见 `Me.futures_steps`；只平仓的委托不检查）、`contract_not_found`（404）、`contract_not_tradable`、`price_out_of_range`、`price_required`、`auction_limit_only`、`insufficient_margin`、`credit_not_open`、`margin_call_active`、`credit_defaulted`、`position_cap`、`margin_cap`、`order_not_found`（404）。
 
+### 4.5b 指数基金（docs/design/funds.md；`[funds] enabled` 打开前，这些接口返回 404 `funds_closed`）
+
+单位净值 `nav` 以星辉为单位（4 位小数，从 1.0000 起），每天收盘后更新。份额以 0.01 份为单位（整数；`units: 120355` 即 1,203.55 份）。申购和赎回在提交后的下一个交易时段成交（08:50 前提交的当天成交），收盘后按当天的净值确认。
+
+| 接口 | 说明 |
+|---|---|
+| `GET /funds` | 基金列表（按 `[funds] keys` 的顺序）：名称、跟踪指数的全称、分组（market/source/theme）、净值及其日期、今日估算 `estimate`（跟踪指数今天的涨跌）、近一月 `month_change`（成立不满一个月为 null）、成立以来、成分股数、单只权重上限、规模、总份额 |
+| `GET /funds/{key}` | 一只基金：同上，加每日净值、前十大持仓（占基金资产和在指数里的权重）、现金比例、费率 |
+| `GET /me/funds` | 我的基金：持有份额、按最新净值的市值、持有成本（赎回按份额比例扣除）、持有不满 7 天的份额和全部免赎回费的日期；未结束的申购赎回（pending 可撤，executing 成交中）和最近 30 笔已结束的；未到账的赎回款 |
+| `POST /me/fund-requests` | 申购：`fund`、`kind: "subscribe"`、`amount`（分，至少 `min_subscribe`）；赎回：`fund`、`kind: "redeem"`、`units`（0.01 份）。返回 201 和这笔申请、最新的“我的基金”。申购的资金立即转出，赎回的份额立即扣除 |
+| `DELETE /me/fund-requests/{id}` | 撤销还没开始成交的申请（资金或份额退回），返回最新的“我的基金” |
+
+`Me.fund_value`：份额按最新净值，加上未确认的申购、赎回和未到账的赎回款；计入 `total_assets` 和排行。持有份额或有未结束的申请时，破产重整返回 `restructure_not_eligible`（`reason: fund_units`），注销返回 `close_not_allowed`。
+
+错误码：`funds_closed`（404）、`fund_not_found`（404）、`insufficient_cash`、`insufficient_units`、`margin_debt`（有融资融券负债时不能申购）、`request_not_cancellable`（404）、`agreement_required`。
+
 ### 4.6 排行榜
 
 #### `GET /api/v1/leaderboard`

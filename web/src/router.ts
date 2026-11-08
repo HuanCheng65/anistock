@@ -18,6 +18,8 @@ const router = createRouter({
     { path: '/stock/:id', redirect: (to) => `/stocks/${to.params.id}` },
     { path: '/futures', name: 'futures', component: () => import('./views/FuturesListView.vue'), meta: { tab: 'stocks', title: '热度期货' } },
     { path: '/futures/:id(\\d+)', name: 'contract', component: () => import('./views/FuturesView.vue'), meta: { tab: 'stocks', title: '热度期货', noNav: true } },
+    { path: '/funds', name: 'funds', component: () => import('./views/FundListView.vue'), meta: { tab: 'stocks', title: '基金' } },
+    { path: '/funds/:key([a-z0-9_]+)', name: 'fund', component: () => import('./views/FundView.vue'), meta: { tab: 'stocks', title: '基金', noNav: true } },
     { path: '/watch', redirect: { path: '/stocks', query: { f: 'watch' } } },
     { path: '/ipo', name: 'ipo', component: () => import('./views/IpoView.vue'), meta: { tab: 'ipo', title: '新股认购' } },
     { path: '/news', name: 'news', component: () => import('./views/NewsView.vue'), meta: { tab: 'news', title: '资讯' } },

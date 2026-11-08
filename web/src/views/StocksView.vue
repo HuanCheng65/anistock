@@ -6,6 +6,7 @@ import type { Quote } from '../api'
 import ChangePill from '../components/ChangePill.vue'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
+import MarketSeg from '../components/MarketSeg.vue'
 import Icon from '../components/Icon.vue'
 import SearchPanel from '../components/SearchPanel.vue'
 import Sparkline from '../components/Sparkline.vue'
@@ -14,13 +15,10 @@ import { DESK, useMedia } from '../composables/useMedia'
 import { useStock } from '../stores/stock'
 import { FILTERS, listRows, SORTS, sortValue, type ListCtx, type SortKey } from '../composables/stockList'
 import { bigMoney, dir, episodeText, money, pct, share } from '../format'
-import { useFutures } from '../stores/futures'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
 
 const market = useMarket()
-const fut = useFutures()
-usePoll(() => (fut.list ? null : fut.refreshList().catch(() => {})), 300000)
 const prefs = usePrefs()
 const route = useRoute()
 const router = useRouter()
@@ -125,10 +123,7 @@ function remember(id: number) {
 
     <div class="container">
       <h1 class="pagetitle desk-only">行情</h1>
-      <nav v-if="fut.list?.length" class="seg" aria-label="品种">
-        <span aria-current="page">股票</span>
-        <RouterLink to="/futures">热度期货</RouterLink>
-      </nav>
+      <MarketSeg current="stocks" />
       <div class="chips" role="group" aria-label="筛选">
         <button v-for="f in FILTERS" :key="f.key" type="button" :aria-pressed="filter === f.key" @click="filter = f.key">
           {{ f.label }}<span v-if="market.stocks" class="num cnt"> {{ counts[f.key] }}</span>
@@ -200,9 +195,6 @@ function remember(id: number) {
 </template>
 
 <style scoped>
-.seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--rule); margin-top: 4px; max-width: 360px; }
-.seg a, .seg span { height: 36px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: var(--ink-2); }
-.seg [aria-current] { background: var(--ink); color: var(--ground); font-weight: 700; }
 .sbtn { margin-left: auto; width: 36px; height: 36px; }
 .searchsheet { position: fixed; inset: 0; z-index: 50; background: var(--ground); overflow: auto; }
 .sbar { display: flex; gap: 12px; align-items: flex-start; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px; }
