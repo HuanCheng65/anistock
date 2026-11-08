@@ -619,6 +619,14 @@ impl Engine {
         self.out.push(Change::MacroDayReplace(row));
         self.do_set_state("rate", &repr(rate));
         self.do_set_state("last_closed", &day);
+        // the free float of every listed company at this close (V23): the indices' weights for the next month
+        // when this is a month's last close (crate::indices)
+        let listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        for id in listed {
+            let float_shares = self.free_float(id);
+            self.out.push(Change::CompanyDayInsertIgnore { company_id: id, day: day.clone() });
+            self.out.push(Change::CompanyDayFloat { company_id: id, day: day.clone(), float_shares });
+        }
         self.snapshot_players(&day, (cx.cfg.game.initial_cash * 100.0).round_ties_even() as i64);
         self.check_invariants()?;
         Ok(rate)

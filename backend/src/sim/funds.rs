@@ -35,13 +35,25 @@ impl FundFlows {
 /// `show_genres`), from the collector's latest AniList snapshots: replay inputs written before they carried them.
 pub fn labels_from_collector(path: &std::path::Path) -> HashMap<i64, (Option<String>, Vec<String>)> {
     let mut out = HashMap::new();
-    let Ok(c) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return out };
-    let Ok(mut st) = c.prepare("SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day") else { return out };
+    let Ok(c) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return out;
+    };
+    let Ok(mut st) =
+        c.prepare("SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day")
+    else {
+        return out;
+    };
     let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
     for (id, data) in rows.into_iter().flatten().flatten() {
         let (Ok(id), Ok(m)) = (id.parse::<i64>(), serde_json::from_str::<serde_json::Value>(&data)) else { continue };
-        let mut g: Vec<String> = m["genres"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
-        if m["tags"].as_array().into_iter().flatten().any(|t| t["name"] == "Isekai" && t["rank"].as_i64().unwrap_or(0) >= 60) {
+        let mut g: Vec<String> =
+            m["genres"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
+        if m["tags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|t| t["name"] == "Isekai" && t["rank"].as_i64().unwrap_or(0) >= 60)
+        {
             g.push("Isekai".into());
         }
         out.insert(id, (m["source"].as_str().map(String::from), g));
@@ -60,7 +72,11 @@ fn unit(seed: u64, a: i64, day: &str, salt: u32) -> f64 {
 pub fn idle_flows(e: &mut Engine, f: &FundFlows, players: &[(i64, i64)], k: usize, seed: u64, day: &str, ts: &str) {
     let keys = e.funds.keys.clone();
     for &(a, start_cash) in players {
-        let key = if f.key == "spread" { keys[(unit(seed, a, "", 7) * keys.len() as f64) as usize % keys.len()].clone() } else { f.key.clone() };
+        let key = if f.key == "spread" {
+            keys[(unit(seed, a, "", 7) * keys.len() as f64) as usize % keys.len()].clone()
+        } else {
+            f.key.clone()
+        };
         let f = &FundFlows { key, ..f.clone() };
         if k < 5 {
             let amt = ((start_cash as f64 * f.share) / 5.0) as i64;
@@ -79,7 +95,7 @@ pub fn idle_flows(e: &mut Engine, f: &FundFlows, players: &[(i64, i64)], k: usiz
         } else if u < f.churn {
             let units = e.fund(&f.key).map_or(0, |x| x.units_of(a)) / 10;
             if units > 0 {
-                let _ = e.fund_redeem(a, &f.key, units, day);
+                let _ = e.fund_redeem(a, &f.key, units, day, ts);
             }
         }
     }
@@ -121,6 +137,8 @@ pub struct Bench {
     pub parts: HashMap<String, Vec<[f64; 3]>>,
     /// key -> per day: half the sum of |fund weight − index weight| (0: the same portfolio)
     pub active: HashMap<String, Vec<f64>>,
+    /// (key, stock) -> (Σ fund weight − index weight, Σ that × the stock's return, days): where the holdings differ
+    pub per_stock: HashMap<(String, i64), (f64, f64, u32)>,
 }
 
 impl Bench {
@@ -130,25 +148,31 @@ impl Bench {
         self.refs = e.companies().map(|c| (c.id, c.prev_close)).collect();
         self.recon = e
             .funds_iter()
-            .map(|f| (f.account, (e.holdings_of(f.account).map(|h| (h.company_id, h.qty)).collect(), e.account(f.account).map_or(0, |a| a.cash))))
+            .map(|f| {
+                (
+                    f.account,
+                    (
+                        e.holdings_of(f.account).map(|h| (h.company_id, h.qty)).collect(),
+                        e.account(f.account).map_or(0, |a| a.cash),
+                    ),
+                )
+            })
             .collect();
         self.day_fills.clear();
         self.day_ledger.clear();
+        let _ = (&qs, member);
         for f in e.funds_iter() {
-            let m: BTreeMap<i64, f64> = e
-                .companies()
-                .filter(|c| member(&f.key, c, day, &qs) && c.prev_close > 0)
-                .map(|c| (c.id, c.prev_close as f64 * e.free_float(c.id) as f64))
-                .collect();
-            let total: f64 = m.values().sum::<f64>().max(1.0);
-            let wi: BTreeMap<i64, f64> = m.iter().map(|(c, v)| (*c, v / total)).collect();
+            // the index's weights by the shared rules (members, caps, 安易 20's choice, the month's float)
+            let wi: BTreeMap<i64, f64> = e.index_weights(&f.key, day);
+            let m: BTreeMap<i64, f64> = wi.clone();
             let held: BTreeMap<i64, f64> = e
                 .holdings_of(f.account)
                 .filter_map(|h| e.company(h.company_id).map(|c| (h.company_id, (h.qty * c.prev_close) as f64)))
                 .collect();
             let cash = e.account(f.account).map_or(0, |a| a.cash) - f.pending_cash - f.owed.values().sum::<i64>();
             let assets = held.values().sum::<f64>() + cash as f64;
-            let wf: BTreeMap<i64, f64> = if assets > 0.0 { held.iter().map(|(c, v)| (*c, v / assets)).collect() } else { BTreeMap::new() };
+            let wf: BTreeMap<i64, f64> =
+                if assets > 0.0 { held.iter().map(|(c, v)| (*c, v / assets)).collect() } else { BTreeMap::new() };
             self.weights.insert(f.key.clone(), (wf, wi));
             self.start.insert(f.key.clone(), m);
         }
@@ -173,25 +197,33 @@ impl Bench {
     /// difference explained by the price moves of the morning's shares, the fills against the close, commission and
     /// stamp duty, and the non-trade ledger rows. The residual must be zero (rounding of the costs aside).
     pub fn reconcile(&mut self, e: &Engine, day: &str) {
-        let adj: std::collections::HashSet<i64> = e.price_adjustments().iter().filter(|a| a.day == day).map(|a| a.company_id).collect();
+        let adj: std::collections::HashSet<i64> =
+            e.price_adjustments().iter().filter(|a| a.day == day).map(|a| a.company_id).collect();
         for f in e.funds_iter() {
             let Some((h0, cash0)) = self.recon.get(&f.account) else { continue };
             if h0.keys().any(|c| adj.contains(c)) {
                 continue;
             }
             let close = |c: i64| e.company(c).map_or(0, |x| x.last_price);
-            let now: i64 = e.holdings_of(f.account).map(|h| h.qty * close(h.company_id)).sum::<i64>() + e.account(f.account).map_or(0, |a| a.cash);
+            let now: i64 = e.holdings_of(f.account).map(|h| h.qty * close(h.company_id)).sum::<i64>()
+                + e.account(f.account).map_or(0, |a| a.cash);
             let before: i64 = h0.iter().map(|(c, q)| q * self.refs.get(c).copied().unwrap_or(0)).sum::<i64>() + cash0;
             let moved: i64 = h0.iter().map(|(c, q)| q * (close(*c) - self.refs.get(c).copied().unwrap_or(0))).sum();
             let fills = self.day_fills.get(&f.account).cloned().unwrap_or_default();
             let at_close: i64 = fills.iter().map(|(c, q, px)| q * (close(*c) - px)).sum();
             let costs: i64 = fills
                 .iter()
-                .map(|(_, q, px)| e.fees.commission_on(q.abs() * px) + if *q < 0 { e.fees.stamp_on(-q * px) } else { 0 })
+                .map(|(_, q, px)| {
+                    e.fees.commission_on(q.abs() * px) + if *q < 0 { e.fees.stamp_on(-q * px) } else { 0 }
+                })
                 .sum();
             let ledger = self.day_ledger.get(&f.account).copied().unwrap_or(0);
             let resid = (now - before) - (moved + at_close - costs + ledger);
-            self.residuals.entry(f.key.clone()).or_default().push((day.to_string(), resid, [moved, at_close, -costs, ledger]));
+            self.residuals.entry(f.key.clone()).or_default().push((
+                day.to_string(),
+                resid,
+                [moved, at_close, -costs, ledger],
+            ));
         }
     }
 
@@ -228,12 +260,13 @@ impl Bench {
         for f in e.funds_iter() {
             let Some(m) = self.start.get(&f.key) else { continue };
             let (mut num, mut den) = (0.0, 0.0);
-            for (&c, &v0) in m {
+            for (&c, &w) in m {
                 let Some(co) = e.company(c) else { continue };
-                // the morning's free float (v0 / the morning's price): the committee sells into rallies during the
-                // day, and shares that came on the market are not the index's gain
+                // each member's return over the day (its close plus the dividend against the morning's price),
+                // weighted as the index weighs it in the morning
                 let p0 = self.refs.get(&c).copied().unwrap_or(0).max(1) as f64;
-                let fl = v0 / p0;
+                let fl = w / p0;
+                let v0 = w;
                 let div = e.company_day(c, day).map_or(0, |d| d.dividend_ps) as f64 * fl;
                 if co.status != "listed" {
                     self.irregular.push((day.into(), c, "delisted"));
@@ -267,6 +300,10 @@ impl Bench {
                             let r = (co.last_price as f64 + div) / p0 as f64 - 1.0;
                             idx_w += b * r;
                             hold += a * r;
+                            let x = self.per_stock.entry((f.key.clone(), c)).or_default();
+                            x.0 += a - b;
+                            x.1 += (a - b) * r;
+                            x.2 += 1;
                         }
                         let part = [ri - idx_w, hold - idx_w, rf - hold];
                         self.active.entry(f.key.clone()).or_default().push(active);
@@ -323,7 +360,8 @@ pub fn report(e: &Engine, bench: &Bench) -> serde_json::Value {
         let reds: i64 = f.confirmed.iter().filter(|c| c.units < 0).map(|c| -c.cash).sum();
         let req_costs: i64 = f.confirmed.iter().map(|c| c.cost).sum();
         let last = f.history.last();
-        let col = |i: usize| -> Vec<f64> { bench.parts.get(&f.key).map_or(vec![], |p| p.iter().map(|x| x[i]).collect()) };
+        let col =
+            |i: usize| -> Vec<f64> { bench.parts.get(&f.key).map_or(vec![], |p| p.iter().map(|x| x[i]).collect()) };
         let avg = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
         let sdv = |v: &[f64]| {
             let m = avg(v);
@@ -335,12 +373,32 @@ pub fn report(e: &Engine, bench: &Bench) -> serde_json::Value {
             .map(|(d, p)| (d.0.clone(), d.1, d.2, p))
             .collect();
         worst.sort_by(|a, b| (b.2 - b.1).abs().partial_cmp(&(a.2 - a.1).abs()).unwrap());
-        let weekday = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map(|x| x.format("%a").to_string()).unwrap_or_default();
-        let ledger: BTreeMap<String, f64> = bench.flows.iter().filter(|((k, _), _)| k == &f.key).map(|((_, r), v)| (r.clone(), *v as f64 / 100.0)).collect();
+        let weekday = |d: &str| {
+            chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map(|x| x.format("%a").to_string()).unwrap_or_default()
+        };
+        let ledger: BTreeMap<String, f64> = bench
+            .flows
+            .iter()
+            .filter(|((k, _), _)| k == &f.key)
+            .map(|((_, r), v)| (r.clone(), *v as f64 / 100.0))
+            .collect();
         let res = bench.residuals.get(&f.key).cloned().unwrap_or_default();
         let mut worst_res = res.clone();
         worst_res.sort_by_key(|x| -x.1.abs());
+        let mut stocks: Vec<(i64, f64, f64, u32)> =
+            bench.per_stock.iter().filter(|((k, _), _)| k == &f.key).map(|((_, c), v)| (*c, v.0, v.1, v.2)).collect();
+        stocks.sort_by(|a, b| b.2.abs().partial_cmp(&a.2.abs()).unwrap());
+        let by_stock: Vec<serde_json::Value> = stocks
+            .iter()
+            .take(12)
+            .map(|(c, act, contrib, n)| {
+                let co = e.company(*c);
+                json!({"stock": co.map(|x| x.title.clone()), "listed_on": co.map(|x| x.listed_on.clone()), "days": n,
+                    "avg_active_pct": act / (*n).max(1) as f64 * 100.0, "contrib_bp": contrib * 1e4})
+            })
+            .collect();
         let parts_json = json!({
+            "by_stock": by_stock,
             "reconcile": {"days": res.len(), "residual_total": res.iter().map(|x| x.1).sum::<i64>() as f64 / 100.0,
                 "worst": worst_res.iter().take(8).map(|x| json!({"day": x.0, "residual": x.1 as f64 / 100.0, "moved": x.2[0] as f64 / 100.0, "at_close": x.2[1] as f64 / 100.0, "costs": x.2[2] as f64 / 100.0, "ledger": x.2[3] as f64 / 100.0})).collect::<Vec<_>>()},
             "ledger": ledger,

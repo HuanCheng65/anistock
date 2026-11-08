@@ -191,6 +191,7 @@ fn main() {
     engine.margin = cfg.margin.clone();
     engine.corporate = cfg.corporate.clone();
     engine.futures = cfg.futures.clone();
+    engine.funds = cfg.funds.clone();
 
     // the session key: ANISTOCK_SECRET, else the random one kept in the game database
     let stored = engine.state("session_secret").map(str::to_string);
@@ -227,6 +228,8 @@ fn main() {
         Ok(n) => eprintln!("futures: listed {n} contracts due today"),
         Err(e) => eprintln!("futures listing at startup failed (the next close lists): {e}"),
     }
+    // 指数基金: the funds of [funds] keys that do not exist yet
+    engine.funds_setup(&clock.ts());
     // 新股: offers priced over what their data support are cut now, while players can still decide (the closes
     // do it too)
     match engine.reprice_offers(&cfg, &clock.today(), &clock.ts()) {

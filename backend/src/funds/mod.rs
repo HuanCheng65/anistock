@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::{Engine, NewOrder};
 
+pub mod store;
+
 /// Units are counted in hundredths (1 unit = 100).
 pub const UNIT: i64 = 100;
 /// A fund starts at a net value of 1 星辉 per unit (cents per unit).
@@ -67,7 +69,9 @@ impl Default for FundRules {
     fn default() -> Self {
         FundRules {
             enabled: false,
-            keys: ["all", "top20", "long", "manga", "light_novel", "isekai", "romance", "action"].map(String::from).to_vec(),
+            keys: ["all", "top20", "long", "manga", "light_novel", "isekai", "romance", "action"]
+                .map(String::from)
+                .to_vec(),
             fee_rate: 0.005,
             auction_limit: 0.03,
             batch_limit: -0.003,
@@ -110,11 +114,16 @@ pub struct Request {
     pub day: String,
     /// a redemption: how many of its units (hundredths) were held fewer than `redeem_fee_days` days
     pub young: i64,
+    pub created_at: String,
+    /// a redemption: the holder's lots it took (day, units), given back if it is cancelled
+    pub taken: Vec<(String, i64)>,
 }
 
 /// One executed request (the replay's record; `fund_requests` rows later).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Confirmed {
+    /// the request
+    pub id: i64,
     pub account: i64,
     pub day: String,
     /// + subscribed cents / − redeemed units (hundredths)
@@ -193,8 +202,15 @@ pub struct FundsState {
     pub fund_today: BTreeMap<(i64, i64), i64>,
     /// `Top` funds: the month they were chosen in (its first session) and the members
     pub top: BTreeMap<String, (String, std::collections::BTreeSet<i64>)>,
+    /// the month's index float: the day it was taken (the month's first session, before trading: the float at the
+    /// last close) and each listed company's free float then (crate::indices: the published indices use the same)
+    pub floats: Option<(String, BTreeMap<i64, i64>)>,
     /// the funds' fills since their last confirmation: (fund account, stock, + bought / − sold shares, price)
     pub fills: Vec<(i64, i64, i64, i64)>,
+    /// per fund account: commission and stamp duty of its fills since `funds_confirm` / the close took them
+    pub costs: BTreeMap<i64, i64>,
+    /// the session whose requests `funds_auction` started executing (once a session)
+    pub auction_day: String,
 }
 
 impl Fund {
@@ -211,7 +227,12 @@ pub fn member(key: &str, c: &crate::model::Company, day: &str, season_from: &str
         return false;
     }
     let Some(d) = crate::indices::def(key) else { return false };
-    let l = crate::indices::Labels { long: c.long_runner != 0, first_air: &c.first_air, source: c.source.as_deref(), genres: &c.genres };
+    let l = crate::indices::Labels {
+        long: c.long_runner != 0,
+        first_air: &c.first_air,
+        source: c.source.as_deref(),
+        genres: &c.genres,
+    };
     crate::indices::eligible(d.rule, &l, season_from)
 }
 
@@ -231,8 +252,13 @@ impl Engine {
                 continue;
             }
             let acct = self.create_account("fund", &format!("fund:{key}"), None, None, None, ts);
-            self.st.funds.funds.insert(key.clone(), Fund { key, account: acct, nav: NAV0, ..Default::default() });
+            self.st
+                .funds
+                .funds
+                .insert(key.clone(), Fund { key: key.clone(), account: acct, nav: NAV0, ..Default::default() });
+            self.fund_dirty(&key);
         }
+        self.commit();
     }
 
     /// A company's free float: its shares less those its production committee and the company itself hold (the
@@ -298,12 +324,22 @@ impl Engine {
         let id = self.st.funds.last_request_id;
         let f = self.st.funds.funds.get_mut(key).unwrap();
         f.pending_cash += amount;
-        f.pending.push(Request { id, account, kind: ReqKind::Subscribe(amount), day: day.into(), young: 0 });
+        f.pending.push(Request {
+            id,
+            account,
+            kind: ReqKind::Subscribe(amount),
+            day: day.into(),
+            young: 0,
+            created_at: ts.into(),
+            taken: vec![],
+        });
+        self.fund_dirty(key);
+        self.commit();
         Ok(id)
     }
 
     /// Redeem `units` hundredths of fund `key`: they leave the holder now, the cash comes at the next open.
-    pub fn fund_redeem(&mut self, account: i64, key: &str, units: i64, day: &str) -> Result<i64, String> {
+    pub fn fund_redeem(&mut self, account: i64, key: &str, units: i64, day: &str, ts: &str) -> Result<i64, String> {
         self.st.funds.last_request_id += 1;
         let id = self.st.funds.last_request_id;
         let Some(f) = self.st.funds.funds.get_mut(key) else { return Err("no such fund".into()) };
@@ -316,30 +352,109 @@ impl Engine {
         let since = crate::vclose::day_no(day).unwrap_or(0) - self.funds.redeem_fee_days;
         let lots = f.lots.entry(account).or_default();
         let (mut left, mut young) = (units, 0);
+        let mut taken = Vec::new();
         while left > 0 && !lots.is_empty() {
             let take = left.min(lots[0].1);
             if crate::vclose::day_no(&lots[0].0).unwrap_or(0) > since {
                 young += take;
             }
+            taken.push((lots[0].0.clone(), take));
             lots[0].1 -= take;
             left -= take;
             if lots[0].1 == 0 {
                 lots.remove(0);
             }
         }
-        f.pending.push(Request { id, account, kind: ReqKind::Redeem(units), day: day.into(), young });
+        f.pending.push(Request {
+            id,
+            account,
+            kind: ReqKind::Redeem(units),
+            day: day.into(),
+            young,
+            created_at: ts.into(),
+            taken,
+        });
+        self.fund_dirty(key);
+        self.commit();
         Ok(id)
+    }
+
+    /// Withdraw a request before it starts executing (the next session's 08:50): a subscription's cash comes back,
+    /// a redemption's units (and their lots) return to the holder.
+    pub fn fund_cancel(&mut self, account: i64, request_id: i64, day: &str, ts: &str) -> Result<(), String> {
+        let Some(key) = self
+            .st
+            .funds
+            .funds
+            .iter()
+            .find(|(_, f)| f.pending.iter().any(|r| r.id == request_id && r.account == account))
+            .map(|(k, _)| k.clone())
+        else {
+            return Err("no such request".into());
+        };
+        let f = self.st.funds.funds.get_mut(&key).unwrap();
+        let i = f.pending.iter().position(|r| r.id == request_id).unwrap();
+        let r = f.pending.remove(i);
+        let fund_acct = f.account;
+        match r.kind {
+            ReqKind::Subscribe(a) => {
+                f.pending_cash -= a;
+                self.transfer(fund_acct, account, a, "fund_cancel", day, ts, None, None);
+            }
+            ReqKind::Redeem(u) => {
+                *f.holders.entry(account).or_default() += u;
+                let lots = f.lots.entry(account).or_default();
+                lots.extend(r.taken.iter().cloned());
+                lots.sort();
+                let mut merged: Vec<(String, i64)> = Vec::new();
+                for (d, n) in std::mem::take(lots) {
+                    match merged.last_mut() {
+                        Some(last) if last.0 == d => last.1 += n,
+                        _ => merged.push((d, n)),
+                    }
+                }
+                *lots = merged;
+            }
+        }
+        self.out.push(crate::store::persist::Change::Funds(store::FundsChange::RequestDone {
+            id: r.id,
+            status: "cancelled".into(),
+        }));
+        self.fund_dirty(&key);
+        self.commit();
+        Ok(())
+    }
+
+    /// Mark a fund for saving at the end of the operation (`Engine::commit`).
+    pub(crate) fn fund_dirty(&mut self, key: &str) {
+        self.dirty_funds.insert(key.to_string());
+    }
+
+    /// The rows of the funds touched in this operation (called by `commit`).
+    pub(crate) fn funds_rows(&mut self) {
+        for key in std::mem::take(&mut self.dirty_funds) {
+            if let Some(f) = self.st.funds.funds.get(&key) {
+                self.out.push(crate::store::persist::Change::Funds(store::FundsChange::Fund(store::snapshot(f))));
+            }
+        }
     }
 
     /// The fund's holdings at `price(c)` plus its own cash (not the pending subscriptions, not what it owes), cents.
     fn fund_assets(&self, f: &Fund, price: impl Fn(&crate::model::Company) -> i64) -> i64 {
-        let stock: i64 = self.holdings_of(f.account).map(|h| h.qty * self.st.companies.get(&h.company_id).map_or(0, &price)).sum();
+        let stock: i64 =
+            self.holdings_of(f.account).map(|h| h.qty * self.st.companies.get(&h.company_id).map_or(0, &price)).sum();
         let cash = self.account(f.account).map_or(0, |a| a.cash);
         stock + cash - f.pending_cash - f.owed.values().sum::<i64>()
     }
 
     /// Target value per member stock for `total` cents of assets (cap-weighted at `price`).
-    fn fund_targets(&self, key: &str, day: &str, total: i64, price: impl Fn(&crate::model::Company) -> i64) -> BTreeMap<i64, i64> {
+    fn fund_targets(
+        &self,
+        key: &str,
+        day: &str,
+        total: i64,
+        price: impl Fn(&crate::model::Company) -> i64,
+    ) -> BTreeMap<i64, i64> {
         let qs = season_from(day);
         let Some(def) = crate::indices::def(key) else { return BTreeMap::new() };
         let chosen = self.st.funds.top.get(key).map(|x| &x.1);
@@ -349,14 +464,55 @@ impl Engine {
             .values()
             .filter(|c| member(key, c, day, &qs))
             .filter(|c| !matches!(def.rule, crate::indices::Rule::Top(_)) || chosen.is_some_and(|s| s.contains(&c.id)))
-            .map(|c| (c.id, price(c) as f64 * self.free_float(c.id) as f64))
+            .map(|c| (c.id, price(c) as f64 * self.index_float(c.id)))
             .collect();
-        crate::indices::weights(&values, def.cap).into_iter().map(|(id, w)| (id, (total.max(0) as f64 * w) as i64)).collect()
+        crate::indices::weights(&values, def.cap)
+            .into_iter()
+            .map(|(id, w)| (id, (total.max(0) as f64 * w) as i64))
+            .collect()
     }
 
-    /// The first session of a month: the `Top` funds' members for the month, by free-float value at the last close
-    /// (`crate::indices`: the published index chooses the same way, from the same closes).
+    /// The index weights' free float of `company`: the month's (`floats`), in today's share terms (times the
+    /// share-count changes since it was taken); without one, today's.
+    pub fn index_float(&self, company: i64) -> f64 {
+        if let Some((day, f)) = self.st.funds.floats.as_ref().and_then(|(d, m)| m.get(&company).map(|f| (d, *f))) {
+            let q: f64 = self
+                .price_adjustments()
+                .iter()
+                .filter(|a| a.company_id == company && a.day.as_str() > day.as_str())
+                .map(|a| a.qty_factor)
+                .product();
+            return f as f64 * q;
+        }
+        self.free_float(company) as f64
+    }
+
+    /// The index `key`'s weights on `day` as its fund would hold them at the last close (prev_close): the fund's
+    /// targets per unit of assets (the replay's benchmark).
+    pub fn index_weights(&self, key: &str, day: &str) -> BTreeMap<i64, f64> {
+        const UNIT_ASSETS: i64 = 1_000_000_000_000;
+        self.fund_targets(key, day, UNIT_ASSETS, |c| c.prev_close)
+            .into_iter()
+            .map(|(c, v)| (c, v as f64 / UNIT_ASSETS as f64))
+            .collect()
+    }
+
+    /// The first session of a month: the month's index float, and the `Top` funds' members for the month by
+    /// free-float value at the last close (`crate::indices`: the published indices do the same from the same closes).
     fn funds_review(&mut self, day: &str) {
+        if self.st.funds.floats.as_ref().is_none_or(|x| x.0.get(..7) != day.get(..7)) {
+            let m = self
+                .st
+                .companies
+                .values()
+                .filter(|c| c.status == "listed")
+                .map(|c| (c.id, self.free_float(c.id)))
+                .collect();
+            self.st.funds.floats = Some((day.to_string(), m));
+            let value = serde_json::to_string(&self.st.funds.floats).unwrap_or_default();
+            self.out
+                .push(crate::store::persist::Change::Funds(store::FundsChange::Mark { key: "floats".into(), value }));
+        }
         for key in self.st.funds.funds.keys().cloned().collect::<Vec<_>>() {
             let Some(crate::indices::Rule::Top(n)) = crate::indices::def(&key).map(|d| d.rule) else { continue };
             if self.st.funds.top.get(&key).is_some_and(|x| x.0.get(..7) == day.get(..7)) {
@@ -367,10 +523,16 @@ impl Engine {
                 .companies
                 .values()
                 .filter(|c| c.status == "listed" && c.listed_on.as_str() < day && c.prev_close > 0)
-                .map(|c| (c.id, c.prev_close as f64 * self.free_float(c.id) as f64))
+                .map(|c| (c.id, c.prev_close as f64 * self.index_float(c.id)))
                 .collect();
             let chosen = crate::indices::top(values, n).into_iter().collect();
-            self.st.funds.top.insert(key, (day.to_string(), chosen));
+            let x = (day.to_string(), chosen);
+            let value = serde_json::to_string(&x).unwrap_or_default();
+            self.out.push(crate::store::persist::Change::Funds(store::FundsChange::Mark {
+                key: format!("top:{key}"),
+                value,
+            }));
+            self.st.funds.top.insert(key, x);
         }
     }
 
@@ -481,14 +643,24 @@ impl Engine {
         if !self.funds.enabled {
             return;
         }
+        if self.st.funds.auction_day.as_str() >= day {
+            return;
+        }
+        self.st.funds.auction_day = day.to_string();
+        self.out.push(crate::store::persist::Change::Funds(store::FundsChange::Mark {
+            key: "auction_day".into(),
+            value: day.to_string(),
+        }));
         let rules = self.funds.clone();
         self.funds_review(day);
         for key in self.st.funds.funds.keys().cloned().collect::<Vec<_>>() {
             let f = self.st.funds.funds.get_mut(&key).unwrap();
             let (now, later): (Vec<Request>, Vec<Request>) = f.pending.drain(..).partition(|r| r.day.as_str() < day);
             f.pending = later;
-            f.executing = now;
+            // (requests a missed close left executing stay: they confirm at the next close)
+            f.executing.extend(now);
             let acct = f.account;
+            self.fund_dirty(&key);
             self.fund_cancel_all(acct, ts);
             if rules.exec != "auction" {
                 continue;
@@ -517,11 +689,20 @@ impl Engine {
                 });
                 if r.is_ok() {
                     let after = self.auction_price(c, reference).0;
-                    marks.push(AuctionMark { day: day.into(), company: c, qty: q, reference, before, after, open: None });
+                    marks.push(AuctionMark {
+                        day: day.into(),
+                        company: c,
+                        qty: q,
+                        reference,
+                        before,
+                        after,
+                        open: None,
+                    });
                 }
             }
             self.st.funds.funds.get_mut(&key).unwrap().marks.extend(marks);
         }
+        self.commit();
     }
 
     /// 09:00 (`exec = "auction"`), after the auction (`open_market` has run): the requests confirmed at the
@@ -545,6 +726,7 @@ impl Engine {
                 f.marks[i].open = Some(o);
             }
         }
+        self.commit();
     }
 
     /// Confirm the executing requests at `price`: the net value of the units already there, units issued,
@@ -554,8 +736,9 @@ impl Engine {
     /// a gain is passed on the same way).
     fn fund_confirm(&mut self, key: &str, day: &str, ts: &str, price: impl Fn(&crate::model::Company) -> i64) {
         let acct = self.st.funds.funds[key].account;
-        let fees = self.st.funds_costs.remove(&acct).unwrap_or(0);
-        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.st.funds.fills).into_iter().partition(|x| x.0 == acct);
+        let fees = self.st.funds.costs.remove(&acct).unwrap_or(0);
+        let (mine, rest): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.st.funds.fills).into_iter().partition(|x| x.0 == acct);
         self.st.funds.fills = rest;
         let mut impact = 0i64;
         let mut traded = 0i64;
@@ -574,7 +757,13 @@ impl Engine {
                 ReqKind::Redeem(u) => -((u as f64 / UNIT as f64 * f.nav).round() as i64),
             })
             .sum();
-        let share = if !flows { 0.0 } else if traded > 0 { (net.abs() as f64 / traded as f64).min(1.0) } else { 1.0 };
+        let share = if !flows {
+            0.0
+        } else if traded > 0 {
+            (net.abs() as f64 / traded as f64).min(1.0)
+        } else {
+            1.0
+        };
         let costs = ((fees + impact) as f64 * share).round() as i64;
         let old = self.fund_assets(f, price) + costs;
         let nav = if f.units > 0 { old as f64 / f.units as f64 * UNIT as f64 } else { NAV0 };
@@ -596,13 +785,31 @@ impl Engine {
                 ReqKind::Subscribe(a) => {
                     let u = (((a - cost) as f64 / nav) * UNIT as f64).floor() as i64;
                     new_units += u;
-                    out.push(Confirmed { account: r.account, day: day.into(), amount: a, units: u, cash: a - cost, cost, nav });
+                    out.push(Confirmed {
+                        id: r.id,
+                        account: r.account,
+                        day: day.into(),
+                        amount: a,
+                        units: u,
+                        cash: a - cost,
+                        cost,
+                        nav,
+                    });
                 }
                 ReqKind::Redeem(u) => {
                     new_units -= u;
                     // the redemption fee stays in the fund (its other holders')
                     let fee = (*g as f64 * r.young as f64 / u.max(1) as f64 * self.funds.redeem_fee).round() as i64;
-                    out.push(Confirmed { account: r.account, day: day.into(), amount: -u, units: -u, cash: -(g - cost - fee), cost, nav });
+                    out.push(Confirmed {
+                        id: r.id,
+                        account: r.account,
+                        day: day.into(),
+                        amount: -u,
+                        units: -u,
+                        cash: -(g - cost - fee),
+                        cost,
+                        nav,
+                    });
                 }
             }
         }
@@ -620,8 +827,16 @@ impl Engine {
         f.own_costs += fees - ((fees as f64) * share).round() as i64;
         f.impact_charged += costs - ((fees as f64) * share).round() as i64;
         f.nav = nav;
+        for c in &out {
+            self.out.push(crate::store::persist::Change::Funds(store::FundsChange::Confirmed {
+                fund: key.to_string(),
+                c: c.clone(),
+            }));
+        }
+        let f = self.st.funds.funds.get_mut(key).unwrap();
         f.confirmed.extend(out);
         f.executing.clear();
+        self.fund_dirty(key);
         self.fund_pay_owed(key, day, ts);
     }
 
@@ -640,6 +855,7 @@ impl Engine {
         }
         for (a, x) in pays {
             self.transfer(acct, a, x, "fund_redeem", day, ts, None, None);
+            self.fund_dirty(key);
             let f = self.st.funds.funds.get_mut(key).unwrap();
             let left = f.owed.get_mut(&a).unwrap();
             *left -= x;
@@ -654,6 +870,10 @@ impl Engine {
     /// difference spread evenly over the batches left (`exec = "close"`: the day's requests included).
     pub fn funds_batch(&mut self, day: &str, ts: &str, minute: i64) {
         if !self.funds.enabled || minute < self.funds.batch_from || minute > self.funds.batch_to {
+            return;
+        }
+        // (not before the session's requests started executing)
+        if self.st.funds.auction_day != day {
             return;
         }
         let rules = self.funds.clone();
@@ -685,6 +905,7 @@ impl Engine {
                 });
             }
         }
+        self.commit();
     }
 
     /// After the daily close: (`exec = "close"`) the day's requests confirmed at the closing prices; the
@@ -703,7 +924,9 @@ impl Engine {
             let f = &self.st.funds.funds[&key];
             let assets = self.fund_assets(f, |c| c.last_price);
             let fee = ((assets.max(0) as f64) * self.funds.fee_rate / 365.0).round() as i64;
-            let free = self.account(acct).map_or(0, |a| a.cash - a.cash_frozen) - f.pending_cash - f.owed.values().sum::<i64>();
+            let free = self.account(acct).map_or(0, |a| a.cash - a.cash_frozen)
+                - f.pending_cash
+                - f.owed.values().sum::<i64>();
             let fee = fee.min(free.max(0));
             if let (Some(w), true) = (world, fee > 0) {
                 self.transfer(acct, w, fee, "fund_fee", day, ts, None, None);
@@ -713,12 +936,15 @@ impl Engine {
             let cash = self.account(acct).map_or(0, |a| a.cash) - f.pending_cash;
             let units = f.units;
             let nav = if units > 0 { assets as f64 / units as f64 * UNIT as f64 } else { f.nav };
-            let rest = self.st.funds_costs.remove(&acct).unwrap_or(0);
+            let rest = self.st.funds.costs.remove(&acct).unwrap_or(0);
             let f = self.st.funds.funds.get_mut(&key).unwrap();
             f.own_costs += rest;
             f.nav = nav;
             f.fees_paid += fee;
-            f.history.push(NavDay { day: day.into(), nav, units, aum: assets, cash, fee });
+            let d = NavDay { day: day.into(), nav, units, aum: assets, cash, fee };
+            f.history.push(d.clone());
+            self.out.push(crate::store::persist::Change::Funds(store::FundsChange::Nav { fund: key.clone(), d }));
+            self.fund_dirty(&key);
         }
         // the session's volumes into the 5-session history (a stock that did not trade: a zero session)
         let listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
@@ -735,12 +961,13 @@ impl Engine {
         }
         fs.fund_today.clear();
         fs.fills.clear();
+        self.commit();
     }
 
     /// Record a fill's commission and stamp duty against a fund's account (called by the fill).
     pub(crate) fn funds_note_cost(&mut self, account: i64, cost: i64) {
         if self.st.accounts.get(&account).is_some_and(|a| a.kind == "fund") {
-            *self.st.funds_costs.entry(account).or_default() += cost;
+            *self.st.funds.costs.entry(account).or_default() += cost;
         }
     }
 }

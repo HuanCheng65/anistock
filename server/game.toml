@@ -272,3 +272,8 @@ buyback_quiet_min = 30       # no buying this long after the open and before the
 # the replay gate passed. Needs a server binary with futures (v0.7.0+): an older one cannot read this table.
 [futures]
 enabled = true
+
+# 指数基金 (docs/v3-funds.md): the eight funds of crate::indices, the other values the code's defaults
+# (backend/src/funds/mod.rs, the ones the replay ran). Turn on with a server binary that has the fund tables (V24).
+[funds]
+enabled = false

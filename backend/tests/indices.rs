@@ -95,3 +95,31 @@ fn free_float_weights_and_a_new_listing_joins_from_its_second_close() {
     assert!((v[2] - want).abs() < 0.01, "{v:?} {want}");
     assert_eq!(r.items[0].members, 3);
 }
+
+#[test]
+fn a_month_is_weighed_by_the_float_recorded_before_it() {
+    // A's committee sells 750 shares on 11-02, the first market day of November: the float recorded at 10-31's close
+    // (250) weighs November; the 1,000 recorded on 11-02 waits for December
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("g.db");
+    store::migrate(&path).unwrap();
+    let c = store::connect(&path).unwrap();
+    c.execute_batch(
+        "INSERT INTO companies(id, code, title, first_air, listed_on, status, shares, ipo_price, prev_close, last_price)
+           VALUES (1, '100001', 'A', '2026-07-01', '2026-06-20', 'listed', 1000, 100, 110, 110),
+                  (2, '100002', 'B', '2026-07-01', '2026-06-20', 'listed', 1000, 100, 100, 100);
+         INSERT INTO candles(company_id, day, open, high, low, close, volume) VALUES
+           (1, '2026-10-30', 100, 100, 100, 100, 10), (1, '2026-10-31', 100, 100, 100, 100, 10),
+           (1, '2026-11-02', 100, 100, 100, 100, 10), (1, '2026-11-03', 110, 110, 110, 110, 10),
+           (2, '2026-10-30', 100, 100, 100, 100, 10), (2, '2026-10-31', 100, 100, 100, 100, 10),
+           (2, '2026-11-02', 100, 100, 100, 100, 10), (2, '2026-11-03', 100, 100, 100, 100, 10);
+         INSERT INTO company_days(company_id, day, revenue, rev_us, rev_cn, rev_jp, aired, float_shares) VALUES
+           (1, '2026-10-31', 0, 0, 0, 0, 0, 250), (2, '2026-10-31', 0, 0, 0, 0, 0, 1000),
+           (1, '2026-11-02', 0, 0, 0, 0, 0, 1000), (2, '2026-11-02', 0, 0, 0, 0, 0, 1000);",
+    )
+    .unwrap();
+    let r = compute_indices(&c, "2026-11-03", true, IndexBasis::Price).unwrap();
+    let v: Vec<f64> = r.items[0].series.iter().map(|p| p.value).collect();
+    // 11-03: A +10% on 250 of 1,250: +2% (today's float, all 1,000 free now, would make it +5%)
+    assert_eq!(v.last().copied(), Some(1020.0), "{v:?}");
+}

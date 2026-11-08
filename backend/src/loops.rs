@@ -8,6 +8,7 @@
 //!   thread so trading is not held up, unlike v1 which held its lock), then close each missing day (one
 //!   engine job per day) and back up. Sleeps until the next `daily_step_at`, between 60 s and 1 h at a
 //!   time.
+//! - 指数基金: the requests start executing from 08:50, batches through the session, confirmed at the close.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +17,54 @@ use crate::api::AppState;
 use crate::config::{hm, next_daily_step, prev_day, Phase};
 
 pub fn spawn(st: &Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
-    vec![tokio::spawn(npc_loop(st.clone())), tokio::spawn(daily_loop(st.clone())), tokio::spawn(margin_loop(st.clone()))]
+    vec![
+        tokio::spawn(npc_loop(st.clone())),
+        tokio::spawn(daily_loop(st.clone())),
+        tokio::spawn(margin_loop(st.clone())),
+        tokio::spawn(funds_loop(st.clone())),
+    ]
+}
+
+/// 指数基金 (crate::funds): from 08:50, once the day before is closed, the requests of the days before start
+/// executing (`funds_auction`, once a session: a late close starts them late); every `batch_every_min` minutes of
+/// continuous trading, a batch. The confirmation is part of the daily close (`catch_up`).
+async fn funds_loop(st: Arc<AppState>) {
+    if !st.cfg.funds.enabled {
+        return;
+    }
+    let every = st.cfg.funds.batch_every_min.max(1);
+    let mut last_slot: Option<(String, i64)> = None;
+    loop {
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let now = st.clock.now();
+        let (day, ts) = (st.clock.today(), st.clock.ts());
+        let Ok(midnight) = chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d") else { continue };
+        // minutes after the trading day's midnight (the night session counts on past 24:00)
+        let minute = (now.naive_local() - midnight.and_time(chrono::NaiveTime::MIN)).num_minutes();
+        if minute < 8 * 60 + 50 {
+            continue;
+        }
+        let slot = (day.clone(), minute / every);
+        let batch = st.phase() == Phase::Continuous && last_slot.as_ref() != Some(&slot);
+        let r = st
+            .actor
+            .call(move |ctx| {
+                let yesterday = prev_day(&day);
+                if ctx.engine.state("last_closed").is_some_and(|l| l >= yesterday.as_str()) {
+                    ctx.engine.funds_auction(&day, &ts);
+                }
+                if batch {
+                    ctx.engine.funds_batch(&day, &ts, minute);
+                }
+            })
+            .await;
+        if r.is_err() {
+            return;
+        }
+        if batch {
+            last_slot = Some(slot);
+        }
+    }
 }
 
 /// 融资融券 (crate::margin): every 30 seconds of continuous trading, lift covered margin calls and run one
@@ -153,6 +201,8 @@ pub async fn catch_up(st: &Arc<AppState>) -> Result<Option<usize>, String> {
                 let now = clock.now();
                 let out = ctx.engine.run_day(&cfg, &day, &crate::config::format_ts(&now), &inputs)?;
                 if matches!(out, crate::daily::CloseOutcome::Closed(_)) {
+                    // 指数基金: the session's requests confirmed at the closing prices, the fee, the net value
+                    ctx.engine.funds_close(&day, &crate::config::format_ts(&now));
                     ctx.ops.market_after_close(&mut ctx.engine, &cfg, &inputs, now.timestamp(), &low)?;
                 }
                 Ok::<_, String>(out)

@@ -234,6 +234,8 @@ pub struct Snapshot {
     pub corp: crate::corporate::CorporateState,
     /// 热度期货 (migration V19; empty for older databases)
     pub futures: crate::futures::FuturesState,
+    /// 指数基金 (migration V24; empty for older databases)
+    pub funds: crate::funds::FundsState,
     pub max_order_id: i64,
     pub max_trade_id: i64,
     pub max_ledger_id: i64,
@@ -413,6 +415,7 @@ pub fn load(conn: &Connection) -> DbResult<Snapshot> {
     }
     s.margin = crate::margin::load(conn)?;
     s.futures = crate::futures::store::load(conn)?;
+    s.funds = crate::funds::store::load(conn)?;
     {
         let r = crate::corporate::CorporateRules::default();
         s.corp = crate::corporate::load(conn, (r.split_above * 100.0).round() as i64, r.buyback_adv_days)?;

@@ -107,10 +107,8 @@ pub(crate) struct State {
     pub corp: crate::corporate::CorporateState,
     /// 热度期货 (crate::futures)
     pub futures: crate::futures::FuturesState,
-    /// 指数基金 (crate::funds; in memory only until the tables come, docs/design/funds.md §9)
+    /// 指数基金 (crate::funds; tables V24, `crate::funds::store`)
     pub funds: crate::funds::FundsState,
-    /// per fund account: commission and stamp duty of its fills since `funds_confirm` / the close took them
-    pub funds_costs: BTreeMap<i64, i64>,
     pub last_order_id: i64,
     pub last_trade_id: i64,
     pub last_ledger_id: i64,
@@ -135,6 +133,8 @@ pub struct Engine {
     dirty_accounts: BTreeSet<i64>,
     dirty_orders: BTreeSet<i64>,
     pub(crate) dirty_companies: BTreeSet<i64>,
+    /// funds touched in the current operation (crate::funds: saved whole by `commit`)
+    pub(crate) dirty_funds: BTreeSet<String>,
     reap: Vec<i64>,
     sink: Box<dyn ChangeSink>,
     db_path: Option<PathBuf>,
@@ -174,6 +174,7 @@ impl Engine {
             dirty_accounts: BTreeSet::new(),
             dirty_orders: BTreeSet::new(),
             dirty_companies: BTreeSet::new(),
+            dirty_funds: BTreeSet::new(),
             reap: Vec::new(),
             sink,
             db_path: None,
@@ -352,6 +353,7 @@ impl Engine {
                 self.out.push(Change::CompanyUpdate(c.clone()));
             }
         }
+        self.funds_rows();
         for id in std::mem::take(&mut self.reap) {
             if self.st.orders.get(&id).is_some_and(|o| o.status != OrderStatus::Open) {
                 self.st.orders.remove(&id);
@@ -1194,6 +1196,7 @@ impl State {
             margin: s.margin.clone(),
             corp: s.corp.clone(),
             futures: s.futures.clone(),
+            funds: s.funds.clone(),
             last_order_id: s.max_order_id,
             last_trade_id: s.max_trade_id,
             last_ledger_id: s.max_ledger_id,

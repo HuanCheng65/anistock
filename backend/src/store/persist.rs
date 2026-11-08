@@ -83,6 +83,12 @@ pub enum Change {
         day: String,
         dividend_ps: i64,
     },
+    /// `UPDATE company_days SET float_shares` (V23)
+    CompanyDayFloat {
+        company_id: i64,
+        day: String,
+        float_shares: i64,
+    },
     /// `INSERT OR REPLACE INTO candles`
     CandleReplace(Candle),
     /// `INSERT OR REPLACE INTO macro_days`
@@ -111,6 +117,8 @@ pub enum Change {
     Corporate(crate::corporate::CorporateChange),
     /// 热度期货 rows (crate::futures, V19)
     Futures(crate::futures::FuturesChange),
+    /// 指数基金 rows (crate::funds, V24)
+    Funds(crate::funds::store::FundsChange),
     /// `INSERT OR REPLACE INTO lots` (a split rescales a lot's quantity and cost)
     LotReplace(Lot),
     StateSet {
@@ -350,6 +358,10 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
             conn.prepare_cached("UPDATE company_days SET dividend_ps=? WHERE company_id=? AND day=?")?
                 .execute(params![dividend_ps, company_id, day])?;
         }
+        Change::CompanyDayFloat { company_id, day, float_shares } => {
+            conn.prepare_cached("UPDATE company_days SET float_shares=? WHERE company_id=? AND day=?")?
+                .execute(params![float_shares, company_id, day])?;
+        }
         Change::CandleReplace(c) => {
             conn.prepare_cached(
                 "INSERT OR REPLACE INTO candles(company_id, day, open, high, low, close, volume, source)
@@ -417,6 +429,7 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
         Change::Margin(m) => crate::margin::apply(conn, m)?,
         Change::Corporate(m) => crate::corporate::apply(conn, m)?,
         Change::Futures(m) => crate::futures::store::apply(conn, m)?,
+        Change::Funds(m) => crate::funds::store::apply(conn, m)?,
         Change::LotReplace(l) => {
             conn.prepare_cached("INSERT OR REPLACE INTO lots(id, account_id, company_id, qty, cost, acquired_on) VALUES (?,?,?,?,?,?)")?
                 .execute(params![l.id, l.account_id, l.company_id, l.qty, l.cost, l.acquired_on])?;

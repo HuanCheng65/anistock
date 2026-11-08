@@ -63,8 +63,18 @@ fn player(e: &mut Engine, name: &str, cash: i64) -> i64 {
 /// Two stocks at 5 星辉 (company 2 twice the shares: two thirds of the index), a dealer holding plenty of both
 /// with cash, players a and b with 1,000 星辉 each; the `all` fund, trading up to the whole volume.
 fn world() -> W {
-    let rules = Rules { vcm_threshold: 1000.0, ..Rules::default() };
-    let (mut e, _) = Engine::in_memory(Fees::default(), rules);
+    world_on(Engine::in_memory(Fees::default(), test_rules()).0)
+}
+
+fn test_rules() -> Rules {
+    Rules { vcm_threshold: 1000.0, ..Rules::default() }
+}
+
+fn fund_rules() -> FundRules {
+    FundRules { enabled: true, keys: vec!["all".into()], batch_limit: 0.0, max_volume_share: 1.0, ..FundRules::default() }
+}
+
+fn world_on(mut e: Engine) -> W {
     for k in ["world", "cb", "gov"] {
         e.create_account(k, k, None, None, None, &ts(D1, "10:00"));
     }
@@ -79,7 +89,7 @@ fn world() -> W {
     e.add_shares(dealer, 2, 20_000, 500, "2026-09-10");
     let a = player(&mut e, "a", 100_000);
     let b = player(&mut e, "b", 100_000);
-    e.funds = FundRules { enabled: true, keys: vec!["all".into()], batch_limit: 0.0, max_volume_share: 1.0, ..FundRules::default() };
+    e.funds = fund_rules();
     e.funds_setup(&ts(D1, "10:00"));
     // a volume history, so the fund may trade from its first session
     for c in [1, 2] {
@@ -183,8 +193,8 @@ fn a_redemption_sells_and_pays_the_holder() {
     w.e.fund_subscribe(w.a, "all", 90_000, D1, &ts(D1, "20:00")).unwrap();
     session(&mut w, D2, "sell");
     let units = w.e.fund("all").unwrap().units_of(w.a);
-    w.e.fund_redeem(w.a, "all", units, D2).unwrap();
-    assert!(w.e.fund_redeem(w.a, "all", 1, D2).is_err());
+    w.e.fund_redeem(w.a, "all", units, D2, &ts(D2, "21:00")).unwrap();
+    assert!(w.e.fund_redeem(w.a, "all", 1, D2, &ts(D2, "21:00")).is_err());
     let cash0 = w.e.account(w.a).unwrap().cash;
     session(&mut w, D3, "buy");
     let f = w.e.fund("all").unwrap();
@@ -208,7 +218,7 @@ fn units_held_a_week_redeem_without_the_fee_and_small_subscriptions_are_refused(
     session(&mut w, D2, "sell");
     let units = w.e.fund("all").unwrap().units_of(w.a);
     // a week after the confirmation: no fee
-    w.e.fund_redeem(w.a, "all", units, "2026-11-13").unwrap();
+    w.e.fund_redeem(w.a, "all", units, "2026-11-13", &ts("2026-11-13", "21:00")).unwrap();
     let r = w.e.fund("all").unwrap().pending[0].clone();
     assert_eq!(r.young, 0);
     // two lots, the newer one young: only it pays
@@ -219,12 +229,11 @@ fn units_held_a_week_redeem_without_the_fee_and_small_subscriptions_are_refused(
     session(&mut w, "2026-11-13", "sell");
     let f = w.e.fund("all").unwrap();
     let (old, new) = (f.lots[&w.a][0].1, f.lots[&w.a][1].1);
-    w.e.fund_redeem(w.a, "all", old + new / 2, "2026-11-14").unwrap();
+    w.e.fund_redeem(w.a, "all", old + new / 2, "2026-11-14", &ts("2026-11-14", "21:00")).unwrap();
     let f = w.e.fund("all").unwrap();
     assert_eq!(f.pending[0].young, new / 2);
     assert_eq!(f.lots[&w.a], vec![("2026-11-13".to_string(), new - new / 2)]);
 }
-
 
 #[test]
 fn the_requests_pay_for_the_prices_they_moved() {
@@ -258,4 +267,75 @@ fn the_requests_pay_for_the_prices_they_moved() {
     let nav_a = (held + w.e.account(fund).unwrap().cash - f.pending_cash) as f64 - (60_000 - cb.cost) as f64;
     let a_value = a_units as f64 / UNIT as f64 * cb.nav;
     assert!((a_value - nav_a).abs() < 50.0, "{a_value} {nav_a}");
+}
+
+/// A day of requests in every state, the server restarted mid-session after the fund traded: the reopened engine
+/// ends the session exactly as one that ran through (the requests, holders, lots, the session's fills and costs
+/// rebuilt from the trades and the ledger).
+#[test]
+fn a_restart_mid_session_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("game.db");
+    crate::store::migrate(&path).unwrap();
+    let mut runs = Vec::new();
+    for reopen in [false, true] {
+        let mut w = if reopen {
+            world_on(Engine::open(&path, Fees::default(), test_rules()).unwrap())
+        } else {
+            world()
+        };
+        w.e.fund_subscribe(w.a, "all", 90_000, D1, &ts(D1, "20:00")).unwrap();
+        session(&mut w, D2, "sell");
+        w.e.set_state("last_closed", D2);
+        w.e.fund_subscribe(w.b, "all", 60_000, D2, &ts(D2, "20:00")).unwrap();
+        let half = w.e.fund("all").unwrap().units_of(w.a) / 2;
+        w.e.fund_redeem(w.a, "all", half, D2, &ts(D2, "21:00")).unwrap();
+        // a request of the session itself (executes the day after) and one cancelled
+        w.e.fund_subscribe(w.b, "all", 20_000, D3, &ts(D3, "10:00")).unwrap();
+        let gone = w.e.fund_subscribe(w.b, "all", 10_000, D3, &ts(D3, "10:01")).unwrap();
+        w.e.fund_cancel(w.b, gone, D3, &ts(D3, "10:02")).unwrap();
+        w.e.set_state("auction_day", D3);
+        w.e.funds_auction(D3, &ts(D3, "08:50"));
+        for c in [1, 2] {
+            w.e.cancel_all(w.dealer, c, &ts(D3, "09:00"));
+        }
+        dealer_quotes(&mut w, "sell", D3);
+        w.e.funds_batch(D3, &ts(D3, "23:00"), 23 * 60);
+        assert!(!w.e.st.funds.fills.is_empty());
+        if reopen {
+            w.e.flush().unwrap();
+            let before = w.e.st.funds.clone();
+            let vol_days = before.vol_days.clone();
+            drop(std::mem::replace(&mut w.e, Engine::open(&path, Fees::default(), test_rules()).unwrap()));
+            w.e.funds = fund_rules();
+            w.e.funds_setup(&ts(D3, "23:05"));
+            let after = &w.e.st.funds;
+            let (f0, f1) = (&before.funds["all"], &after.funds["all"]);
+            assert_eq!(
+                (f0.units, f0.pending_cash, f0.nav, f0.own_costs, f0.impact_charged, f0.fees_paid),
+                (f1.units, f1.pending_cash, f1.nav, f1.own_costs, f1.impact_charged, f1.fees_paid)
+            );
+            assert_eq!((&f0.holders, &f0.lots, &f0.owed), (&f1.holders, &f1.lots, &f1.owed));
+            assert_eq!((&f0.pending, &f0.executing), (&f1.pending, &f1.executing));
+            assert_eq!(f0.history.last(), f1.history.last());
+            assert_eq!((before.last_request_id, &before.auction_day), (after.last_request_id, &after.auction_day));
+            assert_eq!((&before.floats, &before.top), (&after.floats, &after.top));
+            assert_eq!((&before.vol_today, &before.fund_today, &before.fills), (&after.vol_today, &after.fund_today, &after.fills));
+            assert_eq!(before.costs, after.costs);
+            // the closed sessions' volumes come from the trades (the test's made-up history before them does not)
+            for c in [1, 2] {
+                assert_eq!(after.vol_days[&c].back(), vol_days[&c].back(), "{c}");
+            }
+            w.e.st.funds.vol_days = vol_days;
+        }
+        w.e.funds_batch(D3, &ts(D3, "23:30"), 23 * 60 + 30);
+        w.e.funds_close(D3, &ts(D3, "23:59"));
+        w.e.check_invariants().unwrap();
+        let f = w.e.fund("all").unwrap();
+        let done: Vec<Confirmed> = f.confirmed.iter().filter(|c| c.day == D3).cloned().collect();
+        assert_eq!(done.len(), 2);
+        let cash = [w.a, w.b, f.account].map(|a| w.e.account(a).unwrap().cash);
+        runs.push((done, f.holders.clone(), f.lots.clone(), f.nav, f.pending.len(), cash));
+    }
+    assert_eq!(runs[0], runs[1]);
 }

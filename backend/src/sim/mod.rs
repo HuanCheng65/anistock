@@ -592,8 +592,9 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             // the confirmation at its prices (09:00), the batches after it, the idle players' requests (20:00)
             if e.funds.enabled && !opts.value_only {
                 if s == 8 * 3600 + 50 * 60 {
-                    bench.morning(&e, day);
+                    // (the auction first: a month's first session takes the month's index float)
                     e.funds_auction(day, &ts_of(t));
+                    bench.morning(&e, day);
                 }
                 if s == 8 * 3600 + 55 * 60 && k >= bot_start {
                     if let Some(b) = bot.as_mut() {

@@ -501,6 +501,25 @@ pub fn price_factors(c: &Connection) -> R<HashMap<i64, Vec<(String, f64)>>> {
     Ok(out)
 }
 
+/// Share-count changes (V10 `price_adjustments` qty_factor): company -> (first day in new terms, factor), by day.
+pub fn qty_factors(c: &Connection) -> R<HashMap<i64, Vec<(String, f64)>>> {
+    let has: bool = c
+        .query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='price_adjustments'", [], |_| Ok(()))
+        .optional()
+        .map_err(sql)?
+        .is_some();
+    let mut out: HashMap<i64, Vec<(String, f64)>> = HashMap::new();
+    if !has {
+        return Ok(out);
+    }
+    let mut s = c.prepare_cached("SELECT company_id, day, qty_factor FROM price_adjustments ORDER BY day").map_err(sql)?;
+    let mut rows = s.query([]).map_err(sql)?;
+    while let Some(r) = rows.next().map_err(sql)? {
+        out.entry(r.get(0).map_err(sql)?).or_default().push((r.get(1).map_err(sql)?, r.get(2).map_err(sql)?));
+    }
+    Ok(out)
+}
+
 /// The 前复权 factor of `day` (a price or a per-share amount of `day` × it is in today's share terms): the
 /// product of the price factors of the adjustments after `day`.
 pub fn forward_factor(adj: Option<&Vec<(String, f64)>>, day: &str) -> f64 {
@@ -625,7 +644,49 @@ pub fn compute_index_set(c: &Connection, today: &str, with_series: bool, basis: 
             locked.insert(r.get(0).map_err(sql)?, r.get(1).map_err(sql)?);
         }
     }
-    let float = |id: i64| (by_id[&id].shares - locked.get(&id).copied().unwrap_or(0)).max(0) as f64;
+    let float_now = |id: i64| (by_id[&id].shares - locked.get(&id).copied().unwrap_or(0)).max(0) as f64;
+    // the free float recorded at each close (V23), and each company's share-count changes (splits, rights issues)
+    let mut recorded: HashMap<(i64, String), i64> = HashMap::new();
+    {
+        let mut s = c
+            .prepare_cached("SELECT company_id, day, float_shares FROM company_days WHERE float_shares IS NOT NULL AND day<=?")
+            .map_err(sql)?;
+        let mut rows = s.query([today]).map_err(sql)?;
+        while let Some(r) = rows.next().map_err(sql)? {
+            recorded.insert((r.get(0).map_err(sql)?, r.get(1).map_err(sql)?), r.get(2).map_err(sql)?);
+        }
+    }
+    let qty_adj = qty_factors(c)?;
+    // a month is weighed by the float recorded at the last close before its first market day (in today's share
+    // terms: times the share-count changes since); without a record, today's float
+    let mdays: Vec<&String> = days.keys().collect();
+    let mut rec_of: HashMap<&str, Option<&String>> = HashMap::new();
+    {
+        let mut rec: Option<&String> = None;
+        for (i, d) in mdays.iter().enumerate() {
+            if i > 0 && crate::indices::is_review(d, Some(mdays[i - 1])) {
+                rec = Some(mdays[i - 1]);
+            }
+            rec_of.insert(d.as_str(), rec);
+        }
+    }
+    let rec_live = if mdays.last().is_some_and(|d| d.as_str() < today && crate::indices::is_review(today, Some(d))) {
+        mdays.last().copied()
+    } else {
+        mdays.last().and_then(|d| rec_of.get(d.as_str()).copied().flatten())
+    };
+    let float_on = |id: i64, d: &str| -> f64 {
+        let rec = if d == today && !days.contains_key(today) { rec_live } else { rec_of.get(d).copied().flatten() };
+        match rec.and_then(|r| recorded.get(&(id, r.clone())).map(|f| (r, *f))) {
+            // a change takes effect the day after the close that makes it, so the record of day r already has those
+            // effective on r + 1: only the later ones convert it to today's terms
+            Some((r, f)) => {
+                let after = NaiveDate::parse_from_str(r, "%Y-%m-%d").map(|x| (x + chrono::Duration::days(1)).to_string()).unwrap_or_default();
+                f as f64 * qty_adj.get(&id).map_or(1.0, |v| v.iter().filter(|(x, _)| x.as_str() > after.as_str()).map(|x| x.1).product())
+            }
+            None => float_now(id),
+        }
+    };
     let labels = |id: i64| {
         let co = by_id[&id];
         crate::indices::Labels { long: co.long, first_air: &co.first_air, source: co.source.as_deref(), genres: &co.genres }
@@ -648,7 +709,7 @@ pub fn compute_index_set(c: &Connection, today: &str, with_series: bool, basis: 
                     let on = last_any.map_or(dd.as_str(), |x| x.as_str());
                     let values: Vec<(i64, f64)> = base
                         .iter()
-                        .map(|(id, c)| (*id, *c as f64 * forward_factor(adj.get(id), on) * float(*id)))
+                        .map(|(id, c)| (*id, *c as f64 * forward_factor(adj.get(id), on) * float_on(*id, dd)))
                         .collect();
                     chosen = crate::indices::top(values, n).into_iter().collect();
                 }
@@ -668,7 +729,7 @@ pub fn compute_index_set(c: &Connection, today: &str, with_series: bool, basis: 
                         let fwd = forward_factor(a, dd);
                         let before = *pc as f64 * factor_on(a, dd) * fwd;
                         if before > 0.0 {
-                            parts.push((*id, before * float(*id), end_value(*id, dd, *close) * fwd / before));
+                            parts.push((*id, before * float_on(*id, dd), end_value(*id, dd, *close) * fwd / before));
                         }
                     }
                 }
@@ -693,7 +754,7 @@ pub fn compute_index_set(c: &Connection, today: &str, with_series: bool, basis: 
                 if let Some(pc) = lastc.get(&id) {
                     let before = *pc as f64 * forward_factor(adj.get(&id), &last_day);
                     if before > 0.0 {
-                        parts.push((id, before * float(id), by_id[&id].last as f64 / before));
+                        parts.push((id, before * float_on(id, today), by_id[&id].last as f64 / before));
                     }
                 }
             }
