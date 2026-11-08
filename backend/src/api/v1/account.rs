@@ -125,6 +125,22 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         .map_err(sql)?;
     let rate = policy_rate(c)?;
     let announcement = announcement_for(c, id, &created_at)?;
+    let marks = super::onboarding::marks(c, id)?;
+    let traded = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM trades WHERE buyer_id=?1) OR EXISTS(SELECT 1 FROM trades WHERE seller_id=?1)",
+            [id],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(sql)?;
+    let onboarding = Onboarding {
+        signed: !pending_documents.iter().any(|d| d.doc == "disclosure"),
+        watched: marks.iter().any(|k| k == "watch"),
+        traded,
+        verified: verification.verified,
+        dividend: divs > 0,
+        marks,
+    };
     let (reason, message) = match &eligible {
         Ok(()) => (None, None),
         Err(e) => {
@@ -158,6 +174,7 @@ pub fn me_of(st: &AppState, c: &Connection, id: i64) -> R<Me> {
         api_trading,
         futures_steps,
         announcement,
+        onboarding,
     })
 }
 
@@ -1447,7 +1464,7 @@ pub async fn close(
     // personal data outside the game books (docs/design/account.md §9); the ledger and trades stay, anonymous
     let keys = super::bind::with_side(&st, |c| {
         let keys = super::keys::revoke_all(c, id, &st.clock.ts())?;
-        for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins", "api_keys"] {
+        for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins", "api_keys", "watchlist", "account_marks"] {
             c.execute(&format!("DELETE FROM {t} WHERE account_id=?"), [id]).map_err(sql)?;
         }
         Ok(keys)

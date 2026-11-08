@@ -20,6 +20,7 @@ pub mod futures;
 pub mod keys;
 pub mod media;
 pub mod market;
+pub mod onboarding;
 pub mod openapi;
 pub mod assess;
 pub mod password;
@@ -651,6 +652,10 @@ pub fn router(st: Arc<AppState>) -> Router {
         .route("/me/restructure", post(account::restructure))
         .route("/me/agreements", post(account::sign))
         .route("/me/announcements/{id}/read", post(account::read_announcement))
+        .route("/me/marks/{key}", post(onboarding::mark))
+        .route("/me/watchlist", get(onboarding::watchlist))
+        .route("/me/watchlist/import", post(onboarding::import))
+        .route("/me/watchlist/{id}", put(onboarding::watch).delete(onboarding::unwatch))
         .route("/me/credit", get(credit::credit).post(credit::open))
         .route("/me/credit/repay", post(credit::repay))
         .route("/stocks/{id}/margin", get(credit::stock_margin))

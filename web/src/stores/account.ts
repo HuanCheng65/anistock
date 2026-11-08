@@ -73,6 +73,8 @@ export const useAccount = defineStore('account', () => {
   }
   // fills of one order within a moment are summed into one toast
   const fills = new Map<number, { qty: number; notional: number; at: number }>()
+  /** the latest own fill, summed over its order (the 首笔成交 note shows it) */
+  const lastFill = ref<{ side: 'buy' | 'sell'; quantity: number; price: number } | null>(null)
   onLive('fill', (m) => {
     const t = m.trade
     if (trades.value && !trades.value.some((x) => x.id === t.id)) trades.value = [t, ...trades.value]
@@ -84,6 +86,7 @@ export const useAccount = defineStore('account', () => {
     f.notional += t.quantity * t.price
     f.at = now
     fills.set(key, f)
+    lastFill.value = { side: t.side, quantity: f.qty, price: Math.round(f.notional / f.qty) }
     useToast().show({
       key: 'fill' + key,
       text: `${t.side === 'buy' ? '买入' : '卖出'}成交 ${qty(f.qty)} 股 · ${money(Math.round(f.notional / f.qty))}`,
@@ -110,6 +113,7 @@ export const useAccount = defineStore('account', () => {
   })
 
   return {
+    lastFill,
     positions, orders, trades, tradesNext, ledger, ledgerNext, history, bindings,
     refreshPositions, refreshOrders, refreshTrades, moreTrades, refreshLedger, moreLedger, refreshHistory, refreshBindings,
     cancel, clear,

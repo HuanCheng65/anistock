@@ -3482,6 +3482,10 @@
             "$ref": "#/components/schemas/Money",
             "description": "融资融券负债"
           },
+          "onboarding": {
+            "$ref": "#/components/schemas/Onboarding",
+            "description": "入门步骤和新手引导"
+          },
           "pending_documents": {
             "description": "还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户",
             "items": {
@@ -3543,6 +3547,7 @@
           "id",
           "initial_cash",
           "liabilities",
+          "onboarding",
           "pending_documents",
           "restructure",
           "risk",
@@ -4048,6 +4053,47 @@
         "required": [
           "by_style",
           "total"
+        ],
+        "type": "object"
+      },
+      "Onboarding": {
+        "description": "入门步骤的完成情况和新手引导的标记",
+        "properties": {
+          "dividend": {
+            "description": "收到过分红",
+            "type": "boolean"
+          },
+          "marks": {
+            "description": "记过的一次性标记：`guide.stock`、`guide.order`（页面引导已看过），`steps.closed`（入门步骤已关闭），\n`first_fill`（首笔成交说明已看过），`watch`（加入过自选）",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "signed": {
+            "description": "已签署风险揭示书",
+            "type": "boolean"
+          },
+          "traded": {
+            "description": "有过成交",
+            "type": "boolean"
+          },
+          "verified": {
+            "description": "已完成身份验证",
+            "type": "boolean"
+          },
+          "watched": {
+            "description": "加入过自选（之后移出不改变）",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dividend",
+          "marks",
+          "signed",
+          "traded",
+          "verified",
+          "watched"
         ],
         "type": "object"
       },
@@ -5959,6 +6005,23 @@
         "required": [
           "method",
           "verified"
+        ],
+        "type": "object"
+      },
+      "Watchlist": {
+        "description": "自选，新加入的在前",
+        "properties": {
+          "items": {
+            "description": "股票 id",
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -8645,6 +8708,48 @@
         ]
       }
     },
+    "/api/v1/me/marks/{key}": {
+      "post": {
+        "operationId": "mark",
+        "parameters": [
+          {
+            "description": "标记",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "记录一次性的新手引导标记：`guide.stock`、`guide.order`（页面引导已看过）、`steps.closed`（入门步骤已关闭）、\n`first_fill`（首笔成交说明已看过）",
+        "tags": [
+          "account"
+        ]
+      }
+    },
     "/api/v1/me/orders": {
       "get": {
         "operationId": "orders",
@@ -9041,6 +9146,162 @@
           }
         },
         "summary": "我的成交",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/watchlist": {
+      "get": {
+        "operationId": "watchlist",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "自选",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/watchlist/import": {
+      "post": {
+        "operationId": "import",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Watchlist"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "合并自选：把另一份列表（例如浏览器里的旧自选，新加入的在前）中还没有的股票加到自选最前面，保持它们原来的顺序。\n不存在的股票和超出上限的部分忽略。",
+        "tags": [
+          "account"
+        ]
+      }
+    },
+    "/api/v1/me/watchlist/{id}": {
+      "delete": {
+        "operationId": "unwatch",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "移出自选（不在自选中时不变）",
+        "tags": [
+          "account"
+        ]
+      },
+      "put": {
+        "operationId": "watch",
+        "parameters": [
+          {
+            "description": "股票 id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Watchlist"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "加入自选（已在自选中时不变）",
         "tags": [
           "account"
         ]

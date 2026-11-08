@@ -127,8 +127,11 @@ const total = computed(() => (side.value === 'buy' ? notional.value + commission
 
 // ---- 对手价 and the cost of filling now
 const counter = computed(() => (side.value === 'buy' ? bestAsk.value : bestBid.value))
+/** the price was set by the 对手价 default (not typed or picked): it follows 对手价 until the book arrives */
+let defaulted = false
 function useCounter() {
   price.value = centsText(counter.value ?? props.stock.quote.price)
+  defaulted = counter.value == null
 }
 // the price starts at 对手价 (the last price on an empty side), and again on a new stock or side; a price the
 // player typed or picked from the book stays until then
@@ -136,6 +139,13 @@ watch([() => props.stock.stock.id, side], ([id], [was]) => {
   useCounter()
   if (id !== was) qty.value = ''
 }, { immediate: true })
+// the form can open before the book has loaded: 对手价 once there is one
+watch(counter, (c) => {
+  if (c != null && defaulted) useCounter()
+})
+watch(price, (v) => {
+  if (defaulted && v !== centsText(props.stock.quote.price)) defaulted = false
+})
 /** whether the entered price meets the other side now (in the auction: whether it is in the cross) */
 const crosses = computed(() => {
   const c = counter.value
@@ -293,12 +303,12 @@ async function cancel(id: number) {
     <p v-if="vcm" class="note warn">冷静期至 {{ hm(vcm.until) }}，只在 <span class="num">{{ money(vcm.low) }} – {{ money(vcm.high) }}</span> 之间成交</p>
 
     <label class="row">价格
-      <span class="pricebox">
+      <span class="pricebox" data-guide="oprice">
         <input class="tinput num" inputmode="decimal" v-model="price" autocomplete="off" aria-label="价格" />
         <button type="button" class="tbtn counter" :class="side" :disabled="counter == null" @click="useCounter">对手价</button>
       </span>
     </label>
-    <p v-if="fillText" class="note impact" :class="{ wait: !crosses || auction }">{{ fillText }}</p>
+    <p v-if="fillText" class="note impact" :class="{ wait: !crosses || auction }" data-guide="ostate">{{ fillText }}</p>
     <label class="row">数量
       <input class="tinput num" inputmode="numeric" v-model="qty" autocomplete="off" aria-label="数量"
              :placeholder="side === 'sell' && !creditMode ? `可卖 ${fmtQty(sellable)}` : `最多 ${fmtQty(maxQty)}`" />

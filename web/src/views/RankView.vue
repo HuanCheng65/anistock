@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RouterLink } from 'vue-router'
 import { computed, ref, watch } from 'vue'
 import { errorText } from '../api'
 import BackButton from '../components/BackButton.vue'
@@ -53,7 +54,11 @@ const unranked = computed(() => (session.me && !session.me.eligibility.leaderboa
       <h1 class="pagetitle desk-only">排行</h1>
       <Tabs v-model="periodModel" :items="periods" label="排行周期" class="ptabs gutter"><span v-if="since" class="since num">{{ since }}</span></Tabs>
       <EmptyState v-if="error && !board" :text="error" action="重试" tone="error" @act="refresh" />
-      <p v-if="unranked" class="unranked gutter">{{ unranked }}</p>
+      <p v-if="unranked" class="unranked gutter">
+        <span>{{ unranked }}</span>
+        <RouterLink v-if="!session.me?.verification.verified" to="/settings" class="btn small">去验证</RouterLink>
+        <RouterLink v-else to="/stocks" class="btn small ghost">去看股票</RouterLink>
+      </p>
       <section v-if="podium.length" class="podium gutter">
         <div v-for="p in podium" :key="p.rank" class="pod">
           <span class="nm clamp1" :class="{ me: mine(p.user.id) }">{{ p.user.username }}</span>
@@ -79,7 +84,8 @@ const unranked = computed(() => (session.me && !session.me.eligibility.leaderboa
 </template>
 
 <style scoped>
-.unranked { padding-top: 10px; padding-bottom: 10px; font-size: 13px; color: var(--ink-2); border-bottom: 1px solid var(--hair); }
+.unranked { display: flex; align-items: center; gap: 12px; padding-top: 10px; padding-bottom: 10px; font-size: 13px; color: var(--ink-2); border-bottom: 1px solid var(--hair); }
+.unranked span { flex: 1; min-width: 0; }
 .ptabs { gap: 20px; }
 .since { margin-left: auto; font-size: 12px; color: var(--muted); align-self: center; }
 .podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; padding-top: 22px; border-bottom: 1px solid var(--rule); }

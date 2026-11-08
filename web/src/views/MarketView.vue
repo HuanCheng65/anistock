@@ -7,8 +7,10 @@ import BrandLockup from '../components/BrandLockup.vue'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
+import MarketIntro from '../components/MarketIntro.vue'
 import MarketClock from '../components/MarketClock.vue'
 import SearchPanel from '../components/SearchPanel.vue'
+import StartSteps from '../components/StartSteps.vue'
 import Sparkline from '../components/Sparkline.vue'
 import Tabs from '../components/Tabs.vue'
 import { DESK, useMedia } from '../composables/useMedia'
@@ -112,6 +114,8 @@ function remember(key: string, label: string, rows: Quote[]) {
       </div>
     </div>
 
+    <div v-if="session.checked && !session.me" class="container"><MarketIntro /></div>
+    <div v-else-if="session.me" class="container"><StartSteps /></div>
     <div class="container grid">
       <!-- 指数 -->
       <section class="mod m-index">

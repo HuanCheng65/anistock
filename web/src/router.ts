@@ -10,7 +10,7 @@ export const pendingTab = ref<string | null>(null)
 const router = createRouter({
   history: createWebHistory(),
   // a sort or filter tap changes only the query: stay where the list is
-  scrollBehavior: (to, from, saved) => saved ?? (to.path === from.path ? false : { top: 0 }),
+  scrollBehavior: (to, from, saved) => saved ?? (to.hash ? { el: to.hash, behavior: 'smooth' } : to.path === from.path ? false : { top: 0 }),
   routes: [
     { path: '/', name: 'market', component: () => import('./views/MarketView.vue'), meta: { tab: 'market', title: '市场' } },
     { path: '/stocks', name: 'stocks', component: () => import('./views/StocksView.vue'), meta: { tab: 'stocks', title: '行情' } },

@@ -900,6 +900,33 @@ pub struct Me {
     pub futures_steps: FuturesSteps,
     /// 登录后要弹出的公告：开户之后发布、还没看过的最新一条；没有时为 null
     pub announcement: Option<Announcement>,
+    /// 入门步骤和新手引导
+    pub onboarding: Onboarding,
+}
+
+/// 入门步骤的完成情况和新手引导的标记
+#[derive(Serialize, ToSchema, Clone)]
+pub struct Onboarding {
+    /// 已签署风险揭示书
+    pub signed: bool,
+    /// 加入过自选（之后移出不改变）
+    pub watched: bool,
+    /// 有过成交
+    pub traded: bool,
+    /// 已完成身份验证
+    pub verified: bool,
+    /// 收到过分红
+    pub dividend: bool,
+    /// 记过的一次性标记：`guide.stock`、`guide.order`（页面引导已看过），`steps.closed`（入门步骤已关闭），
+    /// `first_fill`（首笔成交说明已看过），`watch`（加入过自选）
+    pub marks: Vec<String>,
+}
+
+/// 自选，新加入的在前
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
+pub struct Watchlist {
+    /// 股票 id
+    pub items: Vec<i64>,
 }
 
 /// 运营公告

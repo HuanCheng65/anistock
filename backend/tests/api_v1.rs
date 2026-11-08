@@ -1168,3 +1168,59 @@ async fn key_connections_follow_the_key_not_the_session() {
     assert_eq!(script.try_recv(), Ok(4001));
     assert!(other.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn watchlist_and_onboarding_marks() {
+    let a = app("2026-11-05T10:00:00+08:00", true);
+    let ck = a.login().await;
+    let h = [("cookie", ck.as_str())];
+    let c = Some(ck.as_str());
+    // two more companies, copies of the fixture's one (the watchlist only checks that the stock exists)
+    let db = rusqlite::Connection::open(&a.st.cfg.game_db).unwrap();
+    db.execute_batch(
+        "CREATE TEMP TABLE c AS SELECT * FROM companies WHERE id=1;
+         UPDATE c SET id=2, code=code || 'b'; INSERT INTO companies SELECT * FROM c;
+         UPDATE c SET id=3, code=code || 'c'; INSERT INTO companies SELECT * FROM c;",
+    )
+    .unwrap();
+    let me = a.checked("/api/v1/me", "/api/v1/me", c).await;
+    assert_eq!(me["onboarding"]["watched"], false);
+    assert_eq!(me["onboarding"]["traded"], false);
+    assert_eq!(me["onboarding"]["marks"], json!([]));
+    let w = a.checked("/api/v1/me/watchlist", "/api/v1/me/watchlist", c).await;
+    assert_eq!(w["items"], json!([]));
+
+    // add (twice is the same), newest first
+    for _ in 0..2 {
+        let r = a.req("PUT", "/api/v1/me/watchlist/1", None, &h).await;
+        assert_eq!(r.status, 200, "{}", r.json);
+        a.validate(&a.schema("PUT", "/api/v1/me/watchlist/{id}", 200), &r.json, "watch");
+    }
+    let r = a.req("PUT", "/api/v1/me/watchlist/2", None, &h).await;
+    assert_eq!(r.json["items"], json!([2, 1]), "{}", r.json);
+    err(&a.req("PUT", "/api/v1/me/watchlist/999999", None, &h).await, 404, "stock_not_found");
+    err(&a.req("PUT", "/api/v1/me/watchlist/1", None, &[]).await, 401, "unauthenticated");
+
+    // removing keeps the 加入过自选 step done
+    let r = a.req("DELETE", "/api/v1/me/watchlist/2", None, &h).await;
+    assert_eq!(r.json["items"], json!([1]));
+    a.req("DELETE", "/api/v1/me/watchlist/1", None, &h).await;
+    let me = a.checked("/api/v1/me", "/api/v1/me", c).await;
+    assert_eq!(me["onboarding"]["watched"], true);
+
+    // import a browser's list (newest first): unknown ids dropped, duplicates once, order kept, on top
+    a.req("PUT", "/api/v1/me/watchlist/1", None, &h).await;
+    let r = a.req("POST", "/api/v1/me/watchlist/import", Some(json!({"items": [3, 999999, 2, 1, 3]})), &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/watchlist/import", 200), &r.json, "import");
+    assert_eq!(r.json["items"], json!([3, 2, 1]));
+    err(&a.req("POST", "/api/v1/me/watchlist/import", Some(json!({"items": "1"})), &h).await, 400, "invalid_request");
+
+    // marks
+    let r = a.req("POST", "/api/v1/me/marks/guide.stock", None, &h).await;
+    assert_eq!(r.status, 200, "{}", r.json);
+    a.validate(&a.schema("POST", "/api/v1/me/marks/{key}", 200), &r.json, "mark");
+    let marks = r.json["onboarding"]["marks"].as_array().unwrap().clone();
+    assert!(marks.contains(&json!("guide.stock")) && marks.contains(&json!("watch")), "{marks:?}");
+    err(&a.req("POST", "/api/v1/me/marks/watch", None, &h).await, 400, "invalid_request");
+}

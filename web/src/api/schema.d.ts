@@ -722,6 +722,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/marks/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 记录一次性的新手引导标记：`guide.stock`、`guide.order`（页面引导已看过）、`steps.closed`（入门步骤已关闭）、
+         *     `first_fill`（首笔成交说明已看过）
+         */
+        post: operations["mark"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/orders": {
         parameters: {
             query?: never;
@@ -821,6 +841,61 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 自选 */
+        get: operations["watchlist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/watchlist/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 合并自选：把另一份列表（例如浏览器里的旧自选，新加入的在前）中还没有的股票加到自选最前面，保持它们原来的顺序。
+         *     不存在的股票和超出上限的部分忽略。
+         */
+        post: operations["import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/watchlist/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 加入自选（已在自选中时不变） */
+        put: operations["watch"];
+        post?: never;
+        /** 移出自选（不在自选中时不变） */
+        delete: operations["unwatch"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2169,6 +2244,8 @@ export interface components {
             initial_cash: components["schemas"]["Money"];
             /** @description 融资融券负债 */
             liabilities: components["schemas"]["Money"];
+            /** @description 入门步骤和新手引导 */
+            onboarding: components["schemas"]["Onboarding"];
             /** @description 还没有同意或签署的文件（当前版本）；不为空时不能委托、认购或开通信用账户 */
             pending_documents: components["schemas"]["PendingDocument"][];
             restructure: components["schemas"]["RestructureState"];
@@ -2344,6 +2421,24 @@ export interface components {
             } | null;
             /** Format: int64 */
             total: number;
+        };
+        /** @description 入门步骤的完成情况和新手引导的标记 */
+        Onboarding: {
+            /** @description 收到过分红 */
+            dividend: boolean;
+            /**
+             * @description 记过的一次性标记：`guide.stock`、`guide.order`（页面引导已看过），`steps.closed`（入门步骤已关闭），
+             *     `first_fill`（首笔成交说明已看过），`watch`（加入过自选）
+             */
+            marks: string[];
+            /** @description 已签署风险揭示书 */
+            signed: boolean;
+            /** @description 有过成交 */
+            traded: boolean;
+            /** @description 已完成身份验证 */
+            verified: boolean;
+            /** @description 加入过自选（之后移出不改变） */
+            watched: boolean;
         };
         Order: {
             average_fill_price: null | components["schemas"]["Money"];
@@ -2910,6 +3005,11 @@ export interface components {
             /** @description 验证方式：`qq`（绑定 QQ）；未验证时为 null */
             method: string | null;
             verified: boolean;
+        };
+        /** @description 自选，新加入的在前 */
+        Watchlist: {
+            /** @description 股票 id */
+            items: number[];
         };
         Work: {
             /** @description 已播各集的讨论（最多最近 26 集） */
@@ -4478,6 +4578,36 @@ export interface operations {
             };
         };
     };
+    mark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 标记 */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     orders: {
         parameters: {
             query?: {
@@ -4723,6 +4853,124 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MyTradePage"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    watchlist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Watchlist"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    import: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Watchlist"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Watchlist"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    watch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Watchlist"];
+                };
+            };
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    unwatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 股票 id */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Watchlist"];
                 };
             };
             default: {

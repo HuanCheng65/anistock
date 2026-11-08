@@ -12,7 +12,8 @@ type Purpose = 'register' | 'login'
 const session = useSession()
 const router = useRouter()
 const route = useRoute()
-const mode = ref<Purpose>(route.query.invite ? 'register' : 'login')
+// ?register (the link in promotion posts) or an invite link opens on 注册
+const mode = ref<Purpose>(route.query.invite || 'register' in route.query ? 'register' : 'login')
 const username = ref('')
 const password = ref('')
 const invite = ref(typeof route.query.invite === 'string' ? route.query.invite : '')

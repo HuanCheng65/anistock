@@ -65,6 +65,10 @@
 | | `POST /api/v1/me/restructure` | 玩家 | `POST /api/me/restructure`（开发中） |
 | | `POST /api/v1/me/agreements` | 玩家 | 新 |
 | | `POST /api/v1/me/announcements/{id}/read` | 玩家 | 新 |
+| | `GET /api/v1/me/watchlist` | 玩家 | 新（自选） |
+| | `PUT /api/v1/me/watchlist/{id}`、`DELETE /api/v1/me/watchlist/{id}` | 玩家 | 新 |
+| | `POST /api/v1/me/watchlist/import` | 玩家 | 新 |
+| | `POST /api/v1/me/marks/{key}` | 玩家 | 新（新手引导） |
 | | `DELETE /api/v1/me` | 玩家 | 新（注销账号） |
 | | `GET /api/v1/assessments/{risk\|margin-quiz}` | 无 | 新 |
 | | `POST /api/v1/me/assessments/{risk\|margin-quiz}` | 玩家 | 新 |
@@ -454,6 +458,12 @@ X-Act-As: qq:123456789
 运营公告的已读标记。`Me.announcement` 是登录后要弹出的公告：开户之后发布、还没有标记已读的最新一条（`id`、`title`、`body` 纯文本空行分段、`published_at`），没有时为 `null`。标记已读后返回 `Me`，下一条未读的公告（如果有）出现在 `Me.announcement`。重复标记不报错；公告不存在时 404 `not_found`。
 
 公告由运营者在服务器上发布：`anistock announce <标题> <正文文件> [--no-popup]`（服务运行时也可以执行；`--no-popup` 只记录、不弹出）。公告和已读记录是数据库的旁表（`announcements`、`announcement_reads`，迁移 V14），不在引擎状态里。
+
+#### 自选与新手引导
+
+`GET /api/v1/me/watchlist` 返回 `{"items": [股票 id, …]}`，新加入的在前。`PUT /api/v1/me/watchlist/{id}` 加入、`DELETE` 移出，都返回更新后的自选；重复操作不报错，股票不存在时 404 `stock_not_found`，超过 200 支时 422 `watchlist_full`。`POST /api/v1/me/watchlist/import`（`{"items": [...]}`，新加入的在前）把另一份列表里还没有的股票加到最前面，保持原来的顺序，不存在的股票和超出上限的部分忽略；网页第一次登录时用它合并浏览器里的旧自选。
+
+`Me.onboarding` 是入门步骤的完成情况（`signed`、`watched`、`traded`、`verified`、`dividend`）和一次性标记 `marks`。`POST /api/v1/me/marks/{key}` 记录标记并返回 `Me`，`key` 是 `guide.stock`、`guide.order`（页面引导已看过）、`steps.closed`（入门步骤已关闭）或 `first_fill`（首笔成交说明已看过）；`watch` 在第一次加入自选时自动记录，之后移出不撤销。迁移 V25 给已经有成交的玩家预先记上前四项。自选和标记是数据库的旁表（`watchlist`、`account_marks`），注销账号时删除。
 
 #### 风险测评与知识测试
 

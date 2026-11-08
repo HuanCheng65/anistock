@@ -12,7 +12,7 @@ use serde_json::Value;
 use utoipa::OpenApi;
 
 use super::types::*;
-use super::{account, assess, bind, keys, media, password, corporate, credit, funds, futures, market, search, stocks, works};
+use super::{account, assess, bind, keys, media, onboarding, password, corporate, credit, funds, futures, market, search, stocks, works};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -25,7 +25,7 @@ use super::{account, assess, bind, keys, media, password, corporate, credit, fun
         works::works, corporate::actions, corporate::rights, corporate::subscribe, corporate::unsubscribe,
         account::me, account::portfolio, account::asset_history, account::orders, account::order_one, account::place,
         account::cancel, account::my_trades, account::ledger, account::restructure,
-        account::leaderboard, account::sign, account::read_announcement, account::close, assess::questions, assess::submit, credit::credit, credit::open, credit::repay, credit::stock_margin,
+        account::leaderboard, account::sign, account::read_announcement, onboarding::mark, onboarding::watchlist, onboarding::import, onboarding::watch, onboarding::unwatch, account::close, assess::questions, assess::submit, credit::credit, credit::open, credit::repay, credit::stock_margin,
         futures::list, futures::detail, futures::heat, futures::mine, futures::place, futures::cancel,
         funds::list, funds::detail, funds::mine, funds::submit, funds::cancel,
         account::challenge, account::register, account::login, account::logout, password::reset, password::change, password::bot_issue,

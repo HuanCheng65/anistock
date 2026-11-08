@@ -1,9 +1,20 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import BackButton from '../components/BackButton.vue'
 import { KYC_UNLOCKS } from '../kyc'
+import { useGuide } from '../stores/guide'
+import { useMarket } from '../stores/market'
 import { useSession } from '../stores/session'
 const session = useSession()
+const router = useRouter()
+const market = useMarket()
+const guide = useGuide()
+// the page guides once more: on the stock with the most turnover today
+function replay() {
+  guide.again()
+  const top = [...(market.stocks ?? [])].sort((a, b) => b.turnover - a.turnover)[0]
+  router.push(top ? `/stocks/${top.stock.id}` : '/stocks')
+}
 </script>
 
 <template>
@@ -41,13 +52,13 @@ const session = useSession()
       </li>
     </ol>
 
-    <section class="sec">
+    <section id="first-trade" class="sec">
       <h2>第一笔交易怎么下</h2>
       <ol>
-        <li>在“股票”里找到一部你在追的番，打开它的股票页。</li>
-        <li>选“买入”，填写数量。价格可以直接选盘口里最低的卖价，它会填入价格栏。</li>
+        <li>在“行情”里找到一部你在追的番，打开它的股票页。</li>
+        <li>选“买入”，填写数量。价格默认为卖 1，也就是盘口里最低的卖价；也可以在盘口里选一档价格。</li>
         <li>提交后能成交的部分立即成交，其余部分留在盘口等待，随时可以撤单。</li>
-        <li>没成交的委托在每天早上的日结时自动撤销。没有涨跌停，大额委托用限价委托更稳妥。</li>
+        <li>没成交的委托在每天早上的日结时自动撤销。没有涨跌停，大额委托先看盘口各档的股数，再决定价格。</li>
       </ol>
     </section>
 
@@ -76,6 +87,7 @@ const session = useSession()
       <RouterLink v-if="!session.me" to="/login" class="btn ghost">注册</RouterLink>
       <RouterLink to="/ipo" class="btn ghost">新股认购</RouterLink>
       <RouterLink to="/rules" class="btn ghost">规则</RouterLink>
+      <button type="button" class="btn ghost" @click="replay">重看引导</button>
     </div>
   </main>
 </template>
@@ -93,5 +105,6 @@ const session = useSession()
 .unlocks { margin: 10px 0 12px; border-top: 1px solid var(--hair-2); }
 .unlocks div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hair-2); font-size: 14px; }
 .unlocks dd { margin: 0; font-size: 12px; color: var(--muted); text-align: right; }
+#first-trade { scroll-margin-top: 64px; }
 .cta { display: flex; flex-wrap: wrap; gap: 8px; padding: 18px var(--gutter); }
 </style>

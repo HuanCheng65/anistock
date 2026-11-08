@@ -26,6 +26,7 @@ import { bigMoney, dir, hm, money, pct, qty, share, signed, weekdayTime } from '
 import { useAccount } from '../stores/account'
 import { useCredit } from '../stores/credit'
 import { useFutures } from '../stores/futures'
+import { useGuide, type GuideStep } from '../stores/guide'
 import { markEditing } from '../version'
 import { useMarket } from '../stores/market'
 import { usePrefs } from '../stores/prefs'
@@ -210,6 +211,55 @@ function onPick(price: number) {
   pick.value = { price, n: (pick.value?.n ?? 0) + 1 }
   if (!desk.value && !sheet.value) sheet.value = 'buy'
 }
+// ---- page guides: the stock page's (盘口, how the price moves) and the order panel's (对手价, 成交状态)
+const guide = useGuide()
+/** the book the order books draw: the live one, or the 涨跌 animation's */
+const shownBook = computed(() => guide.demo ?? book.value)
+const shownLast = computed(() => guide.demo?.last ?? q.value?.price)
+function stockSteps(): GuideStep[] {
+  const side = desk.value ? ['上方', '下方'] : ['左侧', '右侧']
+  const [buys, sells] = desk.value ? [side[1], side[0]] : [side[0], side[1]]
+  return [
+    { target: '[data-guide="price"]', title: '股价', body: '股价是最近一笔成交的价格。涨跌按昨天的收盘价计算。' },
+    { target: '[data-guide="book"]', title: '盘口', body: `${buys}是等待买入的委托，${sells}是等待卖出的委托。每行依次为档位、价格和股数。` },
+    { target: '[data-guide="ask1"]', title: '买 1 和卖 1', body: '卖 1 是目前最低的卖价，买 1 是目前最高的买价。以卖 1 的价格买入，会立即成交。' },
+    {
+      target: '[data-guide="book"]', title: '涨跌', demo: 'tick',
+      body: '以卖 1 的价格买入，成交后股价变为卖 1 的价格。以买 1 的价格卖出，股价变为买 1 的价格。',
+      book: () => (q.value ? { bids: book.value.bids.slice(0, 5), asks: book.value.asks.slice(0, 5), last: q.value.price } : null),
+    },
+    { target: '#stk-tab-heat', title: '热度', body: '热度来自真实观众的观看和讨论，决定公司营收。看好营收增长的玩家买入，看淡的玩家卖出。' },
+  ]
+}
+const orderSteps: GuideStep[] = [
+  { target: '[data-guide="oprice"]', title: '价格', body: '价格默认为对手价。买入时为卖 1，卖出时为买 1，按这个价格提交会立即成交。' },
+  { target: '[data-guide="ostate"]', title: '成交状态', body: '这里显示委托能否立即成交。买入价低于卖 1 时，委托进入盘口排队，卖价降到这个价格才成交。' },
+]
+// the stock page's guide once the page has its quote, after the book has had a moment to arrive (a step whose
+// element is missing, like 卖1 on an empty book, is skipped)
+let guideTimer: number | undefined
+watch(
+  () => !!(s.value && q.value && !subscribing.value),
+  (ready) => {
+    window.clearTimeout(guideTimer)
+    if (ready && !guide.mark) guideTimer = window.setTimeout(() => !sheet.value && !session.me?.announcement && guide.start('guide.stock', stockSteps()), 900)
+  },
+  { immediate: true },
+)
+// desktop: the order form is on the page, its guide follows the stock page's when that one was finished (not
+// skipped); phone: when the order sheet opens
+watch(() => guide.ended, (e) => {
+  if (e?.mark === 'guide.stock' && !e.skipped && desk.value) guide.start('guide.order', orderSteps)
+})
+watch(sheet, (v) => {
+  if (v) window.setTimeout(() => sheet.value && guide.start('guide.order', orderSteps), 380)
+  else if (guide.mark === 'guide.order') guide.abandon()
+})
+onBeforeUnmount(() => {
+  window.clearTimeout(guideTimer)
+  if (guide.mark) guide.abandon()
+})
+
 async function afterOrder() {
   await refresh()
   session.loadMe().catch(() => {})
@@ -278,14 +328,14 @@ function back() {
                 <div class="num prog">{{ progress }}</div>
               </div>
             </div>
-            <div class="price desk-only">
+            <div class="price desk-only" data-guide="price">
               <span v-flash="q.price" class="num big" :class="dir(change)">{{ money(q.price) }}</span>
               <span v-flash="q.price" class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
             </div>
           </section>
 
           <section class="quote">
-            <div class="pline phone-only">
+            <div class="pline phone-only" data-guide="price">
               <span v-flash="q.price" class="num big" :class="dir(change)">{{ money(q.price) }}</span>
               <span v-flash="q.price" class="num" :class="dir(change)">{{ signed(q.price - q.prev_close) }}&nbsp;&nbsp;{{ pct(change) }}</span>
             </div>
@@ -313,8 +363,8 @@ function back() {
           </section>
 
           <!-- phone: book and tape on the terminal surface -->
-          <section v-if="!subscribing" class="term booksec phone-only">
-            <OrderBook :bids="book.bids" :asks="book.asks" layout="split" @pick="onPick" />
+          <section v-if="!subscribing" class="term booksec phone-only" data-guide="book">
+            <OrderBook :bids="shownBook.bids" :asks="shownBook.asks" layout="split" @pick="onPick" />
             <TradeTape :trades="tape" :limit="5" class="tape" />
           </section>
 
@@ -351,7 +401,7 @@ function back() {
 
       <aside v-if="s && q" class="desk-only right term" aria-label="交易">
         <template v-if="!subscribing">
-          <section class="tsec"><OrderBook :bids="book.bids" :asks="book.asks" layout="stack" :last="q.price" :prev-close="q.prev_close" @pick="onPick" /></section>
+          <section class="tsec" data-guide="book"><OrderBook :bids="shownBook.bids" :asks="shownBook.asks" layout="stack" :last="shownLast" :prev-close="q.prev_close" @pick="onPick" /></section>
           <section class="tsec"><OrderForm :stock="s" :book="book" :pick="pick" @placed="afterOrder" /></section>
           <section class="tsec last"><TradeTape :trades="tape" :limit="12" /></section>
         </template>
@@ -379,7 +429,10 @@ function back() {
             <span class="num" :class="change > 0 ? 'tup' : change < 0 ? 'tdown' : ''">{{ money(q.price) }}</span>
             <button type="button" class="iconbtn x" aria-label="关闭" @click="sheet = null"><Icon name="close" :size="20" /></button>
           </div>
-          <OrderForm :stock="s" :book="book" :pick="pick" :initial-side="sheet" @placed="afterOrder" />
+          <div class="sheetgrid">
+            <OrderForm :stock="s" :book="book" :pick="pick" :initial-side="sheet" @placed="afterOrder" />
+            <OrderBook class="sheetbook" :bids="book.bids" :asks="book.asks" layout="stack" :last="q.price" :prev-close="q.prev_close" @pick="onPick" />
+          </div>
         </div>
       </div>
     </template>
@@ -458,6 +511,15 @@ function back() {
 .sheethead { display: flex; align-items: center; gap: 10px; padding: 6px 0 8px; font-size: 15px; }
 .sheethead .serif { flex: 1; min-width: 0; font-weight: 600; }
 .x { color: var(--t-ink-2); margin-right: -10px; }
+/* the order sheet: the form, and the book beside it to price from */
+.sheetgrid { display: grid; grid-template-columns: minmax(0, 1fr) 148px; gap: 12px; align-items: start; }
+.sheetbook { font-size: 11px; }
+/* beside the book the form is narrow: labels above their fields */
+.sheetgrid :deep(.row) { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.sheetgrid :deep(.counter) { padding: 0 8px; }
+.sheetgrid :deep(.impact) { padding-left: 0; }
+.sheetbook :deep(.lv) { font-size: 11.5px; padding: 2px 2px; gap: 6px; }
+.sheetbook :deep(.mid) { font-size: 13px; padding: 4px 2px; }
 .tup { color: var(--t-up); }
 .tdown { color: var(--t-down); }
 .page.stockpage { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
