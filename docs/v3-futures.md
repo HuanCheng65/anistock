@@ -338,9 +338,9 @@
 
 ### 6.1 上线步骤（v0.7.0）
 
-`server/game.toml` 的 `[futures] enabled = true` 和带期货的服务程序在同一个版本里发布：`update.sh` 用检出的 tag 对应的程序，配置和程序一致。
+`server/game.toml` 的 `[futures] enabled = true` 和带期货的服务程序在同一个版本里发布：`update.sh` 在 main 上 pull 之后，用最新提交的 tag（没有就用最新的发布版本）对应的程序，配置和程序一致。
 
-1. `git fetch && git checkout v0.7.0 && bash deploy/update.sh`（迁移 V19 自动执行，执行前自动备份）。
+1. `bash deploy/update.sh`（在 main 上运行：脚本自己 pull，main 的最新提交就是 v0.7.0，装的是这个版本的程序；迁移 V19 自动执行，执行前自动备份）。
 2. 用第 1 版常数重算后台指数（11 月 5 日起用旧的滚动常数算过，还没公开、没结算过）：
    `mv data/derived/heat_index.db data/derived/heat_index.pre-v1.db && uv run engine/heat_index.py`
 3. 日本分项按账号去重的首次同步，约 2 分钟，避开 06:00 的采集：`uv run collect.py --annict-viewers`
