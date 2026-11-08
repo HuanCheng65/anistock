@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { ApiError } from '../api'
-import BrandMark from '../components/BrandMark.vue'
+import BrandLockup from '../components/BrandLockup.vue'
 import Tabs from '../components/Tabs.vue'
 import { powSupported, solve, type PowSolution } from '../pow'
 import { useSession } from '../stores/session'
@@ -100,9 +100,7 @@ async function submit() {
 <template>
   <main class="login">
     <div class="brand">
-      <BrandMark :size="64" />
-      <div class="serif word">AniEx</div>
-      <div class="serif cn">安易</div>
+      <BrandLockup :height="44" />
     </div>
 
     <Tabs v-model="mode" :items="tabs" label="账号" :size="17" class="tabs" />
@@ -137,8 +135,6 @@ async function submit() {
 <style scoped>
 .login { min-height: 100vh; min-height: 100dvh; max-width: 420px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; }
 .brand { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: calc(88px + env(safe-area-inset-top, 0px)) 0 36px; border-bottom: 1px solid var(--rule); }
-.word { font-size: 34px; font-weight: 900; line-height: 1.1; }
-.cn { font-size: 17px; font-weight: 600; color: var(--ink-2); }
 .tabs { padding-top: 20px; border-bottom: 0; }
 .form { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; }
 .form .btn { height: 48px; font-size: 16px; margin-top: 4px; }

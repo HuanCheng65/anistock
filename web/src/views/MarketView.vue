@@ -3,7 +3,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Quote } from '../api'
-import BrandMark from '../components/BrandMark.vue'
+import BrandLockup from '../components/BrandLockup.vue'
 import Cover from '../components/Cover.vue'
 import EmptyState from '../components/EmptyState.vue'
 import Icon from '../components/Icon.vue'
@@ -101,8 +101,7 @@ function remember(key: string, label: string, rows: Quote[]) {
 <template>
   <main class="page market">
     <header class="pagehead phone-only brandhead">
-      <BrandMark :size="28" />
-      <span class="serif word">AniEx</span><span class="cn">安易</span>
+      <BrandLockup :height="22" />
       <MarketClock class="clock" />
       <button type="button" class="iconbtn sbtn" aria-label="搜索" @click="searching = true"><Icon name="search" :size="20" /></button>
     </header>
@@ -261,8 +260,6 @@ function remember(key: string, label: string, rows: Quote[]) {
 
 <style scoped>
 .brandhead { gap: 10px; }
-.word { font-weight: 900; font-size: 19px; letter-spacing: 0.01em; }
-.cn { font-size: 13px; color: var(--ink-2); }
 .clock { margin-left: auto; }
 .sbtn { width: 36px; height: 36px; }
 .searchsheet { position: fixed; inset: 0; z-index: 50; background: var(--ground); overflow: auto; }
