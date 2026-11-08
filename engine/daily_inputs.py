@@ -564,6 +564,7 @@ class ShowInputs:
     schedule: list = field(default_factory=list)   # phase 1
     hiatus: bool = False                   # docs/design/corporate.md
     next_airing: dict | None = None       # docs/design/corporate.md
+    genres: list = field(default_factory=list)     # docs/design/funds.md (the theme indices; the close reads it)
 
 
 @dataclass(frozen=True)

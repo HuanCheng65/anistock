@@ -133,6 +133,7 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
         s.first_air = min([d for d in ep_days[:1]] + ([start_date] if start_date else [])) if (ep_days or start_date) else None
         if s.first_air is None:
             continue
+        _extend_into_gap(s, gaps)
         s.list_day = max(start, s.first_air - timedelta(days=u["ipo_lead_days"]))
         v = p["valuation"]
         s.long_runner = (end - s.first_air).days > 365 * v["long_runner_years"]
@@ -145,9 +146,18 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
     return shows, end
 
 
+GAP_BASELINE = range(20, 48)   # days before a day whose row counts give its usual count
+GAP_TREND_SHARE = 0.5          # a day whose total trending is under this share of the surrounding week's (a normal
+                               # weekly low is about 60%; 2026-03-31, partial, 43%)
+
+
 def find_gap_days(trends: dict[int, dict[date, dict]], end: date | None = None) -> set[date]:
-    """Days AniList lost data for everyone (e.g. 2026-07-06/07 have no rows at all). A day is a gap when
-    it has under half the usual row count, or its total trending is under 25% of the surrounding week's."""
+    """Days AniList lost data for everyone. AniList has no trend rows at all on 2026-07-06/07 and 2026-04-02..18 (its
+    daily trend job stopped while the site kept working: list entries grew as usual); 07-08 and 04-01 are partial
+    days (and 03-31, 43% of the week around it). A day is a gap when it has under half the usual row count, or its
+    total trending is under half the surrounding week's. The usual count is the median over 20–47 days earlier, so a gap of any length is seen (a
+    window around the day, as before, sees only empty days inside a long gap); near the start of the data, where
+    that window is mostly empty, the surrounding two weeks."""
     import statistics
     rows, trend = defaultdict(int), defaultdict(float)
     for t in trends.values():
@@ -163,9 +173,11 @@ def find_gap_days(trends: dict[int, dict[date, dict]], end: date | None = None) 
     # so a live daily close carries the last day forward instead of seeing zero attention
     last = max(days[-1], end) if end else days[-1]
     while d <= last:
-        near = [rows.get(d + timedelta(days=k), 0) for k in range(-7, 8) if k]
+        base = [rows[d - timedelta(days=k)] for k in GAP_BASELINE if rows.get(d - timedelta(days=k), 0)]
+        if len(base) < 7:
+            base = [rows.get(d + timedelta(days=k), 0) for k in range(-7, 8) if k]
         near_t = [trend[d + timedelta(days=k)] for k in range(-3, 4) if k and rows.get(d + timedelta(days=k), 0)]
-        if rows.get(d, 0) < 0.5 * statistics.median(near) or (near_t and trend[d] < 0.25 * statistics.median(near_t)):
+        if rows.get(d, 0) < 0.5 * statistics.median(base) or (near_t and trend[d] < GAP_TREND_SHARE * statistics.median(near_t)):
             gaps.add(d)
         d += timedelta(days=1)
     return gaps
@@ -173,7 +185,10 @@ def find_gap_days(trends: dict[int, dict[date, dict]], end: date | None = None) 
 
 def _fill_grid(s: Show, t: dict[date, dict], end: date, gaps: set[date] = frozenset()) -> None:
     """Dense daily grid. Stocks (popularity, inProgress, score) forward-fill; trending is a flow, so a show's
-    quiet day is 0 — except on market-wide gap days, where the previous day's value is carried forward."""
+    quiet day is 0. On market-wide gap days (find_gap_days) nothing was measured: a run of them between two measured
+    days is drawn straight between those days, for trending, popularity, inProgress and the episodes aired (so the
+    list adds of the gap are spread over it instead of landing on the first day back, and a show airing through the
+    gap stays airing); a run with no measured day after it (the latest days, live) carries the last day forward."""
     first = min(t)
     pop = inprog = 0.0
     score = None
@@ -198,6 +213,58 @@ def _fill_grid(s: Show, t: dict[date, dict], end: date, gaps: set[date] = frozen
         s.score.append(score)
         s.aired.append(aired)
         d += timedelta(days=1)
+    _bridge_gaps(s, gaps)
+
+
+def _extend_into_gap(s: Show, gaps: set[date]) -> None:
+    """A show that premiered inside a market-wide gap has no rows until the gap ends (most of the spring 2026
+    premieres: AniList's first rows are 2026-04-19). Its grid then starts at its premiere: the days back to the
+    premiere take the first measured day's trending, popularity, inProgress and score, and the episodes rise straight
+    from none to the first measured count, so the show is airing through the gap. List adds over those days are not
+    known (counted as none)."""
+    if not s.days or s.first_air is None or s.first_air >= s.days[0]:
+        return
+    lead = []
+    d = s.first_air
+    while d < s.days[0]:
+        if d not in gaps:
+            return                      # a measured day without rows for this show: not a gap's doing
+        lead.append(d)
+        d += timedelta(days=1)
+    k = len(lead)
+    s.days[:0] = lead
+    s.trending[:0] = [s.trending[0]] * k
+    s.popularity[:0] = [s.popularity[0]] * k
+    s.in_progress[:0] = [s.in_progress[0]] * k
+    s.score[:0] = [s.score[0]] * k
+    s.aired[:0] = [int(s.aired[k] * (i + 1) / (k + 1)) for i in range(k)]
+
+
+def _bridge_gaps(s: Show, gaps: set[date]) -> None:
+    """Draw each run of gap days straight between the measured days on either side (see _fill_grid)."""
+    n = len(s.days)
+    i = 0
+    while i < n:
+        if s.days[i] not in gaps:
+            i += 1
+            continue
+        j = i
+        while j < n and s.days[j] in gaps:
+            j += 1
+        # days i..j-1 are a gap; i-1 and j are measured (when they exist)
+        if i > 0 and j < n:
+            span = j - (i - 1)
+            for k in range(i, j):
+                f = (k - (i - 1)) / span
+                for series in (s.trending, s.popularity, s.in_progress):
+                    series[k] = series[i - 1] + (series[j] - series[i - 1]) * f
+            # AniList books an episode count only on the day of a new episode: episodes aired in the gap show up at
+            # the next one after it, so the count is drawn up to that day (within two weeks of the gap's end)
+            m = next((x for x in range(j, min(n, j + 15)) if s.aired[x] > s.aired[i - 1]), None)
+            if m is not None:
+                for k in range(i, m):
+                    s.aired[k] = int(s.aired[i - 1] + (s.aired[m] - s.aired[i - 1]) * (k - (i - 1)) / (m - (i - 1)))
+        i = j
 
 
 def at(s: Show, series: list, d: date, default=0.0):
