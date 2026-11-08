@@ -1,4 +1,4 @@
-//! A replay's account of the futures (docs/v3-futures.md §4.5): every contract's forecast as the closes saw
+//! A replay's account of the futures (docs/design/futures.md §4.5): every contract's forecast as the closes saw
 //! it, how often the final price fell inside the forecast's 80% interval (at listing, at the middle of the
 //! period, in its last week), trading, and the market maker's result.
 

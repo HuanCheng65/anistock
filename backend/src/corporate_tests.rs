@@ -1,4 +1,4 @@
-//! Corporate actions on an in-memory engine (docs/v2-corporate.md §3): a split with lots and a short position,
+//! Corporate actions on an in-memory engine (docs/design/corporate.md §3): a split with lots and a short position,
 //! a rights issue with a subscriber, a lapsed holder and a short seller, a buyback through the book; and the
 //! public schedule's upcoming episodes.
 

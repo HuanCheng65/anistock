@@ -146,7 +146,7 @@ pub struct FutTrade {
     pub day: String,
 }
 
-/// Where a settlement price came from (docs/v3-futures.md §4.2).
+/// Where a settlement price came from (docs/design/futures.md §4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SettleSource {

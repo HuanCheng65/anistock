@@ -1,5 +1,5 @@
 // 融资融券: the player's credit account, opening it, direct repayment, and each stock's margin terms
-// (docs/v2-margin.md). The `credit` push on the `me` topic carries status changes (追保, 强制平仓, 穿仓).
+// (docs/design/margin.md). The `credit` push on the `me` topic carries status changes (追保, 强制平仓, 穿仓).
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { api, call, type CreditAccount, type StockMargin } from '../api'

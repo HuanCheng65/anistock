@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 热度期货 on a work (docs/v3-futures-ui.md §11): the contract as one question, "will these 4 weeks average
+// 热度期货 on a work (docs/design/futures-ui.md §11): the contract as one question, "will these 4 weeks average
 // above the price?", its chart (FutChart), the player's position as one sentence, the contract's numbers and
 // book, and 押更热 / 押更冷. Desk: the same frame as the stock page, the book and the order form in the right
 // column; phone: a bar at the bottom opening the order sheet.

@@ -1,5 +1,5 @@
 """Value a live-like world two ways and compare every listed stock: the check to run before any change to the
-valuation, its parameters or its inputs reaches the game (docs/restart-v0.6.6.md and the 2026-11-07 repricings:
+valuation, its parameters or its inputs reaches the game (`git show 99514a7:docs/restart-v0.6.6.md` and the 2026-11-07 repricings:
 the replays of sim/quickcheck.py start from a 7/7 world and miss stocks only the seed lists, and a median hides
 the few stocks a change moves several times over).
 

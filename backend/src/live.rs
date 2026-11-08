@@ -98,7 +98,7 @@ impl ChangeSink for Tee {
 
 /// Control messages from the WebSocket tasks (and the loops) to the engine thread.
 pub enum Ctl {
-    /// `key`: the API key the connection authenticated with (docs/v2-api-access.md), if any
+    /// `key`: the API key the connection authenticated with (docs/design/api-access.md), if any
     Add { id: u64, account: Option<i64>, bot: bool, key: Option<i64>, exp: Option<i64>, tx: mpsc::Sender<Utf8Bytes>, kill: oneshot::Sender<u16> },
     Sub { id: u64, topics: Vec<String>, since: HashMap<String, i64> },
     Unsub { id: u64, topics: Vec<String> },

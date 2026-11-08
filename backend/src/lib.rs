@@ -2,7 +2,7 @@
 //!
 //! The exchange rules started as a port of v1 (`server/`) and are still checked against it by the engine
 //! and close difftests (`backend/difftest/`). The HTTP API is API v1 (docs/api-v1.md). See
-//! `docs/v2-architecture.md`.
+//! `docs/design/architecture.md`.
 
 pub mod config;
 pub mod corporate;

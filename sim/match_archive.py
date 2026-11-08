@@ -1,6 +1,6 @@
 """AniList shows -> Bangumi subjects by title, against the subjects of the Bangumi archive (sim/backfill_bgm_archive.py
 --all-anime, table bgm_anime_subjects): for backfilling the heat index's cn market over shows the collector never
-tracked (docs/v3-futures.md §3.7). Only shows without a match yet (engine/economy.py effective_matches); a show
+tracked (docs/design/futures.md §3.7). Only shows without a match yet (engine/economy.py effective_matches); a show
 matches a subject whose Japanese or Chinese name normalises to one of its titles (sim/match.py `norm`) and that
 first aired within 60 days of it, the nearest date winning; failing that, a name one of its titles is a prefix of
 (or the reverse; 4 characters or more) in the same window; failing that, the same title without its season

@@ -1,4 +1,4 @@
-//! Listing contracts at the daily close (docs/v3-futures.md §4.1): each period once, on its listing day, if
+//! Listing contracts at the daily close (docs/design/futures.md §4.1): each period once, on its listing day, if
 //! the model's forecast of its average index clears the floor and the work's company is listed and not on
 //! its way out. A forecast cut later does not delist a contract.
 

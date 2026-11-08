@@ -1,4 +1,4 @@
-//! A stock's works (docs/v2-series.md §3): each work's broadcast schedule from the public sources, the
+//! A stock's works (docs/design/series.md §3): each work's broadcast schedule from the public sources, the
 //! per-episode discussion on Bangumi, and the series' sequel status (docs/api-v1.md §4.2.10).
 //!
 //! Only dates a public source gives are shown: the episodes aired (the game's own record), Bangumi's dated

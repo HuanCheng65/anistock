@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 找回密码 (docs/v2-account.md §13): a code from the QQ bot (private message, /安易 找回密码), or from the
+// 找回密码 (docs/design/account.md §13): a code from the QQ bot (private message, /安易 找回密码), or from the
 // operator for an account without 身份验证.
 import { computed, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'

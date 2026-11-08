@@ -1,6 +1,6 @@
 # 数据来源条款核对：AniList、Bangumi、Annict
 
-docs/v3-futures.md §3.3 要求上线前逐条核对三家的条款。本文是核对结果，2026-11-08 读取原文。只读核对，没有改代码。
+docs/design/futures.md §3.3 要求上线前逐条核对三家的条款。本文是核对结果，2026-11-08 读取原文。只读核对，没有改代码。
 
 标记：**【解读】** 表示条文没有直接写到，是按文意推断的结论，平台可能有不同理解；没有标记的结论有原文直接支持。本文不是法律意见；期货是否构成赌博之类的法律问题不在三家条款的范围内，只在 §5 提一句。
 
@@ -29,7 +29,7 @@ docs/v3-futures.md §3.3 要求上线前逐条核对三家的条款。本文是�
 | 3 | Annict 拉取改为串行：`collect.py` `ANNICT_VIEWER_WORKERS = 4` 改为 1，`sim/backfill_annict_records.py --workers` 默认改为 1 | 帮助页“リクエストは並列にせず、1件ずつ順番に送ってください”，API 条款第 11 条把帮助页的限制纳入条款。总量 300/分钟在上限 600 以内，问题只在并行 | 尽快（一行） |
 | 4 | User-Agent 改为带开发者和项目地址，例如 `HuanCheng65/anistock (https://github.com/HuanCheng65/anistock)`（`collect.py`、`engine/flash_fetch.py`、封面的 `AniEx/0.4 (cover cache)`） | Bangumi 要求“带有开发者个人 ID 和应用名称”，开源项目“附上项目主页”，否则“可能会被禁用”。Annict 第 8 条也希望写名称和联系方式，但那条针对网页抓取，API 没有要求 | 尽快（一行） |
 | 5 | AniList 原始 JSON 只保留短期（例如最近两次快照），长期只存派生的每日指标；不再做大范围的历史补登；给 contact@anilist.co 发信说明用途 | API 使用条款“Using the AniList API as a backup or data storage service is strictly prohibited”“Hoarding or mass collection … is strictly prohibited”【解读：现在的规模（约 265 部作品每天一次）不像“mass collection”，但“保存原始数据以便以后改公式”接近“data storage”】 | 期货上线前 |
-| 6 | `annict_viewers` 定保留规则：作品离开采集范围（不再计算指数）后删除这部作品各集的行；停止使用 Annict API 时全部删除（含备份）。写进 docs/v3-futures.md §3.1 | Annict 第 7 条：利用者情報只能在“アプリケーションの提供に必要な範囲”内保存，停止使用 API 时要全部删除 | 期货上线前 |
+| 6 | `annict_viewers` 定保留规则：作品离开采集范围（不再计算指数）后删除这部作品各集的行；停止使用 Annict API 时全部删除（含备份）。写进 docs/design/futures.md §3.1 | Annict 第 7 条：利用者情報只能在“アプリケーションの提供に必要な範囲”内保存，停止使用 API 时要全部删除 | 期货上线前 |
 | 7 | 规则页的数据来源说明加上链接和 Bangumi 的许可：“条目信息来自 Bangumi（CC BY-SA）” | Bangumi 条目信息“遵循 Creative Commons BY-SA License 协议”；Annict、AniList 不要求署名 | 期货上线前 |
 | 8 | 决定是否公开各市场分项（见 §5.2）：公开的常数可以把分项点数反推成原始增量，所以“只公开点数不公开增量”没有区别。真正的选择是公开分项还是只公开总指数 | Annict 明确允许；Bangumi 不明确；AniList 没有规定 | 主会话决定 |
 | 9 | 停用 `sim/fetch_comments.py`（取 `next.bgm.tv/p1` 的各集评论） | 不是文档化的 `api.bgm.tv` 接口，开发者协议要求“在 API 提供的接口范围内获取数据”；评论是用户数据。脚本只留时间，研究已完成 | 不急 |
@@ -74,7 +74,7 @@ docs/v3-futures.md §3.3 要求上线前逐条核对三家的条款。本文是�
 | 存储 | 原始 JSON 快照长期保存（`data/anistock.db`）；`annict_viewers (episode_id, user_id, first_at)` 用于去重和刷量监控，不公开；数据不进仓库（`.gitignore`） | `collect.py` |
 | 公开（页面） | 指数和三个市场分项、Bangumi 评分和在看人数、AniList 评分和人气、Annict 观看人数、各集吐槽数、封面 | 个股页 |
 | 公开（API） | 同上，无需认证：`/stocks/{id}`（`audiences`）、`/stocks/{id}/works`、`/stocks/{id}/heat`、`/futures/{id}` 的每日 `us`/`cn`/`jp`、`/stocks/{id}/cover` | `backend/src/api/v1/` |
-| 游戏 | 营收按平台热度分配；热度期货按 4 周平均指数现金结算；虚拟货币星辉，不能充值或提现，没有广告和付费 | docs/game-design.md、docs/v3-futures.md §4 |
+| 游戏 | 营收按平台热度分配；热度期货按 4 周平均指数现金结算；虚拟货币星辉，不能充值或提现，没有广告和付费 | docs/game-design.md、docs/design/futures.md §4 |
 | 署名 | 规则页和设置页页脚：“作品数据来自 AniList、Bangumi、Annict 的公开统计。” | `web/src/views/RulesView.vue` |
 
 `us`/`cn`/`jp` 是经过校验的每日热度：us 是 AniList 几个量的加权组合，cn 是 Bangumi 标记人数的日增量，jp 是 Annict 按账号和集去重后的记录日增量（`engine/heat_index.py`）。
@@ -165,7 +165,7 @@ Bangumi 没有用户协议和隐私政策。约束开发者的是版权声明页
 | 做法 | Annict | Bangumi | AniList | 代价 |
 |---|---|---|---|---|
 | 公开分项（现在的设计） | 允许 | 不明确 | 允许【解读】 | 无 |
-| 只公开总指数 | 允许 | 基本没有问题【解读】 | 允许 | 违背 docs/v3-futures.md §1“每天公布每部作品的指数和各市场分项”，玩家无法复算、核对补值 |
+| 只公开总指数 | 允许 | 基本没有问题【解读】 | 允许 | 违背 docs/design/futures.md §1“每天公布每部作品的指数和各市场分项”，玩家无法复算、核对补值 |
 
 建议先保留分项，同时向 Bangumi 询问（§6）；如果 Bangumi 不同意，再改为只公开总指数。这需要主会话决定。
 

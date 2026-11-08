@@ -1,4 +1,4 @@
-//! 融资融券: margin buying and short selling (docs/v2-margin.md).
+//! 融资融券: margin buying and short selling (docs/design/margin.md).
 //!
 //! The player's own account is the credit account: cash and every holding are collateral. What it owes is
 //! kept per stock: `margin_debts` (financing: principal and unpaid interest) and `short_positions` (shares
@@ -39,7 +39,7 @@ pub const CALL: &str = "call";
 pub const LIQUIDATING: &str = "liquidating";
 pub const DEFAULTED: &str = "defaulted";
 
-/// `[margin]` of game.toml (docs/v2-margin.md §11).
+/// `[margin]` of game.toml (docs/design/margin.md §11).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MarginRules {

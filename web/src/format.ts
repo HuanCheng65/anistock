@@ -193,7 +193,7 @@ export function weekdayTime(ts: string): string {
 
 // ---------------------------------------------------------------- labels
 
-/** The news groups (the server's `category`) as badges and filter chips. `media`: external news (docs/v3-news.md),
+/** The news groups (the server's `category`) as badges and filter chips. `media`: external news (docs/design/news.md),
  * published as news items from [news] mode = publish. */
 export const NEWS_CATEGORY: Record<string, { label: string; tone: 'flash' | 'notice' | 'air' | 'close' | 'media'; chip?: false }> = {
   flash: { label: '快讯', tone: 'flash' },

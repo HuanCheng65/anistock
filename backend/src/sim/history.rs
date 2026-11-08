@@ -1,4 +1,4 @@
-//! `anistock replay-history`: the pre-launch history under the current model (docs/ops-rebuild-replay.md): the integrated replay
+//! `anistock replay-history`: the pre-launch history under the current model (docs/ops/rebuild-replay.md): the integrated replay
 //! (`sim::run`: the real engine, the real daily close, the NPC market) from a start world to a given day, with
 //! the candles and company_days its closes write. `server/tools/rebuild_replay.py` makes the start world and
 //! writes the result into the game database; this command only reads the inputs and its own start world. It is

@@ -1,4 +1,4 @@
-//! Corporate actions (docs/v2-corporate.md §3, docs/api-v1.md): a stock's splits, rights issues and buybacks,
+//! Corporate actions (docs/design/corporate.md §3, docs/api-v1.md): a stock's splits, rights issues and buybacks,
 //! and rights subscriptions.
 
 use std::sync::Arc;

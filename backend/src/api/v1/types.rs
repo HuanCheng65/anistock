@@ -95,7 +95,7 @@ pub enum NewsCategory {
     Notice,
     Airing,
     Close,
-    /// 外部媒体的新闻（docs/v3-news.md）
+    /// 外部媒体的新闻（docs/design/news.md）
     Media,
 }
 
@@ -412,7 +412,7 @@ pub struct Rules {
     pub heat_index: HeatIndexMethod,
 }
 
-/// 安易热度指数的编制方法（docs/v3-futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模
+/// 安易热度指数的编制方法（docs/design/futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模
 #[derive(Serialize, ToSchema)]
 pub struct HeatIndexMethod {
     pub version: String,
@@ -737,7 +737,7 @@ pub struct ExDay {
     pub price_factor: f64,
 }
 
-// ---------------------------------------------------------------- corporate actions (docs/v2-corporate.md)
+// ---------------------------------------------------------------- corporate actions (docs/design/corporate.md)
 
 /// 公司资本政策的一次行动：拆股、配股或回购
 #[derive(Serialize, ToSchema)]
@@ -939,7 +939,7 @@ pub struct ApiTradingSteps {
     pub disclosure_version: i64,
 }
 
-/// 交易热度期货的前置步骤（docs/v3-futures-ui.md §4）
+/// 交易热度期货的前置步骤（docs/design/futures-ui.md §4）
 #[derive(Serialize, ToSchema, Clone)]
 pub struct FuturesSteps {
     /// 开通了信用账户（期货用它的保证金）
@@ -1061,7 +1061,7 @@ pub struct CloseAccountRequest {
     pub confirm: bool,
 }
 
-/// 身份验证（docs/v2-account.md §2）
+/// 身份验证（docs/design/account.md §2）
 #[derive(Serialize, ToSchema, Clone)]
 pub struct Verification {
     pub verified: bool,
@@ -1325,7 +1325,7 @@ pub struct BindingsResponse {
     pub items: Vec<Binding>,
 }
 
-/// 外部新闻：news-feed 股市扩展的一次判断（docs/v3-news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并
+/// 外部新闻：news-feed 股市扩展的一次判断（docs/design/news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并
 #[derive(Deserialize, ToSchema)]
 pub struct MediaNewsRequest {
     /// news-feed 的事件 id；同一个 id 再推是更新判断
@@ -1382,7 +1382,7 @@ pub struct RedeemResponse {
     pub account: UserRef,
 }
 
-/// API 密钥（docs/v2-api-access.md）。明文只在生成时返回一次
+/// API 密钥（docs/design/api-access.md）。明文只在生成时返回一次
 #[derive(Serialize, ToSchema, Clone)]
 pub struct ApiKey {
     pub id: i64,

@@ -1,4 +1,4 @@
-//! Value agents who sell short (docs/v2-margin.md §8). A fixed share of the value agents (`npc_short_frac`
+//! Value agents who sell short (docs/design/margin.md §8). A fixed share of the value agents (`npc_short_frac`
 //! of `[margin]`) open credit and, when a stock trades well above what they think it is worth, borrow it from
 //! the rights holders and sell it at or above the last price; they buy it back once the price is under their
 //! value. Same lending pool, prices, fees and forced liquidation as players.

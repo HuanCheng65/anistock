@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// A rights issue in its subscription days (docs/v2-corporate.md §3.3): terms and, for a holder, the 配股认购 form.
+// A rights issue in its subscription days (docs/design/corporate.md §3.3): terms and, for a holder, the 配股认购 form.
 // Rights cannot be traded; what is not subscribed is taken by the rights holders at the ex-rights price and the
 // difference is paid to the holder, so not acting is not a loss.
 import { computed, ref, watch } from 'vue'

@@ -1,4 +1,4 @@
-//! 热度期货 (docs/v3-futures.md §4–5): the contracts, one contract's market, a work's published heat index, and
+//! 热度期货 (docs/design/futures.md §4–5): the contracts, one contract's market, a work's published heat index, and
 //! the caller's futures: positions, orders, margin. Prices are in hundredths of an index point (`IndexPrice`);
 //! a contract's `tick_value` says what one hundredth of one lot is worth. The model's forecast is hidden like
 //! the stocks' value: no endpoint shows it.
@@ -455,7 +455,7 @@ pub async fn place(
     if !st.cfg.futures.enabled {
         return Err(order_error("期货交易还没有开放"));
     }
-    // the futures steps (docs/v3-futures-ui.md §4); an order that only closes a position needs none of them
+    // the futures steps (docs/design/futures-ui.md §4); an order that only closes a position needs none of them
     let st2 = st.clone();
     let refusal = read(&st, move |c| super::assess::futures_steps(&st2, c, me)).await?;
     let refusal = super::assess::futures_refusal(&refusal);

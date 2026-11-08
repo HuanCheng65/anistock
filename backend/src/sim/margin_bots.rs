@@ -1,4 +1,4 @@
-//! The 融资融券 exploit tests (docs/v2-margin.md §9): a submodule of `bots` so the strategies share the
+//! The 融资融券 exploit tests (docs/design/margin.md §9): a submodule of `bots` so the strategies share the
 //! bot's state. Each runs as a player with the starting cash, opens credit on its first day (the bots start
 //! in the second week, after the account is old enough) and trades through the same engine.
 

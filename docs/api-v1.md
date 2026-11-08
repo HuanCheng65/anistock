@@ -181,7 +181,7 @@
 | `StockStatus` | `subscribing`、`listed`、`delisted` | 开放 |
 | `IpoStatus` | `upcoming`（认购未开始）、`open`（认购中）、`allotted`（已配售、未上市）、`listed`（已上市）、`cancelled`（取消发行） | 开放 |
 | `NewsKind` | `system`、`ipo`、`allotment`、`premiere`、`finale`、`dividend`、`rate`、`delisting`、`warning`、`vcm`、`flash`、`sequel`、`delay`、`hiatus`、`split`、`rights`、`buyback` | 开放 |
-| `NewsCategory` | `flash`（快讯）、`notice`（公告）、`airing`（放送）、`close`（日结）、`media`（媒体，外部新闻，docs/v3-news.md） | 封闭 |
+| `NewsCategory` | `flash`（快讯）、`notice`（公告）、`airing`（放送）、`close`（日结）、`media`（媒体，外部新闻，docs/design/news.md） | 封闭 |
 | `LedgerReason` | 见 §4.5.8 | 开放 |
 | `HolderKind` | `player`、`npc`、`market_maker`、`committee`、`unissued` | 开放 |
 | `NpcStyle` | `value`（价值型）、`trend`（趋势型）、`news`（消息型）、`retail`（散户型） | 开放 |
@@ -197,7 +197,7 @@
 | `notice` | 公告 | `system`、`ipo`、`allotment`、`delisting`、`warning`、`sequel`、`split`、`rights`、`buyback`，以及任何未知的新 kind |
 | `airing` | 放送 | `premiere`、`finale`、`delay`、`hiatus` |
 | `close` | 日结 | `dividend`、`rate` |
-| `media` | 媒体 | `media`（外部新闻，docs/v3-news.md） |
+| `media` | 媒体 | `media`（外部新闻，docs/design/news.md） |
 
 ### 2.8 空值
 
@@ -416,7 +416,7 @@ X-Act-As: qq:123456789
 
 #### `GET /api/v1/auth/challenge?purpose=register|login`
 
-注册模式和工作量证明的题目（设计见 `docs/v2-account.md` §3.2）。不缓存。
+注册模式和工作量证明的题目（设计见 `docs/design/account.md` §3.2）。不缓存。
 
 ```json
 {"registration": "open",
@@ -440,7 +440,7 @@ X-Act-As: qq:123456789
 
 #### `POST /api/v1/me/agreements`
 
-同意或签署一份文件（`docs/v2-account.md` §7）：
+同意或签署一份文件（`docs/design/account.md` §7）：
 
 ```json
 {"doc": "disclosure", "version": 1, "signature": "alice"}
@@ -544,9 +544,9 @@ POST /me/bind-codes ───────►  生成 8 位码，10 分钟有效
 
 - `POST /api/v1/me/password`（玩家）：`{"current_password", "new_password"}`。200，返回 `Me`，换发 cookie。错误：`invalid_request`（`current_password` 不正确、新密码不足 6 位）。
 - `POST /api/v1/bot/password-resets`（机器人令牌）：`{"platform": "qq", "external_id": "<openid>"}`。201，`{"code": "K7Q3-9MZD", "expires_at", "account": {"id", "username"}}`。错误：`not_bound`、`rate_limited`（同一 QQ 每小时 5 次）。
-- `POST /api/v1/bot/news`（机器人令牌）：news-feed 股市扩展推送一条判断过的外部新闻。格式、合并和三档模式见 `docs/v3-news.md` §2–3。
+- `POST /api/v1/bot/news`（机器人令牌）：news-feed 股市扩展推送一条判断过的外部新闻。格式、合并和三档模式见 `docs/design/news.md` §2–3。
 - `POST /api/v1/auth/password-reset`（无需登录）：`{"username", "code", "new_password"}`。200，返回 `Me`，设置 cookie。错误：422 `reset_code_invalid`（验证码不正确、过期、用过或输错 5 次）。按 IP 计入登录限额。
-- 改密码或重设后，签发时间早于这次修改的 cookie 不再有效（`docs/v2-account.md` §13）。
+- 改密码或重设后，签发时间早于这次修改的 cookie 不再有效（`docs/design/account.md` §13）。
 
 **需要的新表**（迁移 V5，示意）：
 
@@ -560,7 +560,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 
 ### 3.6 API 密钥（脚本）
 
-玩家自己的密钥，给脚本用。设计和分阶段计划见 `docs/v2-api-access.md`。
+玩家自己的密钥，给脚本用。设计和分阶段计划见 `docs/design/api-access.md`。
 
 - 在网页设置里生成（`POST /api/v1/me/api-keys`，只接受 cookie）：`{"name": "看盘脚本", "expires_in_days": 90}`，有效期 30、90（默认）或 365 天。201 返回 `{"key": ApiKey, "token": "anx_…"}`，明文只返回这一次，服务器只存 SHA-256。每个账号同时有效的密钥最多 5 个，超出返回 409 `too_many_api_keys`。
 - 请求时带 `Authorization: Bearer anx_…`。前缀 `anx_` 区分 API 密钥和机器人令牌。密钥无效、已吊销或已过期返回 401 `unauthenticated`。
@@ -732,7 +732,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "sentiment": "neutral"
 }
 ```
-- `sentiment`：当天的市场情绪档位（封闭枚举）`cold` 冷淡 / `neutral` 平稳 / `hot` 火热，交易日内不变；NPC 市场或情绪层未开启时为 null。只给档位，不给数值（docs/v2-sentiment.md）。
+- `sentiment`：当天的市场情绪档位（封闭枚举）`cold` 冷淡 / `neutral` 平稳 / `hot` 火热，交易日内不变；NPC 市场或情绪层未开启时为 null。只给档位，不给数值（docs/design/sentiment.md）。
 - `phase_ends_at`、`next_phase`：当前阶段何时结束、之后是什么。休市时 `phase_ends_at` = `next_open_at`。开发开关 `ANISTOCK_ALWAYS_OPEN` 下两者为 null。
 - `next_open_at`：下一次集合竞价开始的时间（交易中时也给出，方便显示“下次开盘”）。
 - 旧字段 `trading`（布尔）删除，用 `phase != "closed"`；`day` 改名 `trading_day`；`auction_start`/`open`/`close`/`rollover`/`rules` 移到 `/rules`。
@@ -761,7 +761,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
                  "platform": {"us": 116352.0, "cn": 1772.0, "jp": 1649.0}, "scale": 14437.0}
 }
 ```
-- `heat_index`：安易热度指数的编制方法（docs/v3-futures.md §3.7）。一天的指数 = `scale` × Σ `weights[m]` × 当天市场 m 的热度 ÷ `platform[m]`；当天热度见 `/stocks/{id}/heat` 的 `us`、`cn`、`jp`（没有数据来源的市场不计）。
+- `heat_index`：安易热度指数的编制方法（docs/design/futures.md §3.7）。一天的指数 = `scale` × Σ `weights[m]` × 当天市场 m 的热度 ÷ `platform[m]`；当天热度见 `/stocks/{id}/heat` 的 `us`、`cn`、`jp`（没有数据来源的市场不计）。
 - 分红税档：`max_holding_days` 含端点，按游戏时间的持有天数；最后一档为 null（无上限），代替配置里的 `100000`。
 - `initial_cash` 是金额（分）：100,000 币 = `10000000`。
 - `price_limit_multiple`、`stamp_duty_on` 等字段以实现时的真实配置为准；这里列的是字段形状。
@@ -1005,7 +1005,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
   "ex_days": [{"trading_day": "2026-10-20", "kind": "split", "price_factor": 0.5}]
 }
 ```
-- 前复权（docs/v2-corporate.md §5）：每个除权除息日之前的开高低收 × `price_factor`，成交量按拆股比例相乘；最新价格不变。除权日是拆股、配股后按新股数交易的第一天；除息日是分红日（当天日结时派发）之后的第一个交易日，因子 = 1 − 每股分红 / 分红日收盘价（`kind: "dividend"`）。分红日之后还没有日结过的交易日时，本交易日未完成的那一根就是除息日。`ex_days` 是区间内的除权除息日。（2026-11-08 起含分红；之前分红不复权。）
+- 前复权（docs/design/corporate.md §5）：每个除权除息日之前的开高低收 × `price_factor`，成交量按拆股比例相乘；最新价格不变。除权日是拆股、配股后按新股数交易的第一天；除息日是分红日（当天日结时派发）之后的第一个交易日，因子 = 1 − 每股分红 / 分红日收盘价（`kind: "dividend"`）。分红日之后还没有日结过的交易日时，本交易日未完成的那一根就是除息日。`ex_days` 是区间内的除权除息日。（2026-11-08 起含分红；之前分红不复权。）
 - 本交易日有成交而还没日结时，最后一根是 `is_partial: true`（旧 `live: true`）。旧字段 `time` 改 `trading_day`，`replay` 布尔改成 `source` 枚举。
 - 只有日线。参数 `interval` 预留，v1 只接受 `1d`。
 
@@ -1026,7 +1026,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 
 #### 4.2.7 `GET /api/v1/stocks/{id}/corporate-actions`
 
-公司资本政策（docs/v2-corporate.md §3）的每次行动，新的在前。
+公司资本政策（docs/design/corporate.md §3）的每次行动，新的在前。
 
 ```json
 {"items": [
@@ -1050,7 +1050,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 
 #### 4.2.10 `GET /api/v1/stocks/{id}/works`
 
-股票名下的作品（docs/v2-series.md §3：一个系列一家公司）、各作品的播出排期和单集讨论，以及续作。个股页“作品”栏用；变化以天计，客户端几分钟刷新一次即可。
+股票名下的作品（docs/design/series.md §3：一个系列一家公司）、各作品的播出排期和单集讨论，以及续作。个股页“作品”栏用；变化以天计，客户端几分钟刷新一次即可。
 
 ```json
 {"works": [
@@ -1218,7 +1218,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 ```
 `fills` 是这次下单当场撮合的成交（集合竞价阶段为空）。旧接口返回 `{order_id, status, filled, avg_price}`，前端要再请求委托列表；现在直接给出完整委托。
 
-**信用委托**（融资融券，docs/v2-margin.md）：加 `"credit": "<类型>"`，只接受限价、只在连续交易时段：
+**信用委托**（融资融券，docs/design/margin.md）：加 `"credit": "<类型>"`，只接受限价、只在连续交易时段：
 
 | `credit` | `side` | 说明 |
 |---|---|---|
@@ -1313,7 +1313,7 @@ CREATE TABLE player_days (
 
 #### 4.5.11 融资融券
 
-规则见 `docs/v2-margin.md`。
+规则见 `docs/design/margin.md`。
 
 - `GET /api/v1/me/credit` → `{"credit": <CreditAccount>}`：是否开通（`opened`）、未开通时能否开通（`can_open`、`open_message`）、状态、追保日、净资产、毛资产、负债及其构成（`debt`、`interest`、`short_value`、`fees`、`bad_debt`）、冻结的融券卖出所得（`locked`）、可用保证金、维持担保比例（没有负债时为 null）、融资利率、融券费率、各条线（`margin_ratio`、`call_ratio`、`liquidate_ratio`、`target_ratio`）、`debts`（每支股票的融资本金和未付利息）、`shorts`（每支股票的欠券数量、市值、冻结所得、未付费用）。
 - `POST /api/v1/me/credit`：开通，200 返回 `{"credit": ...}`。错误：`credit_open`（409）、`credit_not_eligible`。
@@ -1323,7 +1323,7 @@ CREATE TABLE player_days (
 
 ---
 
-### 4.5a 热度期货（docs/v3-futures.md；`[futures] enabled` 打开前，列表为空，下单返回 `futures_closed`）
+### 4.5a 热度期货（docs/design/futures.md；`[futures] enabled` 打开前，列表为空，下单返回 `futures_closed`）
 
 价格的单位是 0.01 指数点（`IndexPrice`，整数；90.00 点 = 9000）。合约的 `tick_value` 是一手每 0.01 点的价值（分）。模型对合约期平均值的预测和估值一样不公开。
 

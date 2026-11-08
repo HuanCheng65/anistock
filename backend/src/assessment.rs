@@ -1,4 +1,4 @@
-//! 风险测评 and the 融资融券 knowledge test (docs/v2-account.md §5, §6). The texts live here so the
+//! 风险测评 and the 融资融券 knowledge test (docs/design/account.md §5, §6). The texts live here so the
 //! server can score them; the web page renders what `GET /api/v1/assessments/{kind}` sends.
 
 /// One question: the text and its options. For the risk questionnaire option i scores i + 1.
@@ -35,7 +35,7 @@ pub struct Level {
     pub level: i64,
     pub name: &'static str,
     pub description: &'static str,
-    /// the result card's subtitle (docs/v2-account.md §5.2, a personality line: pending approval)
+    /// the result card's subtitle (docs/design/account.md §5.2, a personality line: pending approval)
     pub motto: &'static str,
 }
 
@@ -138,7 +138,7 @@ pub const MARGIN_QUIZ: &[Question] = &[
 pub const FUTURES_QUIZ_VERSION: i64 = 1;
 pub const FUTURES_QUIZ_PASS: i64 = 4;
 
-/// 热度期货知识测试 (docs/v3-futures-ui.md §4): the settlement is an average, daily marking to market, what a
+/// 热度期货知识测试 (docs/design/futures-ui.md §4): the settlement is an average, daily marking to market, what a
 /// point is worth, margin and liquidation.
 pub const FUTURES_QUIZ: &[Question] = &[
     k(

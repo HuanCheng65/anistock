@@ -62,7 +62,7 @@ const position = computed(() => (account.positions ?? []).find((p) => p.stock.id
 const sellable = computed(() => position.value?.available_quantity ?? 0)
 const myOrders = computed(() => (account.orders ?? []).filter((o) => o.stock.id === props.stock.stock.id && o.status === 'open'))
 
-// ---- 融资融券: the trading mode on each side, shown once credit is open (docs/v2-margin.md)
+// ---- 融资融券: the trading mode on each side, shown once credit is open (docs/design/margin.md)
 type Mode = 'plain' | 'margin_buy' | 'short_sell' | 'sell_repay' | 'buy_return'
 const mode = ref<Mode>('plain')
 const sm = computed(() => credit.margins[props.stock.stock.id] ?? null)

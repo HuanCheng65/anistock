@@ -1,4 +1,4 @@
-//! External news from the news-feed stock extension (docs/v3-news.md): the QQ bot's token pushes one
+//! External news from the news-feed stock extension (docs/design/news.md): the QQ bot's token pushes one
 //! judged news event per request. Every push is archived (`media_news`, on the side connection); what the
 //! game does with it depends on `[news] mode`:
 //! - `shadow`: archived only, for labelling and calibrating the extension's thresholds;

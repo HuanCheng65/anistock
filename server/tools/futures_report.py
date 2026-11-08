@@ -1,4 +1,4 @@
-"""The state of heat futures after a close, on one screen (docs/v3-futures.md §4): what to check in the first days.
+"""The state of heat futures after a close, on one screen (docs/design/futures.md §4): what to check in the first days.
 
     uv run python -m server.tools.futures_report [--game data/game.db] [--day YYYY-MM-DD] [--contracts 20]
 

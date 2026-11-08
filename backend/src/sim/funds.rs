@@ -1,4 +1,4 @@
-//! 指数基金 in the replay (docs/v3-funds.md §9 step 1): the players' subscriptions and redemptions, the index the
+//! 指数基金 in the replay (docs/design/funds.md §9 step 1): the players' subscriptions and redemptions, the index the
 //! fund tracks (computed the way `GET /market/indices` computes it, from the closes), and the report: tracking
 //! error, what the fund's orders did to the opening auction, costs and fees.
 
@@ -238,7 +238,16 @@ pub fn report(e: &Engine, bench: &Bench) -> serde_json::Value {
             let m = avg(v);
             (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len().max(2) - 1) as f64).sqrt()
         };
+        let mut worst: Vec<(String, f64, f64, [f64; 3])> = days
+            .iter()
+            .zip(bench.parts.get(&f.key).cloned().unwrap_or_default())
+            .map(|(d, p)| (d.0.clone(), d.1, d.2, p))
+            .collect();
+        worst.sort_by(|a, b| (b.2 - b.1).abs().partial_cmp(&(a.2 - a.1).abs()).unwrap());
+        let weekday = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map(|x| x.format("%a").to_string()).unwrap_or_default();
         let parts_json = json!({
+            "worst_days": worst.iter().take(10).map(|(d, i, fr, p)| json!({"day": d, "weekday": weekday(d), "index_bp": i * 1e4, "fund_bp": fr * 1e4,
+                "new_bp": p[0] * 1e4, "other_bp": p[1] * 1e4, "rest_bp": p[2] * 1e4})).collect::<Vec<_>>(),
             "parts": "new listings (last 14 days), other stocks, the rest (trading vs the close, costs, fees)",
             "sd_bp": (0..3).map(|i| sdv(&col(i)) * 1e4).collect::<Vec<_>>(),
             "mean_bp": (0..3).map(|i| avg(&col(i)) * 1e4).collect::<Vec<_>>(),

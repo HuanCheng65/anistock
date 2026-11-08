@@ -1,4 +1,4 @@
-"""Fit the sequel option (docs/v2-series.md §5) on the history backfill (sim/history_backfill.py).
+"""Fit the sequel option (docs/design/series.md §5) on the history backfill (sim/history_backfill.py).
 
     python sim/fit_sequel.py HISTORY_DB [--out sim/calibration/sequel.json] [--report REPORT.md]
 
@@ -234,7 +234,7 @@ def main():
                                                                     "top_pop"], [round(v, 6) for v in beta])),
            "period_days": [7, 372, 737, 1102, 365], "lag_days": lags, "gap_ratio": gaps,
            "transient": {"week1": 1.286, "weeks2_3": 1.058}}
-    lines = ["# Sequel option fit (docs/v2-series.md §5)\n", f"Data: {a.history}; {len(rows)} finished TV/ONA shows, "
+    lines = ["# Sequel option fit (docs/design/series.md §5)\n", f"Data: {a.history}; {len(rows)} finished TV/ONA shows, "
              f"{len(pp)} show-periods.\n", "Discrete-time logistic hazard: period 0 = the finale ± 7 days, periods 1–3 = "
              "years 1–3 after it, period 4 = each later year.\n",
              "| period | α | P for a first season, score 70, other source, not top decile |\n|---|---|---|"]

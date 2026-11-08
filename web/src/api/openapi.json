@@ -173,7 +173,7 @@
         "type": "object"
       },
       "ApiKey": {
-        "description": "API 密钥（docs/v2-api-access.md）。明文只在生成时返回一次",
+        "description": "API 密钥（docs/design/api-access.md）。明文只在生成时返回一次",
         "properties": {
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -2081,7 +2081,7 @@
         "type": "object"
       },
       "FuturesSteps": {
-        "description": "交易热度期货的前置步骤（docs/v3-futures-ui.md §4）",
+        "description": "交易热度期货的前置步骤（docs/design/futures-ui.md §4）",
         "properties": {
           "credit_open": {
             "description": "开通了信用账户（期货用它的保证金）",
@@ -2169,7 +2169,7 @@
         "type": "object"
       },
       "HeatIndexMethod": {
-        "description": "安易热度指数的编制方法（docs/v3-futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模",
+        "description": "安易热度指数的编制方法（docs/design/futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模",
         "properties": {
           "platform": {
             "$ref": "#/components/schemas/ByMarketF",
@@ -3172,7 +3172,7 @@
         "type": "object"
       },
       "MediaNewsRequest": {
-        "description": "外部新闻：news-feed 股市扩展的一次判断（docs/v3-news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并",
+        "description": "外部新闻：news-feed 股市扩展的一次判断（docs/design/news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并",
         "properties": {
           "credibility": {
             "description": "official、media、rumor",
@@ -5468,7 +5468,7 @@
         "type": "object"
       },
       "Verification": {
-        "description": "身份验证（docs/v2-account.md §2）",
+        "description": "身份验证（docs/design/account.md §2）",
         "properties": {
           "method": {
             "description": "验证方式：`qq`（绑定 QQ）；未验证时为 null",
@@ -6249,7 +6249,7 @@
     },
     "securitySchemes": {
       "api_key": {
-        "description": "玩家自己的 API 密钥（anx_ 开头，在网页设置里生成）。权限 read:account：读 /me/*、WebSocket 订阅 me；写操作只能在网页上做（docs/v2-api-access.md）",
+        "description": "玩家自己的 API 密钥（anx_ 开头，在网页设置里生成）。权限 read:account：读 /me/*、WebSocket 订阅 me；写操作只能在网页上做（docs/design/api-access.md）",
         "scheme": "bearer",
         "type": "http"
       },

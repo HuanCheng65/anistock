@@ -18,7 +18,7 @@ use crate::vfilter::{self as F, Cov, FilterParams};
 /// A 热度快讯's mark on a show's filter state (state key `flash:<id>`): the state before the episode's first
 /// flash, the update the latest hour made, and whether a close has settled it. The flash reads the episode's
 /// early comment count as an estimate of the cn level the close will observe; the close then starts from the
-/// state without the flash, so the episode is counted once (docs/v2-api-access.md §7).
+/// state without the flash, so the episode is counted once (docs/design/api-access.md §7).
 #[derive(Serialize, Deserialize, Clone)]
 struct FlashBase {
     episode: f64,
@@ -35,7 +35,7 @@ struct FlashBase {
     settled: bool,
 }
 
-/// The joint filter's state for one show (docs/v2-valuation.md §3.2): the log levels of the three markets
+/// The joint filter's state for one show (docs/design/valuation.md §3.2): the log levels of the three markets
 /// (us, cn, jp) and their covariance. A market whose data source the show is not mapped to (no Bangumi /
 /// Annict entry), or that reports zero for four weeks after the premiere, is inactive: it earns nothing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,7 +85,7 @@ pub struct JState {
     /// week ends, then fixed (the post-finale observations are read through it)
     #[serde(default = "one")]
     pub tail_mult: f64,
-    /// the sequel option (docs/v2-series.md §5): the announcement hazard's log-odds shift of the show and of its
+    /// the sequel option (docs/design/series.md §5): the announcement hazard's log-odds shift of the show and of its
     /// sequel (fixed at the finale's week, like `tail_mult`)
     #[serde(default)]
     pub seq_z: f64,
@@ -95,13 +95,13 @@ pub struct JState {
     #[serde(default)]
     pub sequel: Option<(i64, i64, Vec<i64>)>,
     /// the work's first air day, episode count, long-runner flag and air days (from the inputs): the shape of a
-    /// work that is not its company's first (docs/v2-series.md §3)
+    /// work that is not its company's first (docs/design/series.md §3)
     #[serde(default)]
     pub meta: Option<WorkMeta>,
     /// the show's relations are collected (an announcement would be seen)
     #[serde(default)]
     pub watched: bool,
-    /// the announced sequel (its id) whose production cost the company has paid (docs/v2-corporate.md §3.3): it
+    /// the announced sequel (its id) whose production cost the company has paid (docs/design/corporate.md §3.3): it
     /// counts in full from then on, before that net of its cost
     #[serde(default)]
     pub sequel_paid: Option<i64>,
@@ -116,7 +116,7 @@ pub struct WorkMeta {
     /// the public schedule: every main episode's air date (Bangumi)
     #[serde(default)]
     pub schedule: Vec<i64>,
-    /// AniList's next episode: (number, air day) (docs/v2-corporate.md §2.2)
+    /// AniList's next episode: (number, air day) (docs/design/corporate.md §2.2)
     #[serde(default)]
     pub next_airing: Option<(i64, i64)>,
     /// production halted (AniList HIATUS): the day the remaining episodes are valued to resume (§2.3)
@@ -128,7 +128,7 @@ impl WorkMeta {
     /// The air days of the episodes still to air after `aired` (sorted air days so far; a show that has not aired
     /// starts from its first air day) up to `episodes`: the public schedule's dates after the last one aired, then
     /// weekly; AniList's date for the next episode moves it and every later one (a delay pushes the rest); a halt
-    /// moves them to its resume day at the earliest (docs/v2-corporate.md §2.2–2.3).
+    /// moves them to its resume day at the earliest (docs/design/corporate.md §2.2–2.3).
     pub fn upcoming(&self, aired: &[i64], episodes: Option<i64>) -> Vec<i64> {
         let Some(n) = episodes else { return Vec::new() };
         let Some(&last) = aired.last() else { return Vec::new() };
@@ -440,9 +440,9 @@ impl Engine {
         std::array::from_fn(|i| std::array::from_fn(|j| c[i][j] + b[i] * b[j] * v))
     }
 
-    /// The absolute revenue rule in force (docs/v2-series.md §6): the platform sizes of the last close and the
+    /// The absolute revenue rule in force (docs/design/series.md §6): the platform sizes of the last close and the
     /// scale set at the switch (state `platform_rule`: "us,cn,jp,scale"); None while the relative rule applies.
-    /// The rule the value prices from `today` (docs/v2-series.md §6): the one in force, or, before the switch, the
+    /// The rule the value prices from `today` (docs/design/series.md §6): the one in force, or, before the switch, the
     /// absolute rule from its known date on (state `platform_pending`: "us,cn,jp,scale estimate,switch day"), so
     /// that the switch day is not a jump anyone could compute in advance.
     pub fn value_rule(&self, today: i64) -> F::ValueRule {
@@ -458,7 +458,7 @@ impl Engine {
         (v.len() == 4).then(|| ([v[0], v[1], v[2]], v[3]))
     }
 
-    /// The sequel option per market in attention-days discounted to today (docs/v2-series.md §5), while the show's
+    /// The sequel option per market in attention-days discounted to today (docs/design/series.md §5), while the show's
     /// next season is not valued on its own (an announced sequel that has a filter state of its own carries its
     /// value from then on).
     #[allow(clippy::too_many_arguments)]
@@ -483,10 +483,10 @@ impl Engine {
         }))
     }
 
-    /// The attention a show earns on today's close (docs/v2-series.md §4.2): the inputs', except for a cn/jp market
+    /// The attention a show earns on today's close (docs/design/series.md §4.2): the inputs', except for a cn/jp market
     /// of the show's (mapped and active) that has no data today: there, the filter's expectation for today as of the
     /// latest state (yesterday's close), `next`: the same expectation the value priced for today. Missing is not zero
-    /// (docs/v2-valuation.md §3.7): after the finale's week the rebuilt series has no data at all (the real tail,
+    /// (docs/design/valuation.md §3.7): after the finale's week the rebuilt series has no data at all (the real tail,
     /// collection and record increments, is not switched on yet), and in season cn/jp report late (the first week,
     /// gaps in Annict's schedule). Booking nothing there while the value, and the market totals every share is
     /// divided by, priced the expectation was a predictable shortfall for that show and a predictable surplus for
@@ -546,7 +546,7 @@ impl Engine {
         s.observed.as_ref().map_or([true, a[1] > 0.0, a[2] > 0.0], |x| [x.us, x.cn, x.jp])
     }
 
-    /// The close's filter step for one show (docs/v2-valuation.md §3.2): before the premiere the prior; then
+    /// The close's filter step for one show (docs/design/valuation.md §3.2): before the premiere the prior; then
     /// each new observation (us: an episode week's average; cn/jp: when their weekly value changes), each
     /// moving all three markets through the covariance. A market without data keeps what the others imply.
     pub(crate) fn valuation_step(&mut self, fp: &FilterParams, p: &Params, s: &ShowInputs, day: &str, ts: &str) {
@@ -715,7 +715,7 @@ impl Engine {
                     }
                 });
                 // after the finale's week the level is a random walk whose variance grows by the spread of
-                // show-specific tails D(t) (docs/v2-series.md §4); before it, the in-season process noise
+                // show-specific tails D(t) (docs/design/series.md §4); before it, the in-season process noise
                 let q: M3 = std::array::from_fn(|m| match (fin, &fp.tail[m]) {
                     (Some(f), Some(tl)) if today >= f + 7 && days > 0 => {
                         let (t0, t1) = (from - f - 7, today - f - 7);
@@ -737,7 +737,7 @@ impl Engine {
         st.seq_zs = seq_zs;
         st.sequel = sequel;
         // the heat class, once, from the us level (after the day's drift, before its observations) DRIFT_WEEKS[0]
-        // weeks after the premiere (docs/v2-valuation.md §3.10)
+        // weeks after the premiere (docs/design/valuation.md §3.10)
         if st.heat_class.is_none() && !s.long_runner && since_premiere >= 7 * F::DRIFT_WEEKS[0] {
             st.heat_class = fp.heat_class(st.mean[0]);
         }
@@ -821,7 +821,7 @@ impl Engine {
                 st.active[m] = true;
             }
         }
-        // the us episode week's days so far (docs/v2-valuation.md §3.2): public every day, and waiting for the
+        // the us episode week's days so far (docs/design/valuation.md §3.2): public every day, and waiting for the
         // complete week priced its news up to a week late. From the second day of an episode week (aligned on its air
         // day, every day present; not the finale's week, not a long-runner: outside the fit) the days so far are
         // observed as an estimate of the complete week, with the fitted extra noise of a partial week, on top of the
@@ -950,7 +950,7 @@ impl Engine {
             .collect()
     }
 
-    /// The market's total attention per market and future day (docs/v2-valuation.md §3.3): the sum of every
+    /// The market's total attention per market and future day (docs/design/valuation.md §3.3): the sum of every
     /// listed (and subscribing) show's own expected path, the same paths the values come from, so the total
     /// fades exactly as the model expects each show to (its finale and post-finale decay included) and a show
     /// not yet airing joins on its first air date; plus the shows not listed yet (what the shows on air drew
@@ -1005,7 +1005,7 @@ impl Engine {
                 sum[m][t] += level[m] * r;
             }
         }
-        // ... and, after their seasons, those shows' long tails (docs/v2-series.md §4): a season's shows not listed
+        // ... and, after their seasons, those shows' long tails (docs/design/series.md §4): a season's shows not listed
         // yet enter the market totals not only while they air but for years after, so the shares of the shows on
         // the market are expected to be diluted by them too. Without this the totals rose at every season change,
         // when the new shows listed with their tails: a predictable fall of every listed show's value under the
@@ -1083,7 +1083,7 @@ impl Engine {
         F::value_from_paths(own, totals, &p.market_weights, a_ref, p, self.outstanding(c), book, rate, long, &tails, self.value_rule(today), extra.as_ref())
     }
 
-    /// A company's value per share (cents): the sum over its works (docs/v2-series.md §3.2). `paths`: the other
+    /// A company's value per share (cents): the sum over its works (docs/design/series.md §3.2). `paths`: the other
     /// works' expected attention.
     #[allow(clippy::too_many_arguments)]
     fn value_of(&self, fp: &FilterParams, c: &Company, own: &[Vec<f64>; 3], totals: &[Vec<f64>; 3], p: &Params, rate: f64, a_ref: f64, today: i64, paths: Option<&HashMap<i64, [Vec<f64>; 3]>>) -> i64 {
@@ -1118,7 +1118,7 @@ impl Engine {
     }
 
     /// A company's hidden value (cents) with every work's expected path (the close's totals): for a corporate action
-    /// taken at the close (docs/v2-corporate.md §3).
+    /// taken at the close (docs/design/corporate.md §3).
     pub(crate) fn company_value_full(&self, vc: &crate::corporate::ValueCtx, id: i64) -> Option<i64> {
         let (fp, p, today) = (vc.fp, vc.p, vc.today);
         let c = self.st.companies.get(&id)?;
@@ -1154,7 +1154,7 @@ impl Engine {
         r
     }
 
-    /// The company has paid the production cost of the work's announced sequel (docs/v2-corporate.md §3.3).
+    /// The company has paid the production cost of the work's announced sequel (docs/design/corporate.md §3.3).
     pub(crate) fn set_sequel_paid(&mut self, work: i64, paid: Option<i64>, ts: &str) {
         if let Some(mut j) = self.st.jstate.get(&work).cloned() {
             j.sequel_paid = paid;
@@ -1383,7 +1383,7 @@ impl Engine {
         min.max((v * (1.0 - discount) * 100.0).round_ties_even() as i64)
     }
 
-    /// The offer price for a show the filter has already valued (docs/v2-valuation.md: the IPO): its value now,
+    /// The offer price for a show the filter has already valued (docs/design/valuation.md: the IPO): its value now,
     /// less a discount for the uncertainty left, through the same `ipo_risk` as the pre-air offer (the filter's
     /// variance of the log level, averaged over the markets the show earns in). A show with weeks of data has
     /// little left, so its discount is small. None: not valued yet.
@@ -1400,7 +1400,7 @@ impl Engine {
     }
 
     /// A 热度快讯: the episode's comments `hours` after airing, as a noisy observation of the show's cn level
-    /// (docs/v2-valuation.md §3.4). Updates the filter and the hidden value at once. None when the
+    /// (docs/design/valuation.md §3.4). Updates the filter and the hidden value at once. None when the
     /// observation carries no information (no comparison base, too early, unknown company).
     ///
     /// The hourly observations of one episode are not independent: each replaces the previous one. The

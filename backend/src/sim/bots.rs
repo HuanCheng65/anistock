@@ -1,4 +1,4 @@
-//! Simulated players running the exploit strategies of docs/v2-npc-market.md §6, each with a real
+//! Simulated players running the exploit strategies of docs/design/npc-market.md §6, each with a real
 //! player's starting cash, trading through the same engine as everyone else.
 
 use serde::Serialize;
@@ -7,21 +7,21 @@ use crate::engine::{Engine, NewOrder};
 use crate::exchange::cooling;
 use crate::market::{day_of, local, ts_of};
 
-/// 融资融券 bots (docs/v2-margin.md §9)
+/// 融资融券 bots (docs/design/margin.md §9)
 #[path = "margin_bots.rs"]
 pub mod margin;
-/// sentiment layer batch 2 bots (docs/v2-sentiment.md §7)
+/// sentiment layer batch 2 bots (docs/design/sentiment.md §7)
 #[path = "sentiment_bots.rs"]
 mod sentiment;
 
-/// corporate action bots (docs/v2-corporate.md §6)
+/// corporate action bots (docs/design/corporate.md §6)
 #[path = "corporate_bots.rs"]
 pub mod corporate;
 
 #[path = "futures_bots.rs"]
 pub mod futures;
 
-/// 指数基金 bots (docs/v3-funds.md §6.1)
+/// 指数基金 bots (docs/design/funds.md §6.1)
 #[path = "funds_bots.rs"]
 pub mod funds;
 
@@ -76,7 +76,7 @@ pub enum BotKind {
     HoldHottest28,
     BadPrice,
     /// buy each stock the evening before its finale airs (a tenth of the starting cash each) and hold it to the
-    /// end: is a finished show's long tail fairly priced? (docs/v2-series.md §11)
+    /// end: is a finished show's long tail fairly priced? (docs/design/series.md §11)
     FinaleHold,
     /// buy each stock the evening before its finale and sell it 8 days after (once the finale week and the
     /// at-finale sequel announcement are known): is the move across the finale predictable?
@@ -87,7 +87,7 @@ pub enum BotKind {
     ShortRich,
     /// 融资融券: short the highest expected dividend yields on Sunday evening, cover on Monday
     ShortDividend,
-    /// sentiment layer (docs/v2-sentiment.md §3): after each published 热度快讯, buy the stock if it was bad
+    /// sentiment layer (docs/design/sentiment.md §3): after each published 热度快讯, buy the stock if it was bad
     /// news (betting on an over-reaction) and sell a day later
     FadeFlash,
     /// after each published good-news 热度快讯, buy the stock and sell a day later (betting on under-reaction)
@@ -103,7 +103,7 @@ pub enum BotKind {
     SentimentTimer,
     /// buy each new show the evening before its premiere, sell the evening after
     PremiereRush,
-    /// corporate actions (docs/v2-corporate.md §6), each on top of a cap-weighted market portfolio: buy after
+    /// corporate actions (docs/design/corporate.md §6), each on top of a cap-weighted market portfolio: buy after
     /// each buyback announcement and hold four weeks
     BuybackFollow,
     /// sell a stock when its rights issue is announced, buy it back after the issue
@@ -119,7 +119,7 @@ pub enum BotKind {
     /// sentiment batch 2: weekly, hold the hot stocks furthest under their 20-session average close (where
     /// retail holders sit on paper losses)
     DispositionFade,
-    /// a script on the API (docs/v2-api-access.md §7): buys a stock the second a good-news 热度快讯 is
+    /// a script on the API (docs/design/api-access.md §7): buys a stock the second a good-news 热度快讯 is
     /// published (before any NPC or the market maker acts again), sells 30 minutes later
     SnipeFlash,
     /// the same, selling 2 hours later
@@ -134,9 +134,9 @@ pub enum BotKind {
     SnipeFinale,
     /// a script on the API quoting every second on the 5 hottest stocks: bid 1 tick over the best bid and ask 1
     /// tick under the best ask, re-quoting whenever it is no longer alone at the top or overbids the level
-    /// below (high-frequency pennying of the market maker, docs/v2-api-access.md §7)
+    /// below (high-frequency pennying of the market maker, docs/design/api-access.md §7)
     ScalperFast,
-    /// 热度期货 (docs/v3-futures.md §4.5; sim/futures_bots.rs): always long / always short
+    /// 热度期货 (docs/design/futures.md §4.5; sim/futures_bots.rs): always long / always short
     FutLong,
     FutShort,
     /// long the first period, short the third and later
@@ -149,7 +149,7 @@ pub enum BotKind {
     FutHedge,
     /// holds the stocks and buys the futures (the same direction twice)
     FutDouble,
-    /// 指数基金 (docs/v3-funds.md §6.1; sim/funds_bots.rs): subscribe everything to the 综合指数基金, hold
+    /// 指数基金 (docs/design/funds.md §6.1; sim/funds_bots.rs): subscribe everything to the 综合指数基金, hold
     FundHold,
     /// buy each new listing on its first session, sell it into the next opening auction (where the fund buys it)
     IpoFrontRun,
@@ -295,7 +295,7 @@ pub struct BotCtx<'a> {
     /// published 热度快讯 so far: (company, unix seconds, direction)
     pub flashes: &'a [(i64, i64, i8)],
     /// published company notices of corporate actions and schedule changes so far: (company, unix seconds, news
-    /// kind, title) (docs/v2-corporate.md)
+    /// kind, title) (docs/design/corporate.md)
     pub notices: &'a [(i64, i64, String, String)],
     /// 开播 / 完结 notices from the closes so far: (company, unix seconds, direction +1 / -1)
     pub events: &'a [(i64, i64, i8)],

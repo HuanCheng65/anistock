@@ -1,4 +1,4 @@
-"""Dry run of the series share swap (docs/v2-series.md §7): which listed companies would merge and at what ratio.
+"""Dry run of the series share swap (docs/design/series.md §7): which listed companies would merge and at what ratio.
 
     python -m server.tools.series_dryrun GAME_DB [--collector anistock.db] [--fetch] [--json OUT]
 

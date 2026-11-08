@@ -1069,7 +1069,7 @@ export interface components {
         AnswersRequest: {
             answers: number[];
         };
-        /** @description API 密钥（docs/v2-api-access.md）。明文只在生成时返回一次 */
+        /** @description API 密钥（docs/design/api-access.md）。明文只在生成时返回一次 */
         ApiKey: {
             created_at: components["schemas"]["Timestamp"];
             expired: boolean;
@@ -1649,7 +1649,7 @@ export interface components {
             /** @description 自上次结算以来的盈亏（按最新价）；结算时划转 */
             unsettled_pnl: components["schemas"]["Money"];
         };
-        /** @description 交易热度期货的前置步骤（docs/v3-futures-ui.md §4） */
+        /** @description 交易热度期货的前置步骤（docs/design/futures-ui.md §4） */
         FuturesSteps: {
             /** @description 开通了信用账户（期货用它的保证金） */
             credit_open: boolean;
@@ -1684,7 +1684,7 @@ export interface components {
             /** @description 编制方法版本 */
             version: string;
         };
-        /** @description 安易热度指数的编制方法（docs/v3-futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模 */
+        /** @description 安易热度指数的编制方法（docs/design/futures.md §3）：指数 = 常数 × Σ 权重 × 当天热度 ÷ 平台规模 */
         HeatIndexMethod: {
             /** @description 各市场的平台规模：一年里每天在播作品热度总和的平均 */
             platform: components["schemas"]["ByMarketF"];
@@ -1957,7 +1957,7 @@ export interface components {
         MeEnvelope: {
             me: components["schemas"]["Me"];
         };
-        /** @description 外部新闻：news-feed 股市扩展的一次判断（docs/v3-news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并 */
+        /** @description 外部新闻：news-feed 股市扩展的一次判断（docs/design/news.md）。只有 `event_id` 和 `merged_into` 时表示这个事件被合并 */
         MediaNewsRequest: {
             /** @description official、media、rumor */
             credibility?: string | null;
@@ -2646,7 +2646,7 @@ export interface components {
             low: null | components["schemas"]["Money"];
             until: null | components["schemas"]["Timestamp"];
         };
-        /** @description 身份验证（docs/v2-account.md §2） */
+        /** @description 身份验证（docs/design/account.md §2） */
         Verification: {
             /** @description 验证方式：`qq`（绑定 QQ）；未验证时为 null */
             method: string | null;

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // /assessment/risk (风险测评), /assessment/margin-quiz (融资融券知识测试) and /assessment/futures-quiz (热度期货
-// 知识测试), docs/v2-account.md §5–§6, docs/v3-futures-ui.md §4.
+// 知识测试), docs/design/account.md §5–§6, docs/design/futures-ui.md §4.
 // The questions come from the server, which scores them.
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'

@@ -107,7 +107,7 @@ pub(crate) struct State {
     pub corp: crate::corporate::CorporateState,
     /// 热度期货 (crate::futures)
     pub futures: crate::futures::FuturesState,
-    /// 指数基金 (crate::funds; in memory only until the tables come, docs/v3-funds.md §9)
+    /// 指数基金 (crate::funds; in memory only until the tables come, docs/design/funds.md §9)
     pub funds: crate::funds::FundsState,
     /// per fund account: commission and stamp duty of its fills since `funds_confirm` / the close took them
     pub funds_costs: BTreeMap<i64, i64>,
@@ -914,7 +914,7 @@ impl Engine {
         self.commit();
     }
 
-    /// Operator repricing after a valuation rebuild (`anistock reprice`, docs/restart-v0.6.6.md): cancel every
+    /// Operator repricing after a valuation rebuild (`anistock reprice`, `git show 99514a7:docs/restart-v0.6.6.md`): cancel every
     /// open order (players' and NPCs', as the daily close expires them, so nothing rests at the old prices),
     /// then put each listed company's value, last price and the day's VCM anchor at `values` (cents). The
     /// previous close stays: today's change shows the move. Returns (orders cancelled, companies repriced).

@@ -682,7 +682,7 @@ pub async fn candles(State(st): State<Arc<AppState>>, Path(raw): Path<String>, R
                 }
             }
         }
-        // 前复权 (docs/v2-corporate.md §5): bars before each split / ex-rights day × its factor, and before each
+        // 前复权 (docs/design/corporate.md §5): bars before each split / ex-rights day × its factor, and before each
         // ex-dividend day × (1 − dividend / that close): a season's weekly payouts do not read as a falling price
         let mut adj = price_adjustments(c, id)?;
         adj.extend(dividend_adjustments(c, id, &today)?);

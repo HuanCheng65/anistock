@@ -1,4 +1,4 @@
-//! 指数基金（场外）(docs/v3-funds.md): an open-ended fund that holds the stocks of one of the market indices
+//! 指数基金（场外）(docs/design/funds.md): an open-ended fund that holds the stocks of one of the market indices
 //! (`GET /api/v1/market/indices`, cap-weighted), bought with what players subscribe and sold for what they redeem.
 //!
 //! Step 1 of the doc's §9: the fund in the engine's memory, driven by the replay (`crate::sim`). The tables, the API
@@ -32,7 +32,7 @@ pub const NAV0: f64 = 100.0;
 pub struct FundRules {
     /// funds exist and take requests
     pub enabled: bool,
-    /// the indices with a fund (docs/v3-funds.md §3.1)
+    /// the indices with a fund (docs/design/funds.md §3.1)
     pub keys: Vec<String>,
     /// management fee a year, accrued daily from the net value (goes to `world`)
     pub fee_rate: f64,

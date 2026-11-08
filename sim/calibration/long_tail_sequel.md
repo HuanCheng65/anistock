@@ -3,7 +3,7 @@
 Data: `sim/history_backfill.py` (AniList TV/ONA 2018–2025 with popularity ≥ 3,000 and their relations; daily trends in
 season and in 14-day windows 1–96 months after the finale; the first trend day of every sequel entry as the
 announcement proxy; a Bangumi sample of ~380 subjects with episode and subject comments). Analysis:
-`sim/long_tail_analysis.py HISTORY_DB` prints everything below. Design: `docs/v2-series.md`.
+`sim/long_tail_analysis.py HISTORY_DB` prints everything below. Design: `docs/design/series.md`.
 
 ## Summary
 

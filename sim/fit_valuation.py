@@ -1,4 +1,4 @@
-"""Fit the valuation filter (engine/valuation.py, docs/v2-valuation.md §3.2) to a season of daily inputs.
+"""Fit the valuation filter (engine/valuation.py, docs/design/valuation.md §3.2) to a season of daily inputs.
 
     .venv/bin/python sim/fit_valuation.py INPUTS_DIR [--out sim/calibration/valuation_filter.json]
                                          [--report REPORT.md] [--comments COMMENTS.json]
@@ -448,7 +448,7 @@ LIST_MIN_POP = 3000.0   # the game lists a show only with this many AniList list
 
 
 def tail_prior_fit(us_hist, pct, ref, tail=None, drop=()):
-    """Tail level by score, format and popularity (docs/v2-series.md §4.1). Per show, the mean log residual of its us
+    """Tail level by score, format and popularity (docs/design/series.md §4.1). Per show, the mean log residual of its us
     factor 3-36 months after the finale against the fitted curve's median (`tail` with no prior), regressed (OLS) on
     (score - 70)/10, ONA and the popularity fifth within its finale year (sim/long_tail_analysis.py's definition; one
     effect per fifth, the middle one the reference: the relation is U-shaped). The multiplier scales the whole
@@ -574,7 +574,7 @@ def tail_table(lines, st_, tail, t_min):
 
 
 def tail_prior_select(hist, us_hist, tail, lines):
-    """v0.6.1 (docs/v2-valuation.md §3.12): the tail prior on the shows the game would list (>= LIST_MIN_POP list
+    """v0.6.1 (docs/design/valuation.md §3.12): the tail prior on the shows the game would list (>= LIST_MIN_POP list
     entries at the finale; below that the history only holds shows whose tail later grew), popularity fifths among
     them; a fifth's effect is kept only if the held-out half agrees (fit on even ids and on odd: same sign, the smaller
     at least half the larger), else 0. The in-season references (`pop_ref_week`) let a show not finished yet be placed
@@ -594,7 +594,7 @@ def tail_prior_select(hist, us_hist, tail, lines):
 
 
 def fit_tail(hist_path, shows, drift8, bump, lines):
-    """The long tail after the finale (docs/v2-series.md §4), per market: a weekly transition, then floor ×
+    """The long tail after the finale (docs/design/series.md §4), per market: a weekly transition, then floor ×
     yearly^(t/365) + slow excess × exp(-t/tau2) + fast excess × exp(-t/tau) (the expected factor relative to the level at the finale × the finale bump,
     t days after the finale's week), the spread D(t) of the show-specific tail, and the score/format prior. us: the
     first weeks from the inputs (observed), then the history backfill deflated by the platform index; cn: Bangumi
@@ -608,7 +608,7 @@ def fit_tail(hist_path, shows, drift8, bump, lines):
     curve, _ = tail_curve_fit(us_st, t_min=21)
     out["us"] = {"trans": [round(math.exp(mu + 0.5 * v), 6) for t, mu, v, n in us_tr], **curve,
                  "var": tail_var_fit(us_st)}
-    lines.append("## Long tail (docs/v2-series.md §4)\n")
+    lines.append("## Long tail (docs/design/series.md §4)\n")
     lines.append(f"Expected attention t days after the finale's week = level at the finale × finale bump × factor(t): "
                  f"weekly transition, then floor × yearly^(t/365) + slow excess × exp(−t/τ2) + fast excess × exp(−t/τ), the floor and the slow excess scaled by the score "
                  f"prior. The filter reads post-finale observations through the median factor (expected × exp(−D(t)/2)), "
@@ -1309,7 +1309,7 @@ def calibration_runup(shows):
 
 
 def fit_runup(shows, history):
-    """v0.6.1 (docs/v2-valuation.md §3.11): attention in the weeks before the finale's week relative to the level. us
+    """v0.6.1 (docs/design/valuation.md §3.11): attention in the weeks before the finale's week relative to the level. us
     from the history (the season median of week -j, which a single bad season cannot move; only the weeks whose
     excess the history separates from zero), cn/jp from the calibration seasons where they separate from zero."""
     hh = history_runup(history)
@@ -1339,7 +1339,7 @@ def rebase_finale_bump(cal, runup):
 
 
 def fit_drift_heat(shows, cal, history=None):
-    """v0.6.1 (docs/v2-valuation.md §3.10): the us in-season drift by heat class. A show's class is the tercile of
+    """v0.6.1 (docs/design/valuation.md §3.10): the us in-season drift by heat class. A show's class is the tercile of
     its us log level estimate DRIFT_WEEKS[0] weeks after the premiere (known then; fixed after); from then on its us
     drift is the common one plus its class's offset. Cuts: the terciles over the shows; offsets: maximum likelihood
     of the complete us weeks observed after that point, the rest fixed. Validated on held-out shows (fit even ids,
@@ -1394,7 +1394,7 @@ def fit_drift_weekly(shows, cal, m):
     weeks 1, 2, 3 by maximum likelihood of the market's own filter (q, r, the outlier component and the other
     periods fixed at `cal`). One rate for
     weeks 0-3 projected the same fade into all four, while shows fade fastest right after the premiere: the value
-    then fell predictably in week 1 and rose in week 3 (docs/v2-valuation.md §3.12). Held out: fitted on even ids,
+    then fell predictably in week 1 and rose in week 3 (docs/design/valuation.md §3.12). Held out: fitted on even ids,
     scored on odd and back; fitted on summer, scored on autumn and back."""
     q, r, pi, r_out = cal["q"][m], cal["r"][m], cal["outlier_p"][m], cal["outlier_r"][m]
     old = tuple(cal["drift_by_week"][m])
@@ -1520,7 +1520,7 @@ def fit_flash(path: Path, r_cn: float):
     log(count_h / (curve_h × final)): how far the early count lands from the episode's own final. (Until
     2026-11-07 this was the variance of log(count_h / (curve_h × previous episodes' mean)), which also counts the
     episode's real departure from the previous ones, the signal itself, as noise: the flash moved the value by a
-    fraction of what it knew and the next close predictably finished the move, docs/v2-api-access.md §7.)"""
+    fraction of what it knew and the next close predictably finished the move, docs/design/api-access.md §7.)"""
     data = json.loads(path.read_text(encoding="utf-8"))
     hours = 24
     frac = [[] for _ in range(hours)]

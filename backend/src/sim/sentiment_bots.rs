@@ -1,4 +1,4 @@
-//! Exploit tests of the sentiment layer's second batch (docs/v2-sentiment.md §7): a submodule of `bots` so the
+//! Exploit tests of the sentiment layer's second batch (docs/design/sentiment.md §7): a submodule of `bots` so the
 //! strategies share the bot's state. They see only public data: each session's opening price (the last close),
 //! the stocks' heat (public popularity) and the order book.
 

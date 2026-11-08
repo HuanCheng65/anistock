@@ -1,4 +1,4 @@
-//! Who trades the futures besides players and the market maker (docs/v3-futures.md §4.3), in three layers:
+//! Who trades the futures besides players and the market maker (docs/design/futures.md §4.3), in three layers:
 //!
 //! - [`View`]: what a trader can see: the contracts, the model's forecast, prices, its position, the day's
 //!   热度快讯. Read-only.

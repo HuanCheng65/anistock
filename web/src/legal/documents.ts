@@ -1,4 +1,4 @@
-// 用户协议、隐私政策、风险揭示书 (docs/v2-account.md, appendices A–C). The server keeps the current
+// 用户协议、隐私政策、风险揭示书 (docs/design/account.md, appendices A–C). The server keeps the current
 // version of each in server/game.toml [account.documents]; raise it there when a text changes materially,
 // and every player accepts the new text again before the next order.
 
@@ -260,7 +260,7 @@ const marginDisclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解融资融券可能造成超过本金的亏损，自愿承担交易结果。',
 }
 
-// docs/v3-futures-ui.md §4: signed before trading heat futures (server/game.toml futures_disclosure)
+// docs/design/futures-ui.md §4: signed before trading heat futures (server/game.toml futures_disclosure)
 const futuresDisclosure: LegalDoc = {
   title: '热度期货风险揭示书',
   updated: '2026-11-08',
@@ -307,7 +307,7 @@ const futuresDisclosure: LegalDoc = {
   declaration: '本人已阅读并理解本揭示书的内容，了解热度期货可能造成超过保证金的亏损，自愿承担交易结果。',
 }
 
-// docs/v2-api-access.md §9: signed before an API key may trade (server/game.toml api_disclosure)
+// docs/design/api-access.md §9: signed before an API key may trade (server/game.toml api_disclosure)
 const apiDisclosure: LegalDoc = {
   title: '程序化交易风险揭示书',
   updated: '2026 年 11 月 7 日',

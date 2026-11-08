@@ -1,4 +1,4 @@
-//! Changing a password, and resetting a forgotten one (docs/v2-account.md §13).
+//! Changing a password, and resetting a forgotten one (docs/design/account.md §13).
 //!
 //! The one proof of who owns an account is 身份验证: the QQ bound to it. The bot asks for a reset code
 //! for the QQ that messaged it in private (`POST /bot/password-resets`) and sends the code back there;
@@ -184,7 +184,7 @@ pub async fn reset(State(st): State<Arc<AppState>>, headers: HeaderMap, body: By
     })?;
     let Some(id) = account else { return Err(invalid()) };
     set_password(&st, id, new).await?;
-    // someone else may have had the account: its API keys go too (docs/v2-api-access.md §3)
+    // someone else may have had the account: its API keys go too (docs/design/api-access.md §3)
     let revoked = with_side(&st, |c| super::keys::revoke_all(c, id, &now))?;
     super::keys::disconnect(&st, &revoked);
     let me = super::account::load_me(&st, id).await?;

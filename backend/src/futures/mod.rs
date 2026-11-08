@@ -1,5 +1,5 @@
-//! 热度期货: cash-settled futures on the AniEx heat index (docs/v3-futures.md; how the code is organised:
-//! docs/v3-futures-impl.md). Matching is the shared layer (`crate::matching`); everything a fill does to
+//! 热度期货: cash-settled futures on the AniEx heat index (docs/design/futures.md; how the code is organised:
+//! docs/design/futures-impl.md). Matching is the shared layer (`crate::matching`); everything a fill does to
 //! margin and positions, the daily mark-to-market and the final settlement live here.
 //!
 //! - `model`: the rows (contracts, orders, trades, positions, days, the frozen index)

@@ -2,7 +2,7 @@
 // Order entry for a heat futures contract, on the terminal surface like the stock order form: 押更热 (buy) or
 // 押更冷 (sell), lots, a price that starts at 对手价, and one line that turns the order into money: "平均到 100
 // 赚 230 星辉", the 100 draggable. Margin and commission under it. Futures trade on the credit account's
-// margin (docs/v3-futures.md §4.2). Until the futures steps are done (docs/v3-futures-ui.md §4: credit account,
+// margin (docs/design/futures.md §4.2). Until the futures steps are done (docs/design/futures-ui.md §4: credit account,
 // 风险测评, the knowledge test, the disclosure) the form lists them with links in place of the button; an
 // order that only closes a position needs none of them.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'

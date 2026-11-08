@@ -2,7 +2,7 @@
 
     python -m server.tools.rebuild_replay GAME_DB [--dry-run] [--force] [--inputs DIR] [--bin PATH] [--work DIR]
 
-Operator steps (Chinese): docs/ops-rebuild-replay.md. Run it with the server STOPPED: the server keeps the
+Operator steps (Chinese): docs/ops/rebuild-replay.md. Run it with the server STOPPED: the server keeps the
 companies and their history in memory and would not see the change (and could write over it).
 
 Before launch, server/seed.py filled each stock's history from the window's first day with a replay of the model

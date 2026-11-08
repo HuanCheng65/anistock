@@ -503,7 +503,7 @@ def snapshot_history(source: str, kind: str) -> dict[int, dict[date, dict]]:
 
 
 def collection_total(subject: dict) -> float:
-    """Bangumi collections: 想看 + 在看 + 看过 (docs/v2-series.md §4.2)."""
+    """Bangumi collections: 想看 + 在看 + 看过 (docs/design/series.md §4.2)."""
     c = subject.get("collection") or {}
     return float((c.get("wish") or 0) + (c.get("doing") or 0) + (c.get("collect") or 0))
 
@@ -526,7 +526,7 @@ def daily_increments(snaps: dict[date, dict], total) -> dict[date, float]:
 
 def tail_link(season: dict[date, float], inc: dict[date, float], min_days: int = 14) -> float | None:
     """The in-season ratio of the game's series to the daily increments, over the in-season days with both:
-    the scale that puts post-finale increments in the series' units (docs/v2-series.md §4.2)."""
+    the scale that puts post-finale increments in the series' units (docs/design/series.md §4.2)."""
     both = [d for d in season if d in inc]
     if len(both) < min_days:
         return None
@@ -613,7 +613,7 @@ def cmd_build() -> None:
                     d += timedelta(days=1)
             else:
                 # finished. The rebuilt series has no post-finale data (an episode's count belongs to its air week).
-                # With the fitted long tail (docs/v2-series.md §4) those days are left MISSING: the filter infers the
+                # With the fitted long tail (docs/design/series.md §4) those days are left MISSING: the filter infers the
                 # level from the other markets and the close books the filter's expectation as revenue (a stopgap,
                 # vclose.rs `revenue_att`). With ANISTOCK_TAIL_INGEST=1 the real tail is used where the collector
                 # has daily snapshots (`tail_ingest`: Bangumi collection-count increments, Annict record increments,

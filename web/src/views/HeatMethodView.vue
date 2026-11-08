@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 指数编制方法: how the AniEx heat index is computed, checked and published (docs/v3-futures.md §3), with the
+// 指数编制方法: how the AniEx heat index is computed, checked and published (docs/design/futures.md §3), with the
 // constants the server uses (GET /rules heat_index), so any day's value can be checked by hand.
 import { computed } from 'vue'
 import BackButton from '../components/BackButton.vue'

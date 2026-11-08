@@ -480,7 +480,7 @@ fn platform_case(days: i64) -> (Engine, Inputs) {
 
 #[test]
 fn the_switch_to_absolute_revenue_keeps_the_days_total() {
-    // docs/v2-series.md §6: on the first day the platform size averages enough history, the scale is set so that
+    // docs/design/series.md §6: on the first day the platform size averages enough history, the scale is set so that
     // the day's total revenue is what the relative rule gives
     let cfg = cfg_absolute();
     let (mut a, inp_short) = platform_case(30);
@@ -505,7 +505,7 @@ fn the_switch_to_absolute_revenue_keeps_the_days_total() {
 
 #[test]
 fn a_new_season_of_a_listed_series_joins_its_company() {
-    // docs/v2-series.md §3.3: no new shares; a company notice; its attention enters the company's revenue
+    // docs/design/series.md §3.3: no new shares; a company notice; its attention enters the company's revenue
     let cfg = cfg_absolute();
     let (mut e, _) = platform_case(200);
     let show = |id: i64, first_air: &str, aired: i64, us: f64, series: i64| {

@@ -45,7 +45,7 @@ async function changePassword() {
   }
 }
 
-// ---- 注销账号 (docs/v2-account.md §9): the password, then the account is gone for good
+// ---- 注销账号 (docs/design/account.md §9): the password, then the account is gone for good
 const closing = ref(false)
 const closePw = ref('')
 const closeErr = ref('')
@@ -65,7 +65,7 @@ async function closeAccount() {
   }
 }
 
-// ---- API 密钥 (docs/v2-api-access.md): read-only, or trading while the server allows it (身份验证 and the
+// ---- API 密钥 (docs/design/api-access.md): read-only, or trading while the server allows it (身份验证 and the
 // signed 程序化交易风险揭示书 first); the token is shown once
 const trading = computed(() => session.me?.api_trading ?? null)
 const keyTrade = ref(false)

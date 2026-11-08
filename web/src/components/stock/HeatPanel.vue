@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 热度: the AniEx heat index by day (docs/v3-futures.md §3), the work's (or the works' summed) published values,
+// 热度: the AniEx heat index by day (docs/design/futures.md §3), the work's (or the works' summed) published values,
 // with the episodes under the days they aired, in fixed slots ending on the latest day (a day without a value is an
 // empty slot). Days rebuilt from the archives before the live index began are lighter and say 回填. Pointing at (or
 // focusing, or tapping) a day shows it in the readout; without a choice the readout shows the latest day and its

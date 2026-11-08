@@ -26,7 +26,7 @@ const c = computed(() => credit.account)
 const rate = (v: number) => share(v, 2)
 const low = computed(() => c.value?.maintenance_ratio != null && c.value.maintenance_ratio < c.value.call_ratio)
 const owed = computed(() => (c.value ? c.value.debt + c.value.interest : 0))
-// 身份验证, 风险测评, the knowledge test, the margin disclosure (docs/v2-account.md §6); days and net assets: can_open
+// 身份验证, 风险测评, the knowledge test, the margin disclosure (docs/design/account.md §6); days and net assets: can_open
 const steps = computed(() => {
   const s = props.me.credit_steps
   const r = props.me.risk

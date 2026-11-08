@@ -1,4 +1,4 @@
-"""Backfill Annict's daily episode records for the heat index (docs/v3-futures.md §3.6: calibrate on history
+"""Backfill Annict's daily episode records for the heat index (docs/design/futures.md §3.6: calibrate on history
 instead of waiting weeks for live snapshots).
 
     uv run sim/backfill_annict_records.py [--per-min 300]
@@ -87,7 +87,7 @@ def main() -> None:
     load_dotenv()
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--per-min", type=int, default=300)
-    ap.add_argument("--workers", type=int, default=1)  # Annict: requests one at a time (docs/v3-data-terms.md)
+    ap.add_argument("--workers", type=int, default=1)  # Annict: requests one at a time (docs/design/data-terms.md)
     args = ap.parse_args()
     token = os.environ.get("ANNICT_TOKEN")
     if not token:

@@ -104,7 +104,7 @@ fn announce(cfg: &Config, args: &[String]) {
 
 /// `anistock reprice <values-db>` (server stopped): after a valuation rebuild, cancel every open order and put
 /// each listed stock's price at the value read from `values-db`, a copy of the game database on which the
-/// server started once with ANISTOCK_VALUATION_REBUILD=1 (docs/restart-v0.6.6.md, 价格对齐).
+/// server started once with ANISTOCK_VALUATION_REBUILD=1 (`git show 99514a7:docs/restart-v0.6.6.md`, 价格对齐).
 fn reprice(cfg: &Config, args: &[String]) {
     let Some(src) = args.first() else { fail("usage: anistock reprice <values-db>", 2) };
     let c = rusqlite::Connection::open_with_flags(src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -132,7 +132,7 @@ fn reprice(cfg: &Config, args: &[String]) {
 }
 
 fn main() {
-    // operator command (docs/ops-rebuild-replay.md): run with the server stopped
+    // operator command (docs/ops/rebuild-replay.md): run with the server stopped
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("replay-history") {
         anistock::sim::history::cli(&args[1..]);
@@ -215,7 +215,7 @@ fn main() {
     {
         fail(format!("game.day_rollover {} must be 04:00 while [market] is enabled", cfg.game.day_rollover), 1);
     }
-    // go-live of the filtered valuation (docs/v2-valuation.md): start it from the inputs history once
+    // go-live of the filtered valuation (docs/design/valuation.md): start it from the inputs history once
     match engine.valuation_go_live(&cfg, &clock.ts()) {
         Ok(Some(n)) => eprintln!("valuation: started the filter from the inputs history, {n} companies valued"),
         Ok(None) => {}

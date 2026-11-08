@@ -8,7 +8,7 @@ turns it into per-show post-finale factors in the form the valuation uses (engin
 
 t = days after the end of the finale's week (finale + 7). The level at the finale is the mean attention of the four
 weeks before the finale's week. The platform index (median in-season attention of the quarter's shows, smoothed over
-three quarters) deflates platform growth: the game's revenue is a share of the platform (docs/v2-series.md §6), so
+three quarters) deflates platform growth: the game's revenue is a share of the platform (docs/design/series.md §6), so
 the tail is measured as a share. Windows from the first trend day of a sequel on (the announcement proxy) are left
 out: the valuation's tail is the tail of a show with no sequel announced; the sequel is a separate option (§5).
 

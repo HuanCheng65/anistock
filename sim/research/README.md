@@ -1,4 +1,4 @@
-Research scripts behind docs/v2-valuation.md §3.13–3.14 (2026-11-07). Not part of the pipeline: they read the
+Research scripts behind docs/design/valuation.md §3.13–3.14 (2026-11-07). Not part of the pipeline: they read the
 replay outputs under data/fast/ (value-only marketsim runs, the filter states dumped by a debug build) and the
 AniList history DB (data/history.db, sim/history_backfill.py).
 

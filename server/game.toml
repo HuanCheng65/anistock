@@ -12,9 +12,9 @@ base_params = "sim/params_recommended.toml"
 # old ÷ new = 0.648 over the 68 companies valued in both; cross-check 2026-10-01: 0.625). The relative values of
 # airing and finished shows still come from the new model.
 "revenue.demand_base_week" = 1620000
-# absolute revenue (docs/v2-series.md §6) once the platform size averages two seasons of the collector's history
+# absolute revenue (docs/design/series.md §6) once the platform size averages two seasons of the collector's history
 "revenue.platform_min_days" = 182
-# phase 1 switches (docs/v2-series.md §12): the absolute revenue rule needs 182 days of real platform history (~Dec 5)
+# phase 1 switches (docs/design/series.md §12): the absolute revenue rule needs 182 days of real platform history (~Dec 5)
 # and the sequel option needs the AniList relations the collector has only just started to keep: both off for now.
 # impute_tail: cn/jp days without data (after the finale, and in season) earn the value's own expectation (the §4.2 stopgap)
 "revenue.absolute_revenue" = 0
@@ -73,7 +73,7 @@ committee_sell_frac = 0.002    # of shares per tick, at most
 noise_trade_prob = 0.15        # per tick per noise trader
 
 [market]
-# v2 NPC market (docs/v2-npc-market.md; Rust server only, the v1 Python server ignores this section).
+# v2 NPC market (docs/design/npc-market.md; Rust server only, the v1 Python server ignores this section).
 # Calibrated in simulation (backend: marketsim); every key not listed keeps its default in
 # backend/src/market/config.rs. On since v0.3.0 (false: the v1 NPCs, npc.rs).
 enabled = true
@@ -99,13 +99,13 @@ bias_sigma = 0.05              # spread of the value agents' views (§4)
 bias_half_life_days = 4.0
 event_shock = 0.12             # belief shift of a magnitude-10 official event
 mm_target_frac = 0.2           # market maker keeps 20% of the float (§8)
-# Designated market maker (v0.3.4, liquidity study in docs/v2-npc-market.md §11): quotes around the market
+# Designated market maker (v0.3.4, liquidity study in docs/design/npc-market.md §11): quotes around the market
 # price (not the hidden value), stock lent by the rights holders, a minimum quote size, size skew by inventory,
 # wider and smaller around scheduled information
 mm_anchor_to_price = 1.0
 mm_follow_revisions = true     # quotes move with each revision of the public value (热度快讯, the hourly updates, the
                                # close) until the price trades on it: a dealer requotes on public news at once
-                               # (Glosten–Milgrom), or scripts pick off its stale quotes (docs/v2-api-access.md §7)
+                               # (Glosten–Milgrom), or scripts pick off its stale quotes (docs/design/api-access.md §7)
 mm_loan_frac = 0.2             # rights holders lend 20% of the shares to the market maker; also the most it
                                # sells short from the lending pool once its inventory is gone
 mm_cash = 50000.0
@@ -114,7 +114,7 @@ mm_base_spread = 0.006
 mm_vol_mult = 2.0
 mm_vol_roll = true             # volatility net of bid-ask bounce (Roll 1984): from trade prices the market maker's
                                # own spread fed back into its volatility estimate (5-min sd 1.5% in the hottest stocks,
-                               # half-spread 1.4%), docs/v2-npc-market.md §13
+                               # half-spread 1.4%), docs/design/npc-market.md §13
 mm_quote_frac = 0.005
 mm_quote_min = 1500.0          # a quote unit is at least 1,500 币 (level k quotes k units)
 mm_levels = 5
@@ -124,11 +124,11 @@ mm_size_skew = 0.7             # ... the size skews instead
 mm_inventory_cap = 3.0
 mm_toxicity_mult = 2.0
 mm_event_widen = 2.0           # air windows, fresh events, the first half hour
-# adaptive liquidity (adapt_*, docs/v2-npc-market.md §11) stays off
+# adaptive liquidity (adapt_*, docs/design/npc-market.md §11) stays off
 fund_floor = 0.3               # fund flows (§6)
 fund_ceiling = 1.2
 fund_weekly_cap = 0.1
-# Sentiment layer batch 1 (docs/v2-sentiment.md): acts only through retail, trend and news agents' orders, never
+# Sentiment layer batch 1 (docs/design/sentiment.md): acts only through retail, trend and news agents' orders, never
 # on the hidden value. Random strengths, durations and occurrences are hashed from the seed and the server
 # secret (deterministic, survive restarts, not computable from this file).
 sentiment_strength = 0.15      # market sentiment (Baker–Wurgler), daily AR(1), half-life 14 days: at +1 sd the
@@ -137,14 +137,14 @@ sentiment_strength = 0.15      # market sentiment (Baker–Wurgler), daily AR(1)
 attention = 0.25               # attention buying (Barber–Odean): retail buy share 62% at a mean-strength episode
 attention_rank_n = 6           # 上热榜 = the market page's top-6 gainers / losers lists
 reaction = true                # under/over-reaction (Barberis–Shleifer–Vishny) of the news agents to revisions
-# Sentiment layer batch 2 (docs/v2-sentiment.md §7)
+# Sentiment layer batch 2 (docs/design/sentiment.md §7)
 bubble_prob = 0.5              # positive-feedback bubbles (De Long et al.): a run (5-close return >= 25%, about two sd of
                                # a 5-session return at the replay's 5% daily sd) in a stock at least average heat becomes a
                                # bubble half the time (Greenwood–Shleifer–You 2019: 21 of 40 100% run-ups crashed);
                                # strength log-normal mean 1, constant-hazard burst (mean life 1-5 days, at most 7)
 disposition_ratio = 1.0        # disposition effect OFF (code kept; 1.5 = Odean 1998 PGR 0.148 / PLR 0.098). On, it
                                # breaks the bounded-deviation criterion for cold stocks in hot-sentiment seasons:
-                               # docs/v2-sentiment.md §7.3
+                               # docs/design/sentiment.md §7.3
 
 [api.rate_limit]
 # API v1 token buckets (docs/api-v1.md §2.12): requests per second and burst per subject
@@ -159,7 +159,7 @@ register_per_ip_day = 20      # successful registrations per IP per day, on top 
 bind_per_hour = 5             # bind-code redemptions per QQ number
 ws_per_ip = 32                # concurrent WebSocket connections per IP (campus NAT shares one address)
 ws_total = 2000               # concurrent WebSocket connections, site-wide
-ws_per_account = 3            # concurrent WebSocket connections opened with API keys, per account (docs/v2-api-access.md)
+ws_per_account = 3            # concurrent WebSocket connections opened with API keys, per account (docs/design/api-access.md)
 order_rps = 5                 # placing / cancelling orders per account, web and API keys together (also counts above)
 order_burst = 10
 orders_per_day = 5000         # orders an account may place in a trading day
@@ -168,7 +168,7 @@ max_open_orders_per_stock = 20
 hash_concurrency = 2          # password hashes (scrypt, ~50 ms each) at a time; a login waits up to 5 s for a slot
 
 [api.pow]
-# proof of work for register / login (docs/v2-account.md §3.2): the browser finds n in [0, max) with
+# proof of work for register / login (docs/design/account.md §3.2): the browser finds n in [0, max) with
 # PBKDF2-SHA-256(n, salt, cost) = target. register_max = 0 turns it off.
 cost = 5000
 register_max = 1000           # about 1-2 s on a mid-range phone (measure before launch)
@@ -179,12 +179,12 @@ cooldown_secs = 600           # a surge lasts this long after the last minute ov
 expires_secs = 300            # a challenge is valid this long
 
 [account]
-# who may register (docs/v2-account.md §3.1): open, invite (needs ANISTOCK_INVITE), closed.
+# who may register (docs/design/account.md §3.1): open, invite (needs ANISTOCK_INVITE), closed.
 # ANISTOCK_REGISTRATION in .env overrides this.
 registration = "invite"
 
 [account.eligibility]
-# what 身份验证 (a QQ binding today; crate::kyc) and activity unlock (docs/v2-account.md §4)
+# what 身份验证 (a QQ binding today; crate::kyc) and activity unlock (docs/design/account.md §4)
 require_kyc = true
 transfer_min_days = 7          # 财政补贴: registered at least this many days
 transfer_active_days = 28      # 财政补贴: a trade in this many days
@@ -207,12 +207,12 @@ api_disclosure = 1             # 程序化交易风险揭示书: signed before a
 futures_disclosure = 1         # 热度期货风险揭示书: signed before trading futures
 
 [news]
-# external news from the news-feed stock extension (docs/v3-news.md): shadow = archived only (calibration);
+# external news from the news-feed stock extension (docs/design/news.md): shadow = archived only (calibration);
 # publish = also a game news item (category 媒体), no effect on the market
 mode = "publish"
 
 [api]
-# API keys with the `trade` scope (docs/v2-api-access.md phase 2). Off: keys stay read-only, and existing
+# API keys with the `trade` scope (docs/design/api-access.md phase 2). Off: keys stay read-only, and existing
 # trade keys stop trading at once (ANISTOCK_API_TRADING=0 overrides without a commit).
 trading = true                 # opened 2026-11-07 with v0.6.10
 
@@ -223,10 +223,10 @@ big_move_window = 0.05        # |change vs the price window_min minutes ago|
 big_move_window_min = 30
 
 [margin]
-# 融资融券 (docs/v2-margin.md §11). These are the defaults in backend/src/margin.rs; change a value here to override it.
+# 融资融券 (docs/design/margin.md §11). These are the defaults in backend/src/margin.rs; change a value here to override it.
 enabled = true
 min_days = 0              # days since registration before credit can be opened (A-share: 6 months). 0: opening
-                          # needs 身份验证 instead, which keeps throwaway accounts out (docs/v2-account.md §6)
+                          # needs 身份验证 instead, which keeps throwaway accounts out (docs/design/account.md §6)
 min_assets = 0.5          # net assets at least this share of initial_cash
 listed_days = 5           # a stock is marginable this many days after listing
 haircut = 0.7             # collateral value of a marginable stock (折算率)
@@ -245,7 +245,7 @@ npc_short_extra = 0.10    # extra mispricing a value agent needs before shorting
 npc_short_size = 0.10     # one short position at most this share of the agent's wealth
 
 [corporate]
-# Company capital policy (docs/v2-corporate.md §3; Rust server only). Every key not listed keeps its default in
+# Company capital policy (docs/design/corporate.md §3; Rust server only). Every key not listed keeps its default in
 # backend/src/corporate.rs.
 enabled = true
 split_above = 100.0          # 币: a close above this ...
@@ -263,7 +263,7 @@ buyback_adv_days = 20
 buyback_every_min = 10
 buyback_quiet_min = 30       # no buying this long after the open and before the close
 
-# 热度期货 (docs/v3-futures.md §4): the other values are the code's defaults (backend/src/futures/rules.rs), the ones
+# 热度期货 (docs/design/futures.md §4): the other values are the code's defaults (backend/src/futures/rules.rs), the ones
 # the replay gate passed. Needs a server binary with futures (v0.7.0+): an older one cannot read this table.
 [futures]
 enabled = true

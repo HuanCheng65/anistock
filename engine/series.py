@@ -1,4 +1,4 @@
-"""Series grouping (docs/v2-series.md §3.1): one company per series.
+"""Series grouping (docs/design/series.md §3.1): one company per series.
 
 Default rule: works connected by SEQUEL / PREQUEL relations among TV, TV_SHORT, ONA and MOVIE entries are one series
 (through entries the game does not track, too: a first season outside the data still links its second and third).

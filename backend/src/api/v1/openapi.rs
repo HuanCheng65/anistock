@@ -88,7 +88,7 @@ pub fn document() -> Value {
             "securitySchemes".into(),
             serde_json::json!({
                 "bot": {"type": "http", "scheme": "bearer", "description": "机器人令牌（ANISTOCK_BOT_TOKENS）；加 X-Act-As: qq:<openid> 代表已绑定的玩家"},
-                "api_key": {"type": "http", "scheme": "bearer", "description": "玩家自己的 API 密钥（anx_ 开头，在网页设置里生成）。权限 read:account：读 /me/*、WebSocket 订阅 me；写操作只能在网页上做（docs/v2-api-access.md）"},
+                "api_key": {"type": "http", "scheme": "bearer", "description": "玩家自己的 API 密钥（anx_ 开头，在网页设置里生成）。权限 read:account：读 /me/*、WebSocket 订阅 me；写操作只能在网页上做（docs/design/api-access.md）"},
             }),
         );
     }

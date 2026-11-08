@@ -55,7 +55,7 @@ Noise variance of the hour-h count read as the cn level, r_cn + var log(count_h 
 ipo_risk = 0: over the 61 shows listed in August-October of the v0.3.2 replay, the value 28 days after listing plus dividends relative to the model's value when the offer was priced is 0.935 value-weighted (1.158 equal-weighted, driven by three hits; 1.024 without them). The model's value already prices the uncertainty; a further discount was a riskless gain for subscribers (ipo_all +9.7 points over cap-weighted buy-and-hold with ipo_risk 0.25).
 
 
-## Long tail (docs/v2-series.md §4)
+## Long tail (docs/design/series.md §4)
 
 Expected attention t days after the finale's week = level at the finale × finale bump × factor(t): weekly transition, then floor × yearly^(t/365) + slow excess × exp(−t/τ2) + fast excess × exp(−t/τ), the floor and the slow excess scaled by the score prior. The filter reads post-finale observations through the median factor (expected × exp(−D(t)/2)), the level a random walk whose variance grows by D(t), the spread of show-specific tails.
 
@@ -232,7 +232,7 @@ Against the acceptance (level ratio within ±0.15 of 1 at 6/12/24 months):
 ## us episode week, day by day (v0.6.1, `--partial-only`)
 
 The days so far of a us episode week are observed every day from the second day as the GLS estimate of the
-complete week's average (engine/valuation.py `partial_observation`, docs/v2-valuation.md §3.8). Fitted on the
+complete week's average (engine/valuation.py `partial_observation`, docs/design/valuation.md §3.8). Fitted on the
 complete aligned episode weeks of the standard inputs (not the finale's), through the close's own day-by-day filter
 (`close_days`): d_j = ybar_j - ybar_7, j = 1..6, mean and covariance per segment, the variance scaled per n by
 maximum likelihood out of fold (fit on even AniList ids, score the complete week's observation on odd, and back):
@@ -265,7 +265,7 @@ that observation's innovation.
 The prior covariance of the three markets' log levels at the premiere had one common correlation (rho 0.534). With
 the dynamics (drift, q, r) fixed, bias, p0, the cn/jp elasticities and three pairwise correlations [us-cn, us-jp,
 cn-jp] were refitted by maximum likelihood of the joint filter (115 shows premiering inside the standard inputs with a
-point-in-time prior; docs/v2-valuation.md §3.9).
+point-in-time prior; docs/design/valuation.md §3.9).
 
 | | common rho | pairwise |
 |---|---|---|

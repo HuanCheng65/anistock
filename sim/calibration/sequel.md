@@ -1,4 +1,4 @@
-# Sequel option fit (docs/v2-series.md §5)
+# Sequel option fit (docs/design/series.md §5)
 
 Data: /home/starrydream/.cache/claude-tmp/claude-1007/-home-starrydream-anisotck/ae90f005-b0a1-4ebf-b50e-662abee6e48f/scratchpad/hist_final.db; 1688 finished TV/ONA shows, 6426 show-periods.
 

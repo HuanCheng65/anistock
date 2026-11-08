@@ -1,4 +1,4 @@
-//! Company capital policy (docs/v2-corporate.md §3): stock splits (拆股), rights issues (配股) and buybacks (回购),
+//! Company capital policy (docs/design/corporate.md §3): stock splits (拆股), rights issues (配股) and buybacks (回购),
 //! each run by the company's management by published rules, and the price adjustment factors they leave in the
 //! price history (前复权 K-lines, the NPC market's price memory).
 //!
@@ -32,7 +32,7 @@ use crate::store::persist::Change;
 use crate::valuation::Params as VParams;
 use crate::vfilter::FilterParams;
 
-/// `[corporate]` of game.toml (docs/v2-corporate.md §3).
+/// `[corporate]` of game.toml (docs/design/corporate.md §3).
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CorporateRules {
@@ -333,7 +333,7 @@ pub fn per_ten(ratio: f64) -> String {
     }
 }
 
-/// What the close needs to value companies again (docs/v2-valuation.md).
+/// What the close needs to value companies again (docs/design/valuation.md).
 pub struct ValueCtx<'a> {
     pub fp: &'a FilterParams,
     pub p: &'a VParams,
@@ -462,7 +462,7 @@ impl Engine {
         }
     }
 
-    /// The corporate step of the close, after the candles (docs/v2-corporate.md §3): settle rights issues on their
+    /// The corporate step of the close, after the candles (docs/design/corporate.md §3): settle rights issues on their
     /// record day, apply splits taking effect tomorrow, count closes over the split threshold and announce splits,
     /// end and (Sundays) start buybacks. Returns the money moved across the economy's border.
     pub fn corporate_close(&mut self, day: &str, ts: &str, sunday: bool, vc: Option<&ValueCtx>) -> Result<Flows, String> {
@@ -631,7 +631,7 @@ impl Engine {
 
     // ------------------------------------------------------------ rights issues
 
-    /// A sequel of `work` (company `c`) was announced at this close (docs/v2-corporate.md §3.3): its production
+    /// A sequel of `work` (company `c`) was announced at this close (docs/design/corporate.md §3.3): its production
     /// cost is the value the season gains when it counts in full; paid from cash at once if the cash allows,
     /// else the rest by a rights issue.
     pub fn corporate_on_sequel(&mut self, c: i64, work: i64, sequel: i64, day: &str, ts: &str, vc: &ValueCtx) -> Flows {
@@ -1015,7 +1015,7 @@ impl Engine {
         }
     }
 
-    /// Company notices from the public schedule after a work's valuation step (docs/v2-corporate.md §2.2–2.3): a
+    /// Company notices from the public schedule after a work's valuation step (docs/design/corporate.md §2.2–2.3): a
     /// halt (AniList HIATUS) and its end, and the next episode moving later (延期). `before`: the work's state
     /// before the step.
     pub(crate) fn schedule_news(

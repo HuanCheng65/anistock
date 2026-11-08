@@ -1,4 +1,4 @@
-//! The designated market maker selling borrowed stock (docs/v2-npc-market.md §11, docs/v2-margin.md §8):
+//! The designated market maker selling borrowed stock (docs/design/npc-market.md §11, docs/design/margin.md §8):
 //! it keeps offering at zero inventory, covers first on the way down, stays within its bound, and pays the
 //! lending fee and manufactured dividends like any short seller.
 

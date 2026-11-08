@@ -1,4 +1,4 @@
-//! Personal API keys for scripts (docs/v2-api-access.md). A key is `anx_` + 40 base62 characters, shown
+//! Personal API keys for scripts (docs/design/api-access.md). A key is `anx_` + 40 base62 characters, shown
 //! once; only its SHA-256 is kept, on the side connection like the QQ bindings (not game state).
 //!
 //! `read:account`: a key reads `/me/*` and may subscribe `me` on the WebSocket. `trade` (phase 2, while

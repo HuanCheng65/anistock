@@ -1,4 +1,4 @@
-//! `[market]` in server/game.toml: the v2 NPC population (docs/v2-npc-market.md). Every key has a default
+//! `[market]` in server/game.toml: the v2 NPC population (docs/design/npc-market.md). Every key has a default
 //! here, so the section may list only what it changes. Money amounts are in 币 (yuan), rates per hour.
 
 use serde::{Deserialize, Serialize};
@@ -109,7 +109,7 @@ pub struct MarketConfig {
     /// weight of the last price (vs the hidden value) in its reference
     pub mm_anchor_to_price: f64,
     /// the market maker's quotes move with every revision of the public value since the last trade
-    /// (docs/v2-api-access.md §7); off: they move only with trades
+    /// (docs/design/api-access.md §7); off: they move only with trades
     pub mm_follow_revisions: bool,
     /// market maker's cash after the float migration, 币
     pub mm_cash: f64,
@@ -175,7 +175,7 @@ pub struct MarketConfig {
     /// a change of the public value by this much (log) is a revision the news agents react to
     pub revision_min: f64,
 
-    // ---- sentiment layer, batch 1 (docs/v2-sentiment.md). Off in these defaults; on in server/game.toml.
+    // ---- sentiment layer, batch 1 (docs/design/sentiment.md). Off in these defaults; on in server/game.toml.
     // Every random strength, duration and occurrence below is a hash of (seed, server secret, company, time):
     // the same after a restart, not computable from the public repository.
     /// market-wide sentiment (Baker–Wurgler): a daily AR(1) in standard units; its effect on retail and trend
@@ -212,7 +212,7 @@ pub struct MarketConfig {
     /// revisions further apart than this do not form a streak (at most 8: the events kept)
     pub reaction_window_days: f64,
 
-    // ---- sentiment layer, batch 2 (docs/v2-sentiment.md §7). Off in these defaults; on in server/game.toml.
+    // ---- sentiment layer, batch 2 (docs/design/sentiment.md §7). Off in these defaults; on in server/game.toml.
     /// positive-feedback bubbles (De Long–Shleifer–Summers–Waldmann): when a stock at least `bubble_heat` hot
     /// (listed average = 1) starts a run (its return over the last `bubble_run_days` closes reaches
     /// `bubble_run`, having been under it the close before), a bubble forms with this probability (0: off)

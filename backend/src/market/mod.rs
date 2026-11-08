@@ -1,4 +1,4 @@
-//! The v2 NPC market (docs/v2-npc-market.md): a heterogeneous population of value, trend, news and retail
+//! The v2 NPC market (docs/design/npc-market.md): a heterogeneous population of value, trend, news and retail
 //! agents with their own beliefs and Poisson-timed actions, an improved market maker per stock, the rights
 //! holders (committee), events, bounded fund flows, and the one-off float migration.
 //!
@@ -406,7 +406,7 @@ impl Market {
         self.events.retain(|e| t - e.at < 8 * DAY);
     }
 
-    // ------------------------------------------------------------ sentiment layer (docs/v2-sentiment.md)
+    // ------------------------------------------------------------ sentiment layer (docs/design/sentiment.md)
 
     /// Market sentiment of the trading day containing `t`, standard units (0 when off).
     fn sentiment_at(&mut self, t: i64) -> f64 {
@@ -773,7 +773,7 @@ impl Market {
         if fair <= 0 {
             return None;
         }
-        // all information reaches the agents through the public value (docs/v2-valuation.md §4)
+        // all information reaches the agents through the public value (docs/design/valuation.md §4)
         Some(fair as f64 * self.bias(agent, c, t).exp())
     }
 
@@ -1527,7 +1527,7 @@ impl Market {
             // a retail agent stands for many small investors: their money demand does not depend on the nominal
             // price, so the whole-share remainder is bought with that probability (stochastic rounding). Without
             // it a share above a small order's size is never bought, and a stock split would release a burst of
-            // retail demand on a known day (docs/v2-corporate.md §3.2)
+            // retail demand on a known day (docs/design/corporate.md §3.2)
             let rest = budget / (at.max(1) as f64 * (1.0 + self.fees_commission) + 1.0) - q as f64;
             if rest > 0.0 && self.rng.range(0.0, 1.0) < rest && self.affordable(engine.available_cash(a.account) as f64, at) > q {
                 q += 1;
@@ -1741,7 +1741,7 @@ impl Market {
                 ask_floor = pa;
             }
         }
-        // selling short (docs/v2-margin.md §8): the same credit account, lending pool, fees, manufactured
+        // selling short (docs/design/margin.md §8): the same credit account, lending pool, fees, manufactured
         // dividends and forced liquidation as a player; only in continuous trading, only a marginable stock,
         // only once it holds none (a credit account cannot sell short a stock it holds). While short, every
         // bid is a buy to cover (买券还券), up to what it owes.

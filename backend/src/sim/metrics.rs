@@ -55,7 +55,7 @@ pub struct Series {
     /// every stock: (company, [(day, auction open, first trade, its time, its buyer, its seller)]) (the opening
     /// gap; buyer and seller as an agent kind or an account kind)
     pub opens: Vec<(i64, Vec<(String, i64, i64, i64, String, String)>)>,
-    /// every published 热度快讯: the price path right after it (docs/v2-api-access.md §7: how much a script
+    /// every published 热度快讯: the price path right after it (docs/design/api-access.md §7: how much a script
     /// that reads the news within a second could take before the market catches up)
     pub flash_paths: Vec<FlashPath>,
 }
@@ -205,7 +205,7 @@ fn wealth(e: &Engine, acct: i64) -> i64 {
 }
 
 impl Recorder {
-    /// Liquidity of the three hottest stocks (docs/v2-npc-market.md §13): spread, the market maker's quotes and
+    /// Liquidity of the three hottest stocks (docs/design/npc-market.md §13): spread, the market maker's quotes and
     /// the depth near the mid, inside and outside information windows, and the spread by hour.
     fn hot_liquidity(&self) -> serde_json::Value {
         let med = |v: Vec<f64>| median(v.into_iter().filter(|x| x.is_finite()).collect());
@@ -353,7 +353,7 @@ impl Recorder {
         self.runs.push((c, day.to_string(), bubble, draws));
     }
 
-    /// Bubbles (docs/v2-sentiment.md §7): log(price / value) of every run start from 5 days before to 10 days
+    /// Bubbles (docs/design/sentiment.md §7): log(price / value) of every run start from 5 days before to 10 days
     /// after, for the runs that became bubbles and those that did not (the control), and the bubbles' draws.
     fn bubble_report(&self) -> serde_json::Value {
         let offsets: Vec<i64> = vec![-5, 0, 1, 2, 3, 5, 7, 10];
@@ -829,7 +829,7 @@ impl Recorder {
             let phi = num / den;
             let half_life = if phi > 0.0 && phi < 1.0 { -(2f64.ln()) / phi.ln() } else { f64::INFINITY };
             let dev_sd = sd(&cs.iter().filter_map(|c| dev.get(c)).flatten().copied().collect::<Vec<_>>());
-            // ---- stylised facts (docs/v2-sentiment.md §4)
+            // ---- stylised facts (docs/design/sentiment.md §4)
             // short-term reversal at a day: lag-1 autocorrelation of daily returns
             let rd: Vec<Vec<f64>> = cs.iter().filter_map(|c| daily.get(c)).map(|v| v.iter().map(|x| x.1).collect()).collect();
             // bounded deviation: quantiles of log(price / value), and the longest run of a stock's days on one
@@ -953,7 +953,7 @@ impl Recorder {
             );
         }
 
-        // ---- revisions of the hidden value (docs/v2-valuation.md §7)
+        // ---- revisions of the hidden value (docs/design/valuation.md §7)
         let mut rev_all: Vec<f64> = Vec::new();
         let mut rev_pairs: Vec<(f64, f64)> = Vec::new();
         let mut by_weekday: [Vec<f64>; 7] = Default::default();

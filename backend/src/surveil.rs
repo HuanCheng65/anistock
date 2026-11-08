@@ -1,4 +1,4 @@
-//! 对倒监控 (docs/v2-account.md §4.1): trades between related accounts that look like moving assets
+//! 对倒监控 (docs/design/account.md §4.1): trades between related accounts that look like moving assets
 //! from one account to another, which the user agreement forbids (风险揭示书 §6.3). A report for a
 //! human to read (`anistock surveillance [days]`); nothing is punished automatically.
 //!

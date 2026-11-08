@@ -189,7 +189,7 @@ impl Engine {
         self.commit();
         let saved: State = self.st.clone();
         let companies: Vec<Company> = self.st.companies.values().filter(|c| c.status == "listed").cloned().collect();
-        // every work of the listed companies (a company is a series: docs/v2-series.md §3)
+        // every work of the listed companies (a company is a series: docs/design/series.md §3)
         let listed: Vec<&ShowInputs> = companies.iter().flat_map(|c| self.works_of(c.id)).filter_map(|w| inputs.show(w)).collect();
         let mut cx = Ctx {
             cfg,
@@ -278,7 +278,7 @@ impl Engine {
         }
         let tot_us = totals[0];
         let demand_day = V::demand_day(tot_us, a_ref, &p);
-        // the absolute revenue rule (docs/v2-series.md §6), once the platform size averages enough history
+        // the absolute revenue rule (docs/design/series.md §6), once the platform size averages enough history
         let abs = if cx.cfg.economy_v1 { None } else { self.platform_switch(cx, &p, &totals, demand_day) };
         if let Ok(path) = std::env::var("SIM_FORECAST") {
             // the realised side (sim/forecast_check.py): totals, demand, each listed show's attention and revenue
@@ -429,7 +429,7 @@ impl Engine {
         let v2 = if cx.cfg.economy_v1 {
             None
         } else {
-            // the filtered valuation (docs/v2-valuation.md): update every show's filter with today's data,
+            // the filtered valuation (docs/design/valuation.md): update every show's filter with today's data,
             // then value every company from the expected attention paths
             let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
             if let Some(msg) = crate::vclose::inputs_schema_problem(&fp, cx.inp) {
@@ -440,9 +440,9 @@ impl Engine {
                     if let Some(s) = cx.inp.show(w) {
                         let before = self.valuation_state(w).cloned();
                         self.valuation_step(&fp, &p, s, &day, &ts);
-                        // news from the public schedule (docs/v2-corporate.md §2.2–2.3)
+                        // news from the public schedule (docs/design/corporate.md §2.2–2.3)
                         self.schedule_news(&c, s, before.as_ref(), &cx.inp.cn_titles, &day, &ts);
-                        // a sequel announced today: its production cost (docs/v2-corporate.md §3.3)
+                        // a sequel announced today: its production cost (docs/design/corporate.md §3.3)
                         let was = before.as_ref().and_then(|j| j.sequel.as_ref()).map(|q| q.0);
                         if let Some(q) = self.valuation_state(w).and_then(|j| j.sequel.as_ref()).map(|q| q.0) {
                             if was != Some(q) {
@@ -655,7 +655,7 @@ impl Engine {
         self.do_set_state(&key, &code);
     }
 
-    /// The absolute revenue rule for this close (docs/v2-series.md §6): each market's platform size from the
+    /// The absolute revenue rule for this close (docs/design/series.md §6): each market's platform size from the
     /// inputs, once it averages at least `revenue.platform_min_days` days, and the scale set on the first such day
     /// so that the day's total revenue is unchanged (state `platform_rule`: "us,cn,jp,scale"). Inputs without a
     /// platform size keep the last one. None: the relative rule.
@@ -938,7 +938,7 @@ impl Engine {
         self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。")
     }
 
-    /// Delisting of a series (docs/v2-series.md §9): every work finished, the last week's revenue under
+    /// Delisting of a series (docs/design/series.md §9): every work finished, the last week's revenue under
     /// `delist_tail_share` of the median weekly revenue of the companies with a work on air, and a sequel
     /// announcement within three years less likely than `delist_sequel_p` (no announced sequel), for
     /// `delist_after_weeks` Sundays in a row. Liquidation at book value per share, as before.
@@ -1268,7 +1268,7 @@ impl Engine {
         let window = cx.g().ipo_subscription_days;
         let existing: HashSet<i64> = self.st.companies.keys().chain(self.st.company_works.keys()).copied().collect();
         let inp = cx.inp;
-        // the series of the listed companies (docs/v2-series.md §3.3): a new season of one joins its company
+        // the series of the listed companies (docs/design/series.md §3.3): a new season of one joins its company
         let mut series: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
         if !cx.cfg.economy_v1 {
             let mut listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();

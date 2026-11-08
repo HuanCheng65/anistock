@@ -14,7 +14,7 @@ File format (JSON, one object):
     cn_titles     {anilist_id: name}  Chinese title for every matched show (not only those in `shows`): a manual
                   `title_cn` in sim/matches.json wins, else Bangumi's name_cn. The close renames any company
                   whose id is here (refresh_titles); a new company is named cn_titles[id], else title_ja.
-    platform      {"us","cn","jp"}  each market's platform size (docs/v2-series.md §6): the mean, over the trailing
+    platform      {"us","cn","jp"}  each market's platform size (docs/design/series.md §6): the mean, over the trailing
                   year's days with data, of the day's total attention of every tracked work airing (an episode in
                   the last 14 days; listed or not; adult titles and promos aside) (phase 1)
     platform_days the number of days `platform` averages (up to 365; the close switches to absolute revenue once
@@ -67,10 +67,10 @@ File format (JSON, one object):
                         yet" is not information and the sequel option is not updated as time passes (phase 1)
         schedule        ["YYYY-MM-DD", ...] every main episode's air date on Bangumi (the public schedule); a show
                         whose schedule has an episode after the last one AniList recorded is not finished (phase 1);
-                        the valuation dates the episodes still to air by it (docs/v2-corporate.md §2.2)
-        hiatus          AniList status HIATUS on D (production halted; omitted when false) (docs/v2-corporate.md §2.3)
+                        the valuation dates the episodes still to air by it (docs/design/corporate.md §2.2)
+        hiatus          AniList status HIATUS on D (production halted; omitted when false) (docs/design/corporate.md §2.3)
         next_airing     AniList nextAiringEpisode on D: {"episode", "date" (Japanese broadcast date)}; omitted
-                        without one (docs/v2-corporate.md §2.2)
+                        without one (docs/design/corporate.md §2.2)
         series          the series key (engine/series.py: SEQUEL/PREQUEL among TV/ONA/films, plus sim/series.json;
                         the smallest AniList id in the series); a new season of a listed series joins its company
                         instead of listing (phase 1)
@@ -79,7 +79,7 @@ File format (JSON, one object):
                         denominator, IPO pricing, fair values)
 
 Top level, besides the shows: `heat` {"<id>": {"idx", "us", "cn", "jp", "flags", "version"}}, the AniEx heat index
-of D for every show engine/heat_index.py has published (docs/v3-futures.md §3; frozen once written; omitted for a
+of D for every show engine/heat_index.py has published (docs/design/futures.md §3; frozen once written; omitted for a
 show without a row). Futures settle on it. Top level so that a server binary from before it ignores it.
 
 Not in the file, because they come from game state or config rather than the model: the demand index
@@ -180,7 +180,7 @@ def _fdate(d: dict | None) -> tuple[date | None, str]:
 
 
 def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
-    """What the relations known on `day` say (docs/v2-series.md §5): whether the show is itself a sequel (a PREQUEL
+    """What the relations known on `day` say (docs/design/series.md §5): whether the show is itself a sequel (a PREQUEL
     TV/ONA/film), and an announced sequel that has not aired: a SEQUEL TV/ONA/film entry not yet released, announced
     on the first day the relation was seen, premiering on its start date (a month or year only: the middle of it),
     else the announcement plus each fitted announcement-to-premiere lag."""
@@ -236,7 +236,7 @@ JST = timezone(timedelta(hours=9))
 
 
 def load_airing(db_path: Path) -> dict[int, list[tuple[date, str | None, dict | None]]]:
-    """AniList's status and next episode per daily media snapshot (docs/v2-corporate.md §2.2–2.3):
+    """AniList's status and next episode per daily media snapshot (docs/design/corporate.md §2.2–2.3):
     {id: [(day, status, {"episode": n, "date": "YYYY-MM-DD"} or None)]}, oldest first. The next episode's day is the
     Japanese broadcast date of `airingAt`."""
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -287,7 +287,7 @@ PLATFORM_DAYS = 365   # the platform size is the mean over the trailing year (fo
 
 
 def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tuple[dict[str, float], int]:
-    """Each market's platform size on `day` (docs/v2-series.md §6): the mean over the trailing year (the days
+    """Each market's platform size on `day` (docs/design/series.md §6): the mean over the trailing year (the days
     before `day` that have data, up to 365) of the day's total attention of every tracked work airing that day,
     listed or not (airing: an episode in the last 14 days, so the finale's week counts; adult titles and promos
     aside). Returns ({market: size}, the number of days averaged)."""
@@ -334,7 +334,7 @@ def airing_sources(s: E.Show, day: date, markets: dict, mapped: dict[str, bool],
     back on, a 3x fall and rise): with no new episode there is nothing to report; nor is a source that never
     reported (a show matched late on Annict starts with the inferred level, then its data: switching it off in
     between moved the value twice). A finished show keeps its source: after the finale a missing market is the
-    long tail's (docs/v2-series.md §4). `aired`: the episode count on `day` (default: AniList's)."""
+    long tail's (docs/design/series.md §4). `aired`: the episode count on `day` (default: AniList's)."""
     out = {m: bool(mapped.get(m)) for m in ("cn", "jp")}
     if (day - s.first_air).days < STALE_DAYS:
         return out
@@ -562,8 +562,8 @@ class ShowInputs:
     popularity: float | None = None        # phase 1
     relations_known: bool = False          # phase 1
     schedule: list = field(default_factory=list)   # phase 1
-    hiatus: bool = False                   # docs/v2-corporate.md
-    next_airing: dict | None = None       # docs/v2-corporate.md
+    hiatus: bool = False                   # docs/design/corporate.md
+    next_airing: dict | None = None       # docs/design/corporate.md
 
 
 @dataclass(frozen=True)

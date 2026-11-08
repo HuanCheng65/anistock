@@ -1,5 +1,5 @@
 """Register past seasons' Annict works (with their episodes) in a collector database, for backfilling the heat
-index's jp market over seasons the collector did not track (docs/v3-futures.md §3.7; then
+index's jp market over seasons the collector did not track (docs/design/futures.md §3.7; then
 sim/backfill_annict_records.py counts their records). The snapshots are dated today, like a collection run.
 
     ANISTOCK_DB=data/fast/collector_b.db uv run python sim/backfill_annict_seasons.py 2025-autumn 2026-winter 2026-spring

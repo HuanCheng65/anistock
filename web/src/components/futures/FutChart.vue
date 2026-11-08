@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// The contract at a glance (docs/v3-futures-ui.md §11): one bar per day of the period, solid once its index is
+// The contract at a glance (docs/design/futures-ui.md §11): one bar per day of the period, solid once its index is
 // published, an empty dashed box until then; the market's expectation of the period average (the price) as a
 // line across the whole period, and the average so far as a dotted line over the published days. Settlement
 // is the average of all the bars, so the picture is the whole rule. To the left, lighter, the work's heat in the

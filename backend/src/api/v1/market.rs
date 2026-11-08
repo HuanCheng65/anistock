@@ -129,7 +129,7 @@ pub fn market_status(st: &AppState, c: &Connection) -> R<MarketStatus> {
     })
 }
 
-/// The market sentiment band of trading day `day` (docs/v2-sentiment.md): a pure function of the market seed,
+/// The market sentiment band of trading day `day` (docs/design/sentiment.md): a pure function of the market seed,
 /// the server secret and the day, so the API computes it without the engine.
 pub fn sentiment(cfg: &Config, day: &str) -> Option<Sentiment> {
     if !cfg.market.enabled || cfg.economy_v1 {

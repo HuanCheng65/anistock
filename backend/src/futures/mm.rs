@@ -1,4 +1,4 @@
-//! The futures market maker (docs/v3-futures.md §4.3): one per contract, quoting around the model's forecast
+//! The futures market maker (docs/design/futures.md §4.3): one per contract, quoting around the model's forecast
 //! of the period average (leaning a little toward the last price), the spread widening with the forecast's
 //! uncertainty, the centre skewed against its inventory, within a position limit. Its account (`fmm`) gets
 //! capital from world for every contract listed and returns it when the contract settles; what it wins or

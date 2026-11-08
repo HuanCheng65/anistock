@@ -3,7 +3,7 @@
     uv run python -m server.seed [--force] [--until DAY]
 
 --until DAY ends the replay on DAY instead of the collector's last full day: the start world of the
-pre-launch history rebuild (server/tools/rebuild_replay.py, docs/ops-rebuild-replay.md).
+pre-launch history rebuild (server/tools/rebuild_replay.py, docs/ops/rebuild-replay.md).
 
 Pre-launch candles and company revenue come from the simulation run with the game's own parameters
 (marked source='replay'). Each company then starts with the rights holders (制作委员会) owning 75%

@@ -1,7 +1,7 @@
 """The pure formulas that turn the model's daily inputs (engine/daily_inputs.py) plus game state into
 revenue shares and per-share values. No I/O, no Show objects: plain numbers and dicts.
 
-This is the part the Rust game server ports (docs/v2-architecture.md §1). The simulation (sim/) uses
+This is the part the Rust game server ports (docs/design/architecture.md §1). The simulation (sim/) uses
 the same functions through engine/economy.py, so there is one copy of each formula. Every float
 operation is written in a fixed order; a port must keep that order (and the summation order of its
 callers) to reproduce the Python results bit for bit.
@@ -125,7 +125,7 @@ def finished(aired: int, episodes: int | None, long_runner: bool) -> bool:
 
 
 # ================================================================ filtered valuation (v0.3.0)
-# docs/v2-valuation.md. The hidden value is a rational analyst's estimate from public information only:
+# docs/design/valuation.md. The hidden value is a rational analyst's estimate from public information only:
 # each show's level per market is tracked with a Kalman filter (attention = level × within-episode curve),
 # the expected attention path gives expected dividends, and the value is their present value plus the
 # company's cash. The game server (backend/src/valuation.rs) implements the same formulas in the same
@@ -203,7 +203,7 @@ def prior_cov(p0: list[float], rho) -> list[list[float]]:
     """Prior covariance of the three markets' log levels: variances p0, and the correlations (a show that beats
     its pre-air estimate in one market tends to beat it in the others). `rho` is one common correlation, or
     (v0.6.1) the three pairwise ones [us-cn, us-jp, cn-jp]: the two Asian markets move together far more than
-    either moves with AniList (docs/v2-valuation.md §3.9)."""
+    either moves with AniList (docs/design/valuation.md §3.9)."""
     sd = [v ** 0.5 for v in p0]
     c = list(rho) if isinstance(rho, (list, tuple)) else [rho, rho, rho]
     pair = lambda i, j: c[i + j - 1]   # (0,1) -> 0, (0,2) -> 1, (1,2) -> 2
@@ -286,7 +286,7 @@ def drift_at(fp: dict, m: str, w: int) -> float:
 
 def heat_class(fp: dict, level: float) -> int | None:
     """v0.6.1: a show's heat class from its us log level estimate DRIFT_WEEKS[0] weeks after the premiere (the
-    terciles `drift_heat.cuts`); None without the table. Fixed once set (docs/v2-valuation.md §3.10)."""
+    terciles `drift_heat.cuts`); None without the table. Fixed once set (docs/design/valuation.md §3.10)."""
     dh = fp.get("drift_heat")
     if not dh:
         return None
@@ -335,7 +335,7 @@ def partial_segment(fp: dict, heat: float, premiere: bool) -> int | None:
 
 def partial_observation(fp: dict, seg: int, ys: list[float], drift: float) -> tuple[float, float] | None:
     """The first n days of a us episode week (`ys`: log(attention / curve) from the air day on, every day present) as
-    an observation of the level today, and its noise variance beyond the complete week's r (docs/v2-valuation.md
+    an observation of the level today, and its noise variance beyond the complete week's r (docs/design/valuation.md
     §3.2). The days so far estimate the complete week's average by generalised least squares: with
     d_j = (average of the first j days) - (the week's average), mean m_j and covariance W fitted on complete weeks
     of the segment, the nested averages are ybar_j = X + m_j + e_j, X the week's average; the best linear unbiased
@@ -426,7 +426,7 @@ def att_path(fp: dict, p: dict, m: str, mean: float, var: float, today: int, sch
 
 
 def runup(fp: dict, m: str, final: int | None, t: int) -> float:
-    """v0.6.1 (docs/v2-valuation.md §3.11): market m's attention on day t relative to the level in the weeks before the
+    """v0.6.1 (docs/design/valuation.md §3.11): market m's attention on day t relative to the level in the weeks before the
     finale's week (`runup[m][j - 1]` for week j = 1, 2, .. before it, the week starting 7j days before the last
     episode's air day; viewers catch up before the finale). 1 elsewhere, and without the table."""
     r = fp.get("runup", {}).get(m)
@@ -465,7 +465,7 @@ def post_finale_factor(fp: dict, p: dict, m: str, final: int, t: int, mult: floa
     return prof[w] if w < len(prof) else prof[-1] * tail ** (w - len(prof) + 1)
 
 
-# ---- the long tail (docs/v2-series.md §4; fitted by sim/fit_valuation.py --history)
+# ---- the long tail (docs/design/series.md §4; fitted by sim/fit_valuation.py --history)
 
 
 def tail_of(fp: dict, m: str) -> dict | None:
@@ -516,7 +516,7 @@ def pop_percentile(pr: dict, popularity: float | None, week: int | None = None) 
 
 
 def tail_mult(fp: dict, score: float | None, ona: bool, popularity: float | None = None, week: int | None = None) -> float:
-    """The show's prior tail level relative to the average (docs/v2-series.md §4.1): fitted on score, format and the
+    """The show's prior tail level relative to the average (docs/design/series.md §4.1): fitted on score, format and the
     popularity percentile (bottom fifth, top tenth), log-linear, centred so the average show has 1. A missing score
     counts as the reference score; an unknown popularity as the middle."""
     pr = fp.get("tail", {}).get("prior")
@@ -546,7 +546,7 @@ def tail_beyond(tl: dict, mult: float, t_last: int, last: float, disc: float) ->
     return k * (a * g1 / (1.0 - g1) + b * g2 / (1.0 - g2) + c * g3 / (1.0 - g3))
 
 
-# ---- the sequel option (docs/v2-series.md §5; fitted by sim/fit_sequel.py)
+# ---- the sequel option (docs/design/series.md §5; fitted by sim/fit_sequel.py)
 
 SEASON_DAYS = 84      # a sequel season: 12 weekly episodes
 SEQ_HORIZON = 3650    # announcements later than 10 years after the finale are not counted
@@ -678,7 +678,7 @@ def discount_day(rate: float, p: dict) -> float:
 
 
 def absolute_parts(own: dict, platform: dict, scale: float, weights: dict, rv: dict) -> dict:
-    """Absolute revenue (docs/v2-series.md §6): each market's revenue per day of a show with attention `own`,
+    """Absolute revenue (docs/design/series.md §6): each market's revenue per day of a show with attention `own`,
     base/7 × scale × w_m × own_m / platform_m. The platform size is each market's trailing-year total attention of
     the airing works (engine/daily_inputs.py `platform_size`); `scale` was set once, at the switch, so that the day's
     total revenue was unchanged. No renormalisation: a market a show is not mapped to earns nothing."""

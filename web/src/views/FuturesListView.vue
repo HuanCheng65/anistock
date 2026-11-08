@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 行情 · 热度期货: every contract trading, one per work (docs/v3-futures.md §4.1), with the market's expectation
+// 行情 · 热度期货: every contract trading, one per work (docs/design/futures.md §4.1), with the market's expectation
 // of its period average and the day's change. The 股票 / 热度期货 switch sits above both lists.
 import { computed, ref } from 'vue'
 import { RouterLink } from 'vue-router'

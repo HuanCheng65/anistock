@@ -1,4 +1,4 @@
-"""Calibrate the live cn/jp long tail (docs/v2-series.md §4.2) on the server's collector history.
+"""Calibrate the live cn/jp long tail (docs/design/series.md §4.2) on the server's collector history.
 
     ANISTOCK_DB=<copy of the server's anistock.db> python sim/fit_tail_link.py [--weeks 26]
 

@@ -123,7 +123,7 @@ pub struct Config {
     pub api_disclosure: i64,
     /// current version of 热度期货风险揭示书 (signed before trading futures)
     pub futures_disclosure: i64,
-    /// `[api] trading`: API keys with the `trade` scope (docs/v2-api-access.md, phase 2); off until switched on.
+    /// `[api] trading`: API keys with the `trade` scope (docs/design/api-access.md, phase 2); off until switched on.
     /// ANISTOCK_API_TRADING=1 / 0 overrides it.
     pub api_trading: bool,
     /// `[news] mode`: shadow (archive only), publish (also a game news item); ANISTOCK_NEWS_MODE overrides
@@ -333,11 +333,11 @@ impl Config {
     }
 }
 
-/// The documents a player accepts before trading, in the order they are shown (docs/v2-account.md §7):
+/// The documents a player accepts before trading, in the order they are shown (docs/design/account.md §7):
 /// 用户协议, 隐私政策 (at registration), 风险揭示书 (signed in the account-opening flow).
 pub const DOCUMENTS: [&str; 3] = ["terms", "privacy", "disclosure"];
 
-/// Who may register (docs/v2-account.md §3.1).
+/// Who may register (docs/design/account.md §3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Registration {
     Open,

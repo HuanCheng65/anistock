@@ -1,4 +1,4 @@
-//! Futures and the credit account (信用账户, docs/v2-margin.md; docs/v3-futures-impl.md §1):
+//! Futures and the credit account (信用账户, docs/design/margin.md; docs/design/futures-impl.md §1):
 //!
 //! - a player trades futures from an open credit account; while it is under a margin call or liquidating it
 //!   may only close positions;

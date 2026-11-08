@@ -1,4 +1,4 @@
-//! Market simulation (docs/v2-npc-market.md §7): the real engine in memory (no database writes), a season
+//! Market simulation (docs/design/npc-market.md §7): the real engine in memory (no database writes), a season
 //! of real per-day inputs, trading sessions with the v2 NPC market acting by Poisson arrivals, the real
 //! daily close every night, events (premiere/finale/delisting warning from the close, 热度快讯 synthesized
 //! from Bangumi episode comment counts), and optional exploit bots. Seeded and deterministic.
@@ -142,7 +142,7 @@ pub const AFTER_WAVE_DAYS: i64 = 14;
 /// from two weeks before the first replayed day (`first_day`) on, in order, up to the first gap of more than
 /// `WAVE_GAP_DAYS`; returns (first premiere, last premiere, last premiere + `AFTER_WAVE_DAYS`). A replay that starts
 /// inside a season's premiere weeks lets a buy-and-hold strategy build its position while the new shows' first data
-/// revise their values, so where the replay starts decides its entry price (docs/v2-series.md, v0.6.1 gate); starting
+/// revise their values, so where the replay starts decides its entry price (docs/design/series.md, v0.6.1 gate); starting
 /// the bots after the wave measures what a strategy can repeat rather than where the replay happens to start.
 pub fn premiere_wave(inputs_dir: &std::path::Path, first_day: &str) -> Result<(String, String, String), String> {
     let first = crate::vclose::day_no(first_day).ok_or("bad first day")?;
@@ -174,7 +174,7 @@ pub fn premiere_wave(inputs_dir: &std::path::Path, first_day: &str) -> Result<(S
     Ok((fmt(p0), fmt(last), fmt(last + AFTER_WAVE_DAYS)))
 }
 
-/// `SIM_SYNTH_SEQUELS=1` (docs/v2-corporate.md §6, a labelled synthetic test): the replay has no relations data,
+/// `SIM_SYNTH_SEQUELS=1` (docs/design/corporate.md §6, a labelled synthetic test): the replay has no relations data,
 /// so no sequel is ever announced and no rights issue happens. With this set (and the sequel option on), every show
 /// counts as watched and, at its finale, draws when its sequel is announced from the fitted hazard model itself (the
 /// model the option prices): in this synthetic world the option is unbiased by construction, and the announcements
@@ -222,7 +222,7 @@ impl SynthSequels {
     }
 }
 
-/// `SIM_REVEAL_DAYS=n` (docs/v2-corporate.md §6): the replay's schedules come from one late snapshot, so every
+/// `SIM_REVEAL_DAYS=n` (docs/design/corporate.md §6): the replay's schedules come from one late snapshot, so every
 /// break is known from the first day and no delay is ever announced. With this set, each show's schedule on a
 /// day shows its real dates only up to n days ahead and weekly after the last of them, so a real break appears
 /// n days before it, as a delay notice, the way a broadcaster announces it.
@@ -270,11 +270,11 @@ pub struct SimOptions {
     /// open every listed company at the model's value on the first day (the start world's prices come from
     /// server.seed's v1 valuation, which can be far from the filtered one; `history` does the same)
     pub open_at_value: bool,
-    /// Rebuilding the pre-launch history (`replay_history`, docs/ops-rebuild-replay.md): no corporate actions (there
+    /// Rebuilding the pre-launch history (`replay_history`, docs/ops/rebuild-replay.md): no corporate actions (there
     /// were none before the market opened), every listed company starts at the model's own value (like
     /// server/seed.py's opening price), and the result keeps what the closes wrote (`SimResult::history`).
     pub history: bool,
-    /// 指数基金 (`[funds]` on): the idle players' flows into a fund (docs/v3-funds.md §9 step 1)
+    /// 指数基金 (`[funds]` on): the idle players' flows into a fund (docs/design/funds.md §9 step 1)
     pub fund_flows: Option<funds::FundFlows>,
 }
 
@@ -557,7 +557,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
                         published.push((f.company_id, at, dir));
                         rec.flash_path(&e, f.company_id, at, dir, out.old_value, out.new_value);
                         // a script reads the news within a second, before the next NPC or market-maker action
-                        // (docs/v2-api-access.md §7); the minute-driven bots see it at the minute's end
+                        // (docs/design/api-access.md §7); the minute-driven bots see it at the minute's end
                         if at >= t_cont && at < t_end && k >= bot_start {
                             if let Some(b) = bot.as_mut() {
                                 b.on_flash(&mut e, f.company_id, at, dir, out.old_value, out.new_value);
@@ -652,7 +652,7 @@ pub fn run(cfg: &Config, opts: &SimOptions) -> Result<SimResult, String> {
             let v: Vec<((i64, String), i64)> = e.companies().filter(|c| c.status == "listed").map(|c| ((c.id, day.clone()), c.fair_value)).collect();
             tap.0.lock().unwrap().history.as_mut().unwrap().values.extend(v);
         }
-        // company notices of the close (docs/v2-corporate.md), and the bot's price memory after splits / ex-rights
+        // company notices of the close (docs/design/corporate.md), and the bot's price memory after splits / ex-rights
         {
             let tp = tap.0.lock().unwrap();
             while news_seen < tp.news.len() {

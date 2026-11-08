@@ -1,4 +1,4 @@
-//! 身份验证 (KYC) and what it unlocks (docs/v2-account.md §2, §4).
+//! 身份验证 (KYC) and what it unlocks (docs/design/account.md §2, §4).
 //!
 //! The eligibility gates (财政补贴, 新股认购, 排行榜) ask one question: is this account verified?
 //! How an account gets verified is decided here and nowhere else. Today the one method is a QQ binding

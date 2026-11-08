@@ -44,10 +44,10 @@ from zoneinfo import ZoneInfo
 import httpx
 
 TZ = ZoneInfo("Asia/Shanghai")  # "day" boundaries are defined in this zone
-# developer/app (url): Bangumi asks for a developer id and app name, the others for a way to reach us (docs/v3-data-terms.md)
+# developer/app (url): Bangumi asks for a developer id and app name, the others for a way to reach us (docs/design/data-terms.md)
 USER_AGENT = "HuanCheng65/anistock (https://github.com/HuanCheng65/anistock)"
 KEEP_TRACKING_DAYS = 180  # full snapshots (episode lists) this long after a work was last discovered; after that the
-                          # work stays tracked for good in a lighter "tail" mode (docs/v2-series.md §4.2: revenue in the
+                          # work stays tracked for good in a lighter "tail" mode (docs/design/series.md §4.2: revenue in the
                           # long tail needs daily data for as long as the company is listed)
 MIN_ANILIST_POPULARITY = 1000  # RELEASING filter, keeps out tiny shows
 MIN_ANNICT_WATCHERS = 30
@@ -522,7 +522,7 @@ query ($ids: [Int], $page: Int) {
 
 
 def collect_anilist_relations(http: Http, store: Store, ids: list[int]) -> int:
-    """Each tracked work's related entries (snapshot kind 'relations'): series grouping (docs/v2-series.md §3.1) and
+    """Each tracked work's related entries (snapshot kind 'relations'): series grouping (docs/design/series.md §3.1) and
     sequel announcements, i.e. a new SEQUEL entry that has not aired yet (§5.2). A separate query keeps the main
     listing query under AniList's complexity limit."""
     n = 0
@@ -586,11 +586,11 @@ def annict_records_query(cursors: dict[int, str | None], first: int) -> tuple[st
 
 
 # seconds per run for reading new records. A work's first read happens here too, a budget a day: Annict asks for
-# full reads in pieces over hours or days (docs/v3-data-terms.md). `collect.py --annict-viewers` reads everything at
+# full reads in pieces over hours or days (docs/design/data-terms.md). `collect.py --annict-viewers` reads everything at
 # once, for a fresh database only; until a work is read its index falls back to recordsCount.
 ANNICT_VIEWER_BUDGET_S = float(os.environ.get("ANNICT_VIEWER_BUDGET_S", "600"))
 # one request at a time (Annict's rate limit page: 「リクエストは並列にせず、1件ずつ順番に送ってください」, made part of
-# the API terms by Art. 11; docs/v3-data-terms.md); each request still reads 20 episodes by alias
+# the API terms by Art. 11; docs/design/data-terms.md); each request still reads 20 episodes by alias
 ANNICT_VIEWER_WORKERS, ANNICT_VIEWER_PER_MIN = 1, 300
 
 
@@ -645,7 +645,7 @@ def read_records(http: "Http", todo: list[EpisodeRead], stop: Callable[[], bool]
 
 class Viewers:
     """Each Annict account counted once per episode (Annict lets an account record an episode again,
-    docs/v3-futures.md §3.1): reads the records added since the last run, newest first, a page of 20
+    docs/design/futures.md §3.1): reads the records added since the last run, newest first, a page of 20
     episodes per request."""
 
     BATCH, PAGE = 20, 100

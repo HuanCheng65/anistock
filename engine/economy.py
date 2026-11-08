@@ -49,7 +49,7 @@ class Show:
     genres: list[str] = field(default_factory=list)  # AniList genres + THEME_TAGS it carries (the theme indices)
 
 
-# AniList tags the theme indices select on (docs/v3-funds.md §3), with the rank (how central the tag is to the
+# AniList tags the theme indices select on (docs/design/funds.md §3), with the rank (how central the tag is to the
 # show, 0-100) from which a show counts
 THEME_TAGS = {"Isekai": 60}
 

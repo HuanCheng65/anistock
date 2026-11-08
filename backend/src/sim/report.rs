@@ -486,7 +486,7 @@ fn bot_ret(bots: &[(String, Value)], k: &str) -> Option<f64> {
     bots.iter().find(|(n, _)| n == k).and_then(|(_, v)| v["return"].as_f64())
 }
 
-/// docs/v2-valuation.md §7: the valuation's acceptance table.
+/// docs/design/valuation.md §7: the valuation's acceptance table.
 fn valuation_acceptance(base: &Value, bots: &[(String, Value)], threshold_pts: f64) -> String {
     let r = &base["revisions"];
     let g = |k: &str| r[k].as_f64().unwrap_or(f64::NAN);
@@ -558,7 +558,7 @@ fn valuation_acceptance(base: &Value, bots: &[(String, Value)], threshold_pts: f
     h
 }
 
-/// docs/v2-sentiment.md §4: the stylised facts, per heat group (measurements; the verdicts need judgement and
+/// docs/design/sentiment.md §4: the stylised facts, per heat group (measurements; the verdicts need judgement and
 /// a comparison with the run without the sentiment layer).
 fn stylised_table(g: &Value) -> String {
     let mut h = String::from("<h2>市场特征（情绪层 §4）</h2><div class=wrap><table><tr><th>特征</th><th>指标</th><th>热门</th><th>中等</th><th>冷门</th><th>全部</th></tr>");
@@ -594,7 +594,7 @@ fn stylised_table(g: &Value) -> String {
     h
 }
 
-/// docs/v2-valuation.md §5: where the money is and where it went.
+/// docs/design/valuation.md §5: where the money is and where it went.
 fn money_table(base: &Value, bots: &[(String, Value)]) -> String {
     let mo = base["money"].as_array().cloned().unwrap_or_default();
     let (Some(a), Some(b)) = (mo.first(), mo.last()) else { return String::new() };

@@ -33,12 +33,12 @@ export const useStock = defineStore('stock', () => {
   /** the cursor of the next older page of `news` (null: no more) */
   const newsMore = ref<Record<number, string | null>>({})
   const works = ref<Record<number, WorksResponse>>({})
-  /** the AniEx heat index by day, summed over the company's works (docs/v3-futures.md §3); `backfill`: a day
+  /** the AniEx heat index by day, summed over the company's works (docs/design/futures.md §3); `backfill`: a day
    *  before the live index, rebuilt from the platforms' archives (server/tools/import_heat.py --backfill) */
   const heat = ref<Record<number, HeatPoint[]>>({})
   const candles = ref<Record<number, Candle[]>>({})
   const intraday = ref<Record<number, IntradayPoint[]>>({})
-  // corporate actions (docs/v2-corporate.md): split / ex-rights days of the K-line, the open rights issue
+  // corporate actions (docs/design/corporate.md): split / ex-rights days of the K-line, the open rights issue
   const exDays = ref<Record<number, ExDay[]>>({})
   const rights = ref<Record<number, RightsOffer | null>>({})
   /** K-lines forward-adjusted (前复权, default) or as traded */

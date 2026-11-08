@@ -613,7 +613,7 @@ table(["months", "n ep", "ep comments: median ratio", "pooled ratio", "share zer
 print(f"<!-- Bangumi subjects: {len(subj)}, with episode comments {len(epc)}, with subject comments {len(pages)} -->")
 
 
-# ------------------------------------------------------------------ design checks (docs/v2-series.md)
+# ------------------------------------------------------------------ design checks (docs/design/series.md)
 print("\n## Design checks\n")
 print("### us tail level (deflated, months 24–36, no sequel) with windows overlapping 2020-04..2021-06 dropped\n")
 LOCK_A, LOCK_B = date(2020, 4, 1), date(2021, 6, 30)

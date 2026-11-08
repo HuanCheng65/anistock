@@ -1,4 +1,4 @@
-//! The futures part of the daily close (docs/v3-futures.md §4.1–4.2):
+//! The futures part of the daily close (docs/design/futures.md §4.1–4.2):
 //!
 //! 1. the day's orders expire;
 //! 2. the day's heat index is published into the game database (frozen);

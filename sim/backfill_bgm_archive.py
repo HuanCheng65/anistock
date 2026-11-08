@@ -1,5 +1,5 @@
 """Backfill Bangumi's weekly collection counts from the official archive (github.com/bangumi/Archive releases),
-for the heat index's cn market (docs/v3-futures.md §3.6).
+for the heat index's cn market (docs/design/futures.md §3.6).
 
     uv run sim/backfill_bgm_archive.py [--since 2025-11-01] [--jobs 3] [--all-anime]
 

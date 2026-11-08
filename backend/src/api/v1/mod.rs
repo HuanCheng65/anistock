@@ -65,7 +65,7 @@ pub struct V1State {
     /// `Idempotency-Key`: (account, key) -> (when, status, body)
     pub idem: Mutex<HashMap<(i64, String), (std::time::Instant, u16, Vec<u8>)>>,
     pub events: events::EventRules,
-    /// register / login proof of work (docs/v2-account.md §3.2)
+    /// register / login proof of work (docs/design/account.md §3.2)
     pub pow: pow::Pow,
     /// password hashes computed at the same time (`limits.hash_concurrency`)
     pub hashing: tokio::sync::Semaphore,
@@ -117,7 +117,7 @@ pub enum Caller {
     Bot { name: String },
     /// a bot token acting for a bound player
     BotAs { name: String, account: i64, scopes: Vec<String> },
-    /// a player's own API key (docs/v2-api-access.md)
+    /// a player's own API key (docs/design/api-access.md)
     ApiKey { account: i64, key: i64, scopes: Vec<String> },
 }
 
@@ -155,7 +155,7 @@ impl Caller {
 
     /// Placing and cancelling orders, subscriptions and repayments: a browser session, or an API key with the
     /// `trade` scope while `[api] trading` is on and the account is verified and has signed the
-    /// 程序化交易风险揭示书 (checked on every request, docs/v2-api-access.md §4).
+    /// 程序化交易风险揭示书 (checked on every request, docs/design/api-access.md §4).
     pub async fn trader(&self, st: &Arc<AppState>) -> R<Trader> {
         match self {
             Caller::ApiKey { account, key, scopes } => {
@@ -329,7 +329,7 @@ pub async fn layer(State(st): State<Arc<AppState>>, mut req: Request, next: Next
         Ok(caller) => {
             let ip_key = ratelimit::ip_key(&ip);
             let key = match &caller {
-                // a key shares its account's bucket with the browser (docs/v2-api-access.md §5)
+                // a key shares its account's bucket with the browser (docs/design/api-access.md §5)
                 Caller::Player { id } | Caller::ApiKey { account: id, .. } => ratelimit::Key::Player(*id),
                 Caller::Bot { name } | Caller::BotAs { name, .. } => ratelimit::Key::Bot(name.clone()),
                 Caller::Anon => ratelimit::Key::Anon(ip_key.clone()),

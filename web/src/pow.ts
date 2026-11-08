@@ -1,4 +1,4 @@
-// The register / login proof of work (docs/v2-account.md §3.2): solved in a Web Worker with crypto.subtle.
+// The register / login proof of work (docs/design/account.md §3.2): solved in a Web Worker with crypto.subtle.
 import type { components } from './api/schema'
 
 export type PowChallenge = components['schemas']['PowChallenge']

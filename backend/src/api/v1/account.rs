@@ -204,7 +204,7 @@ pub fn pending_documents(cfg: &crate::config::Config, c: &Connection, id: i64) -
     Ok(out)
 }
 
-/// Orders, subscriptions and opening credit need every current document accepted (docs/v2-account.md §8).
+/// Orders, subscriptions and opening credit need every current document accepted (docs/design/account.md §8).
 pub async fn require_signed(st: &Arc<AppState>, id: i64) -> R<()> {
     let st2 = st.clone();
     let pending = read(st, move |c| pending_documents(&st2.cfg, c, id)).await?;
@@ -726,7 +726,7 @@ async fn place_new(st: &Arc<AppState>, who: super::Trader, headers: &HeaderMap, 
         e.1 += 1;
     }
     if let Some(key) = who.key {
-        // the 程序化 mark and the surveillance reports (docs/v2-api-access.md §6)
+        // the 程序化 mark and the surveillance reports (docs/design/api-access.md §6)
         super::bind::side_exec(
             st,
             "INSERT OR IGNORE INTO api_orders(order_id, account_id, key_id, day) VALUES (?,?,?,?)",
@@ -1395,7 +1395,7 @@ pub async fn close(
         }
     })
     .await??;
-    // personal data outside the game books (docs/v2-account.md §9); the ledger and trades stay, anonymous
+    // personal data outside the game books (docs/design/account.md §9); the ledger and trades stay, anonymous
     let keys = super::bind::with_side(&st, |c| {
         let keys = super::keys::revoke_all(c, id, &st.clock.ts())?;
         for t in ["bind_codes", "bindings", "account_agreements", "risk_assessments", "quiz_results", "account_logins", "api_keys"] {

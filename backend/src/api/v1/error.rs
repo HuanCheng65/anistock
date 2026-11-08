@@ -96,7 +96,7 @@ pub fn too_many_open_orders(scope: &str, max: usize) -> E {
 pub fn daily_order_limit(max: i64) -> E {
     E::new(429, "daily_order_limit", format!("今天的委托已达上限（{max} 笔），下一个交易日再来")).details(json!({"max": max}))
 }
-/// A key with the `trade` scope whose account no longer meets the conditions (docs/v2-api-access.md §4).
+/// A key with the `trade` scope whose account no longer meets the conditions (docs/design/api-access.md §4).
 pub fn trade_not_allowed(missing: Vec<&'static str>) -> E {
     E::new(403, "forbidden", "这个账号现在不能用 API 交易").details(json!({"required_scope": "trade", "required": missing}))
 }

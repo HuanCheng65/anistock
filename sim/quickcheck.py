@@ -5,7 +5,7 @@
 
 Runs `marketsim --value-only` (the daily closes alone, no intraday trading: about 2 seconds for a season) and reads
 each stock's hidden value and dividends per day. The hidden value and the dividends depend only on the inputs, not
-on trading (backend/src/sim/mod.rs), and prices track the value closely (docs/v2-series.md: deviation p95 about
+on trading (backend/src/sim/mod.rs), and prices track the value closely (docs/design/series.md: deviation p95 about
 10%, half-life about 16 days; a bot's picks earn the value's own total return), so whether a mechanical strategy
 beats the market can be measured on the value paths without simulating the market. The full replay (`marketsim`
 with bots) stays the check of the NPC market; this one is for iterating on the valuation.

@@ -1,4 +1,4 @@
-//! Corporate action exploit tests (docs/v2-corporate.md §6): a submodule of `bots` so the strategies share the
+//! Corporate action exploit tests (docs/design/corporate.md §6): a submodule of `bots` so the strategies share the
 //! bot's state. Each holds the market by market value with most of its money (so its excess over the
 //! cap-weighted benchmark is what the event trades add) and trades the company notices it is given.
 

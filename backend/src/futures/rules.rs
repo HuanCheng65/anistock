@@ -1,4 +1,4 @@
-//! `[futures]` of game.toml (docs/v3-futures.md §4; the defaults are the values decided there).
+//! `[futures]` of game.toml (docs/design/futures.md §4; the defaults are the values decided there).
 
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ pub struct FuturesRules {
     pub margin_cap: f64,
     /// the settlement price is the volume-weighted average of the trades in the session's last minutes
     pub settle_window_min: i64,
-    /// the index in the valuation filter's units, until the filter observes the index itself (docs/v3-futures.md
+    /// the index in the valuation filter's units, until the filter observes the index itself (docs/design/futures.md
     /// §3.5, §3.7): index = scale × Σ weight × link × attention / platform, per market [us, cn, jp]
     pub index_weights: [f64; 3],
     /// index units per unit of the inputs' att, per market [us, cn, jp] and four-week block since the premiere
@@ -132,7 +132,7 @@ impl Default for FuturesRules {
             mm_limit: 200,
             mm_size: 10,
             mm_levels: 3,
-            // the narrowest spread the gate passes (docs/v3-futures.md §4.5, 2026-11-08): at 0.3 the momentum bot
+            // the narrowest spread the gate passes (docs/design/futures.md §4.5, 2026-11-08): at 0.3 the momentum bot
             // beats buy-and-hold by 8 points; 0.6 left the maker 11-14k a season
             mm_spread_sd: 0.4,
             mm_min_half: 10,

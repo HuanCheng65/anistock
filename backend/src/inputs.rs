@@ -1,5 +1,5 @@
 //! The model's per-day inputs file (written by `engine/daily_inputs.py`; format in its docstring and
-//! docs/v2-architecture.md §3), and running the Python side to produce it.
+//! docs/design/architecture.md §3), and running the Python side to produce it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -70,7 +70,7 @@ pub struct ShowInputs {
     /// AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...) (phase 1: the sequel option)
     #[serde(default)]
     pub source: Option<String>,
-    /// AniList genres, plus the theme tags the indices use (Isekai) (the theme indices, docs/v3-funds.md §3)
+    /// AniList genres, plus the theme tags the indices use (Isekai) (the theme indices, docs/design/funds.md §3)
     #[serde(default)]
     pub genres: Vec<String>,
     /// itself a sequel: a PREQUEL relation to a TV/ONA/film (phase 1)
@@ -79,10 +79,10 @@ pub struct ShowInputs {
     /// in the top decile of popularity among the shows premiering within half a year of it (phase 1)
     #[serde(default)]
     pub top_pop: bool,
-    /// an announced sequel not yet aired (phase 1, docs/v2-series.md §5.2)
+    /// an announced sequel not yet aired (phase 1, docs/design/series.md §5.2)
     #[serde(default)]
     pub sequel: Option<SequelInputs>,
-    /// the series key (engine/series.py: the smallest AniList id of the series) (phase 1, docs/v2-series.md §3)
+    /// the series key (engine/series.py: the smallest AniList id of the series) (phase 1, docs/design/series.md §3)
     #[serde(default)]
     pub series: Option<i64>,
     /// AniList list entries on the day (the tail prior's popularity at the finale) (phase 1)
@@ -94,10 +94,10 @@ pub struct ShowInputs {
     /// the public schedule: every main episode's air date on Bangumi (past and announced) (phase 1)
     #[serde(default)]
     pub schedule: Vec<String>,
-    /// AniList status HIATUS on the day: production halted (docs/v2-corporate.md §2.3)
+    /// AniList status HIATUS on the day: production halted (docs/design/corporate.md §2.3)
     #[serde(default)]
     pub hiatus: bool,
-    /// AniList's next episode on the day: its number and air day (docs/v2-corporate.md §2.2)
+    /// AniList's next episode on the day: its number and air day (docs/design/corporate.md §2.2)
     #[serde(default)]
     pub next_airing: Option<NextAiring>,
 }
@@ -136,7 +136,7 @@ fn yes() -> bool {
     true
 }
 
-/// One show's AniEx heat index for the day (engine/heat_index.py; docs/v3-futures.md §3): the checked heat
+/// One show's AniEx heat index for the day (engine/heat_index.py; docs/design/futures.md §3): the checked heat
 /// per market and the index futures settle on. Published once and never revised.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HeatIndex {
@@ -161,7 +161,7 @@ struct RawInputs {
     window_start: Option<String>,
     cn_titles: BTreeMap<String, String>,
     shows: Vec<ShowInputs>,
-    /// phase 1: each market's platform size (docs/v2-series.md §6) and the number of days it averages
+    /// phase 1: each market's platform size (docs/design/series.md §6) and the number of days it averages
     #[serde(default)]
     platform: Option<Markets>,
     #[serde(default)]

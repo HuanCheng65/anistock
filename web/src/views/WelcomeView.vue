@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Account opening (docs/v2-account.md §7). Right after registering (?new=1): what AniEx is, the risk
+// Account opening (docs/design/account.md §7). Right after registering (?new=1): what AniEx is, the risk
 // disclosure, the receipt. After a sign-in with documents pending (existing players, a new version):
 // accept the updated documents, sign the disclosure. Nothing here places an order.
 import { computed, nextTick, ref } from 'vue'

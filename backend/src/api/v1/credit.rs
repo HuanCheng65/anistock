@@ -1,4 +1,4 @@
-//! 融资融券 (docs/v2-margin.md, docs/api-v1.md §4.5.11): the credit account, opening it, direct repayment, a
+//! 融资融券 (docs/design/margin.md, docs/api-v1.md §4.5.11): the credit account, opening it, direct repayment, a
 //! stock's margin terms, and the liabilities every asset figure subtracts. Credit orders go through
 //! `POST /me/orders` with `credit`.
 
@@ -258,7 +258,7 @@ pub async fn open(
 ) -> R<Json<CreditEnvelope>> {
     let id = caller.player()?;
     super::account::require_signed(&st, id).await?;
-    // 风险测评, the knowledge test and the margin disclosure (docs/v2-account.md §6)
+    // 风险测评, the knowledge test and the margin disclosure (docs/design/account.md §6)
     let st2 = st.clone();
     let steps = super::read(&st, move |c| super::assess::credit_steps(&st2, c, id)).await?;
     if let Some(e) = super::assess::credit_refusal(&steps) {

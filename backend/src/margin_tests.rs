@@ -312,7 +312,7 @@ fn delisting_settles_shorts_in_cash() {
     ok(&w.e);
 }
 
-// ---- 保证金可用余额 (the exchanges' formula; docs/v2-margin.md §4)
+// ---- 保证金可用余额 (the exchanges' formula; docs/design/margin.md §4)
 
 /// A player with `cash` and credit open, outside the order flow (positions are set by hand).
 fn bare(cash: i64) -> (W, i64) {

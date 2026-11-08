@@ -1,4 +1,4 @@
-"""Sequel announcements from AniList relations (engine/daily_inputs.py `series_facts`, docs/v2-series.md §5.2)."""
+"""Sequel announcements from AniList relations (engine/daily_inputs.py `series_facts`, docs/design/series.md §5.2)."""
 
 from datetime import date
 

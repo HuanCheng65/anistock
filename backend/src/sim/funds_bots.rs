@@ -1,4 +1,4 @@
-//! 指数基金 exploit tests (docs/v3-funds.md §6.1), a submodule of `bots`. Step 1 has two:
+//! 指数基金 exploit tests (docs/design/funds.md §6.1), a submodule of `bots`. Step 1 has two:
 //!
 //! - `fund_hold`: subscribes all its cash to the 综合指数基金 on its first day and holds the units (against
 //!   `buy_hold_cap`: what the fund costs and how closely it tracks);

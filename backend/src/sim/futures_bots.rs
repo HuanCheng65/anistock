@@ -1,4 +1,4 @@
-//! The 热度期货 exploit tests (docs/v3-futures.md §4.5): a submodule of `bots`. Each is a futures strategy
+//! The 热度期货 exploit tests (docs/design/futures.md §4.5): a submodule of `bots`. Each is a futures strategy
 //! (crate::futures::agents) run once a day (10:30; the front-runner at 21:00) by a player with the starting
 //! cash and an open credit account; the two hedgers also hold stocks. The counterparties are the market maker
 //! and the futures NPCs; a bot beating doing nothing by more than the gate is a mechanical edge.

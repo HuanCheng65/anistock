@@ -1,4 +1,4 @@
-// 热度期货 (docs/v3-futures.md §4–5): the contracts, one contract's market, and the player's futures. Prices are
+// 热度期货 (docs/design/futures.md §4–5): the contracts, one contract's market, and the player's futures. Prices are
 // in hundredths of an index point; a contract's tick_value is what one hundredth of one lot is worth.
 import { defineStore } from 'pinia'
 import { ref } from 'vue'

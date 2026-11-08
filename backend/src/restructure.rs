@@ -95,7 +95,7 @@ impl Engine {
 
     /// Restructure a player (see the module doc). `initial_cents` is `game.initial_cash` in cents, `day` the
     /// trading day. Fails without changing anything; trading hours are the caller's check.
-    /// 注销账号 (docs/v2-account.md §9): cancel orders and subscriptions, hand every holding to the world
+    /// 注销账号 (docs/design/account.md §9): cancel orders and subscriptions, hand every holding to the world
     /// account at the last price (as in a restructuring), write off a default's shortfall, pay all cash to
     /// the world account, then the account becomes kind `closed` with no username or password. Ledger
     /// and trades keep the account id, so the books still balance. Refused while margin debts are open.

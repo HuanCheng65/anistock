@@ -324,7 +324,7 @@ fn a_larger_configured_population_is_appended_and_reattached() {
     }
 }
 
-// ---------------------------------------------------------------- sentiment layer (docs/v2-sentiment.md)
+// ---------------------------------------------------------------- sentiment layer (docs/design/sentiment.md)
 
 fn layer_on(seed: u64) -> MarketConfig {
     let mut m = small(seed);

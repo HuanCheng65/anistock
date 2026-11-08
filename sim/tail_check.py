@@ -1,4 +1,4 @@
-"""Out-of-sample check of the us long tail on the history backfill (docs/v2-series.md §11, phase 1 step 1).
+"""Out-of-sample check of the us long tail on the history backfill (docs/design/series.md §11, phase 1 step 1).
 
     python sim/tail_check.py INPUTS_DIR HISTORY_DB
 

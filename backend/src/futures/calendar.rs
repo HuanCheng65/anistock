@@ -1,4 +1,4 @@
-//! Contract periods, anchored on each work's premiere (docs/v3-futures.md §4.1). Week 0 is the premiere day
+//! Contract periods, anchored on each work's premiere (docs/design/futures.md §4.1). Week 0 is the premiere day
 //! and the six after it (a whole season released at once falls in it too); period k covers weeks
 //! `weeks*(k-1)+1 ..= weeks*k`. Week 0 has no contract. One contract per work at a time, so the players of a
 //! work trade the same one: period 1 is listed on its first day, a week after the premiere (with a week of

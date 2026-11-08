@@ -1,4 +1,4 @@
-//! Season simulation of the v2 NPC market (docs/v2-npc-market.md §7) and the §6 exploit tests.
+//! Season simulation of the v2 NPC market (docs/design/npc-market.md §7) and the §6 exploit tests.
 //!
 //!     marketsim --world WORLD.db --inputs DIR --out DIR [--collector anistock.db] [--days N]
 //!               [--set key=value ...] [--margin key=value ...] [--bots all|none|name,name] [--threshold PTS]

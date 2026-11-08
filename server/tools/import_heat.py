@@ -1,4 +1,4 @@
-"""Copy heat index days the server did not publish itself into the game database (docs/v3-futures.md §3).
+"""Copy heat index days the server did not publish itself into the game database (docs/design/futures.md §3).
 
     uv run python -m server.tools.import_heat [--from data/derived/heat_index.db] [--game data/game.db] [--dry-run]
     uv run python -m server.tools.import_heat --backfill heat_backfill.csv.gz      # the year before the live index

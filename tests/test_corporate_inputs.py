@@ -1,4 +1,4 @@
-"""The daily inputs' AniList status and next episode (docs/v2-corporate.md §2.2–2.3)."""
+"""The daily inputs' AniList status and next episode (docs/design/corporate.md §2.2–2.3)."""
 from datetime import date
 
 from engine.daily_inputs import airing_on

@@ -1,4 +1,4 @@
-//! The filtered valuation (docs/v2-valuation.md): each show's level per market tracked with a Kalman filter
+//! The filtered valuation (docs/design/valuation.md): each show's level per market tracked with a Kalman filter
 //! (attention = level × within-episode curve), the expected attention path → expected dividends → present
 //! value + the company's cash. Same formulas, same operation order as engine/valuation.py (the "filtered
 //! valuation" section), so the game server, the simulation and the fitting script agree.
@@ -33,7 +33,7 @@ struct PerMarketVec {
     jp: Vec<f64>,
 }
 
-/// v0.6.1 (docs/v2-valuation.md §3.10): a show's heat class is the tercile (`cuts`) of its us log level estimate
+/// v0.6.1 (docs/design/valuation.md §3.10): a show's heat class is the tercile (`cuts`) of its us log level estimate
 /// `DRIFT_WEEKS[0]` weeks after the premiere; from then on its us drift is the fitted one plus its class's `offset`
 /// per day (big shows fade more slowly in season).
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -109,7 +109,7 @@ struct RawParams {
     post_finale: Option<PerMarketVec>,
     #[serde(default)]
     post_finale_tail: Option<PerMarket>,
-    /// phase 1: the long tail after the finale, per market, and the tail-level prior (docs/v2-series.md §4)
+    /// phase 1: the long tail after the finale, per market, and the tail-level prior (docs/design/series.md §4)
     #[serde(default)]
     tail: Option<RawTail>,
     /// v0.6.1: the us episode week's days so far as an observation (`partial_observation`)
@@ -229,11 +229,11 @@ pub struct FilterParams {
     pub sequel: Option<SequelParams>,
     /// long-runners' weekly level factor (`[valuation] long_runner_decay`; their filter's drift)
     pub long_runner_decay: f64,
-    /// a sequel season's production cost as a share of its value (docs/v2-corporate.md §3.3: `ipo_float` ×
+    /// a sequel season's production cost as a share of its value (docs/design/corporate.md §3.3: `ipo_float` ×
     /// `production_fee_ratio`, set with the sequel option; 0: the option is gross of cost, as in phase 1)
     pub sequel_cost: f64,
     /// days until a halted show (AniList HIATUS) resumes, for its value: the median announcement-to-premiere lag of
-    /// sequel.json (docs/v2-corporate.md §2.3)
+    /// sequel.json (docs/design/corporate.md §2.3)
     pub hiatus_lag: i64,
     /// the us episode week's days so far as an observation (None: the week is observed only when complete)
     pub partial_us: Option<PartialUs>,
@@ -252,7 +252,7 @@ impl FilterParams {
         let path = cfg.root.join(&rel);
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut fp = FilterParams::parse(&text)?;
-        // the sequel option (docs/v2-series.md §5): off unless `valuation.sequel_option` = 1 (it needs the AniList
+        // the sequel option (docs/design/series.md §5): off unless `valuation.sequel_option` = 1 (it needs the AniList
         // relations the collector has only just started to keep)
         let sq = path.with_file_name("sequel.json");
         let sequel_on = cfg.param("valuation.sequel_option").and_then(|v| v.as_integer()).unwrap_or(0) == 1;
@@ -770,7 +770,7 @@ pub fn tail_beyond(tl: &Tail, mult: f64, t_last: i64, last: f64, disc: f64) -> f
     k * (a * g1 / (1.0 - g1) + b * g2 / (1.0 - g2) + c * g3 / (1.0 - g3))
 }
 
-// ---- the sequel option (docs/v2-series.md §5; Python `sequel_*`; fitted by sim/fit_sequel.py)
+// ---- the sequel option (docs/design/series.md §5; Python `sequel_*`; fitted by sim/fit_sequel.py)
 
 /// A sequel season: 12 weekly episodes (Python `SEASON_DAYS`).
 pub const SEASON_DAYS: i64 = 84;
@@ -924,7 +924,7 @@ pub fn sequel_extra(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64
 }
 
 /// `sequel_extra`, net of each season's production cost (`fp.sequel_cost`) except an announced season whose cost is
-/// `paid` (docs/v2-corporate.md §3.3).
+/// `paid` (docs/design/corporate.md §3.3).
 #[allow(clippy::too_many_arguments)]
 pub fn sequel_extra_paid(fp: &FilterParams, m: usize, mean: f64, var: f64, today: i64, fin: i64, first_air: i64, z: f64, zs: f64, disc: f64, known: &[i64], watched: bool, paid: bool) -> f64 {
     let Some(sp) = &fp.sequel else { return 0.0 };
@@ -952,7 +952,7 @@ pub fn sequel_multiple(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now: i64,
     sequel_multiple_paid(fp, m, z, zs, t_now, disc, known, watched, false)
 }
 
-/// `sequel_multiple` net of production costs (docs/v2-corporate.md §3.3): every season not yet paid for counts
+/// `sequel_multiple` net of production costs (docs/design/corporate.md §3.3): every season not yet paid for counts
 /// (1 − cost) of its value (its cost is paid when it is announced, the same share of its value then); an announced
 /// season whose cost is `paid` counts in full. With `fp.sequel_cost` = 0 this is the phase-1 formula.
 #[allow(clippy::too_many_arguments)]
@@ -976,7 +976,7 @@ pub fn sequel_multiple_paid(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now:
 /// path's last day (Python `value_from_paths` `tails`).
 pub type TailEnd<'a> = Option<(&'a Tail, f64, i64)>;
 
-/// Absolute revenue (docs/v2-series.md §6; Python `absolute_parts`): each market's revenue per day of a show with
+/// Absolute revenue (docs/design/series.md §6; Python `absolute_parts`): each market's revenue per day of a show with
 /// attention `own`, base/7 × scale × w_m × own_m / platform_m (0 for a market without a platform size).
 pub fn absolute_parts(own: &M3, platform: &M3, scale: f64, weights: &M3, p: &Params) -> M3 {
     std::array::from_fn(|m| if platform[m] > 0.0 { p.demand_base_week / 7.0 * scale * weights[m] * own[m] / platform[m] } else { 0.0 })
@@ -1251,7 +1251,7 @@ mod tests {
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
         assert!(close(e6, 3944.0482601881704), "{e6}");
-        // net of production costs (docs/v2-corporate.md §3.3): an announced season paid for gains exactly its cost
+        // net of production costs (docs/design/corporate.md §3.3): an announced season paid for gains exactly its cost
         // share; before the announcement every season counts (1 − cost)
         {
             let mut fc = fp.clone();

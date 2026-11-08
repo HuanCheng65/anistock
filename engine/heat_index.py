@@ -1,4 +1,4 @@
-"""The AniEx heat index, computed in the background (docs/v3-futures.md §3, step 2: it changes nothing in the game).
+"""The AniEx heat index, computed in the background (docs/design/futures.md §3, step 2: it changes nothing in the game).
 
     uv run engine/heat_index.py [--day YYYY-MM-DD] [--report]
 
@@ -21,7 +21,7 @@ spike (over SPIKE x the median of the show's previous 28 days, with 7 or more of
 value is replaced by that median, a missing one by the mean of the last 7 days, and the row says so.
 
 index = sum over markets of weight x heat / platform size x SCALE, with the method's fixed constants (version v1,
-docs/v3-futures.md §3.7): each platform size the mean daily total of the shows on air over 2025-11..2026-10 from
+docs/design/futures.md §3.7): each platform size the mean daily total of the shows on air over 2025-11..2026-10 from
 the backfills, SCALE such that the median show on air scores 100. A new version is announced 7 days ahead and
 applies to contract periods starting after (§3.4). (Before v1 the platform sizes rolled with the stored days.)
 The constants are not changed by data: that is the point

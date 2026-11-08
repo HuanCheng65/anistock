@@ -1,4 +1,4 @@
-//! Proof of work for register and login (docs/v2-account.md §3.2, docs/api-v1.md §3.4).
+//! Proof of work for register and login (docs/design/account.md §3.2, docs/api-v1.md §3.4).
 //!
 //! ALTCHA-style: the server picks `n` in `[0, max)` and sends `target = PBKDF2-SHA-256(n, salt, cost)`;
 //! the browser tries `0, 1, 2, …` until it finds `n` again. The work is bounded by `max` (no unlucky

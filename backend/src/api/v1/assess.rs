@@ -1,4 +1,4 @@
-//! 风险测评 and the knowledge tests of 融资融券 and 热度期货 (docs/v2-account.md §5, §6; docs/v3-futures-ui.md
+//! 风险测评 and the knowledge tests of 融资融券 and 热度期货 (docs/design/account.md §5, §6; docs/design/futures-ui.md
 //! §4): the questions, the answers, and what they unlock (opening credit needs C4 or above, a passed test and
 //! the margin disclosure; trading futures needs credit, C4, its own test and the futures disclosure).
 
@@ -114,7 +114,7 @@ pub fn risk_of(st: &AppState, c: &Connection, id: i64) -> R<Option<RiskResult>> 
 }
 
 /// What opening credit still needs (on top of the engine's own checks: days and net assets).
-/// 身份验证 stands in for a waiting period against throwaway accounts (docs/v2-account.md §6).
+/// 身份验证 stands in for a waiting period against throwaway accounts (docs/design/account.md §6).
 pub fn credit_steps(st: &AppState, c: &Connection, id: i64) -> R<CreditSteps> {
     let verified = !st.cfg.eligibility.require_kyc || crate::kyc::method(c, id).map_err(sql)?.is_some();
     let risk = risk_of(st, c, id)?;
@@ -125,7 +125,7 @@ pub fn credit_steps(st: &AppState, c: &Connection, id: i64) -> R<CreditSteps> {
     Ok(CreditSteps { verified, risk_ok, min_level: format!("C{min}"), quiz_passed, disclosure_signed, disclosure_version: st.cfg.margin_disclosure })
 }
 
-/// What trading heat futures still needs (docs/v3-futures-ui.md §4): an open credit account, 风险测评 at the
+/// What trading heat futures still needs (docs/design/futures-ui.md §4): an open credit account, 风险测评 at the
 /// credit level or above, the futures knowledge test, the futures disclosure.
 pub fn futures_steps(st: &AppState, c: &Connection, id: i64) -> R<FuturesSteps> {
     let credit_open: bool = c

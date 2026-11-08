@@ -1,4 +1,4 @@
-// Solves a register / login proof of work off the main thread (docs/v2-account.md §3.2): find n in
+// Solves a register / login proof of work off the main thread (docs/design/account.md §3.2): find n in
 // [0, max) with PBKDF2-SHA-256(password = String(n), salt = UTF-8 of salt, cost rounds, 32 bytes) = target.
 type Job = { salt: string; cost: number; max: number; target: string }
 

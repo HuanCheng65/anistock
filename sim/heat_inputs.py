@@ -1,4 +1,4 @@
-"""Replay inputs with the heat index (docs/v3-futures-impl.md step 11): a copy of an inputs directory whose files
+"""Replay inputs with the heat index (docs/design/futures-impl.md step 11): a copy of an inputs directory whose files
 carry the top-level `heat` the futures settle on, from the backfilled history (sim/heat_history.py: AniList from
 the collector, Bangumi's weekly archive, Annict's record times; table heat_history of data/derived/heat_backfill.db).
 

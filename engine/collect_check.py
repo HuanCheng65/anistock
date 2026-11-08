@@ -1,4 +1,4 @@
-"""Did today's collection work? (docs/v3-futures.md §6 step 1: the heat index is only as good as the data under it.)
+"""Did today's collection work? (docs/design/futures.md §6 step 1: the heat index is only as good as the data under it.)
 
     uv run engine/collect_check.py [--day YYYY-MM-DD]
 

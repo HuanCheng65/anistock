@@ -1,4 +1,4 @@
-"""The heat index's history from the backfills (docs/v3-futures.md §3.6), for calibration: never published, never
+"""The heat index's history from the backfills (docs/design/futures.md §3.6), for calibration: never published, never
 mixed with the live, frozen values of data/derived/heat_index.db.
 
     uv run sim/heat_history.py [--from 2026-01-01] [--until DAY] [--markets DIR]
