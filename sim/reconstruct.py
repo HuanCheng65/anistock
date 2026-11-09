@@ -586,7 +586,12 @@ def cn_view_series(until: date) -> dict[int, dict[date, float]]:
     from engine.cn_views import daily_views, load_stocks
     bg_by_subject = {r["bgm"]: int(k) for k, r in matches().items() if "bgm" in r}
 
-    stocks = load_stocks(DB, DERIVED / "heat_backfill.db", set(bg_by_subject))
+    archive = DERIVED / "heat_backfill.db"
+    if not archive.exists():
+        # without the archive each show's followers start on the collector's first Bangumi snapshot (2026-11-05) and
+        # the series is a guess (the first reprice of 2026-11-09 went wrong this way): stop rather than build it
+        sys.exit(f"{archive} missing: the viewer series needs the Bangumi archive's weekly counts (docs/ops/switch-cn-views.md)")
+    stocks = load_stocks(DB, archive, set(bg_by_subject))
     # each show's episode days as the game reads them (AniList trends: the episode count on its air day)
     anilist_air: dict[int, list[date]] = defaultdict(list)
     if os.environ.get("ANISTOCK_CN_AIR", "anilist") == "anilist":
