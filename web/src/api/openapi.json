@@ -3973,6 +3973,17 @@
           },
           "trading_day": {
             "$ref": "#/components/schemas/TradingDay"
+          },
+          "updated_at": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "最近一次更新的时间（热度快讯每小时更新到播出后 24 小时；没有更新过为空）"
+              }
+            ]
           }
         },
         "required": [
@@ -3983,7 +3994,8 @@
           "kind",
           "stock",
           "title",
-          "trading_day"
+          "trading_day",
+          "updated_at"
         ],
         "type": "object"
       },

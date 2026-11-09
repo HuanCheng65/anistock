@@ -660,11 +660,12 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 ```json
 {"id": 8890, "at": "2026-11-07T01:12:40+08:00", "trading_day": "2026-11-06",
  "kind": "flash", "category": "flash",
- "title": "热度快讯：《航海王》第 1180 集讨论量高于预期 35%",
- "body": "播出 3 小时后的 Bangumi 单集吐槽数，与前几集同一时间相比。",
- "stock": {"id": 21, "code": "100123", "title": "航海王"}}
+ "title": "热度快讯：《航海王》第 1180 集讨论比前几集多 35%",
+ "body": "播出 3 小时后的 Bangumi 单集吐槽数，与前几集同一时间相比。每小时更新，播出 24 小时后不再变化。",
+ "stock": {"id": 21, "code": "100123", "title": "航海王"},
+ "updated_at": "2026-11-07T03:12:40+08:00"}
 ```
-`body`、`stock` 可空（`system` 类资讯没有关联股票）。`body` 是展示用的中文文本，里面的金额已经格式化，客户端不解析。
+`body`、`stock`、`updated_at` 可空（`system` 类资讯没有关联股票）。热度快讯每集一条：差距第一次达到 20% 时发布，之后每小时原地更新标题和正文，直到播出 24 小时；`updated_at` 是最近一次更新的时间，`id`、`at` 不变。WebSocket 的 `news` 推送会再发一次同 `id` 的条目，客户端按 `id` 替换。`body` 是展示用的中文文本，里面的金额已经格式化，客户端不解析。
 
 #### `Order`
 
@@ -1549,7 +1550,7 @@ v1（三种消息共用 `me` 主题的 `seq`）：
 
 | kind | 什么时候 | `data` | 关联资讯 |
 |---|---|---|---|
-| `flash` | 热度快讯发布 | `{"episode": 1180, "surprise": 0.35}` | 有 |
+| `flash` | 热度快讯发布（每集一次，之后的每小时更新不再发事件） | `{"episode": 1180, "surprise": 0.35}` | 有 |
 | `big_move` | 两条规则（已决定，Q11），见表后说明 | `{"rule", "change", "threshold", "window_minutes", "price", "reference_price", "prev_close"}` | 无 |
 | `vcm` | 触发冷静期 | `{"low", "high", "until", "count_today"}` | 有（`vcm` 资讯） |
 | `ipo_open` | 新股开始认购（日结时） | `{"ipo": <Ipo，无 viewer>}` | 有 |

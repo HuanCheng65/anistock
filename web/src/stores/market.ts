@@ -102,7 +102,13 @@ export const useMarket = defineStore('market', () => {
   /** ids of items that arrived over the push channel (the views slide them in) */
   const fresh = ref(new Set<number>())
   onLive('news', (m) => {
-    if (!news.value || news.value.some((n) => n.id === m.item.id)) return
+    if (!news.value) return
+    // a 热度快讯 is updated in place every hour (same id, new title): replace it where it is
+    const i = news.value.findIndex((n) => n.id === m.item.id)
+    if (i >= 0) {
+      news.value = news.value.map((n, k) => (k === i ? m.item : n))
+      return
+    }
     news.value = [m.item, ...news.value]
     fresh.value.add(m.item.id)
     window.setTimeout(() => fresh.value.delete(m.item.id), 3000)

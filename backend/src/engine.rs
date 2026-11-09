@@ -644,6 +644,12 @@ impl Engine {
         self.commit();
     }
 
+    /// Replace a published item's title and body (a 热度快讯's latest figure); its id, time and day stay.
+    pub fn update_news(&mut self, news: News, updated_at: &str) {
+        self.out.push(Change::NewsUpdate { news, updated_at: updated_at.to_string() });
+        self.commit();
+    }
+
     /// Restore the state saved before a failed multi-step operation (the daily close) and drop its changes.
     pub(crate) fn rollback(&mut self, saved: State) {
         self.st = saved;

@@ -1022,6 +1022,7 @@ pub fn news_from_row(r: &rusqlite::Row, refs: &HashMap<i64, StockRef>) -> rusqli
         title: r.get("title")?,
         body: r.get::<_, Option<String>>("body")?.filter(|b| !b.is_empty()),
         stock: cid.and_then(|id| refs.get(&id).cloned()),
+        updated_at: r.get::<_, Option<String>>("updated_at")?.map(ts),
     })
 }
 

@@ -2402,6 +2402,7 @@ export interface components {
             stock: null | components["schemas"]["StockRef"];
             title: string;
             trading_day: components["schemas"]["TradingDay"];
+            updated_at: null | components["schemas"]["Timestamp"];
         };
         NewsPage: {
             has_more: boolean;

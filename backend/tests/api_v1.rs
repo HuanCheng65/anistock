@@ -47,7 +47,7 @@ fn app_env(at: &str, always_open: bool, extra: &[(&'static str, &'static str)]) 
     fx.e.set_state("last_closed", "2026-11-04");
     fx.e.set_state("launched_on", "2026-11-01");
     fx.e.set_state("rate", "0.03");
-    fx.e.post_news(TS, DAY, "flash", Some(1), "热度快讯：《テスト》第 3 集讨论量高于预期 35%".into(), "正文".into());
+    fx.e.post_news(TS, DAY, "flash", Some(1), "热度快讯：《テスト》第 3 集讨论比前几集多 35%".into(), "正文".into());
     fx.e.flush().unwrap();
     let db = fx.dir.path().join("game.db");
     let (db2, coll) = (db.clone(), fx.dir.path().join("collector.db"));

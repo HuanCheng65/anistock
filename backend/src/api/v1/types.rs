@@ -239,6 +239,8 @@ pub struct NewsItem {
     pub title: String,
     pub body: Option<String>,
     pub stock: Option<StockRef>,
+    /// 最近一次更新的时间（热度快讯每小时更新到播出后 24 小时；没有更新过为空）
+    pub updated_at: Option<Timestamp>,
 }
 
 #[derive(Serialize, ToSchema, Clone, Debug)]

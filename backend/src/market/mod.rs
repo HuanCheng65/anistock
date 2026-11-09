@@ -2172,20 +2172,46 @@ impl Market {
     pub fn apply_flash(&mut self, engine: &mut Engine, cfg: &crate::config::Config, company: i64, episode: f64, hours: f64, comments: i64, prev: &[i64], t: i64) -> Option<crate::vclose::FlashOutcome> {
         let ts = ts_of(t);
         let out = engine.valuation_flash(cfg, company, episode, hours, comments, prev, &ts).ok().flatten()?;
-        if out.surprise.abs() >= self.cfg.flash_news_min && self.flashed.insert((company, episode.to_bits())) {
-            let title = engine.company(company).map(|c| c.title.clone()).unwrap_or_default();
-            let word = if out.surprise > 0.0 { "高于" } else { "低于" };
-            let ep = if episode.fract() == 0.0 { format!("{}", episode as i64) } else { format!("{episode}") };
-            engine.post_news(
-                &ts,
-                &day_of(t),
-                "flash",
-                Some(company),
-                format!("热度快讯：《{title}》第 {ep} 集讨论量{word}预期 {:.0}%", out.surprise.abs() * 100.0),
-                // the valuation is hidden: the news says what was observed, never the value it leads to (a script
-                // reading `old → new` could buy everything under the new value before anyone else acts)
-                format!("播出 {:.0} 小时后的 Bangumi 单集吐槽数，与前几集同一时间相比。", hours),
-            );
+        // one item per episode (engine state `flash_news:<company>:<episode>` = "<news id>|<time>|<day>|<surprise the
+        // NPCs last reacted to>"): posted the first hour the surprise reaches `flash_news_min`, then updated in place
+        // every hour until 24 hours after airing; the NPCs react again when the figure moves by 20 points or turns
+        let key = format!("flash_news:{company}:{episode}");
+        let title = engine.company(company).map(|c| c.title.clone()).unwrap_or_default();
+        let ep = if episode.fract() == 0.0 { format!("{}", episode as i64) } else { format!("{episode}") };
+        let word = if out.surprise > 0.0 { "多" } else { "少" };
+        let headline = format!("热度快讯：《{title}》第 {ep} 集讨论比前几集{word} {:.0}%", out.surprise.abs() * 100.0);
+        // the valuation is hidden: the news says what was observed, never the value it leads to
+        let body = format!(
+            "播出 {:.0} 小时后的 Bangumi 单集吐槽数，与前几集同一时间相比。{}",
+            hours,
+            if hours < 23.5 { "每小时更新，播出 24 小时后不再变化。" } else { "" }
+        );
+        let known: Option<(i64, String, String, f64)> = engine.state(&key).and_then(|v| {
+            let p: Vec<&str> = v.split('|').collect();
+            Some((p.first()?.parse().ok()?, p.get(1)?.to_string(), p.get(2)?.to_string(), p.get(3)?.parse().ok()?))
+        });
+        let react = match known {
+            None if out.surprise.abs() >= self.cfg.flash_news_min && !self.flashed.contains(&(company, episode.to_bits())) => {
+                self.flashed.insert((company, episode.to_bits()));
+                engine.post_news(&ts, &day_of(t), "flash", Some(company), headline, body);
+                let id = engine.st.last_news_id;
+                engine.set_state(&key, &format!("{id}|{ts}|{}|{}", day_of(t), out.surprise));
+                true
+            }
+            None => false,
+            Some((id, at, day, last)) => {
+                engine.update_news(
+                    crate::model::News { id, ts: at.clone(), day: day.clone(), kind: "flash".into(), company_id: Some(company), title: headline, body: Some(body) },
+                    &ts,
+                );
+                let moved = (out.surprise - last).abs() >= 0.2 || (out.surprise > 0.0) != (last > 0.0);
+                if moved {
+                    engine.set_state(&key, &format!("{id}|{at}|{day}|{}", out.surprise));
+                }
+                moved
+            }
+        };
+        if react {
             self.stats.flashes += 1;
             self.post_attention(company, t, "flash");
             // the futures news traders take the flash's side, as far as the flash justifies (futures/agents/news.rs)

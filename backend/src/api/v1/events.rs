@@ -65,9 +65,10 @@ pub struct Pending {
 /// `热度快讯：《…》第 1180 集讨论量高于预期 35%` -> (episode, signed surprise ratio).
 pub fn parse_flash(title: &str) -> (Option<f64>, Option<f64>) {
     let ep = title.split("第 ").nth(1).and_then(|s| s.split(" 集").next()).and_then(|s| s.trim().parse::<f64>().ok());
-    let sign = if title.contains("低于预期") { -1.0 } else { 1.0 };
+    // "…讨论比前几集少 12%" (since v0.8) or "…讨论量低于预期 12%" (before)
+    let sign = if title.contains("低于预期") || title.contains("比前几集少") { -1.0 } else { 1.0 };
     let pct = title
-        .rsplit("预期 ")
+        .rsplit(' ')
         .next()
         .and_then(|s| s.trim_end_matches('%').trim().parse::<f64>().ok())
         .map(|p| r6(sign * p / 100.0));
@@ -235,6 +236,10 @@ mod tests {
         assert_eq!(ep, Some(1180.0));
         assert_eq!(s, Some(0.35));
         let (_, s) = parse_flash("热度快讯：《X》第 3 集讨论量低于预期 12%");
+        assert_eq!(s, Some(-0.12));
+        let (ep, s) = parse_flash("热度快讯：《航海王》第 1180 集讨论比前几集多 35%");
+        assert_eq!((ep, s), (Some(1180.0), Some(0.35)));
+        let (_, s) = parse_flash("热度快讯：《X》第 3 集讨论比前几集少 12%");
         assert_eq!(s, Some(-0.12));
     }
 

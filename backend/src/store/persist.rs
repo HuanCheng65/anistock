@@ -105,6 +105,8 @@ pub enum Change {
         allotted: i64,
     },
     NewsInsert(News),
+    /// `UPDATE news SET title, body, updated_at` (a 热度快讯's latest figure; the row keeps its id, time and day)
+    NewsUpdate { news: News, updated_at: String },
     /// `INSERT INTO restructures` (id assigned by the database)
     RestructureInsert(Restructure),
     /// `INSERT OR REPLACE INTO player_returns`
@@ -425,6 +427,10 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
         Change::NewsInsert(n) => {
             conn.prepare_cached("INSERT INTO news(id, ts, day, kind, company_id, title, body) VALUES (?,?,?,?,?,?,?)")?
                 .execute(params![n.id, n.ts, n.day, n.kind, n.company_id, n.title, n.body])?;
+        }
+        Change::NewsUpdate { news, updated_at } => {
+            conn.prepare_cached("UPDATE news SET title=?, body=?, updated_at=? WHERE id=?")?
+                .execute(params![news.title, news.body, updated_at, news.id])?;
         }
         Change::Margin(m) => crate::margin::apply(conn, m)?,
         Change::Corporate(m) => crate::corporate::apply(conn, m)?,

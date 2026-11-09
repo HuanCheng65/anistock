@@ -73,6 +73,7 @@ fn relevant(c: &Change) -> bool {
             | Change::CompanyUpdate(_)
             | Change::CompanyInsert(_)
             | Change::NewsInsert(_)
+            | Change::NewsUpdate { .. }
             | Change::Futures(
                 FuturesChange::Contract(_)
                     | FuturesChange::Order(_)
@@ -785,6 +786,7 @@ impl Fanout {
                     title: n.title.clone(),
                     body: n.body.clone().filter(|b| !b.is_empty()),
                     stock: n.company_id.map(|id| Self::sref(e, id)),
+                    updated_at: None,
                 };
                 let msg = text(&M::News { seq: n.id as u64, item });
                 self.news_replay.push_back(Replay { seq: n.id as u64, kind: n.kind.clone(), at: Instant::now(), text: msg.clone() });
@@ -794,6 +796,29 @@ impl Fanout {
                     self.send_to(id, &msg);
                 }
                 self.news_events(&n, e);
+            }
+            Change::NewsUpdate { news: n, updated_at } => {
+                // the same item again (clients replace it by id); not a new event, and the replay buffer keeps
+                // one copy of each item, the latest
+                let item = t::NewsItem {
+                    id: n.id,
+                    at: t::ts(n.ts.clone()),
+                    trading_day: t::day(n.day.clone()),
+                    kind: n.kind.clone(),
+                    category: t::NewsCategory::of(&n.kind),
+                    title: n.title.clone(),
+                    body: n.body.clone().filter(|b| !b.is_empty()),
+                    stock: n.company_id.map(|id| Self::sref(e, id)),
+                    updated_at: Some(t::ts(updated_at)),
+                };
+                let msg = text(&M::News { seq: n.id as u64, item });
+                for r in self.news_replay.iter_mut().filter(|r| r.seq == n.id as u64) {
+                    r.text = msg.clone();
+                }
+                let ids: Vec<u64> = self.clients.iter().filter(|(_, c)| c.news).map(|(id, _)| *id).collect();
+                for id in ids {
+                    self.send_to(id, &msg);
+                }
             }
             _ => {}
         }
