@@ -709,6 +709,17 @@ def _flat(s: str | None) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", s or "")).lower()
 
 
+def season_near(work: dict, media: dict) -> bool:
+    """Whether an Annict work's season starts within MAL_SEASON_MONTHS of the AniList show's premiere (true when
+    either is unknown)."""
+    from engine.economy import MAL_SEASON_MONTHS, SEASON_MONTH
+    sd = media.get("startDate") or {}
+    if not (sd.get("year") and work.get("seasonYear") and work.get("seasonName") in SEASON_MONTH):
+        return True
+    return abs(sd["year"] * 12 + (sd.get("month") or 1)
+               - work["seasonYear"] * 12 - SEASON_MONTH[work["seasonName"]]) <= MAL_SEASON_MONTHS
+
+
 DISCOVER_MIN_POPULARITY = 3000  # AniList list entries, the listing gate (game.min_listing_popularity)
 
 
@@ -742,7 +753,10 @@ def discover_annict(http: "Http", store: Store) -> int:
                 log.warning("annict title search failed for %s: %r", title, e)
                 break
             seen += [f'{w["annictId"]} {w["title"]} mal={w.get("malAnimeId")}' for w in nodes[:5]]
-            hit = next((w for w in nodes if w.get("malAnimeId") and int(w["malAnimeId"]) == int(mal)), None)
+            # the MAL id and a season near the premiere: MyAnimeList keeps some split cours as one entry, whose
+            # later part AniList gives the earlier part's id (engine/economy.py MAL_SEASON_MONTHS)
+            hit = next((w for w in nodes if w.get("malAnimeId") and int(w["malAnimeId"]) == int(mal)
+                        and season_near(w, m)), None)
             if hit is None:
                 # Annict leaves malAnimeId empty on some long-runners: accept the TV work whose title is exactly
                 # the AniList native title (spacing and full-width forms ignored), only when it has no MAL id
@@ -760,6 +774,124 @@ def discover_annict(http: "Http", store: Store) -> int:
                      mal, m["id"], t.get("native"), "; ".join(seen) or "none")
     store.commit()
     return new
+
+
+FILMARKS = "https://filmarks.com"
+FILMARKS_WORK_PAGES = 60        # work pages a day (episodes, review count, official site), in rotation: ~5 min
+FILMARKS_MAX_PAGES = 10         # a season list has about 3 pages of 36
+
+
+def _fm_json(attr: str, chunk: str) -> dict:
+    import html as H
+    m = re.search(attr + r'="([^"]*)"', chunk)
+    return json.loads(H.unescape(m.group(1))) if m else {}
+
+
+def _fm_text(cls: str, chunk: str) -> str | None:
+    import html as H
+    m = re.search(r'class="' + cls + r'"[^>]*>(.*?)</', chunk, re.S)
+    return H.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip() if m else None
+
+
+def parse_filmarks_list(page: str) -> list[dict]:
+    """The works on one page of a Filmarks season list (/list-anime/release_year/YYYY/M): ids, title, release
+    date, Mark count (watched and recorded), Clip count (観たい) and average score (None when unrated)."""
+    out = []
+    for chunk in page.split('<div class="js-cassette"')[1:]:
+        mark, clip = _fm_json("data-mark", chunk), _fm_json("data-clip", chunk)
+        if not mark.get("anime_season_id"):
+            continue
+        score = _fm_text("c-rating__score", chunk)
+        released = re.search(r"公開日：</h4><span>(\d{4})年(\d{1,2})月(\d{1,2})日", chunk)
+        out.append({
+            "series_id": mark.get("anime_series_id"), "season_id": mark["anime_season_id"],
+            "title": _fm_text("p-content-cassette__title", chunk),
+            "released": "%s-%02d-%02d" % (released.group(1), int(released.group(2)), int(released.group(3))) if released else None,
+            "marks": mark.get("count"), "clips": clip.get("count"),
+            "score": float(score) if score and re.fullmatch(r"\d+(\.\d+)?", score) else None,
+        })
+    return out
+
+
+def parse_filmarks_work(page: str) -> dict:
+    """A Filmarks work page: per-episode comment and clap counts, the review count and rating of its JSON-LD,
+    and the official site (for matching to Annict's officialSiteUrl)."""
+    import html as H
+    eps = []
+    for item in page.split('class="c2-episode-list-item"')[1:]:
+        m = re.search(r'href="/animes/\d+/\d+/episodes/(\d+)"><p>コメント([\d,]+)件</p><p>拍手([\d,]+)回</p>', item)
+        if not m:
+            continue
+        title = re.search(r'header-text-title">(.*?)</div>', item)
+        eps.append({"episode_id": int(m.group(1)), "comments": int(m.group(2).replace(",", "")),
+                    "claps": int(m.group(3).replace(",", "")), "title": H.unescape(title.group(1)) if title else None})
+    out: dict = {"episodes": eps}
+    for block in re.findall(r'<script type="application/ld\+json">(.*?)</script>', page, re.S):
+        try:
+            ld = json.loads(block)
+        except ValueError:
+            continue
+        if isinstance(ld, dict) and ld.get("@type") == "TVSeason":
+            rating = ld.get("aggregateRating") or {}
+            out.update(start=ld.get("startDate"), rating=rating.get("ratingValue"), reviews=rating.get("reviewCount"))
+    site = re.search(r'links__item--official"><a[^>]*href="([^"]+)"', page)
+    out["official"] = H.unescape(site.group(1)) if site else None
+    return out
+
+
+def filmarks_seasons(d: date) -> list[tuple[int, int]]:
+    """The season lists to read on `d` (year, first month): the previous broadcast season's (its two-cour shows and
+    finales' tails), the current one's and the next one's."""
+    m = (d.month - 1) // 3 * 3 + 1
+    prev = (d.year - (m == 1), 10 if m == 1 else m - 3)
+    nxt = (d.year + (m == 10), 1 if m == 10 else m + 3)
+    return [prev, (d.year, m), nxt]
+
+
+def collect_filmarks(store: Store) -> str:
+    """Filmarks anime counts, a candidate second Japan source (no API, no history: the series starts the day this
+    runs). Every day the previous, current and next season lists (about 8 pages): Mark, Clip and score per work, a
+    snapshot `filmarks/season` each. Then FILMARKS_WORK_PAGES work pages in rotation (works never read first):
+    episodes' comment and clap counts, review count, official site, a snapshot `filmarks/work`. Only counts are kept,
+    no review text (Filmarks terms §14, §19). Not used by the game yet; runs after the heat index (`main`), so its
+    pages never delay the close."""
+    http = Http(min_interval=5.0)
+    seen: dict[int, dict] = {}
+    pages = 0
+    for year, month in filmarks_seasons(date.fromisoformat(store.day)):
+        for n in range(1, FILMARKS_MAX_PAGES + 1):
+            url = f"{FILMARKS}/list-anime/release_year/{year}/{month}" + (f"?page={n}" if n > 1 else "")
+            r = http.request("GET", url)
+            if r.status_code == 404:
+                break
+            r.raise_for_status()
+            pages += 1
+            works = parse_filmarks_list(r.text)
+            for w in works:
+                seen[w["season_id"]] = {**w, "list": f"{year}/{month}"}
+            if not works or f"?page={n + 1}" not in r.text:
+                break
+    if not seen:
+        raise RuntimeError(f"filmarks: no works parsed from {pages} pages (page layout changed?)")
+    for sid, w in seen.items():
+        store.register("filmarks", sid, w["title"])
+        store.snapshot("filmarks", "season", sid, w)
+    store.commit()
+    last = dict(store.db.execute(
+        "SELECT external_id, MAX(day) FROM snapshots WHERE source='filmarks' AND kind='work' GROUP BY 1").fetchall())
+    # never read first, then the longest unread: each work about every 4 days at ~250 works
+    todo = sorted(seen.values(), key=lambda w: last.get(str(w["season_id"]), ""))[:FILMARKS_WORK_PAGES]
+    done = 0
+    for w in todo:
+        try:
+            r = http.request("GET", f"{FILMARKS}/animes/{w['series_id']}/{w['season_id']}")
+            r.raise_for_status()
+            store.snapshot("filmarks", "work", w["season_id"], {"series_id": w["series_id"], **parse_filmarks_work(r.text)})
+            store.commit()
+            done += 1
+        except Exception as e:  # one bad page must not lose the day's lists
+            log.warning("filmarks work %s: %r", w["season_id"], e)
+    return f"works={len(seen)} pages={pages} work_pages={done}/{len(todo)}"
 
 
 def match_bangumi(store: Store) -> str:
@@ -920,7 +1052,7 @@ def print_stats(store: Store) -> None:
 def main() -> int:
     load_dotenv(Path(__file__).parent / ".env")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=["bgm", "anilist", "bgm_match", "annict", "all"], default="all")
+    ap.add_argument("--source", choices=["bgm", "anilist", "bgm_match", "annict", "filmarks", "all"], default="all")
     ap.add_argument("--backfill", action="store_true", help="backfill AniList trends history")
     ap.add_argument("--season", metavar="YYYY-season",
                     help="one-off: add a past AniList season (e.g. 2026-summer) and backfill its trends")
@@ -961,6 +1093,8 @@ def main() -> int:
         "bgm_match": lambda: match_bangumi(store),
         "annict": lambda: collect_annict(store),
     }
+    if args.source == "filmarks":
+        jobs = {"filmarks": lambda: collect_filmarks(store)}
     failures = 0
     for name, fn in jobs.items():
         if args.source not in ("all", name):
@@ -981,6 +1115,16 @@ def main() -> int:
             log.exception("%s failed", name)
     if args.source == "all":
         failures += after_collection()
+        # last: a candidate source the game does not read yet, after the heat index so it never delays the close
+        run_id = store.run_start("filmarks")
+        try:
+            detail = collect_filmarks(store)
+            store.run_end(run_id, "ok", detail)
+            log.info("filmarks ok: %s", detail)
+        except Exception as e:
+            failures += 1
+            store.run_end(run_id, "failed", repr(e))
+            log.exception("filmarks failed")
     return 1 if failures else 0
 
 

@@ -50,6 +50,8 @@ def main() -> int:
             checks.append((r[0] in ("ok", "skipped"), f"{source}: last run {r[0]} ({(r[1] or '')[:80]})"))
 
     for source, kind in col.execute("SELECT DISTINCT source, kind FROM snapshots WHERE day=?", (prev,)).fetchall():
+        if source == "filmarks":
+            continue    # its season lists turn over each quarter and its work pages are weekly (collect.py)
         a = col.execute("SELECT COUNT(*) FROM snapshots WHERE source=? AND kind=? AND day=?", (source, kind, prev)).fetchone()[0]
         b = col.execute("SELECT COUNT(*) FROM snapshots WHERE source=? AND kind=? AND day=?", (source, kind, day)).fetchone()[0]
         checks.append((b >= MIN_COVER * a, f"{source} {kind}: {b} snapshots ({a} the day before)"))

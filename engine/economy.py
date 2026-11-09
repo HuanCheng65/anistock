@@ -375,12 +375,22 @@ def fundamental(s: Show, d: date, weekly_div: float, book: float, rate: float, p
 # ---------------------------------------------------------------- simulation
 
 
+SEASON_MONTH = {"WINTER": 1, "SPRING": 4, "SUMMER": 7, "AUTUMN": 10}
+# a show premiering late in a season (or a few weeks early) is still within this of its Annict season's first month
+MAL_SEASON_MONTHS = 4
+
+
 def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
     """AniList id (str) -> {"bgm": id, "annict": id, ...}: sim/matches.json, plus an Annict work for every
     AniList show without one whose MAL id an Annict work in the collector carries (the `works` table, where
     the collector registers works it discovers by title, and the Annict work snapshots), plus the Bangumi subject the
     collector matched for a show sim/matches.json has none for (`bgm_matches`, engine/bgm_match.py), plus the
-    `manual` corrections, which win. So the server picks up newly collected works without re-running sim/match.py."""
+    `manual` corrections, which win. So the server picks up newly collected works without re-running sim/match.py.
+
+    A MAL id join is skipped when the Annict work's season starts more than `MAL_SEASON_MONTHS` from the AniList
+    show's premiere: MyAnimeList keeps some split cours as one entry, so AniList gives the later part the earlier
+    part's MAL id (JoJo SBR 2nd & 3rd STAGE, 2026-09, carries 1st STAGE's 61469 and was joined to its Annict work
+    of winter 2026)."""
     data = json.loads((ROOT / "sim" / "matches.json").read_text(encoding="utf-8"))
     out = {k: dict(v) for k, v in data["matches"].items()}
     path = db_path or Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db"))
@@ -389,6 +399,8 @@ def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
         try:
             mal_of: dict[str, str] = {}
             annict_of_mal: dict[str, int] = {}
+            start_of: dict[str, int] = {}      # AniList id -> premiere, in months (year * 12 + month)
+            season_of: dict[int, int] = {}     # Annict id -> its season's first month, the same way
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if "works" in tables:
                 for src, ext, mal in db.execute("SELECT source, external_id, mal_id FROM works WHERE mal_id IS NOT NULL AND mal_id != ''"):
@@ -397,13 +409,18 @@ def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
                     elif src == "annict":
                         annict_of_mal.setdefault(str(mal), int(ext))
             for ext, x in db.execute("SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day"):
-                mal = json.loads(x).get("idMal")
-                if mal:
-                    mal_of[str(ext)] = str(mal)
+                m = json.loads(x)
+                if m.get("idMal"):
+                    mal_of[str(ext)] = str(m["idMal"])
+                sd = m.get("startDate") or {}
+                if sd.get("year"):
+                    start_of[str(ext)] = sd["year"] * 12 + (sd.get("month") or 1)
             for ext, x in db.execute("SELECT external_id, data FROM snapshots WHERE source='annict' AND kind='work' ORDER BY day"):
-                mal = json.loads(x).get("malAnimeId")
-                if mal:
-                    annict_of_mal.setdefault(str(mal), int(ext))
+                w = json.loads(x)
+                if w.get("malAnimeId"):
+                    annict_of_mal.setdefault(str(w["malAnimeId"]), int(ext))
+                if w.get("seasonYear") and w.get("seasonName") in SEASON_MONTH:
+                    season_of[int(ext)] = w["seasonYear"] * 12 + SEASON_MONTH[w["seasonName"]]
             from engine.bgm_match import table as bgm_table
             for aid, sid in bgm_table(db).items():
                 r = out.setdefault(aid, {"anilist": int(aid)})
@@ -415,7 +432,10 @@ def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
         for aid, mal in mal_of.items():
             r = out.setdefault(aid, {"anilist": int(aid)})
             if not r.get("annict") and mal in annict_of_mal:
-                r["annict"] = annict_of_mal[mal]
+                wid = annict_of_mal[mal]
+                if aid in start_of and wid in season_of and abs(start_of[aid] - season_of[wid]) > MAL_SEASON_MONTHS:
+                    continue
+                r["annict"] = wid
                 r["annict_via"] = "mal_id"
     for k, v in data.get("manual", {}).items():
         r = out.setdefault(k, {"anilist": int(k)})

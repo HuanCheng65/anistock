@@ -64,3 +64,21 @@ def test_drift_periods_three_or_six():
     from engine.valuation import drift_seg
     assert [drift_seg(3, w) for w in (0, 3, 4, 7, 8, 20)] == [0, 0, 1, 1, 2, 2]
     assert [drift_seg(6, w) for w in (0, 1, 2, 3, 4, 7, 8, 20)] == [0, 1, 2, 3, 4, 4, 5, 5]
+
+
+def test_a_mal_id_shared_by_split_cours_joins_only_the_part_in_season(tmp_path):
+    import json
+    import sqlite3
+    db = tmp_path / "c.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE snapshots (source TEXT, kind TEXT, external_id TEXT, day TEXT, fetched_at TEXT, data TEXT)")
+    rows = [("anilist", "media", "900001", {"idMal": 61469, "startDate": {"year": 2026, "month": 3}}),
+            ("anilist", "media", "900002", {"idMal": 61469, "startDate": {"year": 2026, "month": 9}}),
+            ("annict", "work", "15878", {"malAnimeId": "61469", "seasonYear": 2026, "seasonName": "WINTER"})]
+    c.executemany("INSERT INTO snapshots VALUES (?,?,?,?,?,?)",
+                  [(s, k, i, "2026-11-09", "", json.dumps(d)) for s, k, i, d in rows])
+    c.commit()
+    c.close()
+    m = E.effective_matches(db)
+    assert m["900001"]["annict"] == 15878              # 1st part: winter work, premiere in March
+    assert not m.get("900002", {}).get("annict")       # 2nd part: six months later, not joined
