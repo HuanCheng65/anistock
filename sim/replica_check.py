@@ -3,12 +3,13 @@ valuation, its parameters or its inputs reaches the game (`git show 99514a7:docs
 the replays of sim/quickcheck.py start from a 7/7 world and miss stocks only the seed lists, and a median hides
 the few stocks a change moves several times over).
 
-    python3 sim/replica_check.py --a inputs=DIR[,filter=FILE] --b inputs=DIR[,filter=FILE] [--until DAY] [--top N]
+    python3 sim/replica_check.py --a inputs=DIR[,filter=FILE][,params=TOML] --b ... [--until DAY] [--top N]
 
 Seeds a world the way the server's game was seeded (`server.seed --until DAY`, default: the last inputs file of
 --a), then starts the server binary on a copy of it once per side with ANISTOCK_NO_LOOPS=1, so it bootstraps the
 valuation from that side's inputs history (as at go-live or with ANISTOCK_VALUATION_REBUILD=1) and nothing trades;
-reads every listed company's value. FILE is a valuation filter file (ANISTOCK_FILTER_FILE, relative to the repo).
+reads every listed company's value. FILE is a valuation filter file (ANISTOCK_FILTER_FILE, relative to the repo);
+TOML a file of dotted parameter overrides applied after server/game.toml's (ANISTOCK_PARAMS_FILE).
 Prints the ratio B/A overall and by phase, the stocks it moves most, and every stock moved by more than 1.5x
 either way, with what is known about it (long-runner, finished, markets with data).
 """
@@ -54,6 +55,8 @@ def value(seed_db: Path, name: str, s: dict) -> dict[int, int]:
                ANISTOCK_DB=os.environ.get("ANISTOCK_DB", str(ROOT / "data" / "anistock.db")))
     if s.get("filter"):
         env["ANISTOCK_FILTER_FILE"] = s["filter"]
+    if s.get("params"):
+        env["ANISTOCK_PARAMS_FILE"] = str(Path(s["params"]).resolve())
     p = subprocess.Popen([str(BIN)], cwd=ROOT, env=env, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
     ok, log = False, []
     t0 = time.time()

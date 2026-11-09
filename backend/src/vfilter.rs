@@ -68,6 +68,13 @@ struct RawParams {
     horizon_days: Option<usize>,
     #[serde(default)]
     flash_min_expected: Option<f64>,
+    /// whether a 热度快讯 moves the value (absent: yes, the comment-based cn market of older fits)
+    #[serde(default)]
+    flash_valuation: Option<bool>,
+    #[serde(default)]
+    us_momentum: Option<f64>,
+    #[serde(default)]
+    momentum_weeks: Option<i64>,
     #[serde(default)]
     ipo_risk: Option<f64>,
     /// v0.3.2: the common correlation of the three markets' prior log levels (0: independent markets)
@@ -85,6 +92,8 @@ struct RawParams {
     /// v0.3.2: mean and variance of the pre-air estimate's log growth from k days before its freeze (index k)
     #[serde(default)]
     preair_growth: Vec<[f64; 2]>,
+    #[serde(default)]
+    preair_trend: Vec<[f64; 2]>,
     /// v0.3.2: the share of a season's attention not yet listed, by days from the season start
     #[serde(default)]
     season_listing: Option<SeasonListing>,
@@ -196,6 +205,14 @@ pub struct FilterParams {
     pub clip: f64,
     pub horizon_days: usize,
     pub flash_min_expected: f64,
+    /// a 热度快讯 is an observation of the cn level (false since the cn market counts Bangumi viewers, not comments:
+    /// an episode's comment surprise says next to nothing about its viewers, sim/research/cn_views/flashlink.py; the
+    /// flash is then news only)
+    pub flash_valuation: bool,
+    /// the share of an early-season us level revision expected to follow (vclose `JState::us_rev`; 0: none) and the
+    /// weeks after the premiere it applies to
+    pub us_momentum: f64,
+    pub momentum_weeks: i64,
     pub ipo_risk: f64,
     /// common correlation of the markets' prior log levels (v0.3.2; kept for the record)
     pub rho: f64,
@@ -207,6 +224,9 @@ pub struct FilterParams {
     pub prior_from_us: bool,
     /// the pre-air estimate's expected log growth (and its variance) until it freezes, by days left
     pub preair_growth: Vec<[f64; 2]>,
+    /// the show's own growth (sim/fit_valuation.py `preair_trend`): per day k before the freeze, the share of its
+    /// growth surprise over the last 7 days expected again until the freeze, and the variance left
+    pub preair_trend: Vec<[f64; 2]>,
     /// the share of a season's attention not yet listed, by days from the season start
     pub season_listing: Option<SeasonListing>,
     /// the elasticity of each market's prior log level to the log us pre-air estimate
@@ -286,6 +306,21 @@ impl FilterParams {
         }
         let g = self.preair_growth[(k as usize).min(self.preair_growth.len() - 1)];
         (g[0], g[1])
+    }
+
+    /// The expected log growth and its variance of the pre-air estimate over the `k` days until it freezes, given
+    /// the show's own log growth over the last 7 days (`own7`, None: unknown): the average growth plus `preair_trend`'s
+    /// share of the show's surprise, with the variance left (without the table or the show's growth: `growth`).
+    pub fn growth_own(&self, k: i64, own7: Option<f64>) -> (f64, f64) {
+        let (g, v) = self.growth(k);
+        match own7 {
+            Some(o) if k > 0 && !self.preair_trend.is_empty() => {
+                let t = self.preair_trend[(k as usize).min(self.preair_trend.len() - 1)];
+                let surprise = o - (self.growth(k + 7).0 - g);
+                (g + t[0] * surprise, t[1])
+            }
+            _ => (g, v),
+        }
     }
 
     /// The share of a season's attention not listed yet, `j` days after its start (negative: before). Without
@@ -391,6 +426,9 @@ impl FilterParams {
             clip: r.clip.unwrap_or(4.0),
             horizon_days: r.horizon_days.unwrap_or(400),
             flash_min_expected: r.flash_min_expected.unwrap_or(5.0),
+            flash_valuation: r.flash_valuation.unwrap_or(true),
+            us_momentum: r.us_momentum.unwrap_or(0.0),
+            momentum_weeks: r.momentum_weeks.unwrap_or(5),
             ipo_risk: r.ipo_risk.unwrap_or(0.25),
             long_runner_decay: 1.0,
             sequel_cost: 0.0,
@@ -404,6 +442,7 @@ impl FilterParams {
             },
             prior_from_us: r.prior.as_deref() == Some("us"),
             preair_growth: r.preair_growth,
+            preair_trend: r.preair_trend,
             season_listing: r.season_listing,
             prior_beta: r.prior_beta.map_or([1.0; 3], |b| b.m3()),
             finale_bump: r.finale_bump.map_or([1.0; 3], |b| b.m3()),
@@ -977,17 +1016,17 @@ pub fn sequel_multiple_paid(fp: &FilterParams, m: usize, z: f64, zs: f64, t_now:
 pub type TailEnd<'a> = Option<(&'a Tail, f64, i64)>;
 
 /// Absolute revenue (docs/design/series.md §6; Python `absolute_parts`): each market's revenue per day of a show with
-/// attention `own`, base/7 × scale × w_m × own_m / platform_m (0 for a market without a platform size).
-pub fn absolute_parts(own: &M3, platform: &M3, scale: f64, weights: &M3, p: &Params) -> M3 {
-    std::array::from_fn(|m| if platform[m] > 0.0 { p.demand_base_week / 7.0 * scale * weights[m] * own[m] / platform[m] } else { 0.0 })
+/// attention `own`, base/7 × scale_m × w_m × own_m / platform_m (0 for a market without a platform size).
+pub fn absolute_parts(own: &M3, platform: &M3, scale: &M3, weights: &M3, p: &Params) -> M3 {
+    std::array::from_fn(|m| if platform[m] > 0.0 { p.demand_base_week / 7.0 * scale[m] * weights[m] * own[m] / platform[m] } else { 0.0 })
 }
 
-/// The absolute revenue rule's inputs: each market's platform size and the scale set at the switch.
-pub type PlatformRule = Option<(M3, f64)>;
+/// The absolute revenue rule's inputs: each market's platform size and the scale set at the switch, per market.
+pub type PlatformRule = Option<(M3, M3)>;
 
 /// The revenue rule the value prices: the absolute rule's platform sizes and scale, and the first path index it
 /// applies to (0: in force; later: a scheduled switch, the days before it under the relative rule).
-pub type ValueRule = Option<(M3, f64, usize)>;
+pub type ValueRule = Option<(M3, M3, usize)>;
 
 /// The relative rule's revenue per unit of attention per market for given market totals: demand × the market's
 /// renormalised weight ÷ its total (0 for a market without any).
@@ -1037,7 +1076,7 @@ pub fn value_from_paths(
         f *= disc;
         let o = [own[0][j], own[1][j], own[2][j]];
         if let Some((pl, sc, _)) = platform.as_ref().filter(|_| sw == 0) {
-            let parts = absolute_parts(&o, pl, *sc, weights, p);
+            let parts = absolute_parts(&o, pl, sc, weights, p);
             last = (parts[0] + parts[1] + parts[2]) * keep / shares as f64;
         } else if platform.is_some() && j >= sw {
             let fz = *frozen.get_or_insert_with(|| per_unit(&[totals[0][j], totals[1][j], totals[2][j]], weights, a_ref, p));
@@ -1062,7 +1101,7 @@ pub fn value_from_paths(
                     if pl[m] <= 0.0 {
                         continue;
                     }
-                    p.demand_base_week / 7.0 * sc * weights[m] / pl[m] * keep / shares as f64
+                    p.demand_base_week / 7.0 * sc[m] * weights[m] / pl[m] * keep / shares as f64
                 }
                 (_, Some(fz)) => {
                     if fz[m] <= 0.0 {
@@ -1229,7 +1268,7 @@ mod tests {
         assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.22648754948062882) <= 2);
         assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
         // absolute revenue (phase 1 step 2)
-        let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), None);
+        let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 0)), None);
         assert!((d4 / 17.788654682500482 - 1.0).abs() < 1e-13, "{d4}");
         // the sequel option (phase 1 step 3; off by config, loaded here directly)
         let sp = fp.sequel.as_ref().unwrap();
@@ -1243,10 +1282,10 @@ mod tests {
         let close = |x: f64, y: f64| (x / y - 1.0).abs() < 1e-12;
         assert!(ulps(z, 1.4591888) <= 2, "{z}");
         assert!(close(e1, 197492.206590515) && close(e4, 1742.2352104961365) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
-        let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 0)), Some(&[e1, e4, e5]));
+        let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 0)), Some(&[e1, e4, e5]));
         assert!(close(g, 36.94276022379788), "{g}");
         // a scheduled switch 30 days ahead
-        let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], 0.83, 30)), None);
+        let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 30)), None);
         assert!(close(swv, 47.88233917543998), "{swv}");
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);

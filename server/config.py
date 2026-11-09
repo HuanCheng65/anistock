@@ -40,6 +40,11 @@ def load() -> Config:
     params = copy.deepcopy(params)
     for k, v in raw.get("overrides", {}).items():
         _set(params, k, v)
+    # ANISTOCK_PARAMS_FILE: further dotted overrides, applied last (the same hook as backend/src/config.rs)
+    extra = os.environ.get("ANISTOCK_PARAMS_FILE", "").strip()
+    if extra:
+        for k, v in tomllib.loads(Path(extra).read_text(encoding="utf-8")).items():
+            _set(params, k, v)
     game = raw["game"]
     secret = os.environ.get("ANISTOCK_SECRET", "").strip()
     invite = os.environ.get("ANISTOCK_INVITE", "").strip()

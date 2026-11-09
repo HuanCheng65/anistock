@@ -2188,7 +2188,8 @@ impl Market {
             );
             self.stats.flashes += 1;
             self.post_attention(company, t, "flash");
-            self.fflashes.push(crate::futures::agents::Flash { company, t, up: out.surprise > 0.0 });
+            // the futures news traders take the flash's side, as far as the flash justifies (futures/agents/news.rs)
+            self.fflashes.push(crate::futures::agents::Flash { company, t, up: out.surprise > 0.0, surprise: out.surprise });
         }
         self.note_revisions(engine, t);
         self.requote_revised(engine, t);
@@ -2220,7 +2221,7 @@ impl Market {
             }
             for i in 0..n.news_n {
                 let account = engine.futures_npc_account(&format!("期货消息型 {}", i + 1), n.news_capital, &day, &ts);
-                let strategy = News { hold_s: (n.news_hold_h * 3600.0) as i64, budget: n.news_budget, slippage: n.news_slippage };
+                let strategy = News::new((n.news_hold_h * 3600.0) as i64, n.news_budget, n.news_slippage, n.news_beta);
                 new.push(Trader { label: "fut_news", account, strategy: Box::new(strategy) });
             }
         }

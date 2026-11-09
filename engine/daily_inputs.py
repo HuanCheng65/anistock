@@ -42,6 +42,8 @@ File format (JSON, one object):
         preair          {"us","cn","jp"}  the audience-based pre-air estimate of daily attention per market, from
                         the LATEST audience snapshot (look-ahead for shows already airing; since v0.3.0, not used
                         by the valuation since v0.3.2)
+        prior_prev      {"us","cn","jp"}  `prior` 7 days earlier, before the premiere (absent when the data does not
+                        reach back): the show's own growth (valuation `preair_trend`)
         prior           {"us","cn","jp"}  point-in-time pre-air estimate, frozen at the premiere: us from AniList
                         list entries on min(D, premiere-1); cn/jp only from a Bangumi/Annict snapshot taken by then,
                         else 0 (the filter derives them from us). The valuation filter's prior (since v0.3.2)
@@ -277,6 +279,19 @@ def schedule_on(sched: dict, sid: int, day: date) -> list[str]:
     return (before[-1] if before else snaps[0])[1] if snaps else []
 
 
+PRIOR_LAG = 7   # days: the pre-air estimate this long before, for the show's own growth (valuation `preair_trend`)
+
+
+def prior_prev(s: E.Show, day: date, val: dict, aud_dated: dict) -> dict:
+    """{"prior_prev": the point-in-time pre-air estimate PRIOR_LAG days earlier} while the show has not premiered and
+    its AniList data reaches back that far; else nothing."""
+    back = day - timedelta(days=PRIOR_LAG)
+    if day >= s.first_air - timedelta(days=1) or not s.days or back < s.days[0]:
+        return {}
+    p = E.preair_pit(s, back, val, aud_dated)
+    return {"prior_prev": p} if p.get("us") else {}
+
+
 def top_decile(shows: list[E.Show], s: E.Show) -> bool:
     """In the top decile of popularity among the shows premiering within half a year of it."""
     peers = [x.popularity_end for x in shows if x.first_air and abs((x.first_air - s.first_air).days) <= 182]
@@ -290,7 +305,14 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
     """Each market's platform size on `day` (docs/design/series.md §6): the mean over the trailing year (the days
     before `day` that have data, up to 365) of the day's total attention of every tracked work airing that day,
     listed or not (airing: an episode in the last 14 days, so the finale's week counts; adult titles and promos
-    aside). Returns ({market: size}, the number of days averaged)."""
+    aside). Returns ({market: size}, the number of days averaged).
+
+    A market with a fixed size (`revenue.platform_fixed_cn` / `_jp`) uses it instead: the trailing total depends on
+    which works the collector covers, and its cn/jp series reach back only for the works collected now, so it rose
+    12-18x over the 2026 replay window, a coverage artifact that would have cut every show's revenue month by month.
+    Bangumi as a whole is flat (all anime subjects' new marks, 2025-06..2026-11: 13-26k a day, no trend); Annict has
+    no site-wide figure (its growth, about 1.2x a year, then lifts jp revenue slowly). The scale set at the switch
+    carries the units."""
     rv = p["revenue"]
     lo = day - timedelta(days=PLATFORM_DAYS)
     tot: dict[date, dict[str, float]] = {}
@@ -312,9 +334,10 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
             d += timedelta(days=1)
     days = [d for d in sorted(tot) if d >= max(lo, first)]
     n = len(days)
+    fixed = {m: float(rv[f"platform_fixed_{m}"]) for m in ("cn", "jp") if rv.get(f"platform_fixed_{m}")}
     if not n:
-        return {m: 0.0 for m in E.MARKETS}, 0
-    return {m: sum(tot[d][m] for d in days) / n for m in E.MARKETS}, n
+        return {m: fixed.get(m, 0.0) for m in E.MARKETS}, 0
+    return {m: fixed.get(m, sum(tot[d][m] for d in days) / n) for m in E.MARKETS}, n
 
 
 # A show still airing whose cn/jp series has had no data for this long counts as unmapped in that market
@@ -390,6 +413,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "att": {m: att[m] for m in E.MARKETS},
             "preair": {m: v for m, v in E.preair_att(s, day, val, aud).items()},
             "prior": E.preair_pit(s, day, val, aud_dated),
+            **prior_prev(s, day, val, aud_dated),
             "observed": E.observed_markets(s, day, markets),
             "sources": {"us": True, **airing_sources(s, day, markets, sources.get(s.id, {"cn": False, "jp": False}), aired)},
             **({"adult": True} if s.adult else {}),
@@ -565,6 +589,7 @@ class ShowInputs:
     hiatus: bool = False                   # docs/design/corporate.md
     next_airing: dict | None = None       # docs/design/corporate.md
     genres: list = field(default_factory=list)     # docs/design/funds.md (the theme indices; the close reads it)
+    prior_prev: dict | None = None         # the pre-air estimate 7 days earlier (valuation `preair_trend`)
 
 
 @dataclass(frozen=True)

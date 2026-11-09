@@ -690,15 +690,22 @@ mod traders {
     fn a_news_trader_follows_a_flash_then_closes() {
         let (mut e, [a, _, _]) = priced();
         let c = e.st.futures.contracts[&1].clone();
-        let mut n = News { hold_s: 86_400, budget: 0.05, slippage: 0.02 };
-        let up = [Flash { company: 1, t: NOW - 3600, up: true }];
-        assert_eq!(n.decide(&View::new(&e, at(&up)), a, &c), Some(Intent { lots: 5, limit: Some(9180) }));
+        let mut n = News::new(86_400, 0.05, 0.02, 0.055);
+        // 35% more comments: buy, up to the price the flash justifies (9000 × 1.35^0.055 = 9150), not at any price
+        let up = [Flash { company: 1, t: NOW - 3600, up: true, surprise: 0.35 }];
+        assert_eq!(n.decide(&View::new(&e, at(&up)), a, &c), Some(Intent { lots: 5, limit: Some(9150) }));
+        // the price it pays is anchored where it first saw the flash: a later rise does not lift it
+        let mut risen = c.clone();
+        risen.last_price = 9100;
+        assert_eq!(n.decide(&View::new(&e, at(&up)), a, &risen), Some(Intent { lots: 5, limit: Some(9150) }));
+        let down = [Flash { company: 1, t: NOW - 1800, up: false, surprise: -0.3 }];
+        assert_eq!(n.decide(&View::new(&e, at(&down)), a, &c), Some(Intent { lots: -5, limit: Some(8825) }));
         assert_eq!(n.decide(&View::new(&e, at(&[])), a, &c), None, "no flash, no position: nothing to do");
         // holding after the flash expired: close
         e.st.futures
             .positions
             .insert((a, 1), Position { account_id: a, contract_id: 1, qty: 5, basis: 45000, margin: 0, cost: 0 });
-        let old = [Flash { company: 1, t: NOW - 90_000, up: true }];
+        let old = [Flash { company: 1, t: NOW - 90_000, up: true, surprise: 0.35 }];
         assert_eq!(n.decide(&View::new(&e, at(&old)), a, &c), Some(Intent { lots: 0, limit: Some(8820) }));
     }
 

@@ -83,6 +83,8 @@ pub struct NpcRules {
     pub news_hold_h: f64,
     pub news_budget: f64,
     pub news_slippage: f64,
+    /// how far a flash moves their price: (1 + surprise)^news_beta (futures/agents/news.rs)
+    pub news_beta: f64,
 }
 
 impl Default for NpcRules {
@@ -102,6 +104,7 @@ impl Default for NpcRules {
             news_hold_h: 24.0,
             news_budget: 0.05,
             news_slippage: 0.02,
+            news_beta: 0.055,
         }
     }
 }

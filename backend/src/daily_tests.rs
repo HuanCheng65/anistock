@@ -15,7 +15,10 @@ fn cfg() -> Config {
 /// The config with the absolute revenue rule on (off by default until the platform history allows it).
 fn cfg_absolute() -> Config {
     let mut c = cfg();
-    c.params.get_mut("revenue").and_then(|v| v.as_table_mut()).unwrap().insert("absolute_revenue".into(), toml::Value::Integer(1));
+    let rv = c.params.get_mut("revenue").and_then(|v| v.as_table_mut()).unwrap();
+    rv.insert("absolute_revenue".into(), toml::Value::Integer(1));
+    // every market's total kept on the switch day (the cn coverage factor is tested on its own)
+    rv.insert("absolute_cn_coverage".into(), toml::Value::Float(1.0));
     c
 }
 
@@ -498,8 +501,8 @@ fn platform_case(days: i64) -> (Engine, Inputs) {
 
 #[test]
 fn the_switch_to_absolute_revenue_keeps_the_days_total() {
-    // docs/design/series.md §6: on the first day the platform size averages enough history, the scale is set so that
-    // the day's total revenue is what the relative rule gives
+    // docs/design/series.md §6: on the first day the platform size averages enough history, each market's scale is set
+    // so that the day's revenue in that market is what the relative rule gives
     let cfg = cfg_absolute();
     let (mut a, inp_short) = platform_case(30);
     let (mut b, inp_long) = platform_case(200);
@@ -514,11 +517,12 @@ fn the_switch_to_absolute_revenue_keeps_the_days_total() {
     assert!(a.platform_rule().is_none());
     let (pl, scale) = b.platform_rule().expect("switched");
     assert_eq!(pl, [90000.0, 400.0, 1500.0]);
-    assert!(scale > 0.0);
+    assert!(scale.iter().all(|s| *s > 0.0));
     assert!((ra - rb).abs() <= 2, "relative {ra} vs absolute {rb} (cents, per-company rounding)");
-    // the shares differ: absolute revenue is not renormalised to the listed shows
+    // one scale per market: on the switch day each company earns what the relative rule gives (the rules part only
+    // as attention and the platform size move afterwards)
     let rev = |e: &Engine, id: i64| e.st.company_days.get(&(id, DAY.to_string())).unwrap().revenue;
-    assert_ne!(rev(&a, 1), rev(&b, 1));
+    assert!((rev(&a, 1) - rev(&b, 1)).abs() <= 1);
 }
 
 #[test]
@@ -557,7 +561,7 @@ fn a_new_season_of_a_listed_series_joins_its_company() {
     assert!(matches!(e.run_day(&cfg, day2, "2026-11-09T06:30:00+08:00", &inp(day2, 500.0)).unwrap(), CloseOutcome::Closed(_)));
     let (pl, sc) = e.platform_rule().unwrap();
     let p = Params::from_config(&cfg).unwrap();
-    let one = |us: f64| crate::vfilter::absolute_parts(&[us, 0.0, 0.0], &pl, sc, &p.market_weights, &p)[0];
+    let one = |us: f64| crate::vfilter::absolute_parts(&[us, 0.0, 0.0], &pl, &sc, &p.market_weights, &p)[0];
     let want = pround((one(3000.0) + one(500.0) + one(800.0)) * 100.0);
     let got = e.st.company_days.get(&(1, day2.to_string())).unwrap().revenue;
     assert!((got - want).abs() <= 1, "{got} vs {want}");

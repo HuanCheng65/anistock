@@ -29,6 +29,10 @@ pub struct Params {
     pub platform_min_days: i64,
     /// the absolute revenue rule (docs/design/series.md §6) at all: off (0) until the platform history allows it
     pub absolute_revenue: bool,
+    /// the cn market's revenue under the absolute rule relative to the comment-based series' coverage: Σ cn
+    /// attention of all listed shows ÷ Σ of the shows the old series measured, on the switch (daily.rs
+    /// `platform_switch`); 1: every market's total kept
+    pub absolute_cn_coverage: f64,
     /// cn/jp post-finale days without data earn the filter's expectation (the §4.2 stopgap)
     pub impute_tail: bool,
     /// delisting (docs/design/series.md §9): a finished series' weekly revenue under this share of the median airing
@@ -102,6 +106,7 @@ impl Params {
             demand_elasticity: num(cfg, "revenue.demand_elasticity")?,
             platform_min_days: int(cfg, "revenue.platform_min_days").unwrap_or(182),
             absolute_revenue: int(cfg, "revenue.absolute_revenue").unwrap_or(0) == 1,
+            absolute_cn_coverage: num(cfg, "revenue.absolute_cn_coverage").unwrap_or(1.0),
             impute_tail: int(cfg, "valuation.impute_tail").unwrap_or(1) == 1,
             delist_tail_share: num(cfg, "company.delist_tail_share").unwrap_or(0.01),
             delist_sequel_p: num(cfg, "company.delist_sequel_p").unwrap_or(0.10),

@@ -568,6 +568,89 @@ def tail_ingest(series, smooth: int = 7) -> dict[str, dict[int, dict[date, float
     return out
 
 
+def cn_model_configured() -> str:
+    """server/game.toml `"revenue.cn_model"`: "views" (engine/cn_views.py) or "comments" (the default)."""
+    import tomllib
+    f = ROOT / "server" / "game.toml"
+    if not f.exists():
+        return "comments"
+    return str(tomllib.loads(f.read_text(encoding="utf-8")).get("overrides", {}).get("revenue.cn_model", "comments"))
+
+
+def cn_view_series(until: date) -> dict[int, dict[date, float]]:
+    """AniList id -> {day: episodes watched by Bangumi users} (engine/cn_views.py), for every show mapped to a
+    Bangumi subject with an episode list. Collection counts: the collector's daily subject snapshots, and before
+    the first of them the official archive's weekly counts (data/derived/heat_backfill.db, when present); one
+    source per stretch of days, never both."""
+    sys.path.insert(0, str(ROOT))
+    from engine.cn_views import daily_views
+    bg_by_subject = {r["bgm"]: int(k) for k, r in matches().items() if "bgm" in r}
+
+    def counts(c: dict) -> tuple[float, float, float, float]:
+        return (float(c.get("collect") or 0), float(c.get("doing") or 0), float(c.get("on_hold") or 0),
+                float(c.get("dropped") or 0))
+
+    stocks: dict[int, dict[date, tuple]] = defaultdict(dict)
+    for sid, snaps in snapshot_history("bgm", "subject").items():
+        for d, s in snaps.items():
+            if s.get("collection"):
+                stocks[sid][d] = counts(s["collection"])
+    # the first day the collector has each subject's counts: the archive fills only the days before it (computed once,
+    # before the archive rows are added: computed per row, the first archive row became the "first day" and every
+    # later dump was dropped, leaving a straight line from June 2025 to the collector's first day)
+    first_daily = {sid: min(days) for sid, days in stocks.items() if days}
+    arch = DERIVED / "heat_backfill.db"
+    if arch.exists():
+        a = sqlite3.connect(f"file:{arch}?mode=ro", uri=True)
+        tables = {r[0] for r in a.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for t in ("bgm_weekly", "bgm_anime_weekly"):
+            if t not in tables:
+                continue
+            for sid, at, done, doing, hold, drop in a.execute(
+                    f"SELECT subject_id, at, done, doing, on_hold, dropped FROM {t}"):
+                if sid not in bg_by_subject:
+                    continue
+                # the dump is taken Tuesday ~21:00 UTC: Wednesday's counts in China and Japan
+                d = date.fromisoformat(at[:10]) + timedelta(days=1)
+                fd = first_daily.get(sid)
+                if fd is None or d < fd:
+                    stocks[sid].setdefault(d, (done or 0, doing or 0, hold or 0, drop or 0))
+    # each show's episode days as the game reads them (AniList trends: the episode count on its air day)
+    anilist_air: dict[int, list[date]] = defaultdict(list)
+    if os.environ.get("ANISTOCK_CN_AIR", "anilist") == "anilist":
+        last: dict[int, int] = {}
+        for mid, d, ep in db().execute("SELECT media_id, date, episode FROM anilist_trends WHERE episode IS NOT NULL ORDER BY media_id, date"):
+            k = last.get(mid, 0)
+            if ep > k:
+                anilist_air[mid] += [date.fromisoformat(d)] * (ep - k)
+                last[mid] = ep
+    media = latest("anilist", "media")
+    out: dict[int, dict[date, float]] = {}
+    for sid, blob in latest("bgm", "episodes").items():
+        aid = bg_by_subject.get(sid)
+        if aid is None or not stocks.get(sid):
+            continue
+        air = []
+        for e in blob.get("data") or []:
+            if e.get("type", 0) != 0:     # main episodes only
+                continue
+            try:
+                air.append(date.fromisoformat(e.get("airdate") or ""))
+            except ValueError:
+                pass
+        al = anilist_air.get(aid)
+        if al and len(al) >= len([d for d in air if d <= until]) * 0.8:
+            # the game's own episode days (AniList, as the valuation reads them): Bangumi's air dates are often a few
+            # days later (the date it aired in China), which put the weekly blocks out of step with the episode weeks
+            # the filter observes (its finale week, its partial us week)
+            air = al
+        st = (media.get(aid) or {}).get("status")
+        v = daily_views(stocks[sid], air, until, still_airing=st in ("RELEASING", "HIATUS"))
+        if v:
+            out[aid] = v
+    return out
+
+
 def cmd_build() -> None:
     """Daily attention per show for the China and Japan markets -> data/derived/markets.json.
 
@@ -591,6 +674,16 @@ def cmd_build() -> None:
     out: dict[str, dict[str, dict[str, float]]] = defaultdict(dict)
     stats = {"jp": {"shows": 0, "observed_days": 0, "extended_days": 0},
              "cn": {"shows": 0, "observed_days": 0, "extended_days": 0}}
+    # ANISTOCK_CN_MODEL=views: the China market from Bangumi collection counts (engine/cn_views.py) instead of episode
+    # comments; it has its own post-finale days, so no tail is added on top
+    cn_views = (os.environ.get("ANISTOCK_CN_MODEL") or cn_model_configured()) == "views"
+    if cn_views:
+        series = {**series, "cn": {}}
+        for aid, daily in cn_view_series(snap_day).items():
+            stats["cn"]["shows"] += 1
+            stats["cn"]["observed_days"] += len(daily)
+            for day, v in daily.items():
+                out[str(aid)].setdefault(day.isoformat(), {})["cn"] = round(v, 3)
     for mk, by_show in series.items():
         for aid, eps in by_show.items():
             if not eps:

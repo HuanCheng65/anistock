@@ -55,6 +55,9 @@ pub struct ShowInputs {
     /// point-in-time pre-air estimate, frozen at the premiere (since v0.3.2)
     #[serde(default)]
     pub prior: Option<Markets>,
+    /// `prior` 7 days earlier, before the premiere (engine/daily_inputs.py `prior_prev`)
+    #[serde(default)]
+    pub prior_prev: Option<Markets>,
     /// which markets reported on the day (since v0.3.2)
     #[serde(default)]
     pub observed: Option<Flags>,

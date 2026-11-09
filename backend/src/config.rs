@@ -209,6 +209,15 @@ impl Config {
                 set_dotted(&mut params, k, v.clone())?;
             }
         }
+        // ANISTOCK_PARAMS_FILE: a TOML file of further dotted overrides, applied last (sim/replica_check.py runs one
+        // side with a candidate's parameters this way)
+        if let Some(path) = env("ANISTOCK_PARAMS_FILE").filter(|p| !p.trim().is_empty()) {
+            let text = std::fs::read_to_string(&path).map_err(err(&path))?;
+            let extra: toml::Table = toml::from_str(&text).map_err(err(&path))?;
+            for (k, v) in &extra {
+                set_dotted(&mut params, k, v.clone())?;
+            }
+        }
         let game_raw = raw
             .get("game")
             .and_then(|v| v.as_table())

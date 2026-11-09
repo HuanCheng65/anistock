@@ -310,6 +310,43 @@ def preair_growth(shows, kmax=35):
     return out, {k: len(v) for k, v in by.items()}
 
 
+def preair_trend(shows, growth, kmax=35, lag=7, min_shows=15):
+    """A show's own pre-air growth (docs/design/valuation.md §3.2): its estimate's growth surprise over the last `lag`
+    days, log(p_k / p_{k+lag}) − (g(k+lag) − g(k)), predicts its surprise until the freeze, log(p_0 / p_k) − g(k),
+    almost one for one a week before (shows that gain lists fast keep gaining them: 2026, corr 0.89). For k days
+    before the freeze, the least-squares slope beta_k through the origin and the variance left, [beta_k, var_k];
+    the server adds beta_k × the show's surprise to the prior and uses var_k for the growth's uncertainty. Shows
+    whose estimate does not reach back `lag` days use g(k) alone."""
+    g = lambda k: growth[min(k, len(growth) - 1)][0] if k > 0 else 0.0
+    by = {k: [] for k in range(kmax + 1)}
+    for x in shows.values():
+        ad = air_days(x)
+        if not ad or x["long_runner"] or x["aired"][0] > 0:
+            continue
+        prem = ad[0]
+        pts = {d: p for d, p in zip(x["days"], x["prior_us"]) if p and d < prem}
+        if (prem - 1) not in pts:
+            continue
+        end = pts[prem - 1]
+        for k in range(kmax + 1):
+            a, b = pts.get(prem - 1 - k), pts.get(prem - 1 - k - lag)
+            if a and b and a > 0 and b > 0:
+                by[k].append((math.log(a / b) - (g(k + lag) - g(k)), math.log(end / a) - g(k)))
+    out, last = [], [0.0, 0.0]
+    for k in range(kmax + 1):
+        v = by[k]
+        if k == 0:
+            out.append([0.0, 0.0])
+            continue
+        if len(v) >= min_shows:
+            sxx = sum(p * p for p, _ in v)
+            beta = sum(p * q for p, q in v) / sxx if sxx > 0 else 0.0
+            res = [q - beta * p for p, q in v]
+            last = [round(beta, 6), round(sum(r * r for r in res) / len(res), 6)]
+        out.append(list(last))
+    return out, {k: len(v) for k, v in by.items()}
+
+
 def post_finale(shows, drift, weeks=6, min_shows=20):
     """Per market, the attention after the finale week relative to the level at the end of the finale week
     (what the revenue engine will see: us observed, cn/jp the rebuilt series), for weeks 0..: the mean over
@@ -1620,6 +1657,9 @@ def main():
     ap.add_argument("--outlier-only", action="store_true",
                     help="fit only each market's outlier component (outlier_p, outlier_r) with the rest of --out fixed, "
                          "and write those two keys back")
+    ap.add_argument("--preair-only", action="store_true",
+                    help="refit only the pre-air estimate's growth (`preair_growth`) and the shows' own trend in it "
+                         "(`preair_trend`) with the rest of --out fixed, and write those keys back")
     ap.add_argument("--partial-only", action="store_true",
                     help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
                          "write that key back")
@@ -1699,6 +1739,14 @@ def main():
         fit_prior_only(shows, cal)
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
+    if a.preair_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        growth, _ = preair_growth(shows)
+        cal["preair_growth"] = growth
+        cal["preair_trend"], counts = preair_trend(shows, growth)
+        print(json.dumps({k: [growth[k], cal["preair_trend"][k], counts[k]] for k in (1, 3, 7, 14, 21, 28)}, indent=1))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
     if a.partial_only:
         cal = json.loads(a.out.read_text(encoding="utf-8"))
         BUMP.update(cal["finale_bump"])
@@ -1766,6 +1814,10 @@ def main():
                      f"alone {P_s['b'][k]:+.3f}, on autumn alone {P_a['b'][k]:+.3f}.\n")
     growth, counts = preair_growth(shows)
     res["preair_growth"] = growth
+    trend, tcounts = preair_trend(shows, growth)
+    res["preair_trend"] = trend
+    lines.append(f"Own trend (beta, variance left) at k = 7, 14, 21: {[trend[k] for k in (7, 14, 21)]} "
+                 f"({[tcounts[k] for k in (7, 14, 21)]} shows).\n")
     lines.append(f"## Pre-air estimate until the premiere\n\nMean log growth of the point-in-time estimate from k days "
                  f"before the day before the premiere (k = 7, 14, 21, 28): "
                  f"{[growth[k][0] for k in (7, 14, 21, 28)]}, variance {[growth[k][1] for k in (7, 14, 21, 28)]} "
@@ -1792,7 +1844,9 @@ def main():
             lines.append(f"Outlier component, {m}: outlier_p {o['outlier_p']:.4f}, outlier_r {o['outlier_r']:.4f} (log-likelihood "
                          f"{o['loglik_gaussian']:.1f} Gaussian, {o['loglik_mixture']:.1f} mixture).\n")
         GAUSSIAN = True
-    res["rho"] = round(P["rho"], 6)
+    # fit_joint fits the three pairwise correlations (v0.6.1): written as prior_corr, as --prior-only does
+    res["prior_corr"] = [round(v, 6) for v in P["rho"]]
+    res["rho"] = round(sum(P["rho"]) / 3, 6)
     res["prior_beta"] = {m: round(P["beta"][k], 6) for k, m in enumerate(MARKETS)}
     res["prior"] = "us"
     # the us episode week's days so far (v0.6.1), on the filter above
@@ -1801,7 +1855,7 @@ def main():
                            "rho_autumn_fit": P_a["rho"], "summer_shows": n_s, "autumn_shows": n_a}
     lines.insert(3, f"Joint filter (v0.3.2): one state per show, the three markets' log levels. Prior at the premiere: "
                     f"log(point-in-time us pre-air estimate) + bias_m, variances p0_m, common correlation rho = "
-                    f"{P['rho']:.3f} (summer fit {P_s['rho']:.3f}, autumn fit {P_a['rho']:.3f}). {len(data)} shows with a "
+                    f"{[round(v, 3) for v in P['rho']]} (summer fit {[round(v, 3) for v in P_s['rho']]}, autumn fit {[round(v, 3) for v in P_a['rho']]}). {len(data)} shows with a "
                     f"prior ({n_s} premiering before 2026-09-15, {n_a} after). Two stages: each market's drift, q, r "
                     f"from its own filter; then bias, p0 and rho by maximum likelihood of the joint filter.\n")
     if a.comments:

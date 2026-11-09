@@ -677,13 +677,20 @@ def discount_day(rate: float, p: dict) -> float:
     return (1 / (1 + rw)) ** (1 / 7.0)
 
 
-def absolute_parts(own: dict, platform: dict, scale: float, weights: dict, rv: dict) -> dict:
+def scale_of(scale, m: str) -> float:
+    """The switch's scale for market m: one number (older states) or one per market."""
+    return scale[m] if isinstance(scale, dict) else scale
+
+
+def absolute_parts(own: dict, platform: dict, scale, weights: dict, rv: dict) -> dict:
     """Absolute revenue (docs/design/series.md §6): each market's revenue per day of a show with attention `own`,
-    base/7 × scale × w_m × own_m / platform_m. The platform size is each market's trailing-year total attention of
-    the airing works (engine/daily_inputs.py `platform_size`); `scale` was set once, at the switch, so that the day's
-    total revenue was unchanged. No renormalisation: a market a show is not mapped to earns nothing."""
-    return {m: rv["demand_base_week"] / 7 * scale * weights[m] * own[m] / platform[m] if platform[m] > 0 else 0.0
-            for m in MARKETS}
+    base/7 × scale_m × w_m × own_m / platform_m. The platform size is each market's trailing-year total attention of
+    the airing works, or a fixed size (engine/daily_inputs.py `platform_size`); `scale` (per market, or one number)
+    was set once, at the switch: each market's total revenue that day unchanged, the cn market's for the shows the
+    comment-based series covered (backend daily.rs `platform_switch`). No renormalisation: a market a show is not mapped to
+    earns nothing."""
+    return {m: rv["demand_base_week"] / 7 * scale_of(scale, m) * weights[m] * own[m] / platform[m] if platform[m] > 0
+            else 0.0 for m in MARKETS}
 
 
 def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: dict, shares: int,
@@ -747,7 +754,7 @@ def value_from_paths(own: dict, totals: dict, weights: dict, a_ref: float, p: di
             if platform is not None and sw == 0:
                 if platform[0][m] <= 0:
                     continue
-                per = rv["demand_base_week"] / 7 * platform[1] * weights[m] / platform[0][m] * keep / shares
+                per = rv["demand_base_week"] / 7 * scale_of(platform[1], m) * weights[m] / platform[0][m] * keep / shares
             elif frozen is not None:
                 if frozen[m] <= 0:
                     continue

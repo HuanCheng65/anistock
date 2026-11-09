@@ -26,12 +26,14 @@ use crate::engine::Engine;
 use crate::inputs::HeatIndex;
 use crate::model::{Kind, OrderStatus, Side};
 
-/// A published 热度快讯: the company, when, and whether the discussion ran above expectations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A published 热度快讯: the company, when, and how far the discussion ran above or below the previous episodes.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Flash {
     pub company: i64,
     pub t: i64,
     pub up: bool,
+    /// the episode's comments relative to the previous episodes' at the same hour, minus 1
+    pub surprise: f64,
 }
 
 /// The moment a trader looks: time `t` (unix seconds) of trading day `day`, and what has been published.

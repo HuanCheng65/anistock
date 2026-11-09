@@ -85,6 +85,12 @@ pub struct JState {
     /// week ends, then fixed (the post-finale observations are read through it)
     #[serde(default = "one")]
     pub tail_mult: f64,
+    /// us: the level revision of the last complete episode week in the first `momentum_weeks` weeks after the
+    /// premiere (0 after them): early in a season a show's us level keeps moving the way it just moved (the weekly
+    /// changes of weeks 0-3 correlate +0.3 within a show), so the value prices `us_momentum` x this revision ahead
+    /// (`paths`) instead of revising up or down week after week
+    #[serde(default)]
+    pub us_rev: f64,
     /// the sequel option (docs/design/series.md §5): the announcement hazard's log-odds shift of the show and of its
     /// sequel (fixed at the finale's week, like `tail_mult`)
     #[serde(default)]
@@ -223,6 +229,7 @@ impl JState {
             post: [1.0; 3],
             next: None,
             tail_mult: 1.0,
+            us_rev: 0.0,
             seq_z: 0.0,
             seq_zs: 0.0,
             sequel: None,
@@ -418,9 +425,10 @@ impl Engine {
             if p[0] <= 0.0 {
                 return None;
             }
-            // the estimate keeps growing until it freezes the day before the premiere: its expected growth
+            // the estimate keeps growing until it freezes the day before the premiere: its expected growth, the
+            // show's own pace over the last week included (shows gaining lists fast keep gaining them)
             let k = day_no(&s.first_air).map_or(0, |f| f - 1 - today);
-            let (g, _) = fp.growth(k);
+            let (g, _) = fp.growth_own(k, Self::own7(s));
             let b = fp.prior_beta;
             Some(std::array::from_fn(|m| if m > 0 && p[m] > 0.0 { p[m].ln() + g } else { fp.prior_bias[m] + b[m] * (p[0].ln() + g) }))
         } else {
@@ -431,31 +439,49 @@ impl Engine {
     }
 
     /// Which markets a show can earn in: those whose data source it is mapped to (older inputs: all).
+    /// The show's own log growth of its us pre-air estimate over the last 7 days (inputs `prior_prev`).
+    fn own7(s: &ShowInputs) -> Option<f64> {
+        let (p, q) = (s.prior.as_ref()?.m3()[0], s.prior_prev.as_ref()?.m3()[0]);
+        (p > 0.0 && q > 0.0).then(|| (p / q).ln())
+    }
+
     /// The prior covariance, plus the common uncertainty of the pre-air estimate's growth until it freezes.
     fn prior_cov_at(fp: &FilterParams, s: &ShowInputs, today: i64) -> Cov {
         let k = day_no(&s.first_air).map_or(0, |f| f - 1 - today);
-        let (_, v) = fp.growth(k);
+        let (_, v) = fp.growth_own(k, Self::own7(s));
         let c = F::prior_cov(&fp.p0, &fp.prior_corr);
         let b = fp.prior_beta;
         std::array::from_fn(|i| std::array::from_fn(|j| c[i][j] + b[i] * b[j] * v))
     }
 
     /// The absolute revenue rule in force (docs/design/series.md §6): the platform sizes of the last close and the
-    /// scale set at the switch (state `platform_rule`: "us,cn,jp,scale"); None while the relative rule applies.
+    /// scales set at the switch (state `platform_rule`: "us,cn,jp,scale_us,scale_cn,scale_jp"; an older state's
+    /// "us,cn,jp,scale" is one scale for all three); None while the relative rule applies.
     /// The rule the value prices from `today` (docs/design/series.md §6): the one in force, or, before the switch, the
-    /// absolute rule from its known date on (state `platform_pending`: "us,cn,jp,scale estimate,switch day"), so
-    /// that the switch day is not a jump anyone could compute in advance.
+    /// absolute rule from its known date on (state `platform_pending`: the same, then the switch day), so that the
+    /// switch day is not a jump anyone could compute in advance.
     pub fn value_rule(&self, today: i64) -> F::ValueRule {
         if let Some((pl, sc)) = self.platform_rule() {
             return Some((pl, sc, 0));
         }
         let v: Vec<f64> = self.state("platform_pending")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
-        (v.len() == 5).then(|| ([v[0], v[1], v[2]], v[3], (v[4] as i64 - today - 1).max(0) as usize))
+        let (day, rule) = v.split_last()?;
+        let (pl, sc) = Self::rule_fields(rule)?;
+        Some((pl, sc, (*day as i64 - today - 1).max(0) as usize))
     }
 
     pub fn platform_rule(&self) -> F::PlatformRule {
         let v: Vec<f64> = self.state("platform_rule")?.split(',').filter_map(crate::pyfmt::parse_float).collect();
-        (v.len() == 4).then(|| ([v[0], v[1], v[2]], v[3]))
+        Self::rule_fields(&v)
+    }
+
+    /// "us,cn,jp,scale" or "us,cn,jp,scale_us,scale_cn,scale_jp" -> (platform sizes, scales)
+    fn rule_fields(v: &[f64]) -> Option<(M3, M3)> {
+        match v.len() {
+            4 => Some(([v[0], v[1], v[2]], [v[3]; 3])),
+            6 => Some(([v[0], v[1], v[2]], [v[3], v[4], v[5]])),
+            _ => None,
+        }
     }
 
     /// The sequel option per market in attention-days discounted to today (docs/design/series.md §5), while the show's
@@ -803,6 +829,8 @@ impl Engine {
                 }
             }
         }
+        let us_week = ys.iter().any(|(m, _)| *m == 0);
+        let before_us = st.mean[0];
         for ((m, y), xr) in ys.into_iter().zip(extra_r) {
             if st.active[m] {
                 // outlier-prone (a one-episode spike is mostly noise, not a level change): the fitted mixture
@@ -811,6 +839,10 @@ impl Engine {
                 st.mean = mean;
                 st.cov = cov;
             }
+        }
+        if us_week {
+            let week = day_no(&s.first_air).map_or(i64::MAX, |p| (today - p).div_euclid(7));
+            st.us_rev = if !s.long_runner && !after_finale && week < fp.momentum_weeks { st.mean[0] - before_us } else { 0.0 };
         }
         st.active[0] = true;
         for m in 1..3 {
@@ -876,6 +908,7 @@ impl Engine {
                     vec![0.0; h]
                 }
             });
+            Self::momentum(&mut path[0], fp, js);
             Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
             out.insert(c.id, path);
             for w in self.works_extra(c.id) {
@@ -888,11 +921,22 @@ impl Engine {
                         vec![0.0; h]
                     }
                 });
+                Self::momentum(&mut path[0], fp, js);
                 Self::fill_preair(&mut path[0], today, first_air, js.last_obs[0]);
                 out.insert(w, path);
             }
         }
         out
+    }
+
+    /// The us path moved by the expected continuation of the last early-season revision (`JState::us_rev`).
+    fn momentum(path: &mut [f64], fp: &FilterParams, js: &JState) {
+        if fp.us_momentum != 0.0 && js.us_rev != 0.0 {
+            let f = (fp.us_momentum * js.us_rev).exp();
+            for v in path.iter_mut() {
+                *v *= f;
+            }
+        }
     }
 
     /// Today's total attention per market of this season's shows on air (long-runners and earlier seasons'
@@ -1439,6 +1483,11 @@ impl Engine {
         let p = Params::from_config(cfg)?;
         let Some(c) = self.st.companies.get(&company).filter(|c| c.status == "listed").cloned() else { return Ok(None) };
         let Some((y_rel, r)) = F::flash_observation(&fp, hours, comments, prev_final) else { return Ok(None) };
+        if !fp.flash_valuation {
+            // news only: the surprise is reported, the value does not move
+            let v = c.fair_value;
+            return Ok(Some(FlashOutcome { surprise: y_rel.exp() - 1.0, old_value: v, new_value: v }));
+        }
         let Some(st) = self.st.jstate.get(&company).cloned().filter(|s| s.active[1]) else { return Ok(None) };
         let rate: f64 = self.state("rate").and_then(crate::pyfmt::parse_float).unwrap_or(0.03);
         let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
