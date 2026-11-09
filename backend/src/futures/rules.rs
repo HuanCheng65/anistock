@@ -133,8 +133,8 @@ impl Default for FuturesRules {
             // the inputs, so about 1; sim/research/cn_views/index_link.py)
             index_link: [[1.0; 4], [1.012, 1.004, 1.004, 0.998], [0.642, 0.751, 0.86, 0.978]],
             // the index method v2 (engine/heat_index.py PLATFORM, SCALE)
-            index_platform: [97627.6, 20177.6, 1611.3],
-            index_scale: 11349.0,
+            index_platform: [97627.6, 20187.5, 1611.3],
+            index_scale: 12029.4,
             index_version: "v2".into(),
             terminate_on: None,
             model_cv: 0.15,

@@ -42,6 +42,10 @@ LAG_EPISODES = 3
 FINISHED_AFTER = 7        # days after the last listed episode: the show counts as finished (catch-up = whole show)
 BACKLOG_CAP = 13          # a newcomer's catch-up counts at most one cour: a long-runner's newcomer does not watch
                           # its hundreds of episodes that week (Conan's list was counted as 100 episodes each)
+# how a week's viewing of an episode spreads over the days from its air day (the heat index's daily figure): Annict's
+# watch records of weekly shows, July-October 2026 (1053 episode weeks; AniList's peaks on the same days). Chinese
+# viewers watch the fansubbed episode within a day or two of the Japanese broadcast, as Annict's users do.
+WEEK_SHAPE = (0.081, 0.236, 0.253, 0.131, 0.113, 0.101, 0.085)
 INIT_ACTIVE = 0.5         # first counts after the premiere, no earlier history: share of 在看 still following
 
 
@@ -71,15 +75,16 @@ def daily_index(stocks: dict[date, tuple[float, float, float, float]], air: list
                 h: float = H_PER_EPISODE) -> dict[date, float]:
     """The heat index's China figure (engine/heat_index.py v2) for each day D up to `until` - 1, from the counts up to
     D + 1 (the snapshots of D and D + 1) and the episodes aired by D: the followers' views of each episode spread over
-    the seven days from its air day (a smooth daily figure: a viewer watches during the week), plus the newcomers'
-    catch-up and the late finishers of the counts' change from D to D + 1."""
+    the seven days from its air day by `WEEK_SHAPE` (most of it the day after airing and the next), plus the
+    newcomers' catch-up and the late finishers of the counts' change from D to D + 1. A week's total is the same as
+    an even spread's."""
     follow, rest = parts(stocks, air, until, h)
     out = {}
     if not air:
         return out
     d = min(air)
     while d < until:
-        out[d] = sum(follow.get(d - timedelta(days=k), 0.0) for k in range(7)) / 7 + rest.get(d + timedelta(days=1), 0.0)
+        out[d] = sum(follow.get(d - timedelta(days=k), 0.0) * WEEK_SHAPE[k] for k in range(7)) + rest.get(d + timedelta(days=1), 0.0)
         d += timedelta(days=1)
     return out
 

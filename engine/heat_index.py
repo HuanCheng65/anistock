@@ -59,10 +59,11 @@ SPIKE = 10.0
 # v2 (2026-11-10): the mean daily total of the shows on air (premiere to 7 days after the last episode),
 # 2025-11-01..2026-10-31, and the scale for an on-air median of 100 (ANISTOCK_DB=<collector with the backfilled
 # seasons> sim/heat_history.py --archive --cn-views; jp per account and episode: the backfill's records x 0.96).
-# us without the score premium (2026-11-09, before the first live v2 day). v1 (2026-11-08): us 116352 (with the
+# us without the score premium, cn spread over the week by cn_views.WEEK_SHAPE (2026-11-09, before the first live v2
+# day). v1 (2026-11-08): us 116352 (with the
 # premium), cn 1772 (people who marked the show), jp 1649, scale 14437.
-SCALE = 11349.0
-PLATFORM = {"us": 97627.6, "cn": 20177.6, "jp": 1611.3}
+SCALE = 12029.4
+PLATFORM = {"us": 97627.6, "cn": 20187.5, "jp": 1611.3}
 OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_index.db"
 
 SCHEMA = """
