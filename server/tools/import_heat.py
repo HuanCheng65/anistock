@@ -3,6 +3,12 @@
     uv run python -m server.tools.import_heat [--from data/derived/heat_index.db] [--game data/game.db] [--dry-run]
     uv run python -m server.tools.import_heat --backfill heat_backfill.csv.gz      # the year before the live index
     uv run python -m server.tools.import_heat --export-backfill heat_backfill.csv.gz   # on the machine with the backfills
+    uv run python -m server.tools.import_heat --replace FROM_DB --days 2026-11-05 2026-11-08   # a method change
+
+`--replace` puts the rows of FROM_DB (an engine/heat_index.py database) for those days in place of the published ones,
+in the game database and in data/derived/heat_index.db: once, for the days computed with the previous method right
+before a version change, when no contract settles on them any more (2026-11-09: every contract ended at that day's
+settlement price, docs/ops/switch-cn-views.md). Everything else here never changes a published row.
 
 The collector computes the index every day (engine/heat_index.py, data/derived/heat_index.db); the server
 publishes a day into the game database's `heat_index` once that day's inputs carry it. The default run copies
@@ -76,6 +82,26 @@ def backfill_rows(path: str, game: sqlite3.Connection) -> list[tuple]:
     return out
 
 
+def replace_days(src: str, game: sqlite3.Connection, derived: Path, first: str, last: str) -> None:
+    """The rows of `src` for days first..last in place of those of the game database and of `derived`."""
+    s = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+    rows = s.execute(f"SELECT {COLS} FROM heat_index WHERE day BETWEEN ? AND ? ORDER BY day, work_id", (first, last)).fetchall()
+    full = s.execute("SELECT * FROM heat_index WHERE day BETWEEN ? AND ? ORDER BY day, work_id", (first, last)).fetchall()
+    if not rows:
+        sys.exit(f"{src}: no rows for {first}..{last}")
+    print(f"{src}: {len(rows)} rows, versions {sorted({r[7] for r in rows})}")
+    with game:
+        n = game.execute("DELETE FROM heat_index WHERE day BETWEEN ? AND ? AND version NOT LIKE '%backfill'", (first, last)).rowcount
+        game.executemany(f"INSERT INTO heat_index({COLS}) VALUES (?,?,?,?,?,?,?,?)", rows)
+    print(f"game database: {n} rows replaced by {len(rows)}")
+    if derived.exists():
+        d = sqlite3.connect(derived)
+        with d:
+            n = d.execute("DELETE FROM heat_index WHERE day BETWEEN ? AND ?", (first, last)).rowcount
+            d.executemany(f"INSERT INTO heat_index VALUES ({','.join('?' * len(full[0]))})", full)
+        print(f"{derived}: {n} rows replaced by {len(full)}")
+
+
 def drop_backfill(game: sqlite3.Connection) -> int:
     """Remove the backfilled rows of an earlier import (never a live row)."""
     with game:
@@ -99,6 +125,9 @@ def main() -> int:
     ap.add_argument("--from", dest="src", default=str(DERIVED / "heat_index.db"))
     ap.add_argument("--backfill", metavar="CSV_GZ", help="the history before the live index (--export-backfill's file)")
     ap.add_argument("--export-backfill", metavar="CSV_GZ")
+    ap.add_argument("--replace", metavar="FROM_DB", help="put this database's rows for --days in place of the published ones")
+    ap.add_argument("--days", nargs=2, metavar=("FIRST", "LAST"))
+    ap.add_argument("--derived", default=str(DERIVED / "heat_index.db"), help="with --replace: also replace them here")
     ap.add_argument("--game")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -110,6 +139,11 @@ def main() -> int:
         print("the game database has no heat_index table yet: start the new server once (it migrates), then run this",
               file=sys.stderr)
         return 1
+    if args.replace:
+        if not args.days:
+            sys.exit("--replace needs --days FIRST LAST")
+        replace_days(args.replace, game, Path(args.derived), *args.days)
+        return 0
     rows = backfill_rows(args.backfill, game) if args.backfill else live_rows(args.src)
     if args.backfill and not args.dry_run:
         dropped = drop_backfill(game)

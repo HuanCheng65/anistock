@@ -146,7 +146,9 @@ def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, 
                     m["cn"][name] = ((x1[name] - x0[name]) * 24 / h if h > 0 else None, h)
             else:
                 m["cn"] = {"engaged": (None, None), "wish": (None, None)}
-            m["cn"]["viewers"] = (viewers.get(s.id), 24.0) if k in s1 else (None, None)
+            # (also without D+1's snapshot when a later one exists: the change up to it is spread over the days
+            # between, as the archive's weeks are; a recomputed past day, never the live one)
+            m["cn"]["viewers"] = (viewers.get(s.id), 24.0) if s.id in viewers else (None, None)
             if k in e0 and k in e1 and e0[k][1].get("offset") == e1[k][1].get("offset"):
                 h = hours(e0[k][0], e1[k][0])
                 m["cn"]["comments"] = ((bgm_comments(e1[k][1]) - bgm_comments(e0[k][1])) * 24 / h if h > 0 else None, h)
@@ -184,13 +186,19 @@ def cn_viewers(col_path: Path, shows: list, matches: dict, d: date) -> dict[int,
     by_show = {s.id: int((matches.get(str(s.id)) or {}).get("bgm")) for s in shows
                if (matches.get(str(s.id)) or {}).get("bgm")}
     nxt = d + timedelta(days=1)
-    stocks = load_stocks(col_path, OUT.parent / "heat_backfill.db", set(by_show.values()), until=nxt)
+    # the counts up to the first snapshot from D + 1 on: D + 1's own when there is one (the live case); for a past day
+    # whose D + 1 was not collected, the next one (its change spread evenly over the days between)
+    stocks = load_stocks(col_path, OUT.parent / "heat_backfill.db", set(by_show.values()))
     out = {}
     for s in shows:
         sid = by_show.get(s.id)
         air = air_days(s, d) if s.days else []
         if sid is None or not stocks.get(sid) or not air:
             continue
+        later = [x for x in stocks[sid] if x >= nxt]
+        if not later:
+            continue
+        stocks[sid] = {x: v for x, v in stocks[sid].items() if x <= min(later)}
         v = daily_index(stocks[sid], air, nxt).get(d)
         if v is not None:
             out[s.id] = v
@@ -199,9 +207,11 @@ def cn_viewers(col_path: Path, shows: list, matches: dict, d: date) -> dict[int,
 
 def history(db: sqlite3.Connection, work: int, market: str, day: str, n: int) -> list[float]:
     col = {"us": "us", "cn": "cn", "jp": "jp"}[market]
+    # the method's own rows only: a figure of an earlier version is in other units (v1's cn was new marks, tens a day;
+    # v2's is episodes watched, hundreds to thousands) and would flag every v2 value as a spike
     return [r[0] for r in db.execute(
-        f"SELECT {col} FROM heat_index WHERE work_id=? AND day<? AND {col} IS NOT NULL ORDER BY day DESC LIMIT ?",
-        (work, day, n))]
+        f"SELECT {col} FROM heat_index WHERE work_id=? AND day<? AND {col} IS NOT NULL AND version=? ORDER BY day DESC LIMIT ?",
+        (work, day, VERSION, n))]
 
 
 def compute(day: str) -> int:
