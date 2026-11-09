@@ -36,6 +36,14 @@ cp data/game.db data/game-before-cn-views-(date +%Y%m%d-%H%M).db
 
 ### 2. 用新序列重建中国、日本序列和每日输入
 
+先把 Bangumi 每周存档的回补数据库拷到服务器（只在开发机上有；没有它，每部作品的中国数据只有采集器 11 月 5 日以来的几天，追番人数是猜的，估值会全错）。在开发机上：
+
+```fish
+scp /home/starrydream/anisotck/data/derived/heat_backfill.db <服务器>:~/anistock/data/derived/
+```
+
+然后在服务器上：
+
 ```fish
 uv run sim/reconstruct.py airtimes
 uv run sim/reconstruct.py build          # 读 game.toml 的 revenue.cn_model = "views"
@@ -67,11 +75,25 @@ rm -f data/values.db data/values.db-wal data/values.db-shm
 - `reprice` 撤销所有挂单，把每支上市股票的价格设为新估值；输出最后一行是新旧价格之比的中位数和 p10、p90，应接近 1、约 0.78、约 1.06。
 - 写入前自动备份到 `data/backups/`。
 
-### 4. 启动，发公告
+### 4. 启动（在正式数据库上也重建估值），发公告
 
 ```fish
+systemctl --user set-environment ANISTOCK_VALUATION_REBUILD=1
 systemctl --user start anistock-server
+journalctl --user -u anistock-server -n 30 --no-pager | grep valuation
+systemctl --user unset-environment ANISTOCK_VALUATION_REBUILD
 bin/anistock announce "热度算法更新" docs/ops/switch-cn-views-announcement.md
+```
+
+- 第 3 步只在副本上重建了估值，用来读新估值；`reprice` 只改价格，正式数据库里的估值状态还是旧模型的。所以启动时也要带 `ANISTOCK_VALUATION_REBUILD=1`，日志里应有 `valuation: started the filter from the inputs history`。**启动后一定取消这个环境变量**，否则以后每次重启都会重建。
+- 检查估值和价格一致（应都在 1 附近）：
+
+```fish
+python3 -c "
+import sqlite3, statistics as s
+c = sqlite3.connect('file:data/game.db?mode=ro', uri=True)
+r = sorted(f / p for f, p in c.execute(\"SELECT fair_value, last_price FROM companies WHERE status='listed' AND fair_value > 0\"))
+print(len(r), '只  估值/现价 中位', round(s.median(r), 3), ' 最小', round(r[0], 3), ' 最大', round(r[-1], 3))"
 ```
 
 ### 5. 第二天检查
