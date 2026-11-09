@@ -6,7 +6,8 @@ For each trading day D whose snapshots exist on both sides (the collector's run 
 each), every show the collector tracks gets one row per market, from what was observed live, never from the
 rebuilt series:
 
-- us: the game's own attention for D (engine/economy.py `attention`: in-progress / 7, list adds, trending, score);
+- us: AniList attention for D (engine/economy.py `raw_attention`: in-progress / 7, list adds, trending; v1 also
+  multiplied it by the score premium, which belongs to the revenue, and only in this market);
 - cn (v2, 2026-11): the episodes Bangumi users watch (engine/cn_views.py `daily_index`: followers' views of each
   episode spread over its week, plus the catch-up of the people who marked the show from D's to D+1's snapshot);
   v1 counted the people who marked it (在看, 看过, 搁置, 抛弃), which come at the premiere and the finale, not week by
@@ -58,9 +59,10 @@ SPIKE = 10.0
 # v2 (2026-11-10): the mean daily total of the shows on air (premiere to 7 days after the last episode),
 # 2025-11-01..2026-10-31, and the scale for an on-air median of 100 (ANISTOCK_DB=<collector with the backfilled
 # seasons> sim/heat_history.py --archive --cn-views; jp per account and episode: the backfill's records x 0.96).
-# v1 (2026-11-08): us 116352, cn 1772 (people who marked the show), jp 1649, scale 14437.
-SCALE = 11807.7
-PLATFORM = {"us": 111590.4, "cn": 20177.6, "jp": 1611.3}
+# us without the score premium (2026-11-09, before the first live v2 day). v1 (2026-11-08): us 116352 (with the
+# premium), cn 1772 (people who marked the show), jp 1649, scale 14437.
+SCALE = 11349.0
+PLATFORM = {"us": 97627.6, "cn": 20177.6, "jp": 1611.3}
 OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_index.db"
 
 SCHEMA = """
@@ -134,7 +136,8 @@ def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, 
     for s in shows:
         if s.adult or s.promo:
             continue
-        m: dict[str, dict] = {"us": {"attention": (E.attention(s, d, p["revenue"]) if d >= s.days[0] else None, 24.0)}}
+        # v2: without the score premium (the index measures heat; the premium belongs to the revenue)
+        m: dict[str, dict] = {"us": {"attention": (E.raw_attention(s, d, p["revenue"]) if d >= s.days[0] else None, 24.0)}}
         r = matches.get(str(s.id)) or matches.get(s.id) or {}
         if r.get("bgm"):
             k = str(r["bgm"])

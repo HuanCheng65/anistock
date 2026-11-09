@@ -129,11 +129,12 @@ impl Default for FuturesRules {
             settle_window_min: 30,
             index_weights: [0.3, 0.5, 0.2],
             // index / the inputs' att, median per show-day of each block (2026-07..11 backfill, sim/heat_inputs.py)
-            // (v2: cn from the same viewer model as the inputs, so about 1; sim/research/cn_views/index_link.py)
-            index_link: [[1.0; 4], [1.032, 0.992, 1.007, 0.91], [0.662, 0.762, 0.861, 0.938]],
+            // (v2: of the att without its score premium, which the forecast divides out; cn from the same viewer model as
+            // the inputs, so about 1; sim/research/cn_views/index_link.py)
+            index_link: [[1.0; 4], [1.012, 1.004, 1.004, 0.998], [0.642, 0.751, 0.86, 0.978]],
             // the index method v2 (engine/heat_index.py PLATFORM, SCALE)
-            index_platform: [111590.4, 20177.6, 1611.3],
-            index_scale: 11807.7,
+            index_platform: [97627.6, 20177.6, 1611.3],
+            index_scale: 11349.0,
             index_version: "v2".into(),
             terminate_on: None,
             model_cv: 0.15,

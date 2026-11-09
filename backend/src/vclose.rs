@@ -85,6 +85,10 @@ pub struct JState {
     /// week ends, then fixed (the post-finale observations are read through it)
     #[serde(default = "one")]
     pub tail_mult: f64,
+    /// the score premium the inputs' att carries (`Params::score_mult` of the day's score): the heat index has none,
+    /// so the futures forecast divides it out
+    #[serde(default = "one")]
+    pub score_mult: f64,
     /// us: the level revision of the last complete episode week in the first `momentum_weeks` weeks after the
     /// premiere (0 after them): early in a season a show's us level keeps moving the way it just moved (the weekly
     /// changes of weeks 0-3 correlate +0.3 within a show), so the value prices `us_momentum` x this revision ahead
@@ -229,6 +233,7 @@ impl JState {
             post: [1.0; 3],
             next: None,
             tail_mult: 1.0,
+            score_mult: 1.0,
             us_rev: 0.0,
             seq_z: 0.0,
             seq_zs: 0.0,
@@ -759,6 +764,7 @@ impl Engine {
         st.meta = meta_today.clone();
         st.watched = s.relations_known;
         st.tail_mult = mult;
+        st.score_mult = p.score_mult(s.score);
         st.seq_z = seq_z;
         st.seq_zs = seq_zs;
         st.sequel = sequel;

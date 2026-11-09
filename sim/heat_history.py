@@ -144,7 +144,7 @@ def main() -> None:
         days = list(days_between(max(start, s.days[0]), end))
         shape = {k: float(v) for k, v in jp.get(a, {}).items()} if a else {}
         if not any(shape.values()):
-            shape = {d.isoformat(): E.attention(s, d, p["revenue"]) for d in days}
+            shape = {d.isoformat(): E.raw_attention(s, d, p["revenue"]) for d in days}
         if args.cn_views:
             cn = {}
             if b and b in views_stocks:
@@ -156,7 +156,7 @@ def main() -> None:
             cn = spread(segs.get(b, []), shape) if b else {}
         for d in days:
             ds = d.isoformat()
-            us = E.attention(s, d, p["revenue"])
+            us = E.raw_attention(s, d, p["revenue"])
             c = cn.get(ds, 0.0 if b in cn_seen else None) if b and ds <= cn_last else None
             j = jp.get(a, {}).get(ds, 0 if a in jp_seen else None) if a else None
             hist.append((s.id, ds, us, c, j))

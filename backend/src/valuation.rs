@@ -33,6 +33,11 @@ pub struct Params {
     /// attention of all listed shows ÷ Σ of the shows the old series measured, on the switch (daily.rs
     /// `platform_switch`); 1: every market's total kept
     pub absolute_cn_coverage: f64,
+    /// the score premium on attention (`[revenue] score_*`, engine/economy.py `score_mult`): the inputs' att carries it
+    pub score_ref: f64,
+    pub score_power: f64,
+    pub score_mult_min: f64,
+    pub score_mult_max: f64,
     /// cn/jp post-finale days without data earn the filter's expectation (the §4.2 stopgap)
     pub impute_tail: bool,
     /// delisting (docs/design/series.md §9): a finished series' weekly revenue under this share of the median airing
@@ -79,6 +84,17 @@ fn int(cfg: &Config, path: &str) -> Result<i64, String> {
 }
 
 impl Params {
+    /// The score premium on attention (Python `engine/economy.py score_mult`): (score / ref)^power within
+    /// [min, max]; 1 without a score.
+    pub fn score_mult(&self, score: Option<f64>) -> f64 {
+        match score {
+            Some(sc) if sc > 0.0 => (sc / self.score_ref).powf(self.score_power).clamp(self.score_mult_min, self.score_mult_max),
+            _ => 1.0,
+        }
+    }
+}
+
+impl Params {
     pub fn from_config(cfg: &Config) -> Result<Params, String> {
         let profile = cfg
             .param("valuation.post_finale_profile")
@@ -107,6 +123,10 @@ impl Params {
             platform_min_days: int(cfg, "revenue.platform_min_days").unwrap_or(182),
             absolute_revenue: int(cfg, "revenue.absolute_revenue").unwrap_or(0) == 1,
             absolute_cn_coverage: num(cfg, "revenue.absolute_cn_coverage").unwrap_or(1.0),
+            score_ref: num(cfg, "revenue.score_ref").unwrap_or(70.0),
+            score_power: num(cfg, "revenue.score_power").unwrap_or(2.0),
+            score_mult_min: num(cfg, "revenue.score_mult_min").unwrap_or(0.7),
+            score_mult_max: num(cfg, "revenue.score_mult_max").unwrap_or(1.4),
             impute_tail: int(cfg, "valuation.impute_tail").unwrap_or(1) == 1,
             delist_tail_share: num(cfg, "company.delist_tail_share").unwrap_or(0.01),
             delist_sequel_p: num(cfg, "company.delist_sequel_p").unwrap_or(0.10),

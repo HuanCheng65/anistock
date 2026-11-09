@@ -21,7 +21,10 @@ for f in sorted(glob.glob(sys.argv[1] + '/*.json')):
             continue
         b = min(3, max(0, (date.fromisoformat(x['day']) - date.fromisoformat(s['first_air'])).days // 7 // 4))
         for m in r:
-            a = s['att'][m]
+            # the forecast divides the att's score premium out (backend futures/forecast.rs)
+            sc = s.get('score')
+            mult = min(1.4, max(0.7, (sc / 70) ** 2)) if sc else 1.0
+            a = s['att'][m] / mult
             if h[m] and a and a > 0 and (m == 'us' or (s.get('observed') or {}).get(m)):
                 r[m][b].append(h[m] / a)
 print({m: [round(S.median(v), 3) if len(v) > 50 else None for b, v in sorted(r[m].items())] for m in r})

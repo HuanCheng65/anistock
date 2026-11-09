@@ -282,13 +282,22 @@ def score_mult(score: float | None, r: dict) -> float:
     return min(r["score_mult_max"], max(r["score_mult_min"], (score / r["score_ref"]) ** r["score_power"]))
 
 
-def attention(s: Show, d: date, r: dict) -> float:
+def raw_attention(s: Show, d: date, r: dict) -> float:
+    """AniList attention on day D without the score premium: the heat index's us figure (engine/heat_index.py v2;
+    the index measures heat, the premium is part of the revenue)."""
     i = (d - s.days[0]).days
     if i < 0:
         return 0.0
     new_adds = max(0.0, s.popularity[i] - s.popularity[i - 1]) if i > 0 else 0.0
-    a = r["w_in_progress"] * s.in_progress[i] / 7 + r["w_new_adds"] * new_adds + r["w_trending"] * s.trending[i]
-    return a * score_mult(s.score[i], r)
+    return r["w_in_progress"] * s.in_progress[i] / 7 + r["w_new_adds"] * new_adds + r["w_trending"] * s.trending[i]
+
+
+def attention(s: Show, d: date, r: dict) -> float:
+    """The revenue's us attention: raw attention x the score premium (`score_mult`)."""
+    i = (d - s.days[0]).days
+    if i < 0:
+        return 0.0
+    return raw_attention(s, d, r) * score_mult(s.score[i], r)
 
 
 MARKETS = V.MARKETS

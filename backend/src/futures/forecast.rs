@@ -60,7 +60,8 @@ impl Engine {
                 *gm = (from..=last)
                     .map(|t| {
                         let shrink = (-rules.horizon_drift * (t - today) as f64).exp();
-                        rules.index_per_att(m, (t - first_air).div_euclid(7)) * path[(t - today - 1) as usize] * shrink
+                        // (the att carries the score premium, the index does not)
+                        rules.index_per_att(m, (t - first_air).div_euclid(7)) * path[(t - today - 1) as usize] / js.score_mult * shrink
                     })
                     .sum();
             }
