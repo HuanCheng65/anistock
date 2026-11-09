@@ -36,6 +36,11 @@ pub struct FuturesRules {
     pub index_scale: f64,
     /// the index method's version these constants belong to (engine/heat_index.py VERSION)
     pub index_version: String,
+    /// a trading day on whose close every contract still open settles at that day's settlement price, as if its period
+    /// had ended (positions closed, margins returned): a change of the index method in mid-period (v1 -> v2,
+    /// 2026-11) must not pay anyone for the change of units. None: never.
+    #[serde(default)]
+    pub terminate_on: Option<String>,
     /// the realised average's spread around the model's expectation beyond the level's own uncertainty (the
     /// link, the index's daily noise), as a share of the expectation of the days still to come
     pub model_cv: f64,
@@ -124,11 +129,13 @@ impl Default for FuturesRules {
             settle_window_min: 30,
             index_weights: [0.3, 0.5, 0.2],
             // index / the inputs' att, median per show-day of each block (2026-07..11 backfill, sim/heat_inputs.py)
-            index_link: [[1.0; 4], [5.6, 2.25, 2.3, 2.3], [0.66, 0.76, 0.85, 1.1]],
-            // the index method v1 (engine/heat_index.py PLATFORM, SCALE)
-            index_platform: [116352.0, 1772.0, 1649.0],
-            index_scale: 14437.0,
-            index_version: "v1".into(),
+            // (v2: cn from the same viewer model as the inputs, so about 1; sim/research/cn_views/index_link.py)
+            index_link: [[1.0; 4], [1.032, 0.992, 1.007, 0.91], [0.662, 0.762, 0.861, 0.938]],
+            // the index method v2 (engine/heat_index.py PLATFORM, SCALE)
+            index_platform: [111590.4, 20177.6, 1611.3],
+            index_scale: 11807.7,
+            index_version: "v2".into(),
+            terminate_on: None,
             model_cv: 0.15,
             horizon_drift: 0.002,
             mm_capital: 20_000_000,

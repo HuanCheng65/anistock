@@ -10,8 +10,8 @@ the live days computed before that (from the first collected day to the deploy).
 
 The live index needs a snapshot on each side of a day, so it starts when the collector started taking them.
 `--backfill` adds the history before: each work's days from sim/heat_history.py (AniList trends, Bangumi's weekly
-archive spread over the week, Annict's records), turned into the index with the method v1 constants, version
-`v1-backfill`, only for days before the work's first live value. A day missing a market the work has on other
+archive spread over the week, or with --cn-views the index v2's viewer figure; Annict's records), turned into the index
+with the current method's constants, version `<method>-backfill`, only for days before the work's first live value. A day missing a market the work has on other
 days is left out rather than drawn low. The backfill is not published-and-frozen like the live index: each
 `--backfill` run replaces the backfilled rows of an earlier one (the live rows are never touched). The stock page draws them lighter; futures
 never use them (a contract's days are all after its listing). `--export-backfill` writes that history as a small
@@ -37,8 +37,8 @@ COLS = "work_id, day, idx, us, cn, jp, flags, version"
 DERIVED = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived"))  # as engine/heat_index.py
 
 
-def index_v1(us: float | None, cn: float | None, jp: float | None) -> float:
-    """engine/heat_index.py's index with the method v1 constants (markets without a source left out)."""
+def index_method(us: float | None, cn: float | None, jp: float | None) -> float:
+    """engine/heat_index.py's index with the current method's constants (markets without a source left out)."""
     from engine.heat_index import PLATFORM, SCALE, WEIGHTS
     vals = {"us": us, "cn": cn, "jp": jp}
     return sum(WEIGHTS[m] * max(0.0, v) / PLATFORM[m] * SCALE for m, v in vals.items() if v is not None)
@@ -47,10 +47,11 @@ def index_v1(us: float | None, cn: float | None, jp: float | None) -> float:
 def live_rows(src: str) -> list[tuple]:
     db = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
     rows = db.execute(f"SELECT {COLS} FROM heat_index ORDER BY day, work_id").fetchall()
+    from engine.heat_index import VERSION
     versions = sorted({r[7] for r in rows})
-    if versions != ["v1"]:
-        print(f"warning: expected only method v1 rows, found {versions or 'none'}; recompute first "
-              "(mv heat_index.db aside, uv run engine/heat_index.py)", file=sys.stderr)
+    if not versions or versions[-1] != VERSION:
+        # rows of an earlier method stay as published (frozen); the newest must be the current method's
+        print(f"warning: the newest rows are not method {VERSION}: found {versions or 'none'}", file=sys.stderr)
     return rows
 
 
@@ -70,7 +71,8 @@ def backfill_rows(path: str, game: sqlite3.Connection) -> list[tuple]:
             continue
         if any((us, cn, jp)[i] is None for i in has[w]):
             continue
-        out.append((w, day, round(index_v1(us, cn, jp), 6), us, cn, jp, "{}", "v1-backfill"))
+        from engine.heat_index import VERSION
+        out.append((w, day, round(index_method(us, cn, jp), 6), us, cn, jp, "{}", f"{VERSION}-backfill"))
     return out
 
 

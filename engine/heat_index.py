@@ -7,8 +7,10 @@ each), every show the collector tracks gets one row per market, from what was ob
 rebuilt series:
 
 - us: the game's own attention for D (engine/economy.py `attention`: in-progress / 7, list adds, trending, score);
-- cn: Bangumi, the change from D's to D+1's snapshot of the people who marked the show 在看, 看过, 搁置 or 抛弃
-  (candidate), with 想看 and the episode comments kept for the calibration;
+- cn (v2, 2026-11): the episodes Bangumi users watch (engine/cn_views.py `daily_index`: followers' views of each
+  episode spread over its week, plus the catch-up of the people who marked the show from D's to D+1's snapshot);
+  v1 counted the people who marked it (在看, 看过, 搁置, 抛弃), which come at the premiere and the finale, not week by
+  week. The marks, 想看 and the episode comments are kept for the calibration;
 - jp: Annict, the change of the distinct (account, episode) pairs among the episodes' records (`viewerPairs`,
   collect.py `Viewers`: Annict lets an account record an episode again, so the raw `recordsCount` can be
   inflated by one account); while a work's pairs are not synced yet, the change of the summed `recordsCount`
@@ -48,15 +50,17 @@ sys.path.insert(0, str(ROOT))
 
 from engine import economy as E  # noqa: E402
 
-VERSION = "v1"
+VERSION = "v2"
 WEIGHTS = {"cn": 0.5, "us": 0.3, "jp": 0.2}     # server/game.toml [revenue] market weights
-CANDIDATE = {"cn": "engaged", "jp": "viewers", "us": "attention"}
+CANDIDATE = {"cn": "viewers", "jp": "viewers", "us": "attention"}
 FALLBACK = {"jp": "records"}   # until a work's viewerPairs are synced (collect.py --annict-viewers)
 SPIKE = 10.0
-SCALE = 14437.0
-# the mean daily total of the shows on air, 2025-11-01..2026-10-31 (sim/heat_history.py --archive over the
-# backfilled seasons; jp counted per account and episode: the backfill's raw records x 0.96)
-PLATFORM = {"us": 116352.0, "cn": 1772.0, "jp": 1649.0}
+# v2 (2026-11-10): the mean daily total of the shows on air (premiere to 7 days after the last episode),
+# 2025-11-01..2026-10-31, and the scale for an on-air median of 100 (ANISTOCK_DB=<collector with the backfilled
+# seasons> sim/heat_history.py --archive --cn-views; jp per account and episode: the backfill's records x 0.96).
+# v1 (2026-11-08): us 116352, cn 1772 (people who marked the show), jp 1649, scale 14437.
+SCALE = 11807.7
+PLATFORM = {"us": 111590.4, "cn": 20177.6, "jp": 1611.3}
 OUT = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_index.db"
 
 SCHEMA = """
@@ -126,6 +130,7 @@ def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, 
     a0, a1 = snapshots(col, "annict", "work", day), snapshots(col, "annict", "work", nxt)
     out: dict[int, dict] = {}
     d = date.fromisoformat(day)
+    viewers = cn_viewers(col_path, shows, matches, d)
     for s in shows:
         if s.adult or s.promo:
             continue
@@ -141,6 +146,7 @@ def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, 
                     m["cn"][name] = ((x1[name] - x0[name]) * 24 / h if h > 0 else None, h)
             else:
                 m["cn"] = {"engaged": (None, None), "wish": (None, None)}
+            m["cn"]["viewers"] = (viewers.get(s.id), 24.0) if k in s1 else (None, None)
             if k in e0 and k in e1 and e0[k][1].get("offset") == e1[k][1].get("offset"):
                 h = hours(e0[k][0], e1[k][0])
                 m["cn"]["comments"] = ((bgm_comments(e1[k][1]) - bgm_comments(e0[k][1])) * 24 / h if h > 0 else None, h)
@@ -156,6 +162,38 @@ def raw_day(col: sqlite3.Connection, day: str) -> dict[int, dict[str, dict[str, 
             else:
                 m["jp"] = {"watchers": (None, None), "records": (None, None), "viewers": (None, None)}
         out[s.id] = m
+    return out
+
+
+def air_days(s: E.Show, day: date) -> list[date]:
+    """Each episode's air day by `day` (AniList's episode count per day, as the game reads it)."""
+    out, prev = [], 0
+    for x, a in zip(s.days, s.aired):
+        if x > day:
+            break
+        if a > prev:
+            out += [x] * (a - prev)
+        prev = a
+    return out
+
+
+def cn_viewers(col_path: Path, shows: list, matches: dict, d: date) -> dict[int, float]:
+    """AniList id -> the China figure of day `d` (engine/cn_views.py `daily_index`), from the Bangumi counts up to d + 1:
+    the collector's daily snapshots, and the official archive's weekly counts before them."""
+    from engine.cn_views import daily_index, load_stocks
+    by_show = {s.id: int((matches.get(str(s.id)) or {}).get("bgm")) for s in shows
+               if (matches.get(str(s.id)) or {}).get("bgm")}
+    nxt = d + timedelta(days=1)
+    stocks = load_stocks(col_path, OUT.parent / "heat_backfill.db", set(by_show.values()), until=nxt)
+    out = {}
+    for s in shows:
+        sid = by_show.get(s.id)
+        air = air_days(s, d) if s.days else []
+        if sid is None or not stocks.get(sid) or not air:
+            continue
+        v = daily_index(stocks[sid], air, nxt).get(d)
+        if v is not None:
+            out[s.id] = v
     return out
 
 

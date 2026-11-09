@@ -62,13 +62,37 @@ def _daily(stocks: dict[date, tuple[float, float, float, float]]) -> dict[date, 
 
 def raw_views(stocks: dict[date, tuple[float, float, float, float]], air: list[date], until: date,
              h: float = H_PER_EPISODE) -> dict[date, float]:
-    """Episodes watched on each day from the day after the first snapshot to `until`, booked on the day: followers'
-    views of an episode on its air day, a newcomer's catch-up on the day they mark the show.
+    """Episodes watched on each day (the followers' part on the episode's air day), see `parts`."""
+    follow, rest = parts(stocks, air, until, h)
+    return {d: follow.get(d, 0.0) + v for d, v in rest.items()}
+
+
+def daily_index(stocks: dict[date, tuple[float, float, float, float]], air: list[date], until: date,
+                h: float = H_PER_EPISODE) -> dict[date, float]:
+    """The heat index's China figure (engine/heat_index.py v2) for each day D up to `until` - 1, from the counts up to
+    D + 1 (the snapshots of D and D + 1) and the episodes aired by D: the followers' views of each episode spread over
+    the seven days from its air day (a smooth daily figure: a viewer watches during the week), plus the newcomers'
+    catch-up and the late finishers of the counts' change from D to D + 1."""
+    follow, rest = parts(stocks, air, until, h)
+    out = {}
+    if not air:
+        return out
+    d = min(air)
+    while d < until:
+        out[d] = sum(follow.get(d - timedelta(days=k), 0.0) for k in range(7)) / 7 + rest.get(d + timedelta(days=1), 0.0)
+        d += timedelta(days=1)
+    return out
+
+
+def parts(stocks: dict[date, tuple[float, float, float, float]], air: list[date], until: date,
+          h: float = H_PER_EPISODE) -> tuple[dict[date, float], dict[date, float]]:
+    """Episodes watched from the day after the first snapshot to `until`, in two parts: ({air day: the followers' views
+    of its episodes}, {day: a newcomer's catch-up on the day they mark the show, and the late finishers}).
 
     stocks: {day: (done, doing, on hold, dropped)} snapshots (weekly or daily, any spacing).
     air:    each main episode's air date (the episodes listed so far; a date after `until` is not counted)."""
     if not stocks or not air:
-        return {}
+        return {}, {}
     air = sorted(air)
     eps_on: dict[date, int] = {}
     for d in air:
@@ -82,7 +106,8 @@ def raw_views(stocks: dict[date, tuple[float, float, float, float]], air: list[d
     # else the part of 在看 still following (no history to tell them apart)
     a = d0[1] if first <= air[0] - timedelta(days=7) else d0[1] * INIT_ACTIVE
     aired = sum(1 for d in air if d <= first)
-    out: dict[date, float] = {}
+    follow: dict[date, float] = {}
+    rest: dict[date, float] = {}
     d = first + timedelta(days=1)
     while d <= until:
         new = eps_on.get(d, 0)
@@ -91,13 +116,15 @@ def raw_views(stocks: dict[date, tuple[float, float, float, float]], air: list[d
         finished = d >= last + timedelta(days=FINISHED_AFTER) and last <= until
         a = max(a * (1 - h) ** new + newcomers - max(hold, 0.0) - max(drop, 0.0), 0.0)
         backlog = min(n_total if finished else aired, BACKLOG_CAP)
-        v = a * new + newcomers * backlog * (COMPLETE + (1 - COMPLETE) * PARTIAL)
+        if new:
+            follow[d] = a * new
+        v = newcomers * backlog * (COMPLETE + (1 - COMPLETE) * PARTIAL)
         if finished:
             v += max(-doing, 0.0) * LAG_EPISODES
-        out[d] = v
+        rest[d] = v
         aired += new
         d += timedelta(days=1)
-    return out
+    return follow, rest
 
 
 def weeks(air: list[date], until: date) -> list[date]:
@@ -142,3 +169,44 @@ def daily_views(stocks: dict[date, tuple[float, float, float, float]], air: list
             if w + timedelta(days=k) <= until:
                 out[w + timedelta(days=k)] = round(last_val, 3)
     return out
+
+
+def load_stocks(collector: "Path", archive: "Path | None", subjects: set[int] | None = None,
+                until: date | None = None) -> dict[int, dict[date, tuple[float, float, float, float]]]:
+    """Bangumi subject -> {day: (done, doing, on hold, dropped)}: the collector's daily subject snapshots (up to `until`),
+    and before the first of them the official archive's weekly counts (`archive`, data/derived/heat_backfill.db, when
+    present; the dump is taken Tuesday ~21:00 UTC: Wednesday's counts in China); one source per stretch of days.
+    `subjects`: only these."""
+    import json
+    import sqlite3
+    from collections import defaultdict
+
+    stocks: dict[int, dict[date, tuple]] = defaultdict(dict)
+    db = sqlite3.connect(f"file:{collector}?mode=ro", uri=True)
+    q = "SELECT external_id, day, data FROM snapshots WHERE source='bgm' AND kind='subject'"
+    for ext, d, data in db.execute(q + (" AND day<=?" if until else ""), ((until.isoformat(),) if until else ())):
+        sid = int(ext)
+        if subjects is not None and sid not in subjects:
+            continue
+        c = (json.loads(data).get("collection") or {})
+        if c:
+            stocks[sid][date.fromisoformat(d)] = (float(c.get("collect") or 0), float(c.get("doing") or 0),
+                                                  float(c.get("on_hold") or 0), float(c.get("dropped") or 0))
+    # the first day the collector has each subject's counts, computed once before the archive rows are added (computed
+    # per row, the first archive row became the "first day" and every later dump was dropped)
+    first_daily = {sid: min(days) for sid, days in stocks.items() if days}
+    if archive is not None and archive.exists():
+        a = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
+        tables = {r[0] for r in a.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for t in ("bgm_weekly", "bgm_anime_weekly"):
+            if t not in tables:
+                continue
+            for sid, at, done, doing, hold, drop in a.execute(f"SELECT subject_id, at, done, doing, on_hold, dropped FROM {t}"):
+                if subjects is not None and sid not in subjects:
+                    continue
+                d = date.fromisoformat(at[:10]) + timedelta(days=1)
+                fd = first_daily.get(sid)
+                if (fd is None or d < fd) and (until is None or d <= until):
+                    stocks[sid].setdefault(d, (done or 0, doing or 0, hold or 0, drop or 0))
+    return stocks
+

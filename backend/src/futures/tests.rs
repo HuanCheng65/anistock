@@ -476,6 +476,23 @@ fn final_settlement_on_the_period_average() {
 }
 
 #[test]
+fn a_change_of_index_method_ends_every_open_contract_at_the_days_settlement() {
+    // `terminate_on` (v1 -> v2, 2026-11): mid-period, positions close at the day's settlement price, margins return
+    let (mut e, [a, b, c]) = open_pair();
+    let (ca, cb) = (cash(&e, a), cash(&e, b));
+    e.futures.terminate_on = Some(DAY.to_string());
+    e.st.futures.last_mid.insert(1, 9100);
+    let out = e.futures_close(DAY, END, END, &heat(1, 95.0));
+    assert_eq!(out.settled, [1]);
+    assert!(!e.st.futures.contracts.contains_key(&1) && e.st.futures.positions.is_empty());
+    assert_eq!((cash(&e, a), cash(&e, b)), (ca - 2 * 100 * 10, cb + 2 * 100 * 10));
+    for x in [a, b, c] {
+        assert_eq!(e.st.accounts[&x].cash_frozen, 0);
+    }
+    e.check_invariants().unwrap();
+}
+
+#[test]
 fn an_unpaid_loss_is_covered_and_owed() {
     let (mut e, [a, b, _]) = open_pair();
     let world = e.special("world").unwrap();

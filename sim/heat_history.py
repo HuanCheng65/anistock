@@ -99,6 +99,10 @@ def main() -> None:
     ap.add_argument("--archive", action="store_true",
                     help="cn from every anime subject of the archive (bgm_anime_weekly), with the title matches of "
                          "sim/match_archive.py for shows without one")
+    ap.add_argument("--cn-views", action="store_true",
+                    help="cn as the index v2 measures it (engine/cn_views.py daily_index, from the archive's weekly counts "
+                         "and the collector's daily ones), and print the v2 constants: each market's mean daily total of "
+                         "the shows on air (premiere to 7 days after the last episode) and the scale for a median of 100")
     args = ap.parse_args()
     from server.config import load
     p = load().params
@@ -122,6 +126,11 @@ def main() -> None:
     # after the last count: not measured yet
     cn_last = max(((v[-1][1] - timedelta(days=1)).isoformat() for v in segs.values() if v), default="")
 
+    views_stocks = {}
+    if args.cn_views:
+        from engine.cn_views import load_stocks
+        subj = {int(r["bgm"]) for r in matches.values() if r.get("bgm")}
+        views_stocks = load_stocks(col, DB, subj)
     db.execute("CREATE TABLE IF NOT EXISTS heat_history (work_id INTEGER NOT NULL, day TEXT NOT NULL, us REAL, cn REAL, jp REAL, PRIMARY KEY (work_id, day))")
     db.execute("DELETE FROM heat_history")
     hist = []
@@ -136,7 +145,15 @@ def main() -> None:
         shape = {k: float(v) for k, v in jp.get(a, {}).items()} if a else {}
         if not any(shape.values()):
             shape = {d.isoformat(): E.attention(s, d, p["revenue"]) for d in days}
-        cn = spread(segs.get(b, []), shape) if b else {}
+        if args.cn_views:
+            cn = {}
+            if b and b in views_stocks:
+                from engine.cn_views import daily_index
+                from engine.heat_index import air_days
+                air = air_days(s, end)
+                cn = {k.isoformat(): v for k, v in daily_index(views_stocks[b], air, end + timedelta(days=1)).items()} if air else {}
+        else:
+            cn = spread(segs.get(b, []), shape) if b else {}
         for d in days:
             ds = d.isoformat()
             us = E.attention(s, d, p["revenue"])
@@ -183,6 +200,32 @@ def main() -> None:
         ratio = st.median(a / b for a, b in pairs)
         print(f"{market}: {len(pairs)} show-weeks; log correlation across {corr(lx, ly):+.2f}, within shows "
               f"{corr(wx, wy) if len(wx) > 10 else float('nan'):+.2f}; median new/old {ratio:.3g}")
+
+    if args.cn_views:
+        # the v2 constants: shows on air from the premiere to 7 days after the last episode (as v1, futures.md §3.7)
+        from engine.heat_index import air_days
+        on_air = {}
+        for s in shows:
+            a = air_days(s, end)
+            if a:
+                on_air[s.id] = (a[0], a[-1] + timedelta(days=7))
+        tot = defaultdict(lambda: defaultdict(float))
+        rows_on = []
+        for wid, ds, us, c, j in hist:
+            w = on_air.get(wid)
+            if not w or not (w[0].isoformat() <= ds <= w[1].isoformat()):
+                continue
+            rows_on.append((ds, us, c, j))
+            for m, x in (("us", us), ("cn", c), ("jp", j)):
+                if x:
+                    tot[m][ds] += x
+        plat = {m: st.fmean(v.values()) for m, v in tot.items() if v}
+        plat["jp"] = plat.get("jp", 0) * 0.96   # per account and episode, as the live index counts (futures.md §3.7)
+        raw = sorted(sum(WEIGHTS[m] * (x or 0) / plat[m] for m, x in (("us", us), ("cn", c), ("jp", j)) if plat.get(m))
+                     for ds, us, c, j in rows_on)
+        med = st.median(raw) if raw else 0
+        print("v2 platform (mean daily total of the shows on air): " + "  ".join(f"{m} {plat[m]:.1f}" for m in plat)
+              + f"; scale for an on-air median of 100: {100 / med:.1f} ({len(rows_on)} show-days)")
 
     # ---- platform sizes and the index's spread
     tot = defaultdict(lambda: defaultdict(float))

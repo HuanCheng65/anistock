@@ -583,38 +583,10 @@ def cn_view_series(until: date) -> dict[int, dict[date, float]]:
     the first of them the official archive's weekly counts (data/derived/heat_backfill.db, when present); one
     source per stretch of days, never both."""
     sys.path.insert(0, str(ROOT))
-    from engine.cn_views import daily_views
+    from engine.cn_views import daily_views, load_stocks
     bg_by_subject = {r["bgm"]: int(k) for k, r in matches().items() if "bgm" in r}
 
-    def counts(c: dict) -> tuple[float, float, float, float]:
-        return (float(c.get("collect") or 0), float(c.get("doing") or 0), float(c.get("on_hold") or 0),
-                float(c.get("dropped") or 0))
-
-    stocks: dict[int, dict[date, tuple]] = defaultdict(dict)
-    for sid, snaps in snapshot_history("bgm", "subject").items():
-        for d, s in snaps.items():
-            if s.get("collection"):
-                stocks[sid][d] = counts(s["collection"])
-    # the first day the collector has each subject's counts: the archive fills only the days before it (computed once,
-    # before the archive rows are added: computed per row, the first archive row became the "first day" and every
-    # later dump was dropped, leaving a straight line from June 2025 to the collector's first day)
-    first_daily = {sid: min(days) for sid, days in stocks.items() if days}
-    arch = DERIVED / "heat_backfill.db"
-    if arch.exists():
-        a = sqlite3.connect(f"file:{arch}?mode=ro", uri=True)
-        tables = {r[0] for r in a.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for t in ("bgm_weekly", "bgm_anime_weekly"):
-            if t not in tables:
-                continue
-            for sid, at, done, doing, hold, drop in a.execute(
-                    f"SELECT subject_id, at, done, doing, on_hold, dropped FROM {t}"):
-                if sid not in bg_by_subject:
-                    continue
-                # the dump is taken Tuesday ~21:00 UTC: Wednesday's counts in China and Japan
-                d = date.fromisoformat(at[:10]) + timedelta(days=1)
-                fd = first_daily.get(sid)
-                if fd is None or d < fd:
-                    stocks[sid].setdefault(d, (done or 0, doing or 0, hold or 0, drop or 0))
+    stocks = load_stocks(DB, DERIVED / "heat_backfill.db", set(bg_by_subject))
     # each show's episode days as the game reads them (AniList trends: the episode count on its air day)
     anilist_air: dict[int, list[date]] = defaultdict(list)
     if os.environ.get("ANISTOCK_CN_AIR", "anilist") == "anilist":

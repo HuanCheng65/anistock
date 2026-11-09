@@ -47,11 +47,14 @@ impl Engine {
         }
         self.fut_expire_orders(session_end, ts);
         let ids: Vec<i64> = self.st.futures.contracts.keys().copied().collect();
+        // a change of the index method: every open contract ends today at today's settlement price (`terminate_on`)
+        let terminate = self.futures.terminate_on.as_deref() == Some(day);
         for id in ids {
             let c = &self.st.futures.contracts[&id];
             let over = c.last_day.as_str() <= day;
             let (price, source) = match (over, self.fut_period_average(id)) {
                 (true, Some(avg)) => (avg, SettleSource::Final),
+                _ if terminate => (self.fut_settlement_price(id, day, session_end).0, SettleSource::Final),
                 _ => self.fut_settlement_price(id, day, session_end),
             };
             let (paid, short) = self.fut_mark(id, price, day, ts);
