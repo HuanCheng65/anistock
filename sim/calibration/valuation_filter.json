@@ -710,6 +710,46 @@
     "prior_bias_autumn_fit": 1.312194
    },
    "tail": "trans and level measured over the Bangumi archive (sim/research/cn_views/tailnative.py, tailfit.py) on the 2018-2025 collection-comment shape"
+  },
+  "tail_jp": {
+   "before": {
+    "trans": [
+     0.414046,
+     0.293731,
+     0.222047
+    ],
+    "floor": 0.023795,
+    "yearly": 1.0,
+    "excess": 0.100933,
+    "tau": 49.643321,
+    "excess2": 0.102519,
+    "tau2": 797.269086,
+    "var": [
+     0.409252,
+     22.366,
+     0.000309129
+    ]
+   },
+   "before_source": "the us tail",
+   "note": [
+    "\njp: 1378 finished shows with Annict watch records (TV/ONA 2018–2025 of the history, joined by MAL id), records/day relative to the 4 weeks before the finale × finale bump 0.978; not deflated (the jp platform size is fixed).\n",
+    "| t (days after finale+7) | n | median factor | log var | expected (data) | expected (model) |\n|---|---|---|---|---|---|",
+    "| 4 | 1103 | 0.6835 | 0.419 | 0.8429 | (transition) |",
+    "| 10 | 1086 | 0.3524 | 0.569 | 0.4683 | (transition) |",
+    "| 18 | 1039 | 0.2143 | 0.797 | 0.3192 | (transition) |",
+    "| 24 | 996 | 0.1573 | 0.918 | 0.2488 | (transition) |",
+    "| 42 | 1066 | 0.1090 | 0.695 | 0.1542 | 0.1519 |",
+    "| 73 | 1023 | 0.0632 | 0.878 | 0.0980 | 0.1022 |",
+    "| 120 | 1006 | 0.0484 | 0.787 | 0.0718 | 0.0684 |",
+    "| 195 | 983 | 0.0343 | 0.666 | 0.0479 | 0.0492 |",
+    "| 320 | 905 | 0.0272 | 0.630 | 0.0372 | 0.0373 |",
+    "| 500 | 761 | 0.0191 | 0.888 | 0.0298 | 0.0292 |",
+    "| 750 | 647 | 0.0162 | 0.761 | 0.0236 | 0.0242 |",
+    "| 1100 | 524 | 0.0164 | 0.584 | 0.0219 | 0.0219 |",
+    "| 1550 | 350 | 0.0146 | 0.745 | 0.0212 | 0.0212 |",
+    "| 2200 | 149 | 0.0137 | 0.882 | 0.0213 | 0.0210 |",
+    "\njp: transition [0.842881, 0.468327, 0.31923, 0.248849]; then 0.0210 × 1.0000^(t/365) + 0.0549 × exp(−t/262) + 0.2327 × exp(−t/41); spread D(t) = 0.767(1−e^(−t/5)) + 0.0000·t/365.\n"
+   ]
   }
  },
  "finale_bump": {
@@ -1123,23 +1163,24 @@
   },
   "jp": {
    "trans": [
-    0.414046,
-    0.293731,
-    0.222047
+    0.842881,
+    0.468327,
+    0.31923,
+    0.248849
    ],
-   "floor": 0.023795,
+   "floor": 0.02103,
    "yearly": 1.0,
-   "excess": 0.100933,
-   "tau": 49.643321,
-   "excess2": 0.102519,
-   "tau2": 797.269086,
+   "excess": 0.232674,
+   "tau": 41.248895,
+   "excess2": 0.054948,
+   "tau2": 261.610628,
    "var": [
-    0.409252,
-    22.366,
-    0.000309129
+    0.766553,
+    5.4539,
+    0.0
    ]
   },
-  "jp_source": "us",
+  "jp_source": "annict",
   "prior": {
    "score": 0.114769,
    "ona": 0.087112,

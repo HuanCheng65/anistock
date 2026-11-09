@@ -582,7 +582,13 @@ impl Engine {
     /// moving all three markets through the covariance. A market without data keeps what the others imply.
     pub(crate) fn valuation_step(&mut self, fp: &FilterParams, p: &Params, s: &ShowInputs, day: &str, ts: &str) {
         let Some(today) = day_no(day) else { return };
-        let sched = self.air_days_of(s.id);
+        // a company's own work: its booked days; a work merged into a company (a later season, a prequel) has no
+        // company days of its own: the episode days of its inputs (the same counts, `air_dates`)
+        let sched = if self.st.companies.contains_key(&s.id) {
+            self.air_days_of(s.id)
+        } else {
+            s.air_dates.iter().filter_map(|d| day_no(d)).collect()
+        };
         let k = F::last_air_before(&sched, today).map(|a| today - a);
         // after the finale's week the level is observed through the post-finale profile (the decline it
         // describes is not news) and no longer drifts
@@ -1350,8 +1356,11 @@ impl Engine {
         }
         let mut last = None;
         for inp in history {
-            let listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
-            for id in listed {
+            // every work of every listed company: the merged ones too (a later season, a prequel), as the close steps them
+            let mut listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+            listed.sort();
+            let works: Vec<i64> = listed.iter().flat_map(|&c| self.works_of(c)).collect();
+            for id in works {
                 if let Some(s) = inp.show(id) {
                     self.valuation_step(&fp, &p, s, &inp.day, ts);
                 }
@@ -1379,6 +1388,10 @@ impl Engine {
             st.wk.clear();
             st.wk_seg = None;
             self.save_jstate(id, st, ts);
+        }
+        // inputs whose platform size already qualifies: the absolute rule the next close switches to, set now
+        if let Some(last) = history.last() {
+            self.platform_switch_at_rebuild(cfg, last)?;
         }
         let today = day_no(&day).ok_or("bad day")?;
         let rate: f64 = self.state("rate").and_then(crate::pyfmt::parse_float).unwrap_or(0.03);

@@ -631,12 +631,89 @@ def tail_prior_select(hist, us_hist, tail, lines):
     return prior, n, r2, r2_out, sd
 
 
-def fit_tail(hist_path, shows, drift8, bump, lines):
+JP_TAIL_WINS = [(0, 7), (7, 14), (14, 21), (21, 28), (28, 56), (56, 90), (90, 150), (150, 240), (240, 400), (400, 600),
+                (600, 900), (900, 1300), (1300, 1800), (1800, 2600), (2600, 3300)]
+
+
+def fit_tail_jp(hist, annict_dir: Path, bump_jp: float, lines: list, today: date = date(2026, 11, 3)) -> dict:
+    """jp long tail from Annict watch records, the game's jp metric (docs/design/series.md §4.2), measured like us:
+    records/day in windows t days after the finale's week, relative to the mean records/day of the four weeks before
+    the finale × the jp finale bump; windows from a sequel's first sign on are left out. Not deflated: the jp
+    revenue divides by a fixed platform size (revenue.platform_fixed_jp), so the revenue follows the records
+    themselves, and the history's records already carry Annict's growth (the in-season median per show about doubled
+    2018→2025; deflated, the tail would fall ~10% a year after year 2, present value ~15% lower).
+
+    `annict_dir`: the layout sim/backfill_annict_seasons.py + sim/backfill_annict_records.py write with
+    ANISTOCK_DB=<dir>/collector.db ANISTOCK_DERIVED_DIR=<dir> (Annict works with their MAL ids, and annict_daily);
+    shows join to the history by MAL id within a season of the premiere (engine/economy.py MAL_SEASON_MONTHS)."""
+    import sqlite3
+    from collections import defaultdict
+
+    from engine.economy import MAL_SEASON_MONTHS, SEASON_MONTH
+    from sim.tail_history import fdate
+    works_db, rec_db = annict_dir / "collector.db", annict_dir / "heat_backfill.db"
+    for p in (works_db, rec_db):
+        if not p.exists():
+            sys.exit(f"{p} missing: the jp tail needs the Annict records backfill (sim/backfill_annict_records.py)")
+    al_of_mal = {}
+    for mid, m in hist.media.items():
+        if m.get("idMal"):
+            al_of_mal.setdefault(str(m["idMal"]), mid)
+    annict_of = {}
+    for ext, d in sqlite3.connect(f"file:{works_db}?mode=ro", uri=True).execute(
+            "SELECT external_id, data FROM snapshots WHERE source='annict' AND kind='work'"):
+        w = json.loads(d)
+        mid = al_of_mal.get(str(w.get("malAnimeId")))
+        s = fdate(hist.media[mid]["startDate"]) if mid in hist.media else None
+        if s is None or not w.get("seasonYear") or w.get("seasonName") not in SEASON_MONTH:
+            continue
+        if abs(s.year * 12 + s.month - (w["seasonYear"] * 12 + SEASON_MONTH[w["seasonName"]])) > MAL_SEASON_MONTHS:
+            continue
+        annict_of[mid] = int(ext)
+    rec = defaultdict(dict)
+    for aid, day, n in sqlite3.connect(f"file:{rec_db}?mode=ro", uri=True).execute(
+            "SELECT annict_id, day, records FROM annict_daily"):
+        rec[aid][date.fromisoformat(day)] = n
+
+    def mean(aid, a, b):
+        n = (b - a).days + 1
+        return sum(rec[aid].get(a + timedelta(days=k), 0) for k in range(n)) / n
+
+    pts = []
+    for mid, m, s, e in hist.finished_shows():
+        aid = annict_of.get(mid)
+        if aid is None or not rec.get(aid):
+            continue
+        ref = mean(aid, max(s, e - timedelta(days=28)), e - timedelta(days=1))
+        if ref <= 0:
+            continue
+        ann = hist.announced(m)
+        f0 = e + timedelta(days=7)
+        p = []
+        for lo, hi in JP_TAIL_WINS:
+            a, b = f0 + timedelta(days=lo), f0 + timedelta(days=hi - 1)
+            if b > today or (ann is not None and ann <= b):
+                continue
+            p.append(((lo + hi) / 2, mean(aid, a, b) / ref / bump_jp))
+        pts.append(p)
+    st_ = bucket(pts)
+    curve, _ = tail_curve_fit(st_, t_min=28)
+    out = {"trans": [round(math.exp(mu + 0.5 * v), 6) for t, mu, v, n in st_ if t < 28], **curve,
+           "var": tail_var_fit(st_)}
+    lines.append(f"\njp: {len(pts)} finished shows with Annict watch records (TV/ONA 2018–2025 of the history, joined by "
+                 f"MAL id), records/day relative to the 4 weeks before the finale × finale bump {bump_jp:.3f}; not "
+                 f"deflated (the jp platform size is fixed).\n")
+    tail_table(lines, st_, out, 28)
+    lines.append(f"\njp: {tail_text(out)}\n")
+    return out
+
+
+def fit_tail(hist_path, shows, drift8, bump, lines, annict_dir: Path | None = None):
     """The long tail after the finale (docs/design/series.md §4), per market: a weekly transition, then floor ×
     yearly^(t/365) + slow excess × exp(-t/tau2) + fast excess × exp(-t/tau) (the expected factor relative to the level at the finale × the finale bump,
     t days after the finale's week), the spread D(t) of the show-specific tail, and the score/format prior. us: the
     first weeks from the inputs (observed), then the history backfill deflated by the platform index; cn: Bangumi
-    collection comments in the history backfill (the collection proxy); jp: no post-finale data, the us shape."""
+    collection comments in the history backfill (the collection proxy); jp: Annict watch records (`fit_tail_jp`)."""
     from sim.tail_history import History
     hist = History(str(hist_path))
     out = {}
@@ -678,10 +755,10 @@ def fit_tail(hist_path, shows, drift8, bump, lines):
                  f"in-season mean / finale week, {nconv} shows of the inputs) ÷ finale bump {bump['cn']:.3f}.\n")
     tail_table(lines, cn_st, c, 28)
     lines.append(f"\ncn: {tail_text(c)}\n")
-    out["jp"] = dict(out["us"])
-    out["jp_source"] = "us"
-    lines.append("jp: no post-finale data anywhere (the rebuilt Annict series extends finished shows with a model; "
-                 "the Annict watch-record history is not collected yet): **the us shape, flagged**.\n")
+    if annict_dir is None:
+        sys.exit("--history without --annict: the jp tail is measured on the Annict records backfill (fit_tail_jp)")
+    out["jp"] = fit_tail_jp(hist, annict_dir, bump["jp"], lines)
+    out["jp_source"] = "annict"
     prior, n, r2, r2_out, sd = tail_prior_select(hist, us_hist, out["us"], lines)
     out["prior"] = prior
     f5 = prior["pop_fifth"]
@@ -1664,6 +1741,11 @@ def main():
     ap.add_argument("--partial-only", action="store_true",
                     help="fit only the us partial-week observation (`partial_us`) with the rest of --out fixed, and "
                          "write that key back")
+    ap.add_argument("--annict", type=Path,
+                    help="Annict records backfill directory (collector.db + heat_backfill.db, see fit_tail_jp; the "
+                         "2018-2025 backfill of 2026-11-09 is data/derived/annict_hist, not in git): the jp tail")
+    ap.add_argument("--tail-jp-only", action="store_true",
+                    help="refit only the jp long tail (`tail.jp`; --history, --annict) with the rest of --out fixed")
     ap.add_argument("--tail-prior-only", action="store_true",
                     help="refit only the long tail's prior by popularity (`tail.prior`, --history) on the current curve")
     ap.add_argument("--runup-only", action="store_true",
@@ -1689,6 +1771,17 @@ def main():
             r = fit_outlier(shows, cal, m)
             cal["outlier_p"][m], cal["outlier_r"][m] = round(r["outlier_p"], 6), round(r["outlier_r"], 6)
             print(json.dumps(r))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.tail_jp_only:
+        from sim.tail_history import History
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        lines = []
+        before = cal["tail"]["jp"]
+        cal["tail"]["jp"] = fit_tail_jp(History(str(a.history)), a.annict, cal["finale_bump"]["jp"], lines)
+        cal["tail"]["jp_source"] = "annict"
+        cal.setdefault("fit", {})["tail_jp"] = {"before": before, "before_source": "the us tail", "note": lines}
+        print("\n".join(lines))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.tail_prior_only:
@@ -1830,7 +1923,7 @@ def main():
                  f"`[valuation] post_finale_profile` (measured on AniList in v1) was [0.40, 0.30, 0.22, 0.16, 0.14], ×0.78.\n")
     if a.history:
         res["tail"] = fit_tail(a.history, shows, {m: res["drift_by_week"][m][-1] for m in MARKETS},
-                               res["finale_bump"], lines)
+                               res["finale_bump"], lines, a.annict)
     u, seasons = season_listing(a.inputs)
     if u:
         res["season_listing"] = {"from_day": -60, "u": u, "seasons": seasons}

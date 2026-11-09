@@ -64,7 +64,7 @@ Bangumi sample: 411 of 550 planned subjects (stratified by start year; resumable
    scaled by score and ONA; replaces ×0.94/week.
 2. cn tail from Bangumi collection-count differences (~0.10 of in-season after 12 months). With episode comments as the
    only cn metric the honest cn tail is ~0.
-3. jp: us shape until a server-side Annict records backfill.
+3. jp: us shape until a server-side Annict records backfill. (Done 2026-11-09: fitted on 1,378 shows' Annict records, `sim/fit_valuation.py fit_tail_jp`, docs/design/series.md §12.)
 4. Sequel option from score, is-sequel, a top-decile popularity flag and light-novel source; mostly resolved at the
    finale, then a yearly hazard; sequel attention ≈ 0.6× the prequel; the announcement is a one-week event.
 5. Not supported by the data: studio effects, source material remaining, a jp tail, anything before 2018.

@@ -315,8 +315,25 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
     carries the units."""
     rv = p["revenue"]
     lo = day - timedelta(days=PLATFORM_DAYS)
-    tot: dict[date, dict[str, float]] = {}
+    tot = airing_totals(shows, markets, rv, lo, day)
     first = min((s.days[0] for s in shows if s.days), default=day)
+    days = [d for d in sorted(tot) if d >= max(lo, first)]
+    # us: the days the rebuilt history covers come from it (every airing work, not only the ones this collector met)
+    hist = platform_history(rv)
+    us = {d: tot[d]["us"] for d in days}
+    us.update({d: v for d, v in hist.items() if lo <= d < day})
+    fixed = {m: float(rv[f"platform_fixed_{m}"]) for m in ("cn", "jp") if rv.get(f"platform_fixed_{m}")}
+    n = len(us)
+    if not n:
+        return {m: fixed.get(m, 0.0) for m in E.MARKETS}, 0
+    out = {m: fixed.get(m, sum(tot[d][m] for d in days) / len(days) if days else 0.0) for m in ("cn", "jp")}
+    return {"us": sum(us.values()) / n, **out}, n
+
+
+def airing_totals(shows: list[E.Show], markets: dict, rv: dict, lo: date, day: date) -> dict[date, dict[str, float]]:
+    """Each day in [lo, day) -> each market's total attention of the works airing that day (an episode in the last 14
+    days, so the finale's week counts; adult titles and promos aside): the platform's daily size."""
+    tot: dict[date, dict[str, float]] = {}
     for s in shows:
         if s.adult or s.promo or not s.days:
             continue
@@ -332,12 +349,22 @@ def platform_size(shows: list[E.Show], markets: dict, day: date, p: dict) -> tup
                 for m in E.MARKETS:
                     t[m] += a[m]
             d += timedelta(days=1)
-    days = [d for d in sorted(tot) if d >= max(lo, first)]
-    n = len(days)
-    fixed = {m: float(rv[f"platform_fixed_{m}"]) for m in ("cn", "jp") if rv.get(f"platform_fixed_{m}")}
-    if not n:
-        return {m: fixed.get(m, 0.0) for m in E.MARKETS}, 0
-    return {m: fixed.get(m, sum(tot[d][m] for d in days) / n) for m in E.MARKETS}, n
+    return tot
+
+
+def platform_history(rv: dict) -> dict[date, float]:
+    """`revenue.platform_history`: the us platform's daily size rebuilt from AniList's trends of every work the collector
+    tracks (sim/platform_history.py; a file in the derived directory), for the days before the live collector covered
+    them all: the server's collector started on 2026-11-05 and backfilled only the works it met, so its earlier days
+    miss every show that had finished by then. Configured but missing is an error (the platform, and so every show's
+    us revenue, would be wrong), not an empty history."""
+    name = rv.get("platform_history")
+    if not name:
+        return {}
+    f = Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / name
+    if not f.exists():
+        raise FileNotFoundError(f"{f} missing: revenue.platform_history needs it (sim/platform_history.py)")
+    return {date.fromisoformat(d): float(v) for d, v in json.loads(f.read_text(encoding="utf-8"))["us"].items()}
 
 
 # A show still airing whose cn/jp series has had no data for this long counts as unmapped in that market
@@ -474,7 +501,12 @@ def window_start_of(cfg) -> date:
     return date.fromisoformat(cfg.params["window"]["start"])
 
 
-def source_dates(db_path: Path) -> dict[int, dict[str, date | None]]:
+def archive_path() -> Path:
+    """The Bangumi archive's weekly counts (data/derived/heat_backfill.db; sim/reconstruct.py reads the same file)."""
+    return Path(os.environ.get("ANISTOCK_DERIVED_DIR", ROOT / "data" / "derived")) / "heat_backfill.db"
+
+
+def source_dates(db_path: Path, archive: Path | None = None) -> dict[int, dict[str, date | None]]:
     """AniList id -> {"cn", "jp"}: the first day the collector had data for the show's mapped Bangumi subject /
     Annict work (its `works` row or its first snapshot, whichever is earlier), None if it never did or the show
     is not mapped. An Annict work matched through its MAL id also needs the AniList media's MAL id (its first
@@ -482,8 +514,30 @@ def source_dates(db_path: Path) -> dict[int, dict[str, date | None]]:
 
     A show the collector already had on its first day counts from date.min: the collector cannot tell when
     its source came online before it started (a collector database created mid-season would otherwise switch
-    every show's cn/jp off for the whole history before that day; the rebuilt series cover those days)."""
+    every show's cn/jp off for the whole history before that day; the rebuilt series cover those days).
+
+    A Bangumi subject in the archive (`archive`, default `archive_path()`) counts from the day after its first weekly
+    dump if that is earlier (the viewer series reads the dumps before the collector's first snapshot,
+    engine/cn_views.py load_stocks): a finished show the collector meets late has had cn data since the dumps
+    began. Without the archive file, a show matched through the archive ("bgm_via" "archive") is an error, not a
+    late start."""
     matches = E.effective_matches(db_path)
+    archive = archive or archive_path()
+    dumped: dict[str, date] = {}
+    if archive.exists():
+        a = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
+        try:
+            tables = {r[0] for r in a.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            for t in ("bgm_weekly", "bgm_anime_weekly"):
+                if t in tables:
+                    for sid, at in a.execute(f"SELECT subject_id, MIN(at) FROM {t} GROUP BY 1"):
+                        d = date.fromisoformat(at[:10]) + timedelta(days=1)
+                        dumped[str(sid)] = min(dumped.get(str(sid), d), d)
+        finally:
+            a.close()
+    elif any(r.get("bgm_via") == "archive" for r in matches.values()):
+        raise FileNotFoundError(f"{archive} missing: shows matched through the Bangumi archive need its dates "
+                                "(docs/ops/switch-cn-views.md copies it to the server)")
     seen: dict[tuple[str, str], date] = {}
     if db_path.exists():
         db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -511,6 +565,8 @@ def source_dates(db_path: Path) -> dict[int, dict[str, date | None]]:
     out = {}
     for aid, r in matches.items():
         cn = seen.get(("bgm", str(r["bgm"]))) if r.get("bgm") else None
+        if r.get("bgm") and str(r["bgm"]) in dumped:
+            cn = min(cn, dumped[str(r["bgm"])]) if cn is not None else dumped[str(r["bgm"])]
         jp = seen.get(("annict", str(r["annict"]))) if r.get("annict") else None
         if jp is not None and r.get("annict_via") == "mal_id":
             mal = seen.get(("anilist", str(aid)))

@@ -216,12 +216,15 @@ def main() -> None:
         ({"bgm": sid, "name": bg[sid].get("name"), "name_cn": bg[sid].get("name_cn"), "date": bg[sid].get("date")}
          for sid in bg if sid not in claimed and sid not in {r.get("bgm") for r in manual.values()}),
         key=lambda x: x["date"] or "")
+    # sections this script does not compute (promo excludes, the reviewed Bangumi archive matches) are carried over
+    kept = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {}
     OUT.write_text(json.dumps({
         "note": "id pairs only. Put corrections under 'manual' keyed by AniList id, e.g. {\"12345\": {\"bgm\": 678}}",
         "manual": manual,
         "matches": matches,
         "unmatched_bgm": unmatched_bgm,
-    }, ensure_ascii=False, indent=1), encoding="utf-8")
+        **{k: kept[k] for k in ("exclude", "archive_note", "archive", "archive_rejected") if k in kept},
+    }, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
     # every matched subject, not just the ones missing locally: the server's DB is separate, and
     # re-registering a subject the calendar already lists is harmless

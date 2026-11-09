@@ -1211,8 +1211,8 @@ mod tests {
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
-        assert!(ulps(a, 16.060462465290637) <= 2, "{a}");
-        assert!(ulps(b, 231.24540478506577) <= 2, "{b}");
+        assert!(ulps(a, 16.06492763955004) <= 2, "{a}");
+        assert!(ulps(b, 231.24543663432644) <= 2, "{b}");
         assert!(ulps(own1[0][5], 874.6637259315573) <= 2, "{}", own1[0][5]);
         assert!((own1[1][100] / 6.257436627958673 - 1.0).abs() < 1e-13, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
@@ -1264,12 +1264,12 @@ mod tests {
         let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None], None, None);
         assert!((own4[0][0] / 277.21151923300187 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
         assert!((own4[1][399] / 0.9857899511081235 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
-        assert!((c4 / 49.48468196496411 - 1.0).abs() < 1e-13 && (c0 / 22.589489901383136 - 1.0).abs() < 1e-13, "{c4} {c0}");
+        assert!((c4 / 49.459917469207696 - 1.0).abs() < 1e-13 && (c0 / 22.57688377241974 - 1.0).abs() < 1e-13, "{c4} {c0}");
         assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.08455694274230047) <= 2);
         assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
         // absolute revenue (phase 1 step 2)
         let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 0)), None);
-        assert!((d4 / 11.744596489145918 - 1.0).abs() < 1e-13, "{d4}");
+        assert!((d4 / 11.480803010070781 - 1.0).abs() < 1e-13, "{d4}");
         // the sequel option (phase 1 step 3; off by config, loaded here directly)
         let sp = fp.sequel.as_ref().unwrap();
         let z = sequel_z(sp, Some(78.0), Some("LIGHT_NOVEL"), false, true);
@@ -1281,12 +1281,12 @@ mod tests {
         let e5 = sequel_extra(&fp, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &[today + 200, today + 300], true);
         let close = |x: f64, y: f64| (x / y - 1.0).abs() < 1e-12;
         assert!(ulps(z, 1.4591888) <= 2, "{z}");
-        assert!(close(e1, 197492.206590515) && close(e4, 1528.7329832495034) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
+        assert!(close(e1, 197492.206590515) && close(e4, 1528.7329832495034) && close(e5, 928.5029983302444), "{e1} {e4} {e5}");
         let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 0)), Some(&[e1, e4, e5]));
-        assert!(close(g, 29.189921704515807), "{g}");
+        assert!(close(g, 28.69682977316925), "{g}");
         // a scheduled switch 30 days ahead
         let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 30)), None);
-        assert!(close(swv, 47.610994219691996), "{swv}");
+        assert!(close(swv, 47.58527395650533), "{swv}");
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
         assert!(close(e6, 3460.724835862136), "{e6}");

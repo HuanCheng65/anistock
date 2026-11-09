@@ -296,6 +296,16 @@ def manual_bgm_ids(path: Path) -> list[int]:
     return sorted({int(v["bgm"]) for v in manual.values() if isinstance(v, dict) and v.get("bgm")})
 
 
+def archive_bgm_ids(path: Path, shows: set[str]) -> list[int]:
+    """The Bangumi subjects sim/matches.json "archive" assigns to the AniList shows in `shows` (the ones this collector
+    has): an archive match for a show the collector never met costs requests and feeds nothing."""
+    try:
+        archive = json.loads(path.read_text(encoding="utf-8")).get("archive") or {}
+    except (OSError, ValueError):
+        return []
+    return sorted({int(v["bgm"]) for k, v in archive.items() if k in shows and isinstance(v, dict) and v.get("bgm")})
+
+
 def collect_bangumi(store: Store) -> str:
     http = Http(min_interval=0.4)
     cal = http.request("GET", f"{BGM}/calendar").json()
@@ -317,6 +327,10 @@ def collect_bangumi(store: Store) -> str:
     for sid in manual_bgm_ids(Path(__file__).parent / "sim" / "matches.json"):
         store.register("bgm", sid, None)
         discovered += 1
+    # the reviewed archive matches of shows this collector has (a finished show first met here, e.g. one listed later)
+    for sid in archive_bgm_ids(Path(__file__).parent / "sim" / "matches.json", set(store.tracked("anilist", tail=None))):
+        store.register("bgm", sid, None)
+        discovered += 1
     store.commit()
 
     recent = store.tracked("bgm")
@@ -330,6 +344,8 @@ def collect_bangumi(store: Store) -> str:
                 log.warning("bgm subject %s not found", sid)
                 continue
             r.raise_for_status()
+            if r.json().get("nsfw"):
+                continue    # an adult subject (Bangumi's own flag): never listed, so not kept (excluded_media)
             store.snapshot("bgm", "subject", sid, r.json())
             if sid in tail:
                 # long tail: the collection counts (the cn tail metric) are in the subject; episode comments have
@@ -468,6 +484,7 @@ def collect_anilist_season(store: Store, spec: str) -> str:
                 reset_header="x-ratelimit-reset")
     media = _anilist_pages(http, {"season": season.upper().replace("AUTUMN", "FALL"), "year": year,
                                   "popGt": MIN_ANILIST_POPULARITY, "formats": ["TV", "TV_SHORT", "ONA"]})
+    media = [m for m in media if not excluded_media(m)]
     for m in media:
         store.register("anilist", m["id"], m["title"].get("native") or m["title"].get("romaji"), m.get("idMal"))
         recent = m.pop("recent", {}).get("nodes", [])
@@ -481,6 +498,13 @@ def collect_anilist_season(store: Store, spec: str) -> str:
     return f"season={spec} media={len(media)} backfilled_trend_rows={filled}"
 
 
+def excluded_media(m: dict) -> bool:
+    """A work the game never lists, so the collector does not track it: adult (AniList isAdult or the Hentai genre,
+    engine/economy.py Show.adult) or a PV / CM / teaser (engine/economy.py is_promo)."""
+    from engine.economy import is_promo
+    return bool(m.get("isAdult")) or "Hentai" in (m.get("genres") or []) or is_promo(m["id"], m)
+
+
 def collect_anilist(store: Store, backfill: bool) -> str:
     # AniList allows 30 req/min right now; 2.1s spacing keeps us under it
     http = Http(min_interval=2.1, remaining_header="x-ratelimit-remaining",
@@ -491,15 +515,19 @@ def collect_anilist(store: Store, backfill: bool) -> str:
         found[m["id"]] = m
     for m in _anilist_pages(http, {"status": "RELEASING", "popGt": MIN_ANILIST_POPULARITY}):
         found.setdefault(m["id"], m)
+    skipped = {mid for mid, m in found.items() if excluded_media(m)}
+    found = {mid: m for mid, m in found.items() if mid not in skipped}
     for m in found.values():
         store.register("anilist", m["id"], m["title"].get("native") or m["title"].get("romaji"), m.get("idMal"))
     store.commit()
 
-    # registry items that fell out of today's listings (finished shows in their long tail)
-    missing = [int(i) for i in store.tracked("anilist", tail=None) if int(i) not in found]
+    # registry items that fell out of today's listings (finished shows in their long tail); one registered before the
+    # exclusion is no longer snapshotted
+    missing = [int(i) for i in store.tracked("anilist", tail=None) if int(i) not in found and int(i) not in skipped]
     for i in range(0, len(missing), 50):
         for m in _anilist_pages(http, {"ids": missing[i:i + 50]}):
-            found[m["id"]] = m
+            if not excluded_media(m):
+                found[m["id"]] = m
 
     for mid, m in found.items():
         recent = m.pop("recent", {}).get("nodes", [])

@@ -14,6 +14,10 @@ base_params = "sim/params_recommended.toml"
 "revenue.demand_base_week" = 1620000
 # absolute revenue (docs/design/series.md §6) once the platform size averages two seasons of the collector's history
 "revenue.platform_min_days" = 182
+# the us platform's days before the live collector covered every airing work (it started 2026-11-05 and backfilled only
+# the works it met): rebuilt from AniList's trends of every airing work (sim/platform_history.py; a file in data/derived,
+# copied to the server like the Bangumi archive). With it the trailing year is complete and the switch is not waiting.
+"revenue.platform_history" = "platform_us.json"
 # phase 1 switches (docs/design/series.md §12): absolute revenue on since 2026-11-09 (docs/ops/switch-cn-views.md; cn/jp
 # platform sizes fixed, us the trailing year); the sequel option needs the AniList relations the collector has only
 # just started to keep: off for now.

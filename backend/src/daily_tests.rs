@@ -526,6 +526,24 @@ fn the_switch_to_absolute_revenue_keeps_the_days_total() {
 }
 
 #[test]
+fn a_valuation_rebuild_sets_the_rule_the_next_close_would() {
+    // a rebuild on inputs whose platform size qualifies switches as that close would (the same scales); on shorter
+    // history it records the switch day, as the close does
+    let cfg = cfg_absolute();
+    let (mut a, inp_long) = platform_case(200);
+    let (mut b, _) = platform_case(200);
+    let (mut c, inp_short) = platform_case(30);
+    assert!(a.platform_switch_at_rebuild(&cfg, &inp_long).unwrap());
+    assert!(matches!(b.run_day(&cfg, DAY, TS, &inp_long).unwrap(), CloseOutcome::Closed(_)));
+    assert_eq!(a.platform_rule(), b.platform_rule());
+    assert!(!c.platform_switch_at_rebuild(&cfg, &inp_short).unwrap());
+    assert!(c.platform_rule().is_none());
+    let pending = c.state("platform_pending").expect("pending");
+    let today = crate::vclose::day_no(DAY).unwrap();
+    assert!(pending.ends_with(&format!(",{}", today + 182 - 30)), "{pending}");
+}
+
+#[test]
 fn a_new_season_of_a_listed_series_joins_its_company() {
     // docs/design/series.md §3.3: no new shares; a company notice; its attention enters the company's revenue
     let cfg = cfg_absolute();

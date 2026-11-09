@@ -82,3 +82,72 @@ def test_a_mal_id_shared_by_split_cours_joins_only_the_part_in_season(tmp_path):
     m = E.effective_matches(db)
     assert m["900001"]["annict"] == 15878              # 1st part: winter work, premiere in March
     assert not m.get("900002", {}).get("annict")       # 2nd part: six months later, not joined
+
+
+def _matches(root, data):
+    import json
+    (root / "sim").mkdir(parents=True)
+    (root / "sim" / "matches.json").write_text(json.dumps({"matches": {}, "manual": {}, **data}))
+
+
+def test_archive_matches_fill_a_missing_subject_but_never_take_one_in_use(tmp_path, monkeypatch):
+    _matches(tmp_path, {"matches": {"1": {"anilist": 1, "bgm": 500}},
+                        "archive": {"2": {"bgm": 600, "rule": "exact"}, "3": {"bgm": 500, "rule": "prefix"}}})
+    monkeypatch.setattr(E, "ROOT", tmp_path)
+    m = E.effective_matches(tmp_path / "none.db")
+    assert m["2"]["bgm"] == 600 and m["2"]["bgm_via"] == "archive"
+    assert not m["3"].get("bgm")        # 500 is show 1's: one subject under two shows would count its viewers twice
+
+
+def test_a_subject_in_the_archive_counts_from_its_first_dump(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
+
+    from engine import daily_inputs as D
+    _matches(tmp_path, {"archive": {"7": {"bgm": 700, "rule": "exact"}}})
+    monkeypatch.setattr(E, "ROOT", tmp_path)
+    col = tmp_path / "c.db"
+    c = sqlite3.connect(col)
+    c.execute("CREATE TABLE snapshots (source TEXT, kind TEXT, external_id TEXT, day TEXT, fetched_at TEXT, data TEXT)")
+    # the collector starts on 11-01 and meets the subject on 11-10
+    c.executemany("INSERT INTO snapshots VALUES (?,?,?,?,?,?)",
+                  [("anilist", "media", "9", "2026-11-01", "", "{}"), ("bgm", "subject", "700", "2026-11-10", "", "{}")])
+    c.commit()
+    c.close()
+    arc = tmp_path / "heat_backfill.db"
+    a = sqlite3.connect(arc)
+    a.execute("CREATE TABLE bgm_anime_weekly (subject_id INTEGER, at TEXT, wish INTEGER, done INTEGER, doing INTEGER, "
+              "on_hold INTEGER, dropped INTEGER, score REAL)")
+    a.execute("INSERT INTO bgm_anime_weekly VALUES (700, '2025-06-03T21:02:51Z', 0, 0, 0, 0, 0, 0)")
+    a.commit()
+    a.close()
+    assert D.source_dates(col, arc)[7]["cn"] == date(2025, 6, 4)       # not 11-10: the dumps cover it since June
+    with pytest.raises(FileNotFoundError):                             # an archive match without the archive
+        D.source_dates(col, tmp_path / "missing.db")
+
+
+def test_the_collector_skips_adult_works_and_promos():
+    import collect as C
+    base = {"id": 1, "title": {"native": "作品"}, "genres": [], "isAdult": False}
+    assert not C.excluded_media(base)
+    assert C.excluded_media({**base, "isAdult": True})
+    assert C.excluded_media({**base, "genres": ["Hentai"]})
+    assert C.excluded_media({**base, "title": {"native": "作品 PV"}})
+
+
+def test_the_us_platform_takes_the_rebuilt_history_for_the_days_it_covers(tmp_path, monkeypatch):
+    import json
+
+    import pytest
+
+    from engine import daily_inputs as D
+    monkeypatch.setenv("ANISTOCK_DERIVED_DIR", str(tmp_path))
+    day = date(2026, 11, 10)
+    rv = {"platform_fixed_cn": 10000.0, "platform_fixed_jp": 1000.0, "platform_history": "platform_us.json"}
+    with pytest.raises(FileNotFoundError):          # configured but missing: not an empty history
+        D.platform_size([], {}, day, {"revenue": rv})
+    (tmp_path / "platform_us.json").write_text(json.dumps(
+        {"us": {(day - timedelta(days=k)).isoformat(): 100.0 for k in range(1, 400)}}))
+    plat, n = D.platform_size([], {}, day, {"revenue": rv})
+    assert n == 365 and plat == {"us": 100.0, "cn": 10000.0, "jp": 1000.0}

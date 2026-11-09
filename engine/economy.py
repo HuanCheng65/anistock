@@ -136,7 +136,13 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
         _extend_into_gap(s, gaps)
         s.list_day = max(start, s.first_air - timedelta(days=u["ipo_lead_days"]))
         v = p["valuation"]
-        s.long_runner = (end - s.first_air).days > 365 * v["long_runner_years"]
+        # a long-runner has been on air for years: its run so far, to its end date once AniList calls it finished (a show
+        # that premiered years ago and ran one season is not one: a listed sequel's finished prequel, docs/design/series.md §13)
+        ed = m.get("endDate") or {}
+        run_end = end
+        if m.get("status") == "FINISHED" and ed.get("year") and ed.get("month"):
+            run_end = min(end, date(ed["year"], ed["month"], ed.get("day") or 28))
+        s.long_runner = (run_end - s.first_air).days > 365 * v["long_runner_years"]
         s.episodes_known = s.episodes is not None
         if s.episodes is None and not s.long_runner:
             s.episodes = v["default_episodes"]
@@ -381,7 +387,8 @@ MAL_SEASON_MONTHS = 4
 
 
 def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
-    """AniList id (str) -> {"bgm": id, "annict": id, ...}: sim/matches.json, plus an Annict work for every
+    """AniList id (str) -> {"bgm": id, "annict": id, ...}: sim/matches.json, plus its reviewed Bangumi archive matches
+    ("archive", `bgm_via` "archive") for shows it gives no subject, plus an Annict work for every
     AniList show without one whose MAL id an Annict work in the collector carries (the `works` table, where
     the collector registers works it discovers by title, and the Annict work snapshots), plus the Bangumi subject the
     collector matched for a show sim/matches.json has none for (`bgm_matches`, engine/bgm_match.py), plus the
@@ -393,6 +400,15 @@ def effective_matches(db_path: Path | None = None) -> dict[str, dict]:
     of winter 2026)."""
     data = json.loads((ROOT / "sim" / "matches.json").read_text(encoding="utf-8"))
     out = {k: dict(v) for k, v in data["matches"].items()}
+    # the reviewed Bangumi archive matches ("archive"), for shows nothing above gives a subject; a subject another
+    # show already has is left out (one subject counted under two shows would double its cn viewers)
+    taken = {r["bgm"] for r in out.values() if r.get("bgm")}
+    for aid, a in data.get("archive", {}).items():
+        r = out.setdefault(aid, {"anilist": int(aid)})
+        if not r.get("bgm") and a["bgm"] not in taken:
+            r["bgm"] = a["bgm"]
+            r["bgm_via"] = "archive"
+            taken.add(a["bgm"])
     path = db_path or Path(os.environ.get("ANISTOCK_DB", ROOT / "data" / "anistock.db"))
     if path.exists():
         db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

@@ -56,6 +56,11 @@ fn date(s: &str) -> Result<NaiveDate, String> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| format!("bad date {s:?}: {e}"))
 }
 
+/// The state `platform_rule` / `platform_pending` value: "us,cn,jp,scale_us,scale_cn,scale_jp".
+fn platform_fmt(pl: &V::M3, sc: &V::M3) -> String {
+    format!("{},{},{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(sc[0]), repr(sc[1]), repr(sc[2]))
+}
+
 fn iso(d: NaiveDate) -> String {
     d.format("%Y-%m-%d").to_string()
 }
@@ -680,30 +685,9 @@ impl Engine {
             return prev;
         }
         // the scales that leave today's revenue per market unchanged: set on the switch day; before it, today's estimate
-        let scale_today = || {
-            let (mut old, mut new) = ([0.0; 3], [0.0; 3]);
-            for c in &cx.companies {
-                for w in self.works_of(c.id) {
-                    let Some(s) = cx.inp.show(w) else { continue };
-                    let a = self.revenue_att(s);
-                    let rel = V::blended_share(&a, totals, &p.market_weights).1;
-                    let parts = crate::vfilter::absolute_parts(&a, &pl, &[1.0; 3], &p.market_weights, p);
-                    for m in 0..3 {
-                        old[m] += demand_day * rel[m];
-                        new[m] += parts[m];
-                    }
-                }
-            }
-            if new[0] <= 0.0 {
-                return None;
-            }
-            let mut sc: V::M3 = std::array::from_fn(|m| if new[m] > 0.0 { old[m] / new[m] } else { old[0] / new[0] });
-            sc[1] *= p.absolute_cn_coverage;
-            Some(sc)
-        };
-        let fmt = |pl: &V::M3, sc: &V::M3| {
-            format!("{},{},{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(sc[0]), repr(sc[1]), repr(sc[2]))
-        };
+        let ids: Vec<i64> = cx.companies.iter().map(|c| c.id).collect();
+        let scale_today = || self.platform_scale(cx.inp, &ids, p, totals, demand_day, &pl);
+        let fmt = platform_fmt;
         if cx.inp.platform_days < p.platform_min_days {
             if prev.is_none() {
                 // the switch is on a known day: the value prices the absolute rule from then on (vclose `value_rule`)
@@ -720,6 +704,74 @@ impl Engine {
         };
         self.do_set_state("platform_rule", &fmt(&pl, &scale));
         Some((pl, scale))
+    }
+
+    /// Each market's scale that leaves the day's revenue of `companies` (all their works) as the relative rule gives it
+    /// (the cn one then × `revenue.absolute_cn_coverage`), `platform_switch`.
+    fn platform_scale(&self, inp: &Inputs, companies: &[i64], p: &Params, totals: &V::M3, demand_day: f64, pl: &V::M3) -> Option<V::M3> {
+        let (mut old, mut new) = ([0.0; 3], [0.0; 3]);
+        for &c in companies {
+            for w in self.works_of(c) {
+                let Some(s) = inp.show(w) else { continue };
+                let a = self.revenue_att(s);
+                let rel = V::blended_share(&a, totals, &p.market_weights).1;
+                let parts = crate::vfilter::absolute_parts(&a, pl, &[1.0; 3], &p.market_weights, p);
+                for m in 0..3 {
+                    old[m] += demand_day * rel[m];
+                    new[m] += parts[m];
+                }
+            }
+        }
+        if new[0] <= 0.0 {
+            return None;
+        }
+        let mut sc: V::M3 = std::array::from_fn(|m| if new[m] > 0.0 { old[m] / new[m] } else { old[0] / new[0] });
+        sc[1] *= p.absolute_cn_coverage;
+        Some(sc)
+    }
+
+    /// A valuation rebuild (`vclose` `valuation_go_live`) on inputs whose platform size already qualifies, before the
+    /// close has switched: set the absolute rule now, from the last inputs day, the way that close would (its scale
+    /// from that day's revenue), so the rebuilt values (and a reprice from them) already price the rule the next close
+    /// books. Without this the rebuild values the relative rule and the first close moves every value once. On shorter
+    /// history it records the switch day (`platform_pending`) as the close does. The scale comes from the last inputs
+    /// day: a day whose cn/jp series are not complete yet (a stale markets.json) would put every market's scale off,
+    /// so rebuild from inputs regenerated after the day's `reconstruct build` (docs/ops). Returns whether it switched.
+    pub(crate) fn platform_switch_at_rebuild(&mut self, cfg: &Config, inp: &Inputs) -> Result<bool, String> {
+        let p = Params::from_config(cfg)?;
+        let early = inp.platform_days < p.platform_min_days;
+        if cfg.economy_v1 || !p.absolute_revenue || self.platform_rule().is_some() || (early && self.state("platform_pending").is_some()) {
+            return Ok(false);
+        }
+        let Some(pl) = inp.platform.as_ref().map(|x| x.m3()) else { return Ok(false) };
+        if pl.iter().any(|x| *x <= 0.0) {
+            return Ok(false);
+        }
+        let mut ids: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        ids.sort();
+        let mut totals = [0.0f64; 3];
+        for &c in &ids {
+            for w in self.works_of(c) {
+                if let Some(s) = inp.show(w) {
+                    let a = if p.impute_tail { self.revenue_att(s) } else { s.att.m3() };
+                    for m in 0..3 {
+                        totals[m] += a[m];
+                    }
+                }
+            }
+        }
+        let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
+        let demand_day = V::demand_day(totals[0], a_ref, &p);
+        let Some(sc) = self.platform_scale(inp, &ids, &p, &totals, demand_day, &pl) else { return Ok(false) };
+        if early {
+            // not yet: the switch day, as the close records it (`platform_switch`)
+            let Some(today) = crate::vclose::day_no(&inp.day) else { return Ok(false) };
+            let at = today + p.platform_min_days - inp.platform_days;
+            self.do_set_state("platform_pending", &format!("{},{}", platform_fmt(&pl, &sc), at));
+            return Ok(false);
+        }
+        self.do_set_state("platform_rule", &platform_fmt(&pl, &sc));
+        Ok(true)
     }
 
     /// Per-share value in cents from the company's own revenue history (v1 `daily.fair_value`).
