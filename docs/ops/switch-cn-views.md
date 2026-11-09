@@ -16,25 +16,30 @@
 
 ## 步骤
 
-```bash
+命令按 fish 写。
+
+```fish
 cd ~/anistock
-set -a; source .env; set +a
+for line in (string match -rv '^\s*(#|$)' < .env)
+    set -l kv (string split -m1 = -- $line)
+    set -gx $kv[1] (string trim -c '"\'' -- $kv[2])
+end
 ```
 
 ### 1. 更新程序，停服，备份
 
-```bash
-bash deploy/update.sh            # 迁移 V26（快讯的 updated_at）自动执行；会重启一次服务
+```fish
+bash deploy/update.sh                    # 迁移 V26（快讯的 updated_at）自动执行；会重启一次服务
 systemctl --user stop anistock-server   # 马上停掉
-cp data/game.db data/game-before-cn-views-$(date +%Y%m%d-%H%M).db
+cp data/game.db data/game-before-cn-views-(date +%Y%m%d-%H%M).db
 ```
 
 ### 2. 用新序列重建中国、日本序列和每日输入
 
-```bash
+```fish
 uv run sim/reconstruct.py airtimes
 uv run sim/reconstruct.py build          # 读 game.toml 的 revenue.cn_model = "views"
-uv run engine/daily_inputs.py --from 2026-07-01 --day $(date -d yesterday +%F) --force
+uv run engine/daily_inputs.py --from 2026-07-01 --day (date -d yesterday +%F) --force
 python3 -c "
 import json, datetime
 d = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
@@ -47,16 +52,16 @@ print(d, len(x['shows']), '中国有数据', sum(s['sources']['cn'] for s in x['
 
 ### 3. 从输入历史重建估值，股价对齐估值
 
-```bash
+```fish
 cp data/game.db data/values.db
 ANISTOCK_GAME_DB=$PWD/data/values.db ANISTOCK_PORT=18699 ANISTOCK_NO_LOOPS=1 ANISTOCK_VALUATION_REBUILD=1 bin/anistock
 ```
 
 看到 `valuation: started the filter` 和 `listening on` 后按 Ctrl-C。然后：
 
-```bash
+```fish
 bin/anistock reprice data/values.db
-rm data/values.db*
+rm -f data/values.db data/values.db-wal data/values.db-shm
 ```
 
 - `reprice` 撤销所有挂单，把每支上市股票的价格设为新估值；输出最后一行是新旧价格之比的中位数和 p10、p90，应接近 1、约 0.78、约 1.06。
@@ -64,7 +69,7 @@ rm data/values.db*
 
 ### 4. 启动，发公告
 
-```bash
+```fish
 systemctl --user start anistock-server
 bin/anistock announce "热度算法更新" docs/ops/switch-cn-views-announcement.md
 ```
@@ -77,10 +82,10 @@ bin/anistock announce "热度算法更新" docs/ops/switch-cn-views-announcement
 
 ## 可选：回填的指数改为第 2 版
 
-股票页图上颜色较浅的回填指数还是第 1 版。在有回填数据的机器上：
+股票页图上颜色较浅的回填指数还是第 1 版。在有回填数据的机器上（`/path/to/collector.db` 换成带四季回填的采集库）：
 
-```bash
-ANISTOCK_DB=<带四季回填的采集库> uv run sim/heat_history.py --archive --cn-views --from 2025-11-01
+```fish
+ANISTOCK_DB=/path/to/collector.db uv run sim/heat_history.py --archive --cn-views --from 2025-11-01
 uv run python -m server.tools.import_heat --export-backfill heat_backfill.csv.gz
 ```
 

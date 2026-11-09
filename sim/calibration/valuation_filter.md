@@ -347,3 +347,17 @@ The history's mean is pulled down by 2018Q2 (week −1: −1.36); the median is 
 high). The finale bump is rebased on the run-up of weeks −2/−3 it was fitted against: jp 0.967 → 0.978. Calibration
 us complete-week log-likelihood −73.39 → −73.11; mean innovation in week −1 +0.062 (0.029) → −0.055 (0.029). Heat
 offsets and partial_us refitted on top (unchanged to the printed precision; held-out forecast slope 0.027).
+
+## China market from Bangumi viewers (2026-11-09)
+
+The cn market switched from episode comments to the episodes Bangumi users watch (engine/cn_views.py). Its
+parameters were refitted on inputs 2026-07-01..11-07 rebuilt with the new series (data/fast pipeline: main fit, then
+--outlier-only, --drift-only, --prior-only, --partial-only, --preair-only; us and jp dynamics kept): drift by period
+[0.0207, 0.0348, 0.0032, −0.0009, −0.0016, −0.0006]/day (followers accumulate in the first weeks), q 0.0102, r 0.0001,
+finale bump 1.69. The long tail is measured on the series over the Bangumi archive (307 finished shows,
+sim/research/cn_views/tailnative.py, relative to the 28 days before the finale × bump; tailfit.py scales the
+2018–2025 collection-comment shape to it): about a third of the comment-based tail. New keys: flash_valuation false
+(热度快讯 is news only), us_momentum 1.0 over the first 5 weeks, preair_trend (a show's own pre-air growth).
+Replays (sim/quickcheck.py, absolute revenue on): momentum, finale and post-finale strategies not significant;
+"list then sell before the premiere" +7.7 (old +9.9) and "buy the day before the premiere, sell the day after" −19
+(two shows) remain. sim/replica_check.py against the comment-based model: median 0.991, 21 of 385 moved over 1.5×.

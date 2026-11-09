@@ -1147,9 +1147,10 @@ pub fn flash_observation(fp: &FilterParams, hours: f64, comments: i64, prev_fina
 mod tests {
     use super::*;
 
-    /// 178789 (無職転生 III) in the replay: its cn weekly values 73 → 256 → 78 around episode 13. With the fitted
-    /// outlier component the spike moves the level about 40% as much, and the week after leaves it closer to
-    /// where the series actually is.
+    /// 178789 (無職転生 III) in the replay: its comment-based cn weekly values 73 → 256 → 78 around episode 13; the
+    /// outlier component moved the level about 40% as much. The viewer-based cn series (since 2026-11) has no such
+    /// one-episode spikes (it moves with collection counts), its fitted outlier component is small and its level moves
+    /// more freely (larger q): the component still damps a spike, by less.
     #[test]
     fn a_one_episode_spike_is_mostly_noise() {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -1168,8 +1169,7 @@ mod tests {
         };
         let (plain, robust) = (run(0.0), run(fp.outlier_p[1]));
         let jump = |p: &[f64]| p[2] - p[1];
-        assert!(jump(&robust) < 0.5 * jump(&plain), "{plain:?} {robust:?}");
-        assert!((robust[3] - 75f64.ln()).abs() < (plain[3] - 75f64.ln()).abs(), "{plain:?} {robust:?}");
+        assert!(jump(&robust) < jump(&plain), "{plain:?} {robust:?}");
     }
 
     /// The same case through engine/valuation.py (values printed by Python, bit for bit).
@@ -1211,19 +1211,19 @@ mod tests {
         // within 2 ulp: the platform's exp/pow and Python's may differ in the last bit (the values are
         // rounded to cents before use)
         let ulps = |x: f64, y: f64| (x.to_bits() as i64 - y.to_bits() as i64).abs();
-        assert!(ulps(a, 16.106221066247127) <= 2, "{a}");
-        assert!(ulps(b, 231.23009279496696) <= 2, "{b}");
+        assert!(ulps(a, 16.060462465290637) <= 2, "{a}");
+        assert!(ulps(b, 231.24540478506577) <= 2, "{b}");
         assert!(ulps(own1[0][5], 874.6637259315573) <= 2, "{}", own1[0][5]);
-        assert!(ulps(own1[1][100], 11.449508404300216) <= 2, "{}", own1[1][100]);
+        assert!((own1[1][100] / 6.257436627958673 - 1.0).abs() < 1e-13, "{}", own1[1][100]);
         assert_eq!(kf_update(1.0, 0.3, 2.5, 0.1, 4.0), (2.125, 0.07500000000000002, 1.5));
         assert_eq!(flash_observation(&fp, 6.5, 120, &[100, 90, 110]), Some((1.6638061049175943, 0.3366)));
         // the us episode week's days so far (v0.6.1)
         let wk = [7.1, 8.4, 7.9, 7.6, 7.2, 7.05, 6.9];
         let segs = [partial_segment(&fp, 6.0, false), partial_segment(&fp, 7.0, false), partial_segment(&fp, 9.0, false), partial_segment(&fp, 9.0, true)];
         assert_eq!(segs, [Some(1), Some(2), Some(3), Some(0)]);
-        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.0940560788, 0.246066465)));
-        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.736812908600001, 0.014167226)));
-        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.495926331500001, 0.000491928)));
+        assert_eq!(partial_observation(&fp, 0, &wk[..3], -0.019), Some((7.1109003167000004, 0.314370942)));
+        assert_eq!(partial_observation(&fp, 2, &wk[..3], -0.0065), Some((7.763437175, 0.012230069)));
+        assert_eq!(partial_observation(&fp, 3, &wk[..6], 0.0), Some((7.4903376498, 0.000337376)));
         assert_eq!(partial_observation(&fp, 1, &wk, -0.0065), Some((7.437, 0.0)));
         assert_eq!(partial_observation(&fp, 1, &wk[..1], 0.0), None);
         assert_eq!(robust_update(1.0, 0.3, 2.5, 0.01, 0.1, 0.5, 4.0), (1.8889928389684356, 0.12220143220631287, -3.5695315770294784));
@@ -1263,13 +1263,13 @@ mod tests {
         let c4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, None, None);
         let c0 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &[None, None, None], None, None);
         assert!((own4[0][0] / 277.21151923300187 - 1.0).abs() < 1e-13, "{}", own4[0][0]);
-        assert!((own4[1][399] / 1.7435796941694433 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
-        assert!((c4 / 49.74609675059636 - 1.0).abs() < 1e-13 && (c0 / 22.707883319096137 - 1.0).abs() < 1e-13, "{c4} {c0}");
-        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.22648754948062882) <= 2);
+        assert!((own4[1][399] / 0.9857899511081235 - 1.0).abs() < 1e-13, "{}", own4[1][399]);
+        assert!((c4 / 49.48468196496411 - 1.0).abs() < 1e-13 && (c0 / 22.589489901383136 - 1.0).abs() < 1e-13, "{c4} {c0}");
+        assert!(ulps(post_finale_factor(&fp, &p, 1, today - 100, today, mult), 0.08455694274230047) <= 2);
         assert!(ulps(tail_var(fp.tail[0].as_ref().unwrap(), 250), 0.4865285274988463) <= 2);
         // absolute revenue (phase 1 step 2)
         let d4 = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 0)), None);
-        assert!((d4 / 17.788654682500482 - 1.0).abs() < 1e-13, "{d4}");
+        assert!((d4 / 11.744596489145918 - 1.0).abs() < 1e-13, "{d4}");
         // the sequel option (phase 1 step 3; off by config, loaded here directly)
         let sp = fp.sequel.as_ref().unwrap();
         let z = sequel_z(sp, Some(78.0), Some("LIGHT_NOVEL"), false, true);
@@ -1281,15 +1281,15 @@ mod tests {
         let e5 = sequel_extra(&fp, 2, 2.0, 0.03, today, fin4, s4[0], z, zs, disc, &[today + 200, today + 300], true);
         let close = |x: f64, y: f64| (x / y - 1.0).abs() < 1e-12;
         assert!(ulps(z, 1.4591888) <= 2, "{z}");
-        assert!(close(e1, 197492.206590515) && close(e4, 1742.2352104961365) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
+        assert!(close(e1, 197492.206590515) && close(e4, 1528.7329832495034) && close(e5, 1160.8824105186438), "{e1} {e4} {e5}");
         let g = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 0)), Some(&[e1, e4, e5]));
-        assert!(close(g, 36.94276022379788), "{g}");
+        assert!(close(g, 29.189921704515807), "{g}");
         // a scheduled switch 30 days ahead
         let swv = value_from_paths(&own4, &tot4, &w, 110925.85, &p, 10000, 4321, 0.03, false, &tails, Some(([105000.0, 450.0, 1460.0], [0.83; 3], 30)), None);
-        assert!(close(swv, 47.88233917543998), "{swv}");
+        assert!(close(swv, 47.610994219691996), "{swv}");
         // relations not collected: the option is not updated as time passes
         let e6 = sequel_extra(&fp, 1, 3.0, 0.2, today, fin4, s4[0], z, zs, disc, &[], false);
-        assert!(close(e6, 3944.0482601881704), "{e6}");
+        assert!(close(e6, 3460.724835862136), "{e6}");
         // net of production costs (docs/design/corporate.md §3.3): an announced season paid for gains exactly its cost
         // share; before the announcement every season counts (1 − cost)
         {

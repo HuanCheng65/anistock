@@ -14,15 +14,17 @@ base_params = "sim/params_recommended.toml"
 "revenue.demand_base_week" = 1620000
 # absolute revenue (docs/design/series.md §6) once the platform size averages two seasons of the collector's history
 "revenue.platform_min_days" = 182
-# phase 1 switches (docs/design/series.md §12): the absolute revenue rule needs 182 days of real platform history (~Dec 5)
-# and the sequel option needs the AniList relations the collector has only just started to keep: both off for now.
+# phase 1 switches (docs/design/series.md §12): absolute revenue on since 2026-11-09 (docs/ops/switch-cn-views.md; cn/jp
+# platform sizes fixed, us the trailing year); the sequel option needs the AniList relations the collector has only
+# just started to keep: off for now.
 # impute_tail: cn/jp days without data (after the finale, and in season) earn the value's own expectation (the §4.2 stopgap)
-"revenue.absolute_revenue" = 0
+"revenue.absolute_revenue" = 1
 # the cn market's series (sim/reconstruct.py build): "comments" (episode comments) or "views" (Bangumi viewers rebuilt
 # from collection counts, engine/cn_views.py). Switch together with valuation.preair_cn_per_member (comments 0.0156,
 # views 0.632: weekly views per Bangumi audience member at the premiere, 62 shows of summer-autumn 2026) and the
 # refitted filter: the cn prior of every show with a pre-air Bangumi snapshot is in the series' units.
-"revenue.cn_model" = "comments"
+"revenue.cn_model" = "views"
+"valuation.preair_cn_per_member" = 0.707
 # fixed platform sizes for cn and jp (engine/daily_inputs.py platform_size): their trailing totals follow the collector's
 # coverage, not the platforms (Bangumi as a whole is flat; Annict has no site-wide figure); the switch's scale per market
 # carries the units. us keeps the trailing year of AniList, whose coverage (every show with 3000+ list entries) is stable.
@@ -286,6 +288,9 @@ buyback_quiet_min = 30       # no buying this long after the open and before the
 # the replay gate passed. Needs a server binary with futures (v0.7.0+): an older one cannot read this table.
 [futures]
 enabled = true
+# heat index v2 (2026-11-09, docs/ops/switch-cn-views.md): every contract still open settles at this trading day's
+# settlement price on its close, so nobody gains or loses from the change of the index's units
+terminate_on = "2026-11-09"
 
 # 指数基金 (docs/v3-funds.md): the eight funds of crate::indices, the other values the code's defaults
 # (backend/src/funds/mod.rs, the ones the replay ran). Turn on with a server binary that has the fund tables (V24).

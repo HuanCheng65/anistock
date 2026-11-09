@@ -439,7 +439,8 @@ def tail_var_fit(stats):
         a, tt, b = math.exp(x[0]), math.exp(x[1]), math.exp(x[2])
         return sum(n * (a * (1 - math.exp(-t / tt)) + b * t - v) ** 2 for t, v, n in pts)
     best, _ = nelder_mead(f, [math.log(0.3), math.log(30), math.log(1e-4)], [0.5, 0.5, 1.0], iters=3000)
-    return [round(math.exp(best[0]), 6), round(math.exp(best[1]), 4), round(math.exp(best[2]), 9)]
+    # T at least a day: a spread that is all there from the first day fits T -> 0, and D(t) divides by it
+    return [round(math.exp(best[0]), 6), max(1.0, round(math.exp(best[1]), 4)), round(math.exp(best[2]), 9)]
 
 
 def tail_curve_fit(stats, t_min):
