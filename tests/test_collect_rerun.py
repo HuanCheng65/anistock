@@ -45,3 +45,15 @@ def test_a_later_run_keeps_the_days_snapshots_and_trends(tmp_path, monkeypatch):
     s.commit()
     assert data(s, 1) == '{"v":4}'
     assert '"trending":99' in s.db.execute("SELECT data FROM anilist_trends").fetchone()[0]
+
+
+def test_a_newly_matched_subject_gets_its_episode_list_the_same_run(tmp_path, monkeypatch):
+    at(monkeypatch, 16, 35)
+    s = collect.Store(tmp_path / "c.db")
+    s.register("bgm", 9, None)
+    s.snapshot("bgm", "subject", 9, {"id": 9})       # what the matching stores
+    s.commit()
+    got = []
+    monkeypatch.setattr(collect, "snapshot_bgm_subject", lambda http, store, sid, tail: got.append((sid, tail)) or 1)
+    assert collect.collect_bangumi_new(s) == "new=1 ok=1"
+    assert got == [("9", False)]

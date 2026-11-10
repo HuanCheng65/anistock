@@ -403,11 +403,13 @@ def snapshot_bgm_subject(http: Http, store: Store, sid, tail: bool) -> int:
 
 
 def collect_bangumi_new(store: Store) -> str:
-    """The Bangumi subjects tracked now that have no snapshot today: the ones the matching after the Bangumi job just
-    registered (a new show, a series' earlier work). Without this their episode list waits for tomorrow's run, and a
+    """The Bangumi subjects tracked now that have no snapshot today, or no episode list (the matching stores only the
+    subject): the ones the matching after the Bangumi job just registered (a new show, a series' earlier work). Without this their episode list waits for tomorrow's run, and a
     series' earlier work for one more close (its appraisal needs the list)."""
     tail = set(store.tracked("bgm", tail=True))
-    todo = [sid for sid in store.tracked("bgm", tail=None) if not store.has_snapshot("bgm", "subject", sid)]
+    # (the matching stores the subject itself, not its episode list: a subject not in the long tail needs both)
+    todo = [sid for sid in store.tracked("bgm", tail=None)
+            if not store.has_snapshot("bgm", "subject", sid) or (sid not in tail and not store.has_snapshot("bgm", "episodes", sid))]
     if not todo:
         return "new=0"
     http = Http(min_interval=0.4)
