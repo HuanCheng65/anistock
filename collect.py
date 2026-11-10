@@ -215,12 +215,29 @@ CREATE TABLE IF NOT EXISTS runs (
 
 
 class Store:
-    def __init__(self, path: Path):
+    """refresh=False (the default): a second run on the same day does not replace what an earlier run that day stored
+    (its snapshots, its AniList trend rows): the day's data stays what the scheduled 06:00 run saw, whatever is run by
+    hand later (a deploy). New works still get theirs. refresh=True (`collect.py --refresh`) replaces as before."""
+
+    def __init__(self, path: Path, refresh: bool = False):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         self.day = today()
+        self.refresh = refresh
+        self.started = now_local().isoformat(timespec="seconds")
+        # the AniList trend rows an earlier run today already wrote (the recent days; older rows are final anyway)
+        self.kept_trends: set[tuple[int, int]] = set()
+        if not refresh and self.ran_today("anilist"):
+            since = int((now_local() - timedelta(days=4)).timestamp())
+            self.kept_trends = set(self.db.execute(
+                "SELECT media_id, date_epoch FROM anilist_trends WHERE date_epoch >= ?", (since,)))
+
+    def ran_today(self, source: str) -> bool:
+        """An earlier run of `source` finished ok today."""
+        return self.db.execute("SELECT 1 FROM runs WHERE source=? AND status='ok' AND substr(started_at, 1, 10)=? "
+                               "AND started_at < ?", (source, self.day, self.started)).fetchone() is not None
 
     def register(self, source: str, external_id, title: str | None, mal_id=None) -> None:
         self.db.execute(
@@ -246,13 +263,21 @@ class Store:
         return [r[0] for r in rows]
 
     def snapshot(self, source: str, kind: str, external_id, data) -> None:
+        # (an earlier run's snapshot of the day is kept unless refresh; this run's own are replaced)
         self.db.execute(
-            "INSERT OR REPLACE INTO snapshots VALUES (?,?,?,?,?,?)",
+            "INSERT INTO snapshots VALUES (?,?,?,?,?,?) ON CONFLICT(source, kind, external_id, day) DO UPDATE SET "
+            "fetched_at=excluded.fetched_at, data=excluded.data WHERE ? OR snapshots.fetched_at >= ?",
             (source, kind, str(external_id), self.day, now_local().isoformat(timespec="seconds"),
-             json.dumps(data, ensure_ascii=False, separators=(",", ":"))),
+             json.dumps(data, ensure_ascii=False, separators=(",", ":")), int(self.refresh), self.started),
         )
 
+    def has_snapshot(self, source: str, kind: str, external_id) -> bool:
+        return self.db.execute("SELECT 1 FROM snapshots WHERE source=? AND kind=? AND external_id=? AND day=?",
+                               (source, kind, str(external_id), self.day)).fetchone() is not None
+
     def trend(self, media_id: int, node: dict) -> None:
+        if (media_id, node["date"]) in self.kept_trends:
+            return
         d = datetime.fromtimestamp(node["date"], timezone.utc).date().isoformat()
         self.db.execute(
             "INSERT OR REPLACE INTO anilist_trends VALUES (?,?,?,?,?)",
@@ -339,39 +364,60 @@ def collect_bangumi(store: Store) -> str:
     ok = failed = 0
     for sid in ids:
         try:
-            r = http.request("GET", f"{BGM}/v0/subjects/{sid}")
-            if r.status_code == 404:
-                log.warning("bgm subject %s not found", sid)
-                continue
-            r.raise_for_status()
-            if r.json().get("nsfw"):
-                continue    # an adult subject (Bangumi's own flag): never listed, so not kept (excluded_media)
-            store.snapshot("bgm", "subject", sid, r.json())
-            if sid in tail:
-                # long tail: the collection counts (the cn tail metric) are in the subject; episode comments have
-                # stopped by then, so skip the two episode requests
-                store.commit()
-                ok += 1
-                continue
-
-            # main episodes only (type=0); long-runners have 1000+ eps, so take the latest 100
-            first = http.request("GET", f"{BGM}/v0/episodes",
-                                 params={"subject_id": sid, "type": 0, "limit": 1}).json()
-            total = first.get("total", 0)
-            offset = max(0, total - 100)
-            eps = http.request("GET", f"{BGM}/v0/episodes",
-                               params={"subject_id": sid, "type": 0, "limit": 100, "offset": offset}).json()
-            slim = [{k: e.get(k) for k in ("id", "ep", "sort", "airdate", "comment", "name", "name_cn")}
-                    for e in eps.get("data", [])]
-            store.snapshot("bgm", "episodes", sid, {"total": total, "offset": offset, "data": slim})
-            store.commit()
-            ok += 1
+            ok += snapshot_bgm_subject(http, store, sid, sid in tail)
         except Exception as e:  # keep going; one bad subject must not kill the day
             failed += 1
             log.warning("bgm subject %s failed: %s", sid, e)
     if ok == 0 and ids:
         raise RuntimeError(f"all {len(ids)} bangumi subjects failed")
     return f"discovered={discovered} tracked={len(recent)} tail={len(tail)} ok={ok} failed={failed}"
+
+
+def snapshot_bgm_subject(http: Http, store: Store, sid, tail: bool) -> int:
+    """One subject's snapshot (and, unless it is in the long tail, its episode list). 1 when stored."""
+    r = http.request("GET", f"{BGM}/v0/subjects/{sid}")
+    if r.status_code == 404:
+        log.warning("bgm subject %s not found", sid)
+        return 0
+    r.raise_for_status()
+    if r.json().get("nsfw"):
+        return 0    # an adult subject (Bangumi's own flag): never listed, so not kept (excluded_media)
+    store.snapshot("bgm", "subject", sid, r.json())
+    if tail:
+        # long tail: the collection counts (the cn tail metric) are in the subject; episode comments have
+        # stopped by then, so skip the two episode requests
+        store.commit()
+        return 1
+    # main episodes only (type=0); long-runners have 1000+ eps, so take the latest 100
+    first = http.request("GET", f"{BGM}/v0/episodes",
+                         params={"subject_id": sid, "type": 0, "limit": 1}).json()
+    total = first.get("total", 0)
+    offset = max(0, total - 100)
+    eps = http.request("GET", f"{BGM}/v0/episodes",
+                       params={"subject_id": sid, "type": 0, "limit": 100, "offset": offset}).json()
+    slim = [{k: e.get(k) for k in ("id", "ep", "sort", "airdate", "comment", "name", "name_cn")}
+            for e in eps.get("data", [])]
+    store.snapshot("bgm", "episodes", sid, {"total": total, "offset": offset, "data": slim})
+    store.commit()
+    return 1
+
+
+def collect_bangumi_new(store: Store) -> str:
+    """The Bangumi subjects tracked now that have no snapshot today: the ones the matching after the Bangumi job just
+    registered (a new show, a series' earlier work). Without this their episode list waits for tomorrow's run, and a
+    series' earlier work for one more close (its appraisal needs the list)."""
+    tail = set(store.tracked("bgm", tail=True))
+    todo = [sid for sid in store.tracked("bgm", tail=None) if not store.has_snapshot("bgm", "subject", sid)]
+    if not todo:
+        return "new=0"
+    http = Http(min_interval=0.4)
+    ok = 0
+    for sid in todo:
+        try:
+            ok += snapshot_bgm_subject(http, store, sid, sid in tail)
+        except Exception as e:
+            log.warning("bgm subject %s failed: %s", sid, e)
+    return f"new={len(todo)} ok={ok}"
 
 
 # ---------------------------------------------------------------- AniList
@@ -1236,7 +1282,7 @@ def print_stats(store: Store) -> None:
 def main() -> int:
     load_dotenv(Path(__file__).parent / ".env")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=["bgm", "anilist", "bgm_match", "annict", "filmarks", "all"], default="all")
+    ap.add_argument("--source", choices=["bgm", "anilist", "bgm_match", "bgm_new", "annict", "filmarks", "all"], default="all")
     ap.add_argument("--backfill", action="store_true", help="backfill AniList trends history")
     ap.add_argument("--season", metavar="YYYY-season",
                     help="one-off: add a past AniList season (e.g. 2026-summer) and backfill its trends")
@@ -1244,13 +1290,15 @@ def main() -> int:
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--annict-viewers", action="store_true",
                     help="one-off, fresh database only: read every Annict record at once (the daily run reads them a budget a day)")
+    ap.add_argument("--refresh", action="store_true",
+                    help="replace what an earlier run today stored (by default a second run the same day only adds)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    store = Store(Path(args.db))
+    store = Store(Path(args.db), refresh=args.refresh)
     if args.stats:
         print_stats(store)
         return 0
@@ -1275,6 +1323,7 @@ def main() -> int:
         "bgm": lambda: collect_bangumi(store),
         "anilist": lambda: collect_anilist(store, args.backfill),
         "bgm_match": lambda: match_bangumi(store),
+        "bgm_new": lambda: collect_bangumi_new(store),
         "annict": lambda: collect_annict(store),
     }
     if args.source == "filmarks":

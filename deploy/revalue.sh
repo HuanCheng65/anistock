@@ -73,7 +73,14 @@ for f in data/game.db data/derived/heat_backfill.db data/derived/platform_us.jso
   [ -f "$f" ] || die "缺少 $f"
 done
 command -v sqlite3 >/dev/null || die "找不到 sqlite3"
-ok "当前版本 $PREV，目标 $VERSION"
+# the scheduled run of the day must have happened: its data is what the closes read (a run by hand later only adds)
+TODAY="$(date +%F)"
+COLLECTOR="${ANISTOCK_DB:-data/anistock.db}"
+done_today="$(sqlite3 "file:$COLLECTOR?mode=ro" "SELECT count(DISTINCT source) FROM runs WHERE status='ok' AND substr(started_at, 1, 10)='$TODAY' AND source IN ('bgm', 'anilist')")"
+[ "$done_today" -ge 2 ] || die "今天 06:00 的定时采集还没有成功跑完（Bangumi、AniList）：等它跑完，或者看 journalctl --user -u anistock-collect"
+LAST_CLOSED="$(sqlite3 "file:data/game.db?mode=ro" "SELECT value FROM state WHERE key='last_closed'")"
+[ "$LAST_CLOSED" = "$(date -d yesterday +%F)" ] || die "今天的日结还没有完成（最近一次日结是 $LAST_CLOSED）"
+ok "当前版本 $PREV，目标 $VERSION；今天的采集和日结都已完成"
 
 # ------------------------------------------------------------------------------------------------ 1. stop, back up
 say "停服，备份数据库"
@@ -92,7 +99,7 @@ ANISTOCK_VERSION="$VERSION" ANISTOCK_NO_RESTART=1 bash deploy/update.sh
 
 # ------------------------------------------------------------------------------------------------ 3. data
 if [ "$SKIP_COLLECT" -eq 0 ]; then
-  say "采集一次（十几分钟；第一次采到新作品时更久）"
+  say "采集一次（只补新作品的数据；今天定时采集存下的数据不会被覆盖）"
   "$UV" run collect.py
 fi
 say "重建中国、日本序列和每日输入"

@@ -541,6 +541,14 @@ def appraisal_window(s_days0: date, fin: date, day: date, others: list[tuple[dat
     return day - span, day, False
 
 
+def cn_listed_by(snaps: list, day: date) -> bool:
+    """Whether the collector has read a work's Bangumi episode list by the close of `day`: a snapshot of day D + 1
+    counts (the 06:00 run before the close). It only says the appraisal's data is complete (a listed schedule, not
+    a number the appraisal reads), so a series' earlier work matched one day joins at the next close, not the one
+    after (2026-11-10: about 70 of 100 would have waited a day)."""
+    return any(d <= day + timedelta(days=1) for d, _ in snaps)
+
+
 def appraisal_att(s: E.Show, day: date, others: list[tuple[date, date | None]], rv: dict, markets: dict, fp: dict,
                   mapped: dict, records: dict[str, int] | None, cn_listed: bool = True) -> dict | None:
     """A finished earlier work's normal daily attention per market, the base of its public appraisal when it joins a
@@ -650,7 +658,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
         if len(runs[keys[s.id]]) > 1 and s.first_air < day - timedelta(days=APPRAISAL_FROM_DAYS):
             others = [(f, e) for i, f, e in runs[keys[s.id]] if i != s.id]
             appraisal = appraisal_att(s, day, others, rv, markets, fp, sources.get(s.id, {"cn": False, "jp": False}),
-                                      records.get(s.id), any(d <= day for d, _ in schedules.get(s.id, [])))
+                                      records.get(s.id), cn_listed_by(schedules.get(s.id, []), day))
         att = E.market_att(s, day, rv, markets)
         sched = schedule_on(schedules, s.id, day)
         aired = batch_aired(sched, day, E.at(s, s.aired, day, 0))[0]

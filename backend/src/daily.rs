@@ -11,7 +11,7 @@
 //! orders follow v1's query plans: companies by id; holders of a company in holdings rowid order
 //! (`SCAN h`); interest recipients by kind (mm, noise, player) then id (`accounts_kind` IN-list lookup).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
@@ -59,6 +59,64 @@ fn date(s: &str) -> Result<NaiveDate, String> {
 /// A work's public appraisal (星辉, docs/design/series.md §13): each market's weekly revenue `week` × 52, less the
 /// operating cost and the tax, capitalised at the policy rate plus the equity premium plus the long tail's yearly
 /// decline in that market (1 − the fitted `yearly`; none without a tail fit).
+/// How long a company waits for all its earlier works' appraisal data before the ready ones join (`inject_works`).
+pub(crate) const INJECT_WAIT_DAYS: i64 = 7;
+
+/// One company's asset injection of a close (`Engine::inject_works`), noticed once with the day's rename.
+#[derive(Debug)]
+pub(crate) struct Injection {
+    works: usize,
+    /// the TV/ONA seasons among them by name, oldest first (films, OVAs and specials are counted)
+    seasons: Vec<String>,
+    value: i64,
+    avg: i64,
+    closes: usize,
+    issued: i64,
+    shares: i64,
+    waiting: usize,
+    /// the company's former name and its number of works, when it took the series' name today
+    renamed: Option<(String, usize)>,
+}
+
+impl Injection {
+    /// (title, body); `name` the company's name after the day's rename.
+    fn notice(&self, name: &str) -> (String, String) {
+        let title = match &self.renamed {
+            Some((old, _)) => format!("《{old}》并入前作 {} 部，更名为《{name}》", self.works),
+            None => format!("《{name}》并入前作 {} 部", self.works),
+        };
+        let others = self.works - self.seasons.len();
+        let mut list: Vec<String> = self.seasons.iter().take(6).map(|t| format!("《{t}》")).collect();
+        if self.seasons.len() > 6 {
+            list.push(format!("等 {} 季", self.seasons.len()));
+        }
+        let mut what = list.join("");
+        if others > 0 {
+            if !what.is_empty() {
+                what.push_str("，以及");
+            }
+            what.push_str(&format!("剧场版、OVA 和特别篇 {others} 部"));
+        }
+        let mut body = format!(
+            "同一系列的较早作品由制作委员会注入公司：{what}。评估值合计 {} 星辉（各作品最近一段不受系列其他作品影响的 8 周平均营收，\
+             按当前的营收规则折算，扣除成本和税后按折现率与长尾的年衰减资本化）。以{} {} 星辉向制作委员会发行 {} 股，占发行后总股本的 {}。\
+             热度从下一次日结起计入公司营收和估值。",
+            fixed_grouped(self.value as f64 / 100.0, 0),
+            if self.closes == 0 { "最新收盘价".to_string() } else { format!("过去 {} 个交易日的平均收盘价", self.closes) },
+            fixed(self.avg as f64 / 100.0, 2),
+            int_grouped(self.issued),
+            pct(self.issued as f64 / self.shares.max(1) as f64, 1)
+        );
+        if let Some((_, n)) = &self.renamed {
+            body.push_str(&format!("公司名下现有同一系列的 {n} 部作品，改用系列名，股票代码和持仓不变。"));
+        }
+        if self.waiting > 0 {
+            body.push_str(&format!("另有 {} 部的数据还没齐，齐了以后再注入。", self.waiting));
+        }
+        (title, body)
+    }
+}
+
 /// The days whose revenue sets the absolute rule's scales at the switch (`Engine::platform_scale`): a week.
 pub(crate) const PLATFORM_SCALE_DAYS: i64 = 7;
 
@@ -70,11 +128,6 @@ pub(crate) fn ip_appraisal(p: &Params, fp: &crate::vfilter::FilterParams, week: 
             week[m] * 52.0 * keep / (rate + p.equity_premium + decline)
         })
         .sum()
-}
-
-/// "2026-04-13" -> "2026 年 4 月 13 日" (news bodies)
-fn short_day(d: &str) -> String {
-    NaiveDate::parse_from_str(d, "%Y-%m-%d").map(|x| format!("{} 年 {} 月 {} 日", x.year(), x.month(), x.day())).unwrap_or_else(|_| d.to_string())
 }
 
 /// The state `platform_rule` / `platform_pending` value: "us,cn,jp,scale_us,scale_cn,scale_jp".
@@ -614,7 +667,7 @@ impl Engine {
                 }
             }
         }
-        self.list_new(cx, rate, demand_week)?;
+        let mut injected = self.list_new(cx, rate, demand_week)?;
         // refresh titles (inputs without them leave them as they are), after today's joins:
         // a company of more than one work goes by its series' name (docs/design/series.md §13.7), announced the day
         // it changes from the work's own
@@ -638,9 +691,19 @@ impl Engine {
             self.mark_company(cid);
             if many && listed && cx.inp.cn_titles.get(&cid) == Some(&old) {
                 let works = self.works_of(cid).len();
+                if let Some(n) = injected.get_mut(&cid) {
+                    // said in the injection's notice: one notice a company a day
+                    n.renamed = Some((old, works));
+                    continue;
+                }
                 self.push_news(&ts, &day, "system", Some(cid), format!("《{old}》更名为《{name}》"),
                     format!("公司名下有同一系列的 {works} 部作品，改用系列名。股票代码和持仓不变。"));
             }
+        }
+        for (cid, n) in std::mem::take(&mut injected) {
+            let name = self.st.companies.get(&cid).map(|c| c.title.clone()).unwrap_or_default();
+            let (title, body) = n.notice(&name);
+            self.push_news(&ts, &day, "sequel", Some(cid), title, body);
         }
         // each company's current work (docs/design/series.md §13.7), after today's joins
         if !cx.cfg.economy_v1 {
@@ -1438,7 +1501,7 @@ impl Engine {
     }
 
     /// Open IPO subscriptions for shows that list within the subscription window (v1 `list_new`).
-    fn list_new(&mut self, cx: &mut Ctx, rate: f64, demand_week: f64) -> Result<(), String> {
+    fn list_new(&mut self, cx: &mut Ctx, rate: f64, demand_week: f64) -> Result<BTreeMap<i64, Injection>, String> {
         let tomorrow = cx.d + Duration::days(1);
         let lead = cx.p.ipo_lead_days;
         let window = cx.g().ipo_subscription_days;
@@ -1457,6 +1520,7 @@ impl Engine {
                 }
             }
         }
+        let mut earlier: BTreeMap<i64, Vec<ShowInputs>> = BTreeMap::new();
         for s in &inp.shows {
             if existing.contains(&s.id) || s.excluded().is_some() {
                 continue;
@@ -1473,7 +1537,7 @@ impl Engine {
                     // premiered long before: its long tail is an asset of the committee, injected at its public
                     // appraisal for new shares (docs/design/series.md §13)
                     if !cx.cfg.economy_v1 && cx.p.asset_injection {
-                        self.inject_work(cx, s, c, rate)?;
+                        earlier.entry(c).or_default().push(s.clone());
                     }
                     continue;
                 }
@@ -1503,7 +1567,13 @@ impl Engine {
             let sub = (iso(tomorrow), iso(listed_on - Duration::days(1)));
             self.create_company(cx, s, &iso(listed_on), rate, demand_week, sub)?;
         }
-        Ok(())
+        let mut injected = BTreeMap::new();
+        for (c, works) in earlier {
+            if let Some(n) = self.inject_works(cx, c, &works, rate)? {
+                injected.insert(c, n);
+            }
+        }
+        Ok(injected)
     }
 
     /// A company's current work (docs/design/series.md §13.7) among its works in today's inputs that are TV, TV_SHORT
@@ -1550,18 +1620,40 @@ impl Engine {
         }
     }
 
-    /// 资产注入 (docs/design/series.md §13): a finished earlier work of a listed company's series joins it, and the
-    /// production committee, which holds the work, is paid in new shares: its public appraisal (`ip_appraisal` of the
-    /// revenue its `appraisal_att` earns under today's revenue rule) at the average close of the last 20 trading days
-    /// (fewer since a reprice; none: the last close).
-    /// Waits (nothing happens) while the work's appraisal data is not all there or the absolute rule is not in force.
-    fn inject_work(&mut self, cx: &mut Ctx, s: &ShowInputs, c: i64, rate: f64) -> Result<(), String> {
-        let Some(a) = s.appraisal_att.clone() else { return Ok(()) };
-        let Some((pl, sc)) = self.platform_rule() else { return Ok(()) };
+    /// The earlier works of listed company `c`'s series that premiered long before (docs/design/series.md §13.4) join
+    /// together, by one asset injection: their public appraisals summed, one issue of new shares to the committee at
+    /// the average close since the last reprice (at most 20). While a work's appraisal data is not all there (its
+    /// Bangumi episode list, its records) the company waits for it, up to `INJECT_WAIT_DAYS` from the first day one
+    /// waited (state `inject_wait:<company>`); then the ready ones join and the rest when theirs is. None: nothing
+    /// joined today. The notice is posted by the close, after the renames (`Injection::notice`).
+    fn inject_works(&mut self, cx: &mut Ctx, c: i64, works: &[ShowInputs], rate: f64) -> Result<Option<Injection>, String> {
+        let key = format!("inject_wait:{c}");
+        let ready: Vec<&ShowInputs> = works.iter().filter(|s| s.appraisal_att.is_some()).collect();
+        let waiting = works.len() - ready.len();
+        let today = crate::vclose::day_no(&cx.day).ok_or("bad day")?;
+        if waiting > 0 {
+            let since = self.state(&key).and_then(crate::vclose::day_no);
+            if since.is_none() {
+                self.do_set_state(&key, &cx.day.clone());
+            }
+            if today - since.unwrap_or(today) < INJECT_WAIT_DAYS {
+                return Ok(None);
+            }
+        } else if self.state(&key).is_some_and(|v| !v.is_empty()) {
+            self.do_set_state(&key, "");
+        }
+        if ready.is_empty() {
+            return Ok(None);
+        }
+        let Some((pl, sc)) = self.platform_rule() else { return Ok(None) };
         let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
-        let day_parts = crate::vfilter::absolute_parts(&[a.us, a.cn, a.jp], &pl, &sc, &cx.p.market_weights, &cx.p);
-        let week: V::M3 = std::array::from_fn(|m| day_parts[m] * 7.0);
-        let value = pround(ip_appraisal(&cx.p, &fp, &week, rate) * 100.0);
+        let mut value = 0;
+        for s in &ready {
+            let a = s.appraisal_att.as_ref().unwrap();
+            let day_parts = crate::vfilter::absolute_parts(&[a.us, a.cn, a.jp], &pl, &sc, &cx.p.market_weights, &cx.p);
+            let week: V::M3 = std::array::from_fn(|m| day_parts[m] * 7.0);
+            value += pround(ip_appraisal(&cx.p, &fp, &week, rate) * 100.0);
+        }
         let co = self.st.companies[&c].clone();
         // the last 20 closes, or those since a reprice (`Engine::reprice`: the closes before it are at the old prices)
         let since = self.state("repriced_after").map(str::to_string);
@@ -1573,47 +1665,42 @@ impl Engine {
         let avg = if closes.is_empty() { co.prev_close } else { (closes.iter().sum::<i64>() as f64 / closes.len() as f64).round() as i64 }.max(1);
         let issued = value / avg;
         let (day, ts) = (cx.day.clone(), cx.ts.clone());
-        self.st.company_works.insert(s.id, c);
-        self.out.push(Change::CompanyWork { work_id: s.id, company_id: c, joined_on: day.clone() });
+        for s in &ready {
+            self.st.company_works.insert(s.id, c);
+            self.out.push(Change::CompanyWork { work_id: s.id, company_id: c, joined_on: day.clone() });
+        }
         if issued > 0 {
             let holder = self.account_of("committee", c).unwrap_or(cx.world);
             self.do_add_shares(holder, c, issued, avg, &day);
             self.st.companies.get_mut(&c).unwrap().shares += issued;
         }
         self.mark_company(c);
-        // the work's own valuation state from today, and the company's value with it
+        // the works' own valuation states from today, and the company's value with them
         if let Some(totals) = cx.vtotals.clone() {
             let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
-            let today = crate::vclose::day_no(&day).ok_or("bad day")?;
-            self.valuation_step(&fp, &cx.p, s, &day, &ts);
-            // every work of the company (the one just joined included), per share of the new count
+            for s in &ready {
+                self.valuation_step(&fp, &cx.p, s, &day, &ts);
+            }
             let vc = crate::corporate::ValueCtx { fp: &fp, p: &cx.p, totals: &totals, today, rate, a_ref };
             if let Some(v) = self.company_value_full(&vc, c) {
                 self.st.companies.get_mut(&c).unwrap().fair_value = v;
             }
         }
-        let name = cx.inp.cn_titles.get(&s.id).cloned().unwrap_or_else(|| s.title_ja.clone());
-        let shares = co.shares + issued;
-        let basis = match a.basis.as_str() {
-            "season" => format!(
-                "《{name}》完结不久，按播出期（{} 至 {}）的平均营收乘以完结后 {} 个月左右的长尾比例计算",
-                short_day(&a.from),
-                short_day(&a.to),
-                (a.tail_days.unwrap_or(120) as f64 / 30.0).round() as i64
-            ),
-            _ => format!("按《{name}》{} 至 {} 的平均营收计算（新作宣传开始之前）", short_day(&a.from), short_day(&a.to)),
-        };
-        let body = format!(
-            "同一系列的作品，版权由制作委员会注入公司。评估值 {} 星辉：{basis}，按当前的营收规则折算成每周营收，扣除成本和税后按折现率与长尾的年衰减资本化。\
-             以{} {} 星辉向制作委员会发行 {} 股，占发行后总股本的 {}。热度从下一次日结起计入公司营收和估值。",
-            fixed_grouped(value as f64 / 100.0, 0),
-            if closes.is_empty() { "最新收盘价".to_string() } else { format!("过去 {} 个交易日的平均收盘价", closes.len()) },
-            fixed(avg as f64 / 100.0, 2),
-            int_grouped(issued),
-            pct(issued as f64 / shares.max(1) as f64, 1)
-        );
-        self.push_news(&ts, &day, "sequel", Some(c), format!("《{name}》注入《{}》", co.title), body);
-        Ok(())
+        let name = |s: &ShowInputs| cx.inp.cn_titles.get(&s.id).cloned().unwrap_or_else(|| s.title_ja.clone());
+        let mut seasons: Vec<&ShowInputs> =
+            ready.iter().copied().filter(|s| s.format.as_deref().is_none_or(|f| matches!(f, "TV" | "TV_SHORT" | "ONA"))).collect();
+        seasons.sort_by(|a, b| (a.first_air.as_str(), a.id).cmp(&(b.first_air.as_str(), b.id)));
+        Ok(Some(Injection {
+            works: ready.len(),
+            seasons: seasons.iter().map(|s| name(s)).collect(),
+            value,
+            avg,
+            closes: closes.len(),
+            issued,
+            shares: co.shares + issued,
+            waiting,
+            renamed: None,
+        }))
     }
 
     /// A company with its accounts and an open IPO subscription (v1 `create_company` with `subscription`).

@@ -515,7 +515,12 @@ fn a_newly_mapped_market_posts_one_notice() {
 
 /// Two listed shows and the day's inputs with a platform size averaging `days` days.
 fn platform_case(days: i64) -> (Engine, Inputs) {
-    let (mut e, _sink) = Engine::in_memory(Fees::default(), Rules::default());
+    let (e, inp, _) = platform_case_sink(days);
+    (e, inp)
+}
+
+fn platform_case_sink(days: i64) -> (Engine, Inputs, crate::store::persist::MemorySink) {
+    let (mut e, sink) = Engine::in_memory(Fees::default(), Rules::default());
     for k in ["world", "cb", "gov"] {
         e.create_account(k, k, None, None, None, TS);
     }
@@ -545,7 +550,7 @@ fn platform_case(days: i64) -> (Engine, Inputs) {
         .unwrap(),
     )
     .unwrap();
-    (e, inp)
+    (e, inp, sink)
 }
 
 #[test]
@@ -951,4 +956,96 @@ fn a_sequel_notice_says_what_it_is() {
     exact.exact = true;
     let (t, b) = Engine::sequel_notice("斗罗大陆", &exact, &[d]);
     assert_eq!((t.as_str(), b.as_str()), ("《斗罗大陆》剧场版公布", "《薬屋のひとりごと 第3期 第2クール》，定于 2027 年 4 月 15 日播出。"));
+}
+
+
+#[test]
+fn a_companys_earlier_works_join_together_in_one_notice_with_its_new_name() {
+    // one issue and one notice a company a day; it waits for every earlier work's appraisal data (at most
+    // INJECT_WAIT_DAYS), and the day's rename is said in the same notice
+    let mut cfg = cfg_absolute();
+    cfg.params.get_mut("company").and_then(|v| v.as_table_mut()).unwrap().insert("asset_injection".into(), toml::Value::Integer(1));
+    let (mut e, _, sink) = platform_case_sink(200);
+    e.st.corp.closes.insert(1, vec![600; 20].into());
+    let show = |id: i64, first_air: &str, fmt: &str, appraisal: bool| {
+        let mut v = serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,
+            "first_air": first_air, "episodes": 12, "episodes_known": true, "long_runner": false, "format": fmt,
+            "popularity_end": 9000, "aired": 12, "has_real_data": true, "series": 1,
+            "att": {"us": 100.0, "cn": 0.0, "jp": 0.0}, "expected": {"us": 100.0, "cn": 0.0, "jp": 0.0}});
+        if appraisal {
+            v["appraisal_att"] = serde_json::json!({"us": 150.0, "cn": 2.0, "jp": 1.0, "basis": "window", "from": "2026-04-13", "to": "2026-06-07"});
+        }
+        v
+    };
+    let inp = |day: &str, b_ready: bool| {
+        Inputs::parse(&serde_json::to_string(&serde_json::json!({
+            "day": day, "cn_titles": {"1": "テスト", "5": "第一季", "6": "第二季", "7": "剧场版"}, "series_titles": {"1": "系列名"},
+            "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": 200,
+            "shows": [show(1, "2026-10-01", "TV", false), show(2, "2026-10-01", "TV", false),
+                      show(5, "2024-01-05", "TV", true), show(6, "2025-01-05", "TV", b_ready), show(7, "2025-06-01", "MOVIE", true)]
+        })).unwrap()).unwrap()
+    };
+    let notices = |sink: &crate::store::persist::MemorySink| -> Vec<(String, String, String)> {
+        sink.0.lock().unwrap().iter().filter_map(|ch| match ch {
+            Change::NewsInsert(n) if n.kind == "sequel" || n.kind == "system" => Some((n.kind.clone(), n.title.clone(), n.body.clone().unwrap_or_default())),
+            _ => None,
+        }).collect()
+    };
+    let close = |e: &mut Engine, day: &str, ready: bool| {
+        assert!(matches!(e.run_day(&cfg, day, &format!("{day}T06:30:00+08:00"), &inp(day, ready)).unwrap(), CloseOutcome::Closed(_)));
+        e.commit();
+    };
+    let shares0 = e.company(1).unwrap().shares;
+    // one work not ready: nobody joins
+    close(&mut e, "2026-11-08", false);
+    close(&mut e, "2026-11-09", false);
+    assert!(e.st.company_works.get(&5).is_none() && notices(&sink).is_empty());
+    // all ready: the three join at once, one issue, one notice with the rename
+    close(&mut e, "2026-11-10", true);
+    assert_eq!([5, 6, 7].map(|w| e.st.company_works.get(&w).copied()), [Some(1); 3]);
+    let n = notices(&sink);
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert_eq!(n[0].0, "sequel");
+    assert_eq!(n[0].1, "《テスト》并入前作 3 部，更名为《系列名》");
+    assert!(n[0].2.contains("《第一季》《第二季》，以及剧场版、OVA 和特别篇 1 部"), "{}", n[0].2);
+    assert!(n[0].2.contains("改用系列名"), "{}", n[0].2);
+    assert_eq!(e.company(1).unwrap().title, "系列名");
+    let committee = e.account_of("committee", 1).unwrap();
+    let issued = e.company(1).unwrap().shares - shares0;
+    assert!(issued > 0 && e.holding(committee, 1).unwrap().qty >= issued);
+    e.flush().unwrap();
+    e.check_invariants().unwrap();
+}
+
+#[test]
+fn a_company_stops_waiting_for_a_late_work_after_a_week() {
+    let mut cfg = cfg_absolute();
+    cfg.params.get_mut("company").and_then(|v| v.as_table_mut()).unwrap().insert("asset_injection".into(), toml::Value::Integer(1));
+    let (mut e, _) = platform_case(200);
+    let show = |id: i64, appraisal: bool| {
+        let mut v = serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,
+            "first_air": "2025-01-05", "episodes": 12, "episodes_known": true, "long_runner": false, "format": "TV",
+            "popularity_end": 9000, "aired": 12, "has_real_data": true, "series": 1,
+            "att": {"us": 100.0, "cn": 0.0, "jp": 0.0}, "expected": {"us": 100.0, "cn": 0.0, "jp": 0.0}});
+        if appraisal {
+            v["appraisal_att"] = serde_json::json!({"us": 150.0, "cn": 2.0, "jp": 1.0, "basis": "window", "from": "2026-04-13", "to": "2026-06-07"});
+        }
+        v
+    };
+    let mut first = serde_json::json!({"id": 1, "title_ja": "x", "title_en": null, "studio": null, "first_air": "2026-10-01",
+        "episodes": 12, "episodes_known": true, "long_runner": false, "popularity_end": 9000, "aired": 6, "has_real_data": true,
+        "series": 1, "att": {"us": 3000.0, "cn": 0.0, "jp": 0.0}, "expected": {"us": 3000.0, "cn": 0.0, "jp": 0.0}});
+    first["format"] = "TV".into();
+    let mut d = chrono::NaiveDate::from_ymd_opt(2026, 11, 8).unwrap();
+    for k in 0..=crate::daily::INJECT_WAIT_DAYS {
+        let day = d.format("%Y-%m-%d").to_string();
+        let inp = Inputs::parse(&serde_json::to_string(&serde_json::json!({
+            "day": day, "cn_titles": {}, "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": 200,
+            "shows": [first.clone(), show(5, true), show(6, false)]})).unwrap()).unwrap();
+        assert!(matches!(e.run_day(&cfg, &day, &format!("{day}T06:30:00+08:00"), &inp).unwrap(), CloseOutcome::Closed(_)));
+        let joined = e.st.company_works.get(&5).is_some();
+        assert_eq!(joined, k == crate::daily::INJECT_WAIT_DAYS, "day {k}");
+        d = d.succ_opt().unwrap();
+    }
+    assert!(e.st.company_works.get(&6).is_none());
 }
