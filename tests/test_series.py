@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from engine.daily_inputs import SEQUEL_ID_BASE, apply_sequel_override, series_facts
+from engine.daily_inputs import SEQUEL_ID_BASE, apply_sequel_override, sequel_kind, series_facts
 
 
 def edge(kind, nid, status="NOT_YET_RELEASED", start=None, fmt="TV"):
@@ -19,10 +19,29 @@ def test_announcement_is_the_first_day_the_sequel_is_seen():
     assert f == {"prequel": True, "sequel": None, "relations_known": True}
     # no date yet: the announcement plus each lag
     f = series_facts(1, rel, date(2026, 9, 20), [100, 300])
-    assert f["sequel"] == {"id": 5, "announced": "2026-09-20", "premieres": ["2026-12-29", "2027-07-17"], "exact": False}
+    assert f["sequel"] == {"id": 5, "announced": "2026-09-20", "premieres": ["2026-12-29", "2027-07-17"], "exact": False,
+                           "title": None, "kind": "season", "known_before": False}
     # a month: its middle; the announcement day stays the first sighting
     f = series_facts(1, rel, date(2026, 10, 1), [100, 300])
-    assert f["sequel"] == {"id": 5, "announced": "2026-09-20", "premieres": ["2027-04-15"], "exact": False}
+    assert f["sequel"] == {"id": 5, "announced": "2026-09-20", "premieres": ["2027-04-15"], "exact": False,
+                           "title": None, "kind": "season", "when": "2027 年 4 月", "known_before": False}
+
+
+def test_a_sequel_says_what_it_is_and_whether_it_was_there_from_the_start():
+    part = edge("SEQUEL", 5, start={"year": 2027})
+    part["node"]["title"] = {"native": "無職転生Ⅲ ～異世界行ったら本気だす～ 第2クール"}
+    film = edge("SEQUEL", 6, fmt="MOVIE", start={"year": 2027})
+    film["node"]["title"] = {"native": "劇場版"}
+    rel = {1: [(date(2026, 11, 6), [part])], 2: [(date(2026, 11, 6), []), (date(2026, 11, 8), [film])]}
+    a = series_facts(1, rel, date(2026, 11, 9), [100])["sequel"]
+    assert (a["kind"], a["part"], a["known_before"], a["when"]) == ("part", 2, True, "2027 年")
+    assert sequel_kind({"title": {"native": "ロメリア戦記 〜魔王を倒した後も〜 第IIクール"}}) == ("part", 2)
+    assert sequel_kind({"title": {"native": "某作 後半クール"}}) == ("part", None)
+    assert sequel_kind({"title": {"native": "某作 第３クール"}}) == ("part", 3)
+    assert sequel_kind({"title": {"romaji": "Something Part 3"}}) == ("part", 3)
+    assert sequel_kind({"title": {"native": "猫と竜 第2期"}}) == ("season", None)
+    b = series_facts(2, rel, date(2026, 11, 9), [100])["sequel"]
+    assert (b["kind"], b["known_before"]) == ("film", False)
 
 
 def test_aired_sequels_side_stories_and_unknown_shows_are_ignored():
@@ -45,7 +64,8 @@ def test_an_override_announces_before_anilist_and_keeps_its_id_once_listed():
     # AniList lists it later: the same id and announcement day, AniList's dates
     listed = apply_sequel_override(series_facts(1, rel, date(2026, 11, 26), [100]), 1, ov, date(2026, 11, 26), [100])
     assert listed["sequel"] == {"id": SEQUEL_ID_BASE + 1, "announced": "2026-11-20", "premieres": ["2027-07-15"],
-                                "exact": False, "source": "https://example.org/a"}
+                                "exact": False, "source": "https://example.org/a", "title": None, "kind": "season",
+                                "when": "2027 年 7 月", "known_before": False}
     # no premiere given: the fitted lags from the announcement
     bare = apply_sequel_override(series_facts(1, rel, date(2026, 11, 20), [100]), 1,
                                  {"announced": "2026-11-20", "source": "u"}, date(2026, 11, 20), [100])

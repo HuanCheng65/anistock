@@ -63,9 +63,13 @@ File format (JSON, one object):
         top_pop         top decile of popularity among the shows premiering within half a year of it (phase 1)
         sequel          an announced sequel not yet aired, from the relations known on D, else null (phase 1;
                         engine/daily_inputs.py `series_facts`): {"id", "announced" (the first day the relation was
-                        seen), "premieres" [days, equally likely], "exact" (an announced day), "source" (an
-                        operator's override: the official announcement)}; data/sequel_overrides.json applies
-                        (`apply_sequel_override`)
+                        seen), "premieres" [days, equally likely], "exact" (an announced day), "title" (the
+                        entry's native title), "kind" ("season", "part": a later part of a split season, with "part" its
+                        number when the title gives one, "film"), "when" (a premiere announced to the month or
+                        year: "2027 年 4 月"),
+                        "known_before" (already in the show's first relations snapshot: announced earlier, on a day
+                        not seen), "source" (an operator's override: the official announcement)};
+                        data/sequel_overrides.json applies (`apply_sequel_override`)
         popularity      AniList list entries on D (the tail prior's popularity at the finale) (phase 1)
         relations_known the collector has the show's AniList relations as of D; without them "no sequel announced
                         yet" is not information and the sequel option is not updated as time passes (phase 1)
@@ -98,6 +102,7 @@ import argparse
 from collections import Counter
 import json
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass, field
@@ -234,6 +239,28 @@ def apply_sequel_override(facts: dict, sid: int, ov: dict | None, day: date, lag
     return out
 
 
+PART_WORDS = ("クール", "cour", "Cour", "Part", "PART", "パート", "部分")
+PART_NUMBER = re.compile(r"第\s*([0-9０-９]+|[IVX]+|[ⅠⅡⅢⅣⅤⅥ])\s*(?:クール|部分|部)|(?:Part|PART|パート)\s*([0-9０-９]+|[IVX]+)"
+                         r"|([0-9]+)(?:st|nd|rd|th)\s*[Cc]our")
+ROMAN = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "Ⅰ": 1, "Ⅱ": 2, "Ⅲ": 3, "Ⅳ": 4, "Ⅴ": 5, "Ⅵ": 6}
+
+
+def sequel_kind(node: dict) -> tuple[str, int | None]:
+    """How a SEQUEL entry continues the show, for its notice: "film", "part" (a later part of a split season:
+    無職転生Ⅲ 第2クール) with its number when the title gives one, else "season"."""
+    if node.get("format") == "MOVIE":
+        return "film", None
+    t = node.get("title") or {}
+    names = " ".join(x for x in (t.get("native"), t.get("romaji"), t.get("english")) if x)
+    if not any(w in names for w in PART_WORDS):
+        return "season", None
+    m = PART_NUMBER.search(names)
+    n = next((g for g in m.groups() if g), None) if m else None
+    if n is None:
+        return "part", None
+    return "part", ROMAN.get(n) or int(n.translate(str.maketrans("０１２３４５６７８９", "0123456789")))
+
+
 def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
     """What the relations known on `day` say (docs/design/series.md §5): whether the show is itself a sequel (a PREQUEL
     TV/ONA/film), and an announced sequel that has not aired: a SEQUEL TV/ONA/film entry not yet released, announced
@@ -256,14 +283,21 @@ def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
         if n.get("status") not in ("NOT_YET_RELEASED", None) or (start is not None and prec == "day" and start <= day):
             continue
         first = min(d for d, es in snaps if any(x["node"]["id"] == n["id"] and x["relationType"] == "SEQUEL" for x in es))
+        # already there in the show's first relations snapshot: announced on some earlier day we did not see
+        before = first == snaps[0][0]
         if prec == "none":
             prem = [first + timedelta(days=lag) for lag in lags]
         else:
             prem = [max(start, day + timedelta(days=1))]
         if not prem:    # no date and no fitted lags (the sequel option is off): nothing to say about when
             continue
+        t = n.get("title") or {}
+        kind, part = sequel_kind(n)
+        hint = {"month": f"{start.year} 年 {start.month} 月", "year": f"{start.year} 年"}.get(prec) if start else None
         cands.append((min(prem), {"id": n["id"], "announced": first.isoformat(), "premieres": [d.isoformat() for d in prem],
-                                  "exact": prec == "day"}))
+                                  "exact": prec == "day", "title": t.get("native") or t.get("romaji"),
+                                  "kind": kind, **({"part": part} if part else {}),
+                                  **({"when": hint} if hint else {}), "known_before": before}))
     cands.sort(key=lambda c: (c[0], c[1]["id"]))
     return {"prequel": prequel, "sequel": cands[0][1] if cands else None, "relations_known": True}
 

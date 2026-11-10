@@ -152,6 +152,21 @@ pub struct SequelInputs {
     /// an operator's override (data/sequel_overrides.json): the official announcement, before AniList lists it
     #[serde(default)]
     pub source: Option<String>,
+    /// the entry's native title (v0.8.6)
+    #[serde(default)]
+    pub title: Option<String>,
+    /// "season", "part" (a later part of a split season) or "film" (v0.8.6)
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// a part's number when its title gives one (第3クール: 3)
+    #[serde(default)]
+    pub part: Option<i64>,
+    /// a premiere announced to the month or the year, as the notice says it ("2027 年 4 月")
+    #[serde(default)]
+    pub when: Option<String>,
+    /// already in the show's first relations snapshot: announced on an earlier day nobody saw (v0.8.6)
+    #[serde(default)]
+    pub known_before: bool,
 }
 
 /// One flag per market.

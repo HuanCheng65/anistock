@@ -903,3 +903,52 @@ fn the_switch_scale_comes_from_the_week_not_its_last_day() {
     let seven = scale(&long[long.len() - 7..]);
     assert_eq!(week, seven);
 }
+
+#[test]
+fn after_a_reprice_the_volatility_control_ignores_the_old_prices() {
+    // 2026-11-10: a trade at the old price earlier that day made the first trade at the new price start a cooling-off
+    // period around the old one
+    let (mut e, _) = Engine::in_memory(Fees::default(), Rules::default());
+    e.insert_company(company(1, "listed", 1000, "2026-07-01", "2026-06-10"));
+    let t = |ts: &str| crate::engine::TradeRef { day: "2026-11-10".into(), ts: ts.into(), price: 7000, id: 1, qty: 1 };
+    e.st.recent_trades.insert(1, vec![t("2026-11-10T15:00:00+08:00")]);
+    let at = "2026-11-10T18:40:00+08:00";
+    assert_eq!(e.vcm_lookback(1, "2026-11-10", at), Some(7000));
+    e.reprice(&std::collections::HashMap::from([(1, 16000)]), "2026-11-10T18:30:00+08:00");
+    assert_eq!(e.vcm_lookback(1, "2026-11-10", at), None);
+    // trades after it count again
+    e.st.recent_trades.get_mut(&1).unwrap().push(crate::engine::TradeRef { price: 16100, ..t("2026-11-10T18:31:00+08:00") });
+    assert_eq!(e.vcm_lookback(1, "2026-11-10", at), Some(16100));
+}
+
+#[test]
+fn a_sequel_notice_says_what_it_is() {
+    let q = |kind: &str, before: bool| crate::inputs::SequelInputs {
+        id: 5,
+        announced: "2026-11-06".into(),
+        premieres: vec!["2027-04-15".into()],
+        exact: false,
+        source: None,
+        title: Some("薬屋のひとりごと 第3期 第2クール".into()),
+        kind: Some(kind.into()),
+        part: (kind == "part").then_some(2),
+        when: None,
+        known_before: before,
+    };
+    let d = crate::vclose::day_no("2027-04-15").unwrap();
+    let (t, b) = Engine::sequel_notice("药屋少女的呢喃 第三季", &q("part", true), &[d]);
+    assert_eq!(t, "《药屋少女的呢喃 第三季》第 2 部分已公布");
+    assert_eq!(b, "《薬屋のひとりごと 第3期 第2クール》，播出时间未定。此前已经公布，估值从今天起按已公布计算。");
+    let (t, _) = Engine::sequel_notice("猫与龙", &q("season", false), &[d]);
+    assert_eq!(t, "《猫与龙》续作公布");
+    let mut unnumbered = q("part", false);
+    unnumbered.part = None;
+    assert_eq!(Engine::sequel_notice("罗梅莉亚战记", &unnumbered, &[d]).0, "《罗梅莉亚战记》下一部分公布");
+    let mut month = q("part", false);
+    month.when = Some("2027 年 4 月".into());
+    assert_eq!(Engine::sequel_notice("药屋", &month, &[d]).1, "《薬屋のひとりごと 第3期 第2クール》，预计 2027 年 4 月播出。");
+    let mut exact = q("film", false);
+    exact.exact = true;
+    let (t, b) = Engine::sequel_notice("斗罗大陆", &exact, &[d]);
+    assert_eq!((t.as_str(), b.as_str()), ("《斗罗大陆》剧场版公布", "《薬屋のひとりごと 第3期 第2クール》，定于 2027 年 4 月 15 日播出。"));
+}

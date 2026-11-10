@@ -647,14 +647,9 @@ impl Engine {
             if !known && self.valuation_replay {
                 paid_before = Some(*sid);
             } else if !known {
-                if let Some(c) = self.st.companies.get(&s.id).filter(|c| c.status == "listed").cloned() {
-                    let when = match (s.sequel.as_ref().is_some_and(|q| q.exact), pr.first()) {
-                        (true, Some(d)) => NaiveDate::from_num_days_from_ce_opt(*d as i32)
-                            .map_or(String::new(), |d| format!("续作定于 {} 年 {} 月 {} 日开播。", d.year(), d.month(), d.day())),
-                        _ => "开播时间未公布。".into(),
-                    };
-                    let src = s.sequel.as_ref().and_then(|q| q.source.as_deref()).map_or(String::new(), |u| format!("来源：{u}"));
-                    self.push_news(ts, day, "sequel", Some(c.id), format!("《{}》续作公布", c.title), format!("{when}{src}"));
+                if let (Some(c), Some(q)) = (self.st.companies.get(&s.id).filter(|c| c.status == "listed").cloned(), s.sequel.as_ref()) {
+                    let (title, body) = Self::sequel_notice(&c.title, q, pr);
+                    self.push_news(ts, day, "sequel", Some(c.id), title, body);
                 }
             }
         }
@@ -1433,6 +1428,34 @@ impl Engine {
         }
         self.commit();
         Ok(vals.len())
+    }
+
+    /// The notice of an announced sequel (title, body): what it is (the second part of a split season, a film, a new
+    /// season) and its entry's name; when it airs; an entry already there when the show's relations were first read
+    /// was announced earlier, on a day not seen, and says so.
+    pub(crate) fn sequel_notice(company: &str, q: &crate::inputs::SequelInputs, premieres: &[i64]) -> (String, String) {
+        let what = match (q.kind.as_deref(), q.part) {
+            (Some("part"), Some(n)) => format!("第 {n} 部分"),
+            (Some("part"), None) => "下一部分".into(),
+            (Some("film"), _) => "剧场版".into(),
+            _ => "续作".into(),
+        };
+        let date = |d: i64| NaiveDate::from_num_days_from_ce_opt(d as i32);
+        let when = match (q.exact, premieres.first().and_then(|d| date(*d)), &q.when) {
+            (true, Some(d), _) => format!("定于 {} 年 {} 月 {} 日播出。", d.year(), d.month(), d.day()),
+            (_, _, Some(w)) => format!("预计 {w}播出。"),
+            _ => "播出时间未定。".into(),
+        };
+        let name = q.title.as_deref().map_or(String::new(), |t| format!("《{t}》，"));
+        let title = if q.known_before { format!("《{company}》{what}已公布") } else { format!("《{company}》{what}公布") };
+        let mut body = format!("{name}{when}");
+        if q.known_before {
+            body.push_str("此前已经公布，估值从今天起按已公布计算。");
+        }
+        if let Some(u) = &q.source {
+            body.push_str(&format!("来源：{u}"));
+        }
+        (title, body)
     }
 
     /// IPO price of a new show from the same model's pre-air prior, plus `extra` yuan per share (the earlier works of

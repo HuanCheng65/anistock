@@ -703,10 +703,16 @@ impl Engine {
     // ------------------------------------------------------------ volatility control
 
     /// The last trade price at least the VCM window before `ts` today.
-    fn vcm_lookback(&self, company_id: i64, day: &str, ts: &str) -> Option<i64> {
+    pub(crate) fn vcm_lookback(&self, company_id: i64, day: &str, ts: &str) -> Option<i64> {
         let before = ts_add_minutes(ts, -self.rules.vcm_window_min);
+        // trades before a reprice (`reprice`, state `repriced_at`) are at the old prices: not a reference
+        let after = self.state("repriced_at").unwrap_or("");
         let trades = self.st.recent_trades.get(&company_id)?;
-        trades.iter().rev().find(|t| t.day == day && t.ts.as_str() <= before.as_str()).map(|t| t.price)
+        trades
+            .iter()
+            .rev()
+            .find(|t| t.day == day && t.ts.as_str() <= before.as_str() && t.ts.as_str() >= after)
+            .map(|t| t.price)
     }
 
     /// May a trade print at `tp` now? Starts a cooling-off period (and posts a 'vcm' news item) when it
@@ -964,6 +970,10 @@ impl Engine {
         if let Some(last) = self.state("last_closed").map(str::to_string) {
             self.do_set_state("repriced_after", &last);
         }
+        // and the volatility control's reference looks back only at trades after it (`vcm_lookback`): an earlier
+        // trade today is at the old price, and the first trade at the new one would start a cooling-off period
+        // around the old price (2026-11-10)
+        self.do_set_state("repriced_at", ts);
         self.commit();
         (open.len(), n)
     }

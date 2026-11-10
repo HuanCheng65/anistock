@@ -216,6 +216,11 @@ impl SynthSequels {
                         premieres: sp.lag_days.iter().map(|l| fmt(a + l)).collect(),
                         exact: false,
                         source: None,
+                        title: None,
+                        kind: None,
+                        part: None,
+                        when: None,
+                        known_before: false,
                     });
                 }
             }
