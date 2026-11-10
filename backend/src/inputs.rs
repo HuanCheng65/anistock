@@ -289,10 +289,7 @@ impl Inputs {
 
 /// Where `engine/daily_inputs.py` writes day `day` by default (`$ANISTOCK_INPUTS_DIR` or data/derived/inputs).
 pub fn default_path(cfg: &Config, day: &str) -> PathBuf {
-    let dir = std::env::var("ANISTOCK_INPUTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| cfg.root.join("data").join("derived").join("inputs"));
-    dir.join(format!("{day}.json"))
+    cfg.inputs_dir.join(format!("{day}.json"))
 }
 
 /// `<root>/.venv/bin/python SCRIPT` (like v1, which runs its own interpreter; no dependency resolution

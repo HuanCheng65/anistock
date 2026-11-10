@@ -1420,8 +1420,8 @@ impl Engine {
             self.save_jstate(id, st, ts);
         }
         // inputs whose platform size already qualifies: the absolute rule the next close switches to, set now
-        if let Some(last) = history.last() {
-            self.platform_switch_at_rebuild(cfg, last)?;
+        if !history.is_empty() {
+            self.platform_switch_at_rebuild(cfg, history)?;
         }
         let today = day_no(&day).ok_or("bad day")?;
         let rate: f64 = self.state("rate").and_then(crate::pyfmt::parse_float).unwrap_or(0.03);

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Pull the latest code and restart. Database migrations run automatically at startup
 # (with a backup in data/backups/ first). Run from the repo root:  bash deploy/update.sh
-#   ANISTOCK_VERSION=vX.Y.Z  install that release of the game server (default: the checked-out tag, else latest)
+#   ANISTOCK_VERSION=vX.Y.Z  install that release of the game server, and check the code out at that tag (detached),
+#                            so the configuration, calibration and Python code are the release's, not main's
+#                            (default: the latest release with main's latest code)
+#   ANISTOCK_NO_RESTART=1    install everything but leave the server as it is (stopped: deploy/revalue.sh)
 # Rolling back means restoring the automatic pre-migration backup and the previous release
 # (docs/api-v1.md §7.5); the v1 Python server cannot run on this database any more.
 set -euo pipefail
@@ -69,11 +72,24 @@ UV="$(command -v uv)"
 
 # the binary first: a failed download (GitHub answers 504 now and then) leaves everything as it was, instead of new
 # code and frontend against the old server
+if [ -z "${ANISTOCK_VERSION:-}" ] && ! git symbolic-ref -q HEAD >/dev/null; then
+  echo "代码停在发布版本 $(git describe --tags 2>/dev/null)（之前用 ANISTOCK_VERSION 更新过）：请用 ANISTOCK_VERSION=vX.Y.Z 指定要更新到的版本" >&2
+  exit 1
+fi
+
 say "下载游戏服务程序"
 install_binary stage
 
 say "拉取代码"
-git pull --ff-only
+git fetch --tags --quiet
+if [ -n "${ANISTOCK_VERSION:-}" ]; then
+  # the release's own code and configuration: a newer main may already be configured for the next release
+  git checkout --quiet --detach "$ANISTOCK_VERSION"
+  echo "代码切到 $ANISTOCK_VERSION"
+else
+  if ! git symbolic-ref -q HEAD >/dev/null; then git checkout --quiet main; fi
+  git pull --ff-only
+fi
 check_env || exit 1
 
 say "更新依赖、构建前端"
@@ -94,6 +110,12 @@ systemctl --user daemon-reload
 # v0.3.0+: the game server fetches the hourly comment snapshots itself; retire the earlier record-only timer
 systemctl --user disable --now anistock-flash.timer 2>/dev/null || true
 rm -f ~/.config/systemd/user/anistock-flash.service ~/.config/systemd/user/anistock-flash.timer
+
+if [ -n "${ANISTOCK_NO_RESTART:-}" ]; then
+  activate_binary
+  printf '\033[1;32m已更新到 %s，服务没有重启\033[0m\n' "$(cat bin/anistock.version 2>/dev/null)"
+  exit 0
+fi
 
 say "重启游戏服务"
 if port_taken_by_other; then

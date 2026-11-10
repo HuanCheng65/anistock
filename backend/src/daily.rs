@@ -59,6 +59,9 @@ fn date(s: &str) -> Result<NaiveDate, String> {
 /// A work's public appraisal (星辉, docs/design/series.md §13): each market's weekly revenue `week` × 52, less the
 /// operating cost and the tax, capitalised at the policy rate plus the equity premium plus the long tail's yearly
 /// decline in that market (1 − the fitted `yearly`; none without a tail fit).
+/// The days whose revenue sets the absolute rule's scales at the switch (`Engine::platform_scale`): a week.
+pub(crate) const PLATFORM_SCALE_DAYS: i64 = 7;
+
 pub(crate) fn ip_appraisal(p: &Params, fp: &crate::vfilter::FilterParams, week: &V::M3, rate: f64) -> f64 {
     let keep = (1.0 - p.operating_cost_ratio) * (1.0 - p.corp_tax);
     (0..3)
@@ -724,9 +727,12 @@ impl Engine {
         if pl.iter().any(|x| *x <= 0.0) {
             return prev;
         }
-        // the scales that leave today's revenue per market unchanged: set on the switch day; before it, today's estimate
-        let ids: Vec<i64> = cx.companies.iter().map(|c| c.id).collect();
-        let scale_today = || self.platform_scale(cx.inp, &ids, p, totals, demand_day, &pl);
+        // the scales that leave the last week's revenue per market unchanged: set on the switch day; before it, the
+        // estimate as of today
+        let _ = (totals, demand_day);
+        let mut ids: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
+        ids.sort();
+        let scale_today = || self.platform_scale(&self.inputs_week(cx.cfg, cx.inp), &ids, p, &pl);
         let fmt = platform_fmt;
         if cx.inp.platform_days < p.platform_min_days {
             if prev.is_none() {
@@ -746,16 +752,42 @@ impl Engine {
         Some((pl, scale))
     }
 
-    /// Each market's scale that leaves the day's revenue of `companies` (all their works) as the relative rule gives it
-    /// (the cn one then × `revenue.absolute_cn_coverage`), `platform_switch`.
-    fn platform_scale(&self, inp: &Inputs, companies: &[i64], p: &Params, totals: &V::M3, demand_day: f64, pl: &V::M3) -> Option<V::M3> {
+    /// The inputs of the switch's week: today's and the 6 days before it that are on disk (the inputs directory of
+    /// `default_path`), oldest first. A day missing on disk is left out.
+    fn inputs_week(&self, cfg: &Config, today: &Inputs) -> Vec<Inputs> {
+        let mut out = Vec::new();
+        if let Some(d) = crate::vclose::day_no(&today.day) {
+            for k in (1..PLATFORM_SCALE_DAYS).rev() {
+                let Some(day) = chrono::NaiveDate::from_num_days_from_ce_opt((d - k) as i32) else { continue };
+                let day = day.format("%Y-%m-%d").to_string();
+                if let Ok(i) = Inputs::read(&crate::inputs::default_path(cfg, &day)) {
+                    out.push(i);
+                }
+            }
+        }
+        out.push(today.clone());
+        out
+    }
+
+    /// Each market's scale that leaves the revenue of `companies` (all their works) over `days` as the relative rule
+    /// gives it (the cn one then × `revenue.absolute_cn_coverage`), `platform_switch`. Over a week, not one day: us
+    /// attention is about 1.6 times higher at the weekend than midweek, and the scale is set once for good, so the
+    /// switch's weekday would move every value (2026-11-10: a Monday's scale against the week's, us +8%, cn/jp -9%).
+    /// Each day's relative revenue from that day's totals of the same works; the platform size is the switch day's.
+    fn platform_scale(&self, days: &[Inputs], companies: &[i64], p: &Params, pl: &V::M3) -> Option<V::M3> {
+        let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
         let (mut old, mut new) = ([0.0; 3], [0.0; 3]);
-        for &c in companies {
-            for w in self.works_of(c) {
-                let Some(s) = inp.show(w) else { continue };
-                let a = self.revenue_att(s);
-                let rel = V::blended_share(&a, totals, &p.market_weights).1;
-                let parts = crate::vfilter::absolute_parts(&a, pl, &[1.0; 3], &p.market_weights, p);
+        for inp in days {
+            let atts: Vec<V::M3> = companies
+                .iter()
+                .flat_map(|&c| self.works_of(c))
+                .filter_map(|w| inp.show(w).map(|s| self.revenue_att(s)))
+                .collect();
+            let totals: V::M3 = std::array::from_fn(|m| atts.iter().map(|a| a[m]).sum());
+            let demand_day = V::demand_day(totals[0], a_ref, p);
+            for a in &atts {
+                let rel = V::blended_share(a, &totals, &p.market_weights).1;
+                let parts = crate::vfilter::absolute_parts(a, pl, &[1.0; 3], &p.market_weights, p);
                 for m in 0..3 {
                     old[m] += demand_day * rel[m];
                     new[m] += parts[m];
@@ -771,13 +803,14 @@ impl Engine {
     }
 
     /// A valuation rebuild (`vclose` `valuation_go_live`) on inputs whose platform size already qualifies, before the
-    /// close has switched: set the absolute rule now, from the last inputs day, the way that close would (its scale
-    /// from that day's revenue), so the rebuilt values (and a reprice from them) already price the rule the next close
+    /// close has switched: set the absolute rule now, from the last inputs days (`week`, oldest first: the last
+    /// `PLATFORM_SCALE_DAYS` of them), the way that close would (its scale from that week's revenue), so the rebuilt values (and a reprice from them) already price the rule the next close
     /// books. Without this the rebuild values the relative rule and the first close moves every value once. On shorter
     /// history it records the switch day (`platform_pending`) as the close does. The scale comes from the last inputs
     /// day: a day whose cn/jp series are not complete yet (a stale markets.json) would put every market's scale off,
     /// so rebuild from inputs regenerated after the day's `reconstruct build` (docs/ops). Returns whether it switched.
-    pub(crate) fn platform_switch_at_rebuild(&mut self, cfg: &Config, inp: &Inputs) -> Result<bool, String> {
+    pub(crate) fn platform_switch_at_rebuild(&mut self, cfg: &Config, week: &[Inputs]) -> Result<bool, String> {
+        let Some(inp) = week.last() else { return Ok(false) };
         let p = Params::from_config(cfg)?;
         let early = inp.platform_days < p.platform_min_days;
         if cfg.economy_v1 || !p.absolute_revenue || self.platform_rule().is_some() || (early && self.state("platform_pending").is_some()) {
@@ -789,20 +822,8 @@ impl Engine {
         }
         let mut ids: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
         ids.sort();
-        let mut totals = [0.0f64; 3];
-        for &c in &ids {
-            for w in self.works_of(c) {
-                if let Some(s) = inp.show(w) {
-                    let a = if p.impute_tail { self.revenue_att(s) } else { s.att.m3() };
-                    for m in 0..3 {
-                        totals[m] += a[m];
-                    }
-                }
-            }
-        }
-        let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
-        let demand_day = V::demand_day(totals[0], a_ref, &p);
-        let Some(sc) = self.platform_scale(inp, &ids, &p, &totals, demand_day, &pl) else { return Ok(false) };
+        let from = week.len().saturating_sub(PLATFORM_SCALE_DAYS as usize);
+        let Some(sc) = self.platform_scale(&week[from..], &ids, &p, &pl) else { return Ok(false) };
         if early {
             // not yet: the switch day, as the close records it (`platform_switch`)
             let Some(today) = crate::vclose::day_no(&inp.day) else { return Ok(false) };

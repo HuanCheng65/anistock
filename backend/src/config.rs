@@ -84,6 +84,8 @@ pub struct NpcConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub root: PathBuf,
+    /// the daily inputs directory: `ANISTOCK_INPUTS_DIR`, else data/derived/inputs (`inputs::default_path`)
+    pub inputs_dir: PathBuf,
     /// Economic parameters (same shape as sim/params.toml) with game.toml's overrides applied.
     pub params: toml::Table,
     pub game: GameRules,
@@ -264,6 +266,7 @@ impl Config {
         let path_env = |k: &str, default: PathBuf| env(k).map(PathBuf::from).unwrap_or(default);
         Ok(Config {
             root: root.to_path_buf(),
+            inputs_dir: path_env("ANISTOCK_INPUTS_DIR", root.join("data").join("derived").join("inputs")),
             params,
             npc,
             market,

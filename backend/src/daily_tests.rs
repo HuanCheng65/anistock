@@ -9,7 +9,10 @@ const DAY: &str = "2026-11-08"; // a Sunday
 fn cfg() -> Config {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let root = if root.join("server/game.toml").exists() { root } else { crate::config::find_root() };
-    Config::load_from(&root, |_| None).unwrap()
+    let mut c = Config::load_from(&root, |_| None).unwrap();
+    // no inputs on disk: a close reads only the inputs it is given (the switch's week, `inputs_week`)
+    c.inputs_dir = std::env::temp_dir().join("anistock-tests-no-inputs");
+    c
 }
 
 /// The config with the absolute revenue rule on (off by default until the platform history allows it).
@@ -579,10 +582,10 @@ fn a_valuation_rebuild_sets_the_rule_the_next_close_would() {
     let (mut a, inp_long) = platform_case(200);
     let (mut b, _) = platform_case(200);
     let (mut c, inp_short) = platform_case(30);
-    assert!(a.platform_switch_at_rebuild(&cfg, &inp_long).unwrap());
+    assert!(a.platform_switch_at_rebuild(&cfg, std::slice::from_ref(&inp_long)).unwrap());
     assert!(matches!(b.run_day(&cfg, DAY, TS, &inp_long).unwrap(), CloseOutcome::Closed(_)));
     assert_eq!(a.platform_rule(), b.platform_rule());
-    assert!(!c.platform_switch_at_rebuild(&cfg, &inp_short).unwrap());
+    assert!(!c.platform_switch_at_rebuild(&cfg, std::slice::from_ref(&inp_short)).unwrap());
     assert!(c.platform_rule().is_none());
     let pending = c.state("platform_pending").expect("pending");
     let today = crate::vclose::day_no(DAY).unwrap();
@@ -868,4 +871,35 @@ fn a_new_listing_takes_the_earlier_works_of_its_series_at_their_appraisal() {
     // the offer's discount applies to the whole line
     let lift = (series.ipo_price - alone.ipo_price) as f64;
     assert!(lift > 0.5 * per_share && lift <= per_share + 1.0, "{lift} vs {per_share}");
+}
+
+#[test]
+fn the_switch_scale_comes_from_the_week_not_its_last_day() {
+    // docs/design/series.md §12 v0.8.5: us attention is far higher at the weekend; one day's scale would depend on
+    // the weekday of the switch
+    let cfg = cfg_absolute();
+    let scale = |week: &[Inputs]| {
+        let (mut e, _) = platform_case(200);
+        assert!(e.platform_switch_at_rebuild(&cfg, week).unwrap());
+        e.platform_rule().unwrap().1
+    };
+    let (_, sunday) = platform_case(200);
+    let mut monday = sunday.clone();
+    monday.day = "2026-11-09".into();
+    for s in monday.shows.iter_mut() {
+        s.att.us *= 0.6;
+    }
+    let one = scale(std::slice::from_ref(&monday));
+    let both = scale(&[sunday.clone(), monday.clone()]);
+    let other = scale(std::slice::from_ref(&sunday));
+    for m in 0..3 {
+        let (lo, hi) = (one[m].min(other[m]), one[m].max(other[m]));
+        assert!(lo < both[m] && both[m] < hi, "market {m}: {} {} {}", one[m], both[m], other[m]);
+    }
+    // more than a week back is left out
+    let mut long = vec![sunday.clone(); 8];
+    long.push(monday);
+    let week = scale(&long);
+    let seven = scale(&long[long.len() - 7..]);
+    assert_eq!(week, seven);
 }
