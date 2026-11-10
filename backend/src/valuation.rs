@@ -44,6 +44,9 @@ pub struct Params {
     /// company's, while its chance of a sequel announcement within three years is under `delist_sequel_p`
     pub delist_tail_share: f64,
     pub delist_sequel_p: f64,
+    /// a listed series' earlier works join it by an asset injection at their public appraisal, and a delisting buys the
+    /// works out at it (docs/design/series.md §13)
+    pub asset_injection: bool,
     // valuation
     pub equity_premium: f64,
     pub post_finale_profile: Vec<f64>,
@@ -130,6 +133,7 @@ impl Params {
             impute_tail: int(cfg, "valuation.impute_tail").unwrap_or(1) == 1,
             delist_tail_share: num(cfg, "company.delist_tail_share").unwrap_or(0.01),
             delist_sequel_p: num(cfg, "company.delist_sequel_p").unwrap_or(0.10),
+            asset_injection: int(cfg, "company.asset_injection").unwrap_or(0) == 1,
             equity_premium: num(cfg, "valuation.equity_premium")?,
             post_finale_profile: profile,
             post_finale_tail_decay: num(cfg, "valuation.post_finale_tail_decay")?,

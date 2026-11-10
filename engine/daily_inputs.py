@@ -63,10 +63,14 @@ File format (JSON, one object):
         top_pop         top decile of popularity among the shows premiering within half a year of it (phase 1)
         sequel          an announced sequel not yet aired, from the relations known on D, else null (phase 1;
                         engine/daily_inputs.py `series_facts`): {"id", "announced" (the first day the relation was
-                        seen), "premieres" [days, equally likely], "exact" (an announced day)}
+                        seen), "premieres" [days, equally likely], "exact" (an announced day), "source" (an
+                        operator's override: the official announcement)}; data/sequel_overrides.json applies
+                        (`apply_sequel_override`)
         popularity      AniList list entries on D (the tail prior's popularity at the finale) (phase 1)
         relations_known the collector has the show's AniList relations as of D; without them "no sequel announced
                         yet" is not information and the sequel option is not updated as time passes (phase 1)
+        sequel_cancelled  the makers said officially there will be no sequel (an operator's override, its source):
+                        no sequel option (v0.8.4, docs/design/series.md §5.4); absent otherwise
         schedule        ["YYYY-MM-DD", ...] every main episode's air date on Bangumi (the public schedule); a show
                         whose schedule has an episode after the last one AniList recorded is not finished (phase 1);
                         the valuation dates the episodes still to air by it (docs/design/corporate.md §2.2)
@@ -120,7 +124,10 @@ def load_markets() -> dict[int, dict]:
 
 def air_dates(s: E.Show, day: date, schedule: list[str] | None = None) -> list[str]:
     """The day each episode aired so far (from the model's per-day episode count), plus the episodes of a release
-    of several at once (`batch_aired`) on the schedule's day."""
+    of several at once (`batch_aired`) on the schedule's day. A series member that aired before the trends: its
+    episodes' days from its run (economy.py `member_episodes`)."""
+    if s.ep_dates is not None:
+        return [x.isoformat() for x in s.ep_dates if x <= day]
     out, prev = [], 0
     for d, a in zip(s.days, s.aired):
         if d > day:
@@ -179,6 +186,52 @@ def _fdate(d: dict | None) -> tuple[date | None, str]:
     if not d.get("day"):
         return date(d["year"], d["month"], 15), "month"
     return date(d["year"], d["month"], d["day"]), "day"
+
+
+SEQUEL_ID_BASE = 1_000_000_000   # an override's sequel id: this plus the work's id (AniList ids are far below)
+
+
+def sequel_overrides_path() -> Path:
+    return Path(os.environ.get("ANISTOCK_SEQUEL_OVERRIDES", ROOT / "data" / "sequel_overrides.json"))
+
+
+def load_sequel_overrides(path: Path | None = None) -> dict[int, dict]:
+    """The operator's sequel overrides (engine/sequel_override.py; docs/design/series.md §5.4), by work id: an
+    official announcement AniList has not listed yet ("announced", "premiere", "source") or an official statement that
+    there will be no sequel ("cancelled", "source"). Missing file: none."""
+    path = path or sequel_overrides_path()
+    if not path.exists():
+        return {}
+    return {int(k): v for k, v in json.loads(path.read_text(encoding="utf-8")).items()}
+
+
+def apply_sequel_override(facts: dict, sid: int, ov: dict | None, day: date, lags: list[int]) -> dict:
+    """`series_facts` with the work's override as of `day`. An announcement keeps one sequel id from the override's
+    day on, also once AniList lists the entry (its dates are used then), so the notice and the production cost come
+    once; a statement that there will be no sequel drops the sequel and sets `sequel_cancelled` to its source."""
+    out = dict(facts)
+    if not ov:
+        return out
+    if ov.get("cancelled") and date.fromisoformat(ov["cancelled"]) <= day:
+        out["sequel"] = None
+        out["sequel_cancelled"] = ov.get("source") or ""
+        return out
+    if ov.get("announced") and date.fromisoformat(ov["announced"]) <= day:
+        a = date.fromisoformat(ov["announced"])
+        q = out.get("sequel")
+        if q is None:
+            start, prec = _fdate(dict(zip(("year", "month", "day"), map(int, ov["premiere"].split("-"))))
+                                 if ov.get("premiere") else None)
+            if prec == "none":
+                prem = [a + timedelta(days=lag) for lag in lags]
+            else:
+                prem = [max(start, day + timedelta(days=1))]
+            if not prem:
+                return out
+            q = {"premieres": [d.isoformat() for d in prem], "exact": prec == "day"}
+        out["sequel"] = {**q, "id": SEQUEL_ID_BASE + sid, "announced": a.isoformat(), "source": ov.get("source")}
+        out["relations_known"] = True
+    return out
 
 
 def series_facts(sid: int, rel: dict, day: date, lags: list[int]) -> dict:
@@ -404,11 +457,140 @@ def airing_sources(s: E.Show, day: date, markets: dict, mapped: dict[str, bool],
     return out
 
 
+APPRAISAL_WEEKS = (26, 18)      # the appraisal window: weeks 26 to 18 before the sequel's premiere (docs/design/series.md §13)
+APPRAISAL_DAYS = 56             # its length (8 weeks)
+APPRAISAL_RECENT_DAYS = 90      # a work's decline after its finale: no window starts within this of a finale
+APPRAISAL_TAIL_DAYS = 120       # still declining: the in-season level times the long tail this long after the finale
+APPRAISAL_FROM_DAYS = 60        # a work premiered within this of D joins a company as a new season would, not appraised
+
+
+def load_member_records(db_path: Path) -> dict[int, dict[str, int]] | None:
+    """The series members' Annict records per day (collect.py `count_member_records`): {Annict id: {day: records}},
+    an entry for every work counted (none counted yet: an empty dict); None when the collector has no such table."""
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "member_records_done" not in tables:
+            return None
+        out: dict[int, dict[str, int]] = {int(r[0]): {} for r in db.execute("SELECT annict_id FROM member_records_done")}
+        for aid, d, n in db.execute("SELECT annict_id, day, records FROM member_records"):
+            out.setdefault(int(aid), {})[d] = n
+        return out
+    finally:
+        db.close()
+
+
+def member_records_by_show(db_path: Path) -> dict[int, dict[str, int]]:
+    """`load_member_records` by AniList id (the effective Annict match), for the works counted."""
+    rec = load_member_records(db_path) or {}
+    return {int(k): rec[r["annict"]] for k, r in E.effective_matches(db_path).items() if r.get("annict") in rec}
+
+
+def appraisal_window(s_days0: date, fin: date, day: date, others: list[tuple[date, date | None]]) -> tuple[date, date, bool] | None:
+    """The appraisal window [lo, hi) of an earlier work that finished on `fin` (docs/design/series.md §13): the latest
+    APPRAISAL_DAYS days, up to D, clear of every other work of the series from its run-up (APPRAISAL_WEEKS[1] weeks
+    before its premiere; the sequel's announcement and promotion lift the earlier works) to APPRAISAL_RECENT_DAYS after
+    its finale (`others`: premiere, finale or None while airing or unaired), and starting APPRAISAL_RECENT_DAYS after
+    the work's own finale week and within its data (`s_days0`). With the series' newest work the only other one, this
+    is weeks 26-18 before that work's premiere. None: no window after the work's own decline (it finished recently).
+    No clean window within the data: the latest window there, and False."""
+    span = timedelta(days=APPRAISAL_DAYS)
+    first = max(s_days0, fin + timedelta(days=7 + APPRAISAL_RECENT_DAYS))
+    if first + span > day:
+        return None
+    far = date.max - timedelta(days=APPRAISAL_RECENT_DAYS + 1)
+    busy = [(p - timedelta(weeks=APPRAISAL_WEEKS[1]), (f or far) + timedelta(days=APPRAISAL_RECENT_DAYS)) for p, f in others]
+    for hi in sorted({day} | {a for a, _ in busy if first + span <= a <= day}, reverse=True):
+        lo = hi - span
+        if all(b <= lo or a >= hi for a, b in busy):
+            return lo, hi, True
+    return day - span, day, False
+
+
+def appraisal_att(s: E.Show, day: date, others: list[tuple[date, date | None]], rv: dict, markets: dict, fp: dict,
+                  mapped: dict, records: dict[str, int] | None, cn_listed: bool = True) -> dict | None:
+    """A finished earlier work's normal daily attention per market, the base of its public appraisal when it joins a
+    listed company by an asset injection (docs/design/series.md §13): the mean over `appraisal_window` (clear of the
+    other works' run-ups and runs), each market as the game reads it (cn/jp only where the work is matched: `mapped`);
+    Japan from the work's Annict records per day (`records`; the rebuilt series has no post-finale days). A work still
+    in its decline after the finale (no window yet), or with no clear window and its run in the data: the in-season
+    mean times the fitted long tail APPRAISAL_TAIL_DAYS after the finale's week; with no clear window and no in-season
+    data: the latest window anyway ("window_mixed"). None when the data is not all there (the trends or the records not
+    read back yet, a Bangumi match whose episode list the collector has not read yet: `cn_listed`): the company waits.
+    A subject with no main episodes (a film) has no viewer series: China 0."""
+    from engine import valuation as V
+    dates = air_dates(s, day)
+    if not dates or s.long_runner or (s.episodes and len(dates) < s.episodes):
+        return None
+    fin = date.fromisoformat(dates[-1])
+    if fin + timedelta(days=7) > day or not s.days:
+        return None
+    if mapped.get("cn") and not cn_listed:
+        return None     # matched on Bangumi, its episode list not read yet (the collection after the match)
+    w = appraisal_window(s.days[0], fin, day, others)
+    season = [d for d in (s.first_air + timedelta(days=k) for k in range((fin - s.first_air).days + 7))
+              if s.days[0] <= d <= s.days[-1]]
+    if w is None or (not w[2] and season):
+        # still declining after its finale, or no window clear of the other works (a sequel's run-up began before the
+        # decline ended): the in-season level times the long tail
+        days = season
+        if not days:
+            return None
+        out = {}
+        for m in E.MARKETS:
+            tl = V.tail_of(fp, m)
+            if tl is None:
+                return None
+            on = m == "us" or bool(mapped.get(m))
+            mean = sum(E.market_att(s, d, rv, markets)[m] for d in days) / len(days) if on else 0.0
+            out[m] = round(mean * V.tail_mean(tl, APPRAISAL_TAIL_DAYS, 1.0), 4)
+        return {**out, "basis": "season", "from": days[0].isoformat(), "to": days[-1].isoformat(),
+                "tail_days": APPRAISAL_TAIL_DAYS}
+    lo, hi, clean = w
+    jp_on = bool(mapped.get("jp"))
+    if jp_on and records is None:
+        return None
+    days = [lo + timedelta(days=k) for k in range((hi - lo).days)]
+    out = {"us": 0.0, "cn": 0.0, "jp": 0.0}
+    for d in days:
+        a = E.market_att(s, d, rv, markets)
+        out["us"] += a["us"]
+        out["cn"] += a["cn"] if mapped.get("cn") else 0.0
+        if jp_on:
+            out["jp"] += records.get(d.isoformat(), 0) * E.score_mult(E.at(s, s.score, d, None), rv)
+    return {**{m: round(v / len(days), 4) for m, v in out.items()}, "basis": "window" if clean else "window_mixed",
+            "from": lo.isoformat(), "to": (hi - timedelta(days=1)).isoformat()}
+
+
+def series_titles(shows: list[E.Show], keys: dict[int, int], cn_titles: dict[int, str], ex: dict) -> dict[int, str]:
+    """Each series of more than one work: its name (docs/design/series.md §13.7), the name a company of several works
+    goes by. sim/series.json `names` (by any work of the series), else the Chinese title (Bangumi), else the native
+    one, of its first TV, TV_SHORT or ONA work (films, OVAs and specials are side works), else of its first work."""
+    by: dict[int, list[E.Show]] = {}
+    for s in shows:
+        by.setdefault(keys[s.id], []).append(s)
+    names = ex.get("names", {})
+    out = {}
+    for k, ws in by.items():
+        if len(ws) < 2:
+            continue
+        named = next((names[s.id] for s in sorted(ws, key=lambda s: s.id) if s.id in names), None)
+        if named:
+            out[k] = named
+            continue
+        main = [s for s in ws if s.fmt in ("TV", "TV_SHORT", "ONA")] or ws
+        first = min(main, key=lambda s: (s.first_air, s.id))
+        out[k] = cn_titles.get(first.id) or first.title
+    return out
+
+
 def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, str], day: date, p: dict,
           window_start: date, aud_dated: dict | None = None, sources: dict | None = None,
           relations: dict | None = None, schedules: dict | None = None, airing: dict | None = None,
-          heat: dict | None = None) -> dict:
-    """The inputs dict for `day` from already-loaded model objects (no I/O)."""
+          heat: dict | None = None, records: dict[int, dict[str, int]] | None = None,
+          overrides: dict[int, dict] | None = None) -> dict:
+    """The inputs dict for `day` from already-loaded model objects (no I/O). records: the series members' Annict
+    records per day by AniList id, for the works counted (`load_member_records`)."""
     rv, val = p["revenue"], p["valuation"]
     aud_dated = aud_dated or {}
     sources = sources or {}
@@ -419,9 +601,22 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
     lags = V.filter_params(p).get("sequel", {}).get("lag_days", [])
     from engine.series import load_exceptions, series_keys
     known = {i: [e for d, e in snaps if d <= day] for i, snaps in relations.items()}
-    keys = series_keys({i: v[-1] for i, v in known.items() if v}, [s.id for s in shows], load_exceptions())
+    keys = series_keys({i: v[-1] for i, v in known.items() if v}, [s.id for s in shows], load_exceptions(),
+                       {s.id: s.fmt for s in shows})
+    records = records or {}
+    fp = V.filter_params(p)
+    runs: dict[int, list[tuple[int, date, date | None]]] = {}    # series -> each work's premiere and finale
+    for s in shows:
+        ad = air_dates(s, day)
+        done = not s.long_runner and bool(s.episodes) and len(ad) >= s.episodes
+        runs.setdefault(keys[s.id], []).append((s.id, s.first_air, date.fromisoformat(ad[-1]) if done else None))
     out = []
     for s in shows:
+        appraisal = None
+        if len(runs[keys[s.id]]) > 1 and s.first_air < day - timedelta(days=APPRAISAL_FROM_DAYS):
+            others = [(f, e) for i, f, e in runs[keys[s.id]] if i != s.id]
+            appraisal = appraisal_att(s, day, others, rv, markets, fp, sources.get(s.id, {"cn": False, "jp": False}),
+                                      records.get(s.id), any(d <= day for d, _ in schedules.get(s.id, [])))
         att = E.market_att(s, day, rv, markets)
         sched = schedule_on(schedules, s.id, day)
         aired = batch_aired(sched, day, E.at(s, s.aired, day, 0))[0]
@@ -450,12 +645,14 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
             "format": s.fmt,
             "source": s.source,
             "genres": s.genres,
-            **series_facts(s.id, relations, day, lags),
+            **apply_sequel_override(series_facts(s.id, relations, day, lags), s.id, (overrides or {}).get(s.id), day,
+                                    lags),
             "top_pop": top_decile(shows, s),
             "popularity": E.at(s, s.popularity, day, None),
             "schedule": sched,
             **airing_on(airing, s.id, day),
             "series": keys[s.id],
+            **({"appraisal_att": appraisal} if appraisal else {}),
             "expected": {m: v for m, v in E.expected_att(s, day, rv, markets, val, aud).items()},
         })
     plat, n = platform_size(shows, markets, day, p)
@@ -463,6 +660,7 @@ def build(shows: list[E.Show], markets: dict, aud: dict, cn_titles: dict[int, st
         "day": day.isoformat(),
         "window_start": window_start.isoformat(),
         "cn_titles": {str(k): v for k, v in cn_titles.items()},
+        "series_titles": {str(k): v for k, v in series_titles(shows, keys, cn_titles, load_exceptions()).items()},
         "platform": plat,
         "platform_days": n,
         "shows": out,
@@ -592,7 +790,7 @@ def daily_inputs(day: str, cfg=None, window_start: date | None = None) -> dict:
     return build(shows, load_markets(), E.load_audiences(cfg.collector_db), E.load_cn_titles(cfg.collector_db),
                  d, cfg.params, start, E.load_audiences_dated(cfg.collector_db), sources_on(source_dates(cfg.collector_db), d),
                  load_relations(cfg.collector_db), load_schedules(cfg.collector_db), load_airing(cfg.collector_db),
-                 load_heat(d))
+                 load_heat(d), member_records_by_show(cfg.collector_db), load_sequel_overrides())
 
 
 def dumps(inputs: dict) -> str:
@@ -641,6 +839,7 @@ class ShowInputs:
     series: int | None = None              # phase 1
     popularity: float | None = None        # phase 1
     relations_known: bool = False          # phase 1
+    sequel_cancelled: str | None = None    # v0.8.4: an official "no sequel" (its source; docs/design/series.md §5.4)
     schedule: list = field(default_factory=list)   # phase 1
     hiatus: bool = False                   # docs/design/corporate.md
     next_airing: dict | None = None       # docs/design/corporate.md

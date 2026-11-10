@@ -115,6 +115,9 @@ pub struct JState {
     /// counts in full from then on, before that net of its cost
     #[serde(default)]
     pub sequel_paid: Option<i64>,
+    /// the makers said officially that there will be no sequel (docs/design/series.md §5.4): no sequel option
+    #[serde(default)]
+    pub sequel_cancelled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -241,6 +244,7 @@ impl JState {
             meta: None,
             watched: false,
             sequel_paid: None,
+            sequel_cancelled: false,
         }
     }
     pub(crate) fn var(&self, m: usize) -> f64 {
@@ -422,9 +426,10 @@ impl Engine {
     }
 
     /// The prior log levels of a show's three markets (point-in-time, frozen at the premiere by the inputs):
-    /// from the us pre-air estimate and the fitted per-market bias; a market with its own pre-air snapshot
+    /// from the us pre-air estimate and the fitted per-market bias (a sequel's own: docs/design/series.md §5.3); a
+    /// market with its own pre-air snapshot
     /// estimate uses that instead (not yet calibrated: bias 0). None without any estimate.
-    fn prior_mean(fp: &FilterParams, s: &ShowInputs, today: i64) -> Option<M3> {
+    pub(crate) fn prior_mean(fp: &FilterParams, s: &ShowInputs, today: i64) -> Option<M3> {
         if fp.prior_from_us {
             let p = s.prior.as_ref()?.m3();
             if p[0] <= 0.0 {
@@ -435,7 +440,8 @@ impl Engine {
             let k = day_no(&s.first_air).map_or(0, |f| f - 1 - today);
             let (g, _) = fp.growth_own(k, Self::own7(s));
             let b = fp.prior_beta;
-            Some(std::array::from_fn(|m| if m > 0 && p[m] > 0.0 { p[m].ln() + g } else { fp.prior_bias[m] + b[m] * (p[0].ln() + g) }))
+            let bias = if s.prequel { fp.prior_bias_sequel } else { fp.prior_bias };
+            Some(std::array::from_fn(|m| if m > 0 && p[m] > 0.0 { p[m].ln() + g } else { bias[m] + b[m] * (p[0].ln() + g) }))
         } else {
             // v0.3.0 parameters: each market from its own (look-ahead) estimate
             let p = s.preair.as_ref().map_or(s.expected.m3(), |x| x.m3());
@@ -499,7 +505,7 @@ impl Engine {
             return None;
         }
         let fin = *sched.last()?;
-        if js.sequel.as_ref().is_some_and(|q| self.st.jstate.contains_key(&q.0)) {
+        if js.sequel_cancelled || js.sequel.as_ref().is_some_and(|q| self.st.jstate.contains_key(&q.0)) {
             return None;
         }
         let known: &[i64] = js.sequel.as_ref().map_or(&[], |q| &q.2);
@@ -632,17 +638,31 @@ impl Engine {
             let a = day_no(&q.announced)?;
             Some((q.id, a, q.premieres.iter().filter_map(|d| day_no(d)).collect::<Vec<i64>>()))
         });
+        // A replay of the history (valuation_bootstrap: a go-live or a model change) meets sequels announced before
+        // the state existed: no notice, and their production is taken as financed (the game charged nothing when
+        // they were announced; the repricing that follows a rebuild aligns the prices with that value).
+        let mut paid_before = None;
         if let Some((sid, _, pr)) = &sequel {
             let known = prev_state.as_ref().and_then(|j| j.sequel.as_ref()).is_some_and(|x| x.0 == *sid);
-            if !known {
+            if !known && self.valuation_replay {
+                paid_before = Some(*sid);
+            } else if !known {
                 if let Some(c) = self.st.companies.get(&s.id).filter(|c| c.status == "listed").cloned() {
                     let when = match (s.sequel.as_ref().is_some_and(|q| q.exact), pr.first()) {
                         (true, Some(d)) => NaiveDate::from_num_days_from_ce_opt(*d as i32)
                             .map_or(String::new(), |d| format!("续作定于 {} 年 {} 月 {} 日开播。", d.year(), d.month(), d.day())),
                         _ => "开播时间未公布。".into(),
                     };
-                    self.push_news(ts, day, "sequel", Some(c.id), format!("《{}》续作公布", c.title), when);
+                    let src = s.sequel.as_ref().and_then(|q| q.source.as_deref()).map_or(String::new(), |u| format!("来源：{u}"));
+                    self.push_news(ts, day, "sequel", Some(c.id), format!("《{}》续作公布", c.title), format!("{when}{src}"));
                 }
+            }
+        }
+        let cancelled = s.sequel_cancelled.is_some();
+        if cancelled && !prev_state.as_ref().is_some_and(|j| j.sequel_cancelled) && !self.valuation_replay {
+            if let Some(c) = self.st.companies.get(&s.id).filter(|c| c.status == "listed").cloned() {
+                let src = s.sequel_cancelled.as_deref().unwrap_or_default();
+                self.push_news(ts, day, "sequel", Some(c.id), format!("《{}》官方表示不再制作续作", c.title), format!("来源：{src}"));
             }
         }
         let post: M3 = std::array::from_fn(|m| {
@@ -692,6 +712,10 @@ impl Engine {
             j.seq_z = seq_z;
             j.seq_zs = seq_zs;
             j.sequel = sequel.clone();
+            if paid_before.is_some() {
+                j.sequel_paid = paid_before;
+            }
+            j.sequel_cancelled = cancelled;
             j.meta = meta_today.clone();
             j.watched = s.relations_known;
             j
@@ -774,6 +798,10 @@ impl Engine {
         st.seq_z = seq_z;
         st.seq_zs = seq_zs;
         st.sequel = sequel;
+        if paid_before.is_some() {
+            st.sequel_paid = paid_before;
+        }
+        st.sequel_cancelled = cancelled;
         // the heat class, once, from the us level (after the day's drift, before its observations) DRIFT_WEEKS[0]
         // weeks after the premiere (docs/design/valuation.md §3.10)
         if st.heat_class.is_none() && !s.long_runner && since_premiere >= 7 * F::DRIFT_WEEKS[0] {
@@ -1355,6 +1383,7 @@ impl Engine {
             self.out.push(Change::ValuationJointDelete { company_id: id });
         }
         let mut last = None;
+        self.valuation_replay = true;
         for inp in history {
             // every work of every listed company: the merged ones too (a later season, a prequel), as the close steps them
             let mut listed: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed").map(|c| c.id).collect();
@@ -1370,6 +1399,7 @@ impl Engine {
             }
             last = Some(inp.day.clone());
         }
+        self.valuation_replay = false;
         let Some(day) = last else { return Ok(0) };
         // the history ends mid-week: observe the us days collected so far (at least three), so the first
         // live close doesn't revise every show at once (a week whose days so far are already observed on top of
@@ -1405,10 +1435,12 @@ impl Engine {
         Ok(vals.len())
     }
 
-    /// IPO price of a new show from the same model's pre-air prior, less a discount for its uncertainty.
-    pub(crate) fn ipo_price_v2(&self, fp: &FilterParams, p: &Params, s: &ShowInputs, shares: i64, today: i64, totals: &[Vec<f64>; 3], rate: f64, a_ref: f64) -> i64 {
+    /// IPO price of a new show from the same model's pre-air prior, plus `extra` yuan per share (the earlier works of
+    /// its series listed with it, at their appraisal: docs/design/series.md §13.8), less a discount for its uncertainty.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn ipo_price_v2(&self, fp: &FilterParams, p: &Params, s: &ShowInputs, shares: i64, today: i64, totals: &[Vec<f64>; 3], rate: f64, a_ref: f64, extra: f64) -> i64 {
         let Some(pm) = Self::prior_mean(fp, s, today) else {
-            return (p.ipo_price_min * 100.0).round_ties_even() as i64;
+            return ((p.ipo_price_min + extra) * 100.0).round_ties_even() as i64;
         };
         let src = Self::sources(s);
         let long = s.long_runner;
@@ -1429,7 +1461,7 @@ impl Engine {
         // (the new show is not in today's totals yet: it joins them)
         let tails = Self::tail_ends(fp, &sched, long, today, mult);
         // the sequel option from the prior (the show is not valued yet)
-        let extra: Option<M3> = match (&fp.sequel, sched.last()) {
+        let opt: Option<M3> = match (&fp.sequel, sched.last()) {
             (Some(sp), Some(&fin)) if !long => {
                 let z = F::sequel_z(sp, s.score, s.source.as_deref(), s.prequel, s.top_pop);
                 let zs = if s.prequel { z } else { z + sp.beta.sequel };
@@ -1438,7 +1470,8 @@ impl Engine {
             }
             _ => None,
         };
-        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails, self.value_rule(today), extra.as_ref());
+        let v = F::value_from_paths(&own, &Self::with_own(totals, &own), &p.market_weights, a_ref, p, shares, 0, rate, long, &tails, self.value_rule(today), opt.as_ref())
+            + extra;
         let used: Vec<f64> = (0..3).filter(|m| src[*m]).map(|m| fp.p0[m]).collect();
         let sd = if used.is_empty() { 0.0 } else { (used.iter().sum::<f64>() / used.len() as f64).sqrt() };
         let discount = 1.0 - (-fp.ipo_risk * sd).exp();

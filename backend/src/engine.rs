@@ -99,6 +99,8 @@ pub(crate) struct State {
     pub jstate: HashMap<i64, crate::vclose::JState>,
     /// work -> company for the works a company owns besides its first (V9)
     pub company_works: BTreeMap<i64, i64>,
+    /// company -> its current work (V27, `Engine::update_current`)
+    pub company_current: BTreeMap<i64, CompanyCurrent>,
     /// players who have restructured: their chain-linked return (crate::restructure)
     pub player_returns: BTreeMap<i64, PlayerReturn>,
     /// 融资融券: credit accounts, debts, short positions, credit order tags (crate::margin)
@@ -144,6 +146,9 @@ pub struct Engine {
     /// per company: notional (cents) traded with a player on either side since this engine started
     /// (in memory only; the NPC market reads it to see how active the humans are in each stock)
     player_flow: HashMap<i64, i64>,
+    /// inside `valuation_bootstrap`: the history is being replayed (a sequel met there was announced before the
+    /// state existed: financed already, no notice; docs/design/series.md §5.2)
+    pub(crate) valuation_replay: bool,
 }
 
 impl Engine {
@@ -181,6 +186,7 @@ impl Engine {
             reader: None,
             batch_depth: 0,
             player_flow: HashMap::new(),
+            valuation_replay: false,
         };
         for o in s.open_orders.values() {
             e.st.by_account.entry(o.account_id).or_default().insert(o.id);
@@ -953,6 +959,11 @@ impl Engine {
                 n += 1;
             }
         }
+        // the closes before it are at the old prices: an average over recent closes (an asset injection's issue
+        // price, docs/design/series.md §13) starts after the last close before the reprice
+        if let Some(last) = self.state("last_closed").map(str::to_string) {
+            self.do_set_state("repriced_after", &last);
+        }
         self.commit();
         (open.len(), n)
     }
@@ -1198,6 +1209,7 @@ impl State {
             penny_days: s.penny_days.clone(),
             jstate: s.jstate.clone(),
             company_works: s.company_works.clone(),
+            company_current: s.company_current.clone(),
             player_returns: s.player_returns.clone(),
             margin: s.margin.clone(),
             corp: s.corp.clone(),

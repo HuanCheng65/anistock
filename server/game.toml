@@ -19,8 +19,8 @@ base_params = "sim/params_recommended.toml"
 # copied to the server like the Bangumi archive). With it the trailing year is complete and the switch is not waiting.
 "revenue.platform_history" = "platform_us.json"
 # phase 1 switches (docs/design/series.md §12): absolute revenue on since 2026-11-09 (docs/ops/switch-cn-views.md; cn/jp
-# platform sizes fixed, us the trailing year); the sequel option needs the AniList relations the collector has only
-# just started to keep: off for now.
+# platform sizes fixed, us the trailing year); the sequel option on since v0.8.4 (the collector keeps the AniList
+# relations since 2026-11-06; turned on with a valuation rebuild and a reprice, docs/ops/deploy-v0.8.4.md).
 # impute_tail: cn/jp days without data (after the finale, and in season) earn the value's own expectation (the §4.2 stopgap)
 "revenue.absolute_revenue" = 1
 # the cn market's series (sim/reconstruct.py build): "comments" (episode comments) or "views" (Bangumi viewers rebuilt
@@ -38,7 +38,7 @@ base_params = "sim/params_recommended.toml"
 # cn series measures (2.4% of the listed shows' cn attention, Oct 9 – Nov 7 2026) earn on top instead of taking it
 # from the seasonal shows (sim/research/cn_views/, daily.rs platform_switch)
 "revenue.absolute_cn_coverage" = 1.024
-"valuation.sequel_option" = 0
+"valuation.sequel_option" = 1
 "valuation.impute_tail" = 1
 "company.shares" = 10000
 "company.ipo_float" = 0.25
@@ -46,6 +46,9 @@ base_params = "sim/params_recommended.toml"
 "company.fees_leave_economy" = true
 "company.operating_cost_ratio" = 0.5
 "company.payout_ratio" = 0.9
+# a listed series' earlier works join it by an asset injection at their public appraisal (new shares to the
+# committee at the 20-day average close); a delisting buys the works' rights out at it (docs/design/series.md §13)
+"company.asset_injection" = 1
 # equity premium, annual, added to the policy rate when discounting dividends (sim/params_recommended.toml has
 # the broad-market 0.08). Raised for risk: every stock here is a very small, very volatile company that may be
 # delisted, so holding stocks earns about 5% a season over transfers (docs/game-design.md ⚠️).

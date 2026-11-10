@@ -409,6 +409,52 @@ fn penny_stocks_are_warned_then_delisted() {
     assert_eq!(e.st.penny_days[&1], 0);
 }
 
+#[test]
+fn a_delisting_buys_the_works_rights_out_at_their_appraisal() {
+    // docs/design/series.md §13.5: with asset_injection, the holders get the cash plus the rights' appraisal (the last
+    // 8 weeks' revenue capitalised), the world account paying for the rights
+    let mut cfg = cfg();
+    cfg.params.get_mut("company").and_then(|v| v.as_table_mut()).unwrap().insert("asset_injection".into(), toml::Value::Integer(1));
+    let inp = empty_inputs();
+    let payout = |cfg: &Config| {
+        let mut e = fixture();
+        e.set_state("rate", "0.03");
+        let committee = e.account_of("committee", 1).unwrap();
+        let acct = e.account_of("company", 1).unwrap();
+        let world = e.special("world").unwrap();
+        e.add_shares(committee, 1, 900, 500, "2026-09-10");
+        let player = e.create_account("player", "p", None, None, None, TS);
+        e.add_shares(player, 1, 100, 500, "2026-09-10");
+        e.do_transfer(world, acct, 50_000, "revenue", "2026-11-01", TS, Some(1), None);
+        for k in 0..56 {
+            let d = iso(date(DAY).unwrap() - Duration::days(k));
+            e.st.company_days.insert((1, d.clone()), CompanyDay { company_id: 1, day: d, revenue: 700, rev_us: 400, rev_cn: 200, rev_jp: 100, aired: 12, dividend_ps: 0 });
+        }
+        e.st.companies.get_mut(&1).unwrap().prev_close = 99;
+        let before = cash(&e, player);
+        let book = cash(&e, acct);
+        let mut cx = ctx(&e, cfg, &inp);
+        for _ in 0..20 {
+            e.penny_rule(&mut cx, &[1]).unwrap();
+        }
+        assert_eq!(e.company(1).unwrap().status, "delisted");
+        e.flush().unwrap();
+        e.check_invariants().unwrap();
+        (cash(&e, player) - before, book)
+    };
+    let mut off = cfg.clone();
+    off.params.get_mut("company").and_then(|v| v.as_table_mut()).unwrap().insert("asset_injection".into(), toml::Value::Integer(0));
+    let (plain, book) = payout(&off);
+    let (with, _) = payout(&cfg);
+    assert_eq!(plain, book / 1000 * 100);
+    let p = Params::from_config(&cfg).unwrap();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    // 7 days a week of 4/2/1 星辉 per day
+    let ip = pround(ip_appraisal(&p, &fp, &[28.0, 14.0, 7.0], 0.03) * 100.0);
+    assert!(ip > 0);
+    assert_eq!(with, (book + ip) / 1000 * 100);
+}
+
 fn show_with_sources(cn: bool, jp: bool) -> crate::inputs::ShowInputs {
     serde_json::from_value(serde_json::json!({
         "id": 1, "title_ja": "テスト", "title_en": null, "studio": null, "first_air": "2026-07-01", "episodes": 12,
@@ -574,6 +620,10 @@ fn a_new_season_of_a_listed_series_joins_its_company() {
     // an earlier work of the series on air (within 60 days of its premiere) joins too; one long past does not
     assert_eq!(e.works_of(1), vec![1, 3, 4]);
     assert!(e.company(5).is_none() && e.st.company_works.get(&5).is_none());
+    // docs/design/series.md §13.7: the current work is the latest-premiered one on air (4 over 1; 3 not yet aired)
+    let cur = e.st.company_current.get(&1).unwrap();
+    assert_eq!((cur.work_id, cur.first_air.as_str(), cur.aired), (4, "2026-10-15", 3));
+    assert_eq!(e.st.company_current.get(&2).unwrap().work_id, 2);
     // the next day the new season's pre-air attention earns for company 1
     let day2 = "2026-11-09";
     assert!(matches!(e.run_day(&cfg, day2, "2026-11-09T06:30:00+08:00", &inp(day2, 500.0)).unwrap(), CloseOutcome::Closed(_)));
@@ -583,6 +633,66 @@ fn a_new_season_of_a_listed_series_joins_its_company() {
     let want = pround((one(3000.0) + one(500.0) + one(800.0)) * 100.0);
     let got = e.st.company_days.get(&(1, day2.to_string())).unwrap().revenue;
     assert!((got - want).abs() <= 1, "{got} vs {want}");
+}
+
+#[test]
+fn an_earlier_work_joins_by_an_asset_injection_at_its_appraisal() {
+    // docs/design/series.md §13: a work of the series premiered long before joins once its appraisal data is there;
+    // the committee is paid in new shares, its appraisal at the 20-day average close
+    let mut cfg = cfg_absolute();
+    cfg.params.get_mut("company").and_then(|v| v.as_table_mut()).unwrap().insert("asset_injection".into(), toml::Value::Integer(1));
+    let (mut e, _) = platform_case(200);
+    e.st.corp.closes.insert(1, (0..30).map(|k| if k < 10 { 9999 } else { 600 }).collect());
+    let show = |id: i64, first_air: &str, aired: i64, us: f64, appraisal: Option<f64>| {
+        let mut v = serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,
+            "first_air": first_air, "episodes": 12, "episodes_known": true, "long_runner": false,
+            "popularity_end": 9000, "aired": aired, "has_real_data": true, "series": 1,
+            "att": {"us": us, "cn": 0.0, "jp": 0.0}, "expected": {"us": us, "cn": 0.0, "jp": 0.0}});
+        if let Some(a) = appraisal {
+            v["appraisal_att"] = serde_json::json!({"us": a, "cn": 2.0, "jp": 1.0, "basis": "window", "from": "2026-04-13", "to": "2026-06-07"});
+        }
+        v
+    };
+    let inp = |day: &str, appraisal: Option<f64>| {
+        Inputs::parse(
+            &serde_json::to_string(&serde_json::json!({
+                "day": day, "cn_titles": {"5": "前作"}, "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": 200,
+                "shows": [show(1, "2026-10-01", 6, 3000.0, None), show(2, "2026-10-01", 6, 1200.0, None),
+                          show(5, "2025-01-05", 12, 100.0, appraisal)]
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    // no appraisal data yet: it waits
+    assert!(matches!(e.run_day(&cfg, DAY, TS, &inp(DAY, None)).unwrap(), CloseOutcome::Closed(_)));
+    assert!(e.st.company_works.get(&5).is_none());
+    let shares0 = e.company(1).unwrap().shares;
+    let committee = e.account_of("committee", 1).unwrap();
+    let held0 = e.holding(committee, 1).unwrap().qty;
+    let day2 = "2026-11-09";
+    assert!(matches!(e.run_day(&cfg, day2, "2026-11-09T06:30:00+08:00", &inp(day2, Some(150.0))).unwrap(), CloseOutcome::Closed(_)));
+    assert_eq!(e.st.company_works.get(&5), Some(&1));
+    let p = Params::from_config(&cfg).unwrap();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    let (pl, sc) = e.platform_rule().unwrap();
+    let day = crate::vfilter::absolute_parts(&[150.0, 2.0, 1.0], &pl, &sc, &p.market_weights, &p);
+    let week: crate::valuation::M3 = std::array::from_fn(|m| day[m] * 7.0);
+    let value = pround(ip_appraisal(&p, &fp, &week, 0.03) * 100.0);
+    // the last 20 closes: the two days' closes appended after the 30 seeded ones (all 600 but the oldest 10, gone)
+    let avg = {
+        let v: Vec<i64> = e.st.corp.closes[&1].iter().rev().take(20).copied().collect();
+        (v.iter().sum::<i64>() as f64 / v.len() as f64).round() as i64
+    };
+    let issued = e.company(1).unwrap().shares - shares0;
+    assert!(issued > 0);
+    assert!((issued - value / avg).abs() <= 1, "{issued} vs {value}/{avg}");
+    assert_eq!(e.holding(committee, 1).unwrap().qty - held0, issued);
+    e.flush().unwrap();
+    e.check_invariants().unwrap();
+    // a premise of the number: the yearly decline enters the capitalisation per market
+    let flat = ip_appraisal(&p, &fp, &[1.0, 0.0, 0.0], 0.03);
+    assert!((flat - 52.0 * (1.0 - p.operating_cost_ratio) * (1.0 - p.corp_tax) / (0.03 + p.equity_premium + 1.0 - fp.tail[0].as_ref().map_or(1.0, |t| t.yearly))).abs() < 1e-9);
 }
 
 #[test]
@@ -638,4 +748,124 @@ fn an_offer_priced_over_its_value_is_cut_before_allotment() {
     apply(&mut e, "a", 600);
     assert_eq!(e.reprice_offers(&cfg, DAY, TS).unwrap(), 0);
     assert_eq!(e.company(2).unwrap().ipo_price, 500);
+}
+
+#[test]
+fn a_sequels_prior_takes_the_sequel_bias() {
+    // docs/design/series.md §5.3: a sequel's pre-air list entries include the earlier seasons' audience
+    let cfg = cfg();
+    let mut fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    fp.prior_bias = [0.5, -0.3, -0.5];
+    fp.prior_bias_sequel = [-0.2, -1.2, -1.2];
+    let mut s = show_with_sources(true, true);
+    s.first_air = "2026-07-01".into();
+    s.prior = Some(serde_json::from_value(serde_json::json!({"us": 100.0, "cn": 0.0, "jp": 0.0})).unwrap());
+    let today = crate::vclose::day_no("2026-07-01").unwrap();
+    let first = Engine::prior_mean(&fp, &s, today).unwrap();
+    s.prequel = true;
+    let seq = Engine::prior_mean(&fp, &s, today).unwrap();
+    for m in 0..3 {
+        assert!((first[m] - seq[m] - (fp.prior_bias[m] - fp.prior_bias_sequel[m])).abs() < 1e-12, "market {m}");
+    }
+}
+
+#[test]
+fn a_rebuild_takes_a_sequel_it_meets_as_financed_and_a_close_announces_one() {
+    // docs/design/series.md §5.2: a sequel announced before the state existed (met in a replay of the history) posts
+    // no notice and its production counts as paid; one a live close meets is announced
+    let cfg = cfg();
+    let p = Params::from_config(&cfg).unwrap();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    let mut s = show_with_sources(true, true);
+    s.prior = Some(serde_json::from_value(serde_json::json!({"us": 100.0, "cn": 0.0, "jp": 0.0})).unwrap());
+    s.relations_known = true;
+    s.sequel = Some(serde_json::from_value(serde_json::json!(
+        {"id": 900, "announced": "2026-09-20", "premieres": ["2027-04-15"], "exact": false})).unwrap());
+    let sequel_notices = |sink: &crate::store::persist::MemorySink| {
+        sink.0.lock().unwrap().iter().filter(|ch| matches!(ch, Change::NewsInsert(n) if n.kind == "sequel")).count()
+    };
+    for replay in [true, false] {
+        let (mut e, sink) = Engine::in_memory(Fees::default(), Rules::default());
+        e.insert_company(company(1, "listed", 1000, "2026-07-01", "2026-06-10"));
+        e.valuation_replay = replay;
+        e.valuation_step(&fp, &p, &s, DAY, TS);
+        e.commit();
+        let j = e.valuation_state(1).unwrap();
+        assert_eq!(j.sequel.as_ref().map(|q| q.0), Some(900));
+        assert_eq!(j.sequel_paid, if replay { Some(900) } else { None }, "replay {replay}");
+        assert_eq!(sequel_notices(&sink), if replay { 0 } else { 1 }, "replay {replay}");
+    }
+}
+
+#[test]
+fn an_official_no_sequel_is_announced_once_and_ends_the_option() {
+    // docs/design/series.md §5.4
+    let cfg = cfg();
+    let p = Params::from_config(&cfg).unwrap();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    let mut s = show_with_sources(true, true);
+    s.relations_known = true;
+    s.sequel_cancelled = Some("https://example.org/c".into());
+    let (mut e, sink) = Engine::in_memory(Fees::default(), Rules::default());
+    e.insert_company(company(1, "listed", 1000, "2026-07-01", "2026-06-10"));
+    let notices = |sink: &crate::store::persist::MemorySink| -> Vec<String> {
+        sink.0.lock().unwrap().iter().filter_map(|ch| match ch {
+            Change::NewsInsert(n) if n.kind == "sequel" => Some(format!("{}|{}", n.title, n.body.clone().unwrap_or_default())),
+            _ => None,
+        }).collect()
+    };
+    e.valuation_step(&fp, &p, &s, DAY, TS);
+    e.valuation_step(&fp, &p, &s, "2026-11-09", TS);
+    e.commit();
+    assert!(e.valuation_state(1).unwrap().sequel_cancelled);
+    assert_eq!(notices(&sink), vec!["《テスト》官方表示不再制作续作|来源：https://example.org/c".to_string()]);
+}
+
+#[test]
+fn a_new_listing_takes_the_earlier_works_of_its_series_at_their_appraisal() {
+    // docs/design/series.md §13.8: listed as a series; no shares issued for them after the listing
+    let mut cfg = cfg_absolute();
+    cfg.params.get_mut("company").and_then(|v| v.as_table_mut()).unwrap().insert("asset_injection".into(), toml::Value::Integer(1));
+    let p = Params::from_config(&cfg).unwrap();
+    let fp = crate::vfilter::FilterParams::load(&cfg).unwrap();
+    let price = |with_earlier: bool| {
+        let (mut e, _) = platform_case(200);
+        let show = |id: i64, first_air: &str, aired: i64, us: f64, series: i64, appraisal: bool| {
+            let mut v = serde_json::json!({"id": id, "title_ja": format!("作品{id}"), "title_en": null, "studio": null,
+                "first_air": first_air, "episodes": 12, "episodes_known": true, "long_runner": false,
+                "popularity_end": 9000, "aired": aired, "has_real_data": aired > 0, "series": series,
+                "prior": {"us": 2000.0, "cn": 0.0, "jp": 0.0},
+                "att": {"us": us, "cn": 0.0, "jp": 0.0}, "expected": {"us": us, "cn": 0.0, "jp": 0.0}});
+            if appraisal {
+                v["appraisal_att"] = serde_json::json!({"us": 150.0, "cn": 2.0, "jp": 1.0, "basis": "window", "from": "2026-04-13", "to": "2026-06-07"});
+            }
+            v
+        };
+        let mut shows = vec![show(1, "2026-10-01", 6, 3000.0, 1, false), show(2, "2026-10-01", 6, 1200.0, 2, false),
+                             show(7, "2026-12-01", 0, 300.0, 7, false)];
+        if with_earlier {
+            shows.push(show(6, "2024-04-05", 12, 80.0, 7, true));
+        }
+        let inp = Inputs::parse(&serde_json::to_string(&serde_json::json!({
+            "day": DAY, "cn_titles": {"6": "前作", "7": "新作"}, "series_titles": {"7": "系列名"},
+            "platform": {"us": 90000.0, "cn": 400.0, "jp": 1500.0}, "platform_days": 200, "shows": shows})).unwrap()).unwrap();
+        assert!(matches!(e.run_day(&cfg, DAY, TS, &inp).unwrap(), CloseOutcome::Closed(_)));
+        let c = e.company(7).expect("offer").clone();
+        e.flush().unwrap();
+        e.check_invariants().unwrap();
+        (c, e)
+    };
+    let (alone, _) = price(false);
+    let (series, e) = price(true);
+    assert_eq!(e.st.company_works.get(&6), Some(&7));
+    assert_eq!(series.title, "系列名");
+    assert_eq!(alone.title, "新作");
+    assert_eq!(series.shares, alone.shares, "no shares for the earlier work");
+    let (pl, sc) = e.platform_rule().unwrap();
+    let day = crate::vfilter::absolute_parts(&[150.0, 2.0, 1.0], &pl, &sc, &p.market_weights, &p);
+    let week: crate::valuation::M3 = std::array::from_fn(|m| day[m] * 7.0);
+    let per_share = ip_appraisal(&p, &fp, &week, 0.03) * 100.0 / series.shares as f64;
+    // the offer's discount applies to the whole line
+    let lift = (series.ipo_price - alone.ipo_price) as f64;
+    assert!(lift > 0.5 * per_share && lift <= per_share + 1.0, "{lift} vs {per_share}");
 }

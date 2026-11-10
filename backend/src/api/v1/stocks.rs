@@ -100,6 +100,21 @@ pub fn matches(cfg: &Config) -> std::collections::HashMap<String, Value> {
             out.insert(k.clone(), v.clone());
         }
     }
+    // the reviewed Bangumi archive matches, for shows nothing above gives a subject, never a subject already in use
+    // (engine/economy.py `effective_matches`)
+    if let Some(a) = all.get("archive").and_then(Value::as_object) {
+        let mut taken: std::collections::HashSet<String> =
+            out.values().filter_map(|v| v.get("bgm").filter(|b| !b.is_null()).map(|b| b.to_string())).collect();
+        for (k, v) in a {
+            let Some(b) = v.get("bgm").filter(|b| !b.is_null()) else { continue };
+            let e = out.entry(k.clone()).or_insert_with(|| serde_json::json!({}));
+            if let Some(e) = e.as_object_mut() {
+                if e.get("bgm").is_none_or(Value::is_null) && taken.insert(b.to_string()) {
+                    e.insert("bgm".into(), b.clone());
+                }
+            }
+        }
+    }
     if let Some(cdb) = super::market::collector(cfg) {
         if let Ok(mut s) = cdb.prepare("SELECT anilist_id, bgm_id FROM bgm_matches") {
             let rows = s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)));
@@ -375,8 +390,11 @@ pub async fn detail(
                 }
             }
         }
-        let next_episode = next_airings(cfg, &[id])
-            .get(&id)
+        // the current work's (docs/design/series.md §13.7): a series' new season once it has joined
+        let cur = super::market::current_works(c)?.remove(&id);
+        let work = cur.as_ref().map_or(id, |x| x.work);
+        let next_episode = next_airings(cfg, &[work])
+            .get(&work)
             .map(|(ep, at)| NextEpisode { episode: *ep, airs_at: ts(unix_ts(&st2, *at)) });
         let r = ratios(c, cfg, &today, Some(id))?.remove(&id).ok_or_else(|| error::internal("ratios"))?;
         // the last 28 days, cut like `ratios`: actual sums, never annualised
@@ -401,12 +419,12 @@ pub async fn detail(
             status: co.status.clone(),
             trading_day: day(today.clone()),
             shares: co.shares,
-            first_air: co.first_air.clone(),
+            first_air: cur.as_ref().map_or_else(|| co.first_air.clone(), |x| x.first_air.clone()),
             listed_on: co.listed_on.clone(),
             delisted_on: co.delisted_on.clone(),
-            episodes: co.episodes,
-            episodes_aired: aired_now,
-            is_long_runner: co.long_runner != 0,
+            episodes: cur.as_ref().map_or(co.episodes, |x| x.episodes),
+            episodes_aired: cur.as_ref().map_or(aired_now, |x| x.aired),
+            is_long_runner: cur.as_ref().map_or(co.long_runner != 0, |x| x.long),
             ipo_price: m(co.ipo_price),
             quote: StockQuote {
                 price: m(co.last_price),
@@ -816,7 +834,14 @@ pub async fn cover_file(st: &Arc<AppState>, name: &str) -> Response<Body> {
     }
 }
 
-async fn cover_of(st: &Arc<AppState>, id: i64) -> Response<Body> {
+async fn cover_of(st: &Arc<AppState>, stock: i64) -> Response<Body> {
+    // the company's current work's cover (a series' new season once it airs; docs/design/series.md §13.7): kept per
+    // work, served under the stock's address, so the edge may hold the old one for a day (`image_reply`)
+    let id = super::read(st, move |c| Ok(super::market::current_works(c)?.get(&stock).map(|x| x.work)))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(stock);
     let path = covers_dir(st).join(format!("{id}.img"));
     if let Ok(bytes) = tokio::fs::read(&path).await {
         return image_reply(bytes);
@@ -850,7 +875,8 @@ fn image_reply(bytes: Vec<u8>) -> Response<Body> {
     let Some(t) = image_type(&bytes) else { return no_cover() };
     let mut r = Response::new(Body::from(bytes));
     r.headers_mut().insert("content-type", HeaderValue::from_static(t));
-    r.headers_mut().insert("cache-control", HeaderValue::from_static("public, max-age=604800, immutable"));
+    // a day: a stock's cover changes when its series' new season starts airing
+    r.headers_mut().insert("cache-control", HeaderValue::from_static("public, max-age=86400"));
     r
 }
 

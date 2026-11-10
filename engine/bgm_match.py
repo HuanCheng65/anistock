@@ -131,9 +131,17 @@ def best(m: dict, subjects: dict[int, dict], claimed: set[int], near: int = 3) -
     return (top[1], top[0]) if top else None
 
 
-def wanted(m: dict) -> bool:
-    return (m.get("format") in FORMATS and not m.get("isAdult") and "Hentai" not in (m.get("genres") or [])
-            and m.get("status") in ("RELEASING", "NOT_YET_RELEASED") and (m.get("popularity") or 0) >= MIN_POPULARITY)
+MEMBER_FORMATS = FORMATS | {"MOVIE", "OVA", "SPECIAL"}
+
+
+def wanted(m: dict, member: bool = False) -> bool:
+    """A show worth a match: airing or upcoming; or an earlier work of a series (collect.py `collect_series_members`:
+    finished, and possibly a film, an OVA or a special), whose long tail joins a listed company."""
+    if m.get("isAdult") or "Hentai" in (m.get("genres") or []) or (m.get("popularity") or 0) < MIN_POPULARITY:
+        return False
+    if member:
+        return m.get("format") in MEMBER_FORMATS and m.get("status") != "NOT_YET_RELEASED"
+    return m.get("format") in FORMATS and m.get("status") in ("RELEASING", "NOT_YET_RELEASED")
 
 
 def latest(db: sqlite3.Connection, source: str, kind: str) -> dict[int, dict]:
@@ -171,7 +179,9 @@ def match_new(db: sqlite3.Connection, day: str, matches_file, search=None, fetch
     tries = {r[0]: r[1] for r in db.execute("SELECT anilist_id, searched_on FROM bgm_match_tries")}
     today = date.fromisoformat(day)
     out = {"todo": 0, "calendar": 0, "search": 0, "searched": 0}
-    todo = [(aid, m) for aid, m in shows.items() if aid not in have and aid not in done and wanted(m)]
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    members = {r[0] for r in db.execute("SELECT anilist_id FROM series_members")} if "series_members" in tables else set()
+    todo = [(aid, m) for aid, m in shows.items() if aid not in have and aid not in done and wanted(m, aid in members)]
     out["todo"] = len(todo)
     for aid, m in sorted(todo, key=lambda x: -(x[1].get("popularity") or 0)):
         hit = best(m, subjects, claimed)

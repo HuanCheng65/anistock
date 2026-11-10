@@ -94,6 +94,10 @@ pub struct ShowInputs {
     /// the collector has the show's relations as of the day (else "no sequel announced" is not information)
     #[serde(default)]
     pub relations_known: bool,
+    /// an operator's override (data/sequel_overrides.json, docs/design/series.md §5.4): the makers said officially
+    /// that there will be no sequel; its source
+    #[serde(default)]
+    pub sequel_cancelled: Option<String>,
     /// the public schedule: every main episode's air date on Bangumi (past and announced) (phase 1)
     #[serde(default)]
     pub schedule: Vec<String>,
@@ -103,6 +107,27 @@ pub struct ShowInputs {
     /// AniList's next episode on the day: its number and air day (docs/design/corporate.md §2.2)
     #[serde(default)]
     pub next_airing: Option<NextAiring>,
+    /// a finished earlier work of a series: its normal daily attention per market, the base of its public appraisal
+    /// when it joins the series' listed company by an asset injection (engine/daily_inputs.py `appraisal_att`,
+    /// docs/design/series.md §13); absent while the data is not all there
+    #[serde(default)]
+    pub appraisal_att: Option<AppraisalAtt>,
+}
+
+/// The appraisal base of an earlier work (engine/daily_inputs.py `appraisal_att`): mean daily attention per market
+/// over a window before the series' newest premiere ("window"), or the in-season mean times the fitted long tail
+/// `tail_days` after the finale ("season"), over the days `from`..`to`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppraisalAtt {
+    pub us: f64,
+    pub cn: f64,
+    pub jp: f64,
+    pub basis: String,
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub tail_days: Option<i64>,
 }
 
 /// AniList `nextAiringEpisode`: the episode number and its air day (local date of `airingAt`).
@@ -124,6 +149,9 @@ pub struct SequelInputs {
     pub premieres: Vec<String>,
     #[serde(default)]
     pub exact: bool,
+    /// an operator's override (data/sequel_overrides.json): the official announcement, before AniList lists it
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// One flag per market.
@@ -163,6 +191,9 @@ struct RawInputs {
     #[serde(default)]
     window_start: Option<String>,
     cn_titles: BTreeMap<String, String>,
+    /// series key -> the series' name (engine/daily_inputs.py `series_titles`, docs/design/series.md §13.7)
+    #[serde(default)]
+    series_titles: BTreeMap<String, String>,
     shows: Vec<ShowInputs>,
     /// phase 1: each market's platform size (docs/design/series.md §6) and the number of days it averages
     #[serde(default)]
@@ -182,6 +213,8 @@ pub struct Inputs {
     pub shows: Vec<ShowInputs>,
     pub index: HashMap<i64, usize>,
     pub cn_titles: BTreeMap<i64, String>,
+    /// series key -> the series' name: the name of a company with more than one work (docs/design/series.md §13.7)
+    pub series_titles: BTreeMap<i64, String>,
     /// each market's platform size: the trailing-year mean of the day's total attention of every tracked work
     /// airing (listed or not); None in inputs written before phase 1
     pub platform: Option<Markets>,
@@ -223,6 +256,10 @@ impl Inputs {
         for (k, v) in raw.cn_titles {
             cn_titles.insert(k.parse::<i64>().map_err(|e| format!("cn_titles key {k}: {e}"))?, v);
         }
+        let mut series_titles = BTreeMap::new();
+        for (k, v) in raw.series_titles {
+            series_titles.insert(k.parse::<i64>().map_err(|e| format!("series_titles key {k}: {e}"))?, v);
+        }
         let mut heat = BTreeMap::new();
         for (k, v) in raw.heat {
             heat.insert(k.parse::<i64>().map_err(|e| format!("heat key {k}: {e}"))?, v);
@@ -233,6 +270,7 @@ impl Inputs {
             shows,
             index,
             cn_titles,
+            series_titles,
             platform: raw.platform,
             platform_days: raw.platform_days.unwrap_or(0),
             heat,

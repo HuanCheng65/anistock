@@ -151,3 +151,50 @@ def test_the_us_platform_takes_the_rebuilt_history_for_the_days_it_covers(tmp_pa
         {"us": {(day - timedelta(days=k)).isoformat(): 100.0 for k in range(1, 400)}}))
     plat, n = D.platform_size([], {}, day, {"revenue": rv})
     assert n == 365 and plat == {"us": 100.0, "cn": 10000.0, "jp": 1000.0}
+
+
+def test_an_earlier_works_appraisal_reads_the_window_before_the_sequel():
+    """engine/daily_inputs.py `appraisal_att` (docs/design/series.md §13): the mean over weeks 26-18 before the newest
+    work's premiere, Japan from the Annict records; a finale close before the window: in-season level x the tail;
+    a Bangumi match without its viewer series yet, or Annict records not counted: not ready."""
+    import tomllib
+    from pathlib import Path
+    from engine import valuation as V
+    from engine.daily_inputs import appraisal_att
+    p = tomllib.loads((Path(E.ROOT) / "sim" / "params.toml").read_text(encoding="utf-8"))
+    rv, fp = p["revenue"], V.filter_params(p)
+    day, later = date(2026, 11, 8), date(2026, 10, 3)
+    first = date(2025, 12, 1)
+    s = E.Show(id=7, title="t", title_en=None, fmt="TV", episodes=12, popularity_end=0, studio=None, first_air=date(2022, 4, 9))
+    s.days = [first + timedelta(days=i) for i in range((day - first).days + 1)]
+    n = len(s.days)
+    s.trending, s.popularity, s.in_progress, s.score = [10.0] * n, [100.0] * n, [0.0] * n, [None] * n
+    s.ep_dates = [date(2022, 4, 9) + timedelta(weeks=k) for k in range(12)]
+    s.aired = [12] * n
+    us = E.raw_attention(s, day, rv)
+    lo = later - timedelta(weeks=26)
+    markets = {7: {(lo + timedelta(days=k)).isoformat(): {"cn": 4.0} for k in range(60)}}
+    rec = {(lo + timedelta(days=k)).isoformat(): 2 for k in range(0, 56, 2)}     # 2 every other day: 1 a day
+    a = appraisal_att(s, day, [(later, None)], rv, markets, fp, {"cn": True, "jp": True}, rec)
+    assert a["basis"] == "window" and a["from"] == lo.isoformat() and a["to"] == (later - timedelta(weeks=18, days=1)).isoformat()
+    assert abs(a["us"] - us) < 1e-3 and abs(a["cn"] - 4.0) < 1e-3 and abs(a["jp"] - 1.0) < 1e-3
+    # unmatched markets count nothing; matched but not ready: wait
+    assert appraisal_att(s, day, [(later, None)], rv, markets, fp, {"cn": False, "jp": False}, None)["cn"] == 0.0
+    assert appraisal_att(s, day, [(later, None)], rv, markets, fp, {"cn": True, "jp": True}, None) is None
+    assert appraisal_att(s, day, [(later, None)], rv, {}, fp, {"cn": True, "jp": False}, None, cn_listed=False) is None
+    assert appraisal_att(s, day, [(later, None)], rv, {}, fp, {"cn": True, "jp": False}, None)["cn"] == 0.0   # a film: no series
+    # a finale within 90 days of the window's start: the in-season level times the tail 120+ days on
+    s.first_air = date(2026, 1, 3)
+    s.ep_dates = [s.first_air + timedelta(weeks=k) for k in range(12)]
+    a = appraisal_att(s, day, [(later, None)], rv, markets, fp, {"cn": False, "jp": False}, None)
+    assert a["basis"] == "season" and a["tail_days"] == 120
+    assert abs(a["us"] - round(us * V.tail_mean(V.tail_of(fp, "us"), 120, 1.0), 4)) < 1e-3
+    # another season aired months before the listed sequel: the window steps back before its run-up
+    s.first_air = date(2022, 4, 9)
+    s.ep_dates = [date(2022, 4, 9) + timedelta(weeks=k) for k in range(12)]
+    s2 = (date(2026, 4, 12), date(2026, 6, 28))
+    from engine.daily_inputs import appraisal_window
+    lo, hi, clean = appraisal_window(date(2025, 8, 1), s.ep_dates[-1], day, [s2, (later, None)])
+    assert clean and hi == s2[0] - timedelta(weeks=18) and hi - lo == timedelta(days=56)
+    # the data starts too late for that: the latest window anyway, marked
+    assert appraisal_window(first, s.ep_dates[-1], day, [s2, (later, None)])[2] is False

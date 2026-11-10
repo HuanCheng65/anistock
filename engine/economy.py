@@ -47,6 +47,8 @@ class Show:
     promo: bool = False              # a PV / CM / teaser compilation, not a show (`is_promo`): never listed
     source: str | None = None        # AniList source (MANGA, LIGHT_NOVEL, ORIGINAL, ...)
     genres: list[str] = field(default_factory=list)  # AniList genres + THEME_TAGS it carries (the theme indices)
+    ep_dates: list[date] | None = None  # a series member that aired before the trends: each episode's day, from its run
+    member: bool = False             # an earlier work of a tracked show's series (collect.py `collect_series_members`)
 
 
 # AniList tags the theme indices select on (docs/design/funds.md §3), with the rank (how central the tag is to the
@@ -103,10 +105,14 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
         end = max_day - timedelta(days=1)    # the last day is usually partial
     gaps = find_gap_days(trends, end)
 
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    members = {r[0] for r in db.execute("SELECT anilist_id FROM series_members")} if "series_members" in tables else set()
     u = p["universe"]
     shows = []
     for mid, m in latest.items():
-        if m.get("format") not in u["formats"] or (m.get("popularity") or 0) < u["min_popularity"]:
+        if (m.get("popularity") or 0) < u["min_popularity"]:
+            continue
+        if m.get("format") not in u["formats"] and not member_tail(m, mid in members, end):
             continue
         t = trends.get(mid)
         if not t:
@@ -136,20 +142,55 @@ def load_shows(db_path: Path, p: dict, start: date, end: date | None,
         _extend_into_gap(s, gaps)
         s.list_day = max(start, s.first_air - timedelta(days=u["ipo_lead_days"]))
         v = p["valuation"]
-        # a long-runner has been on air for years: its run so far, to its end date once AniList calls it finished (a show
-        # that premiered years ago and ran one season is not one: a listed sequel's finished prequel, docs/design/series.md §13)
+        # a long-runner has been on air for years and still is: a finished show (a listed sequel's prequel, even one
+        # that ran for years) has a finale and a long tail, docs/design/series.md §13
         ed = m.get("endDate") or {}
-        run_end = end
-        if m.get("status") == "FINISHED" and ed.get("year") and ed.get("month"):
-            run_end = min(end, date(ed["year"], ed["month"], ed.get("day") or 28))
-        s.long_runner = (run_end - s.first_air).days > 365 * v["long_runner_years"]
+        finished = m.get("status") == "FINISHED" and bool(ed.get("year")) and date(ed["year"], ed.get("month") or 12, ed.get("day") or 28) <= end
+        s.long_runner = not finished and (end - s.first_air).days > 365 * v["long_runner_years"]
         s.episodes_known = s.episodes is not None
         if s.episodes is None and not s.long_runner:
             s.episodes = v["default_episodes"]
+        if mid in members:
+            s.member = True
+            member_episodes(s, m)
         if s.list_day > end + timedelta(days=upcoming_days):   # the game opens subscriptions ahead of listing
             continue
         shows.append(s)
     return shows, end
+
+
+MEMBER_TAIL_DAYS = 60    # a film, OVA or special of a series joins it this long after its run ended: the long tail only
+
+
+def _end_date(m: dict) -> date | None:
+    ed = m.get("endDate") or {}
+    return date(ed["year"], ed.get("month") or 12, ed.get("day") or 28) if ed.get("year") else None
+
+
+def member_tail(m: dict, member: bool, end: date | None) -> bool:
+    """A series member outside the listing's formats (a film, an OVA, a special: docs/design/series.md §13) is a work
+    of the game once its run ended MEMBER_TAIL_DAYS ago: its long tail joins the company. The game has no model of a
+    film's or OVA's run (the handoff's open item), so one still showing is left out."""
+    if not member or m.get("status") != "FINISHED" or end is None:
+        return False
+    e = _end_date(m)
+    return e is not None and e <= end - timedelta(days=MEMBER_TAIL_DAYS)
+
+
+def member_episodes(s: Show, m: dict) -> None:
+    """A finished series member whose trends do not show its whole run (it aired before AniList's trend rows, or
+    before the backfill): each episode's day spread evenly from its start to its end date (a film: its release),
+    so the valuation sees a finale and a long tail instead of a show still airing."""
+    e = _end_date(m)
+    if m.get("status") != "FINISHED" or e is None or s.first_air is None or not s.aired:
+        return
+    n = s.episodes if s.episodes_known and s.episodes else max(1, round((e - s.first_air).days / 7) + 1)
+    if s.aired[-1] >= n:
+        return
+    span = max(0, (e - s.first_air).days)
+    s.ep_dates = [s.first_air + timedelta(days=round(span * k / (n - 1))) if n > 1 else s.first_air for k in range(n)]
+    s.aired = [sum(1 for x in s.ep_dates if x <= d) for d in s.days]
+    s.episodes, s.episodes_known = n, True
 
 
 GAP_BASELINE = range(20, 48)   # days before a day whose row counts give its usual count

@@ -217,6 +217,18 @@ pub struct IpoApplication {
     pub created_at: String,
 }
 
+/// `company_current` (V27): a company's current work (docs/design/series.md §13.7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompanyCurrent {
+    pub company_id: i64,
+    pub work_id: i64,
+    pub first_air: String,
+    pub episodes: Option<i64>,
+    pub aired: i64,
+    pub long_runner: bool,
+    pub since: String,
+}
+
 /// `company_days`: what a business did on one day.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CompanyDay {

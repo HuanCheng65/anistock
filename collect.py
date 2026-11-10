@@ -33,7 +33,7 @@ import sys
 import threading
 import time
 import unicodedata
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
@@ -537,11 +537,12 @@ def collect_anilist(store: Store, backfill: bool) -> str:
     store.commit()
 
     rel = collect_anilist_relations(http, store, list(found))
+    members = collect_series_members(http, store)
 
     filled = 0
     if backfill:
         filled = _backfill_trends(http, store, list(found), season_start(*previous_season(year, season)))
-    return f"media={len(found)} missing_refetched={len(missing)} relations={rel} backfilled_trend_rows={filled}"
+    return f"media={len(found)} missing_refetched={len(missing)} relations={rel} {members} backfilled_trend_rows={filled}"
 
 
 RELATIONS_QUERY = """
@@ -580,6 +581,87 @@ def collect_anilist_relations(http: Http, store: Store, ids: list[int]) -> int:
             n += 1
         store.commit()
     return n
+
+
+SERIES_BACKFILL_DAYS = 450    # a series member's trends (and Annict records) this far back: the appraisal window of an
+                               # asset injection (docs/design/series.md §13), 8 weeks clear of the other works' run-ups
+                               # and runs: before a season that aired months before the listed sequel, too
+
+
+def series_seeds(store: Store) -> list[int]:
+    """The tracked AniList works whose series' earlier works matter: airing, upcoming, or premiered within a year (a
+    listed sequel, docs/design/series.md §13)."""
+    cutoff = date.fromisoformat(store.day) - timedelta(days=365)
+    latest: dict[int, dict] = {}
+    for i, d in store.db.execute(
+            "SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day"):
+        latest[int(i)] = json.loads(d)
+    out = []
+    for i, m in latest.items():
+        sd = m.get("startDate") or {}
+        recent = bool(sd.get("year")) and date(sd["year"], sd.get("month") or 1, sd.get("day") or 1) >= cutoff
+        if m.get("status") in ("RELEASING", "NOT_YET_RELEASED") or recent:
+            out.append(i)
+    return sorted(out)
+
+
+def collect_series_members(http: Http, store: Store) -> str:
+    """Register the earlier works of the tracked shows' series (docs/design/series.md §13: a listed sequel's prequels
+    join its company by an asset injection): the works `engine.series.members` reaches from `series_seeds` over
+    AniList's relations (sim/series.json applies) that have aired, are not adult or a promo, and have the listing's
+    popularity. A new member's trends are read back SERIES_BACKFILL_DAYS (its revenue in the appraisal window) and it
+    is tracked from then on like any other work (table series_members notes why)."""
+    from engine.series import load_exceptions, members
+    store.db.execute("CREATE TABLE IF NOT EXISTS series_members (anilist_id INTEGER PRIMARY KEY, seed INTEGER NOT NULL, "
+                     "added_on TEXT NOT NULL)")
+    rel: dict[int, list] = {}
+    for i, d in store.db.execute(
+            "SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='relations' ORDER BY day"):
+        rel[int(i)] = json.loads(d).get("edges") or []
+    fetched: dict[int, list] = {}
+
+    def edges_of(ids: list[int]) -> dict[int, list]:
+        need = [i for i in ids if i not in rel and i not in fetched]
+        for k in range(0, len(need), 50):
+            data = http.graphql(ANILIST, RELATIONS_QUERY, {"ids": need[k:k + 50], "page": 1})
+            for m in data["Page"]["media"]:
+                fetched[m["id"]] = m["relations"]["edges"] or []
+            for i in need[k:k + 50]:
+                fetched.setdefault(i, [])
+        return {i: rel.get(i, fetched.get(i, [])) for i in ids}
+
+    tracked = {int(i) for i in store.tracked("anilist", tail=None)}
+    ex = load_exceptions()
+    seeds = series_seeds(store)
+    # one walk from every seed at once (a request per step for all the works first met in it), then each seed's own
+    # from the relations already read (no requests): which series a new member came from
+    members(seeds, edges_of, ex, limit=20000)
+    cached = lambda ids: {i: rel.get(i, fetched.get(i, [])) for i in ids}  # noqa: E731
+    seed_of: dict[int, int] = {}
+    for s in seeds:
+        for w in members([s], cached, ex):
+            if w not in tracked:
+                seed_of.setdefault(w, s)
+    new: list[int] = []
+    cand = sorted(seed_of)
+    for k in range(0, len(cand), 50):
+        for m in _anilist_pages(http, {"ids": cand[k:k + 50]}):
+            if excluded_media(m) or m.get("status") in ("NOT_YET_RELEASED", "CANCELLED", None) \
+                    or (m.get("popularity") or 0) < DISCOVER_MIN_POPULARITY:
+                continue
+            store.register("anilist", m["id"], m["title"].get("native") or m["title"].get("romaji"), m.get("idMal"))
+            recent = m.pop("recent", {}).get("nodes", [])
+            store.snapshot("anilist", "media", m["id"], m)
+            for node in recent:
+                store.trend(m["id"], node)
+            if m["id"] in fetched:
+                store.snapshot("anilist", "relations", m["id"], {"edges": fetched[m["id"]]})
+            store.db.execute("INSERT OR IGNORE INTO series_members VALUES (?,?,?)", (m["id"], seed_of[m["id"]], store.day))
+            new.append(m["id"])
+            log.info("series member: AniList %s %s (series of %s)", m["id"], m["title"].get("native"), seed_of[m["id"]])
+    store.commit()
+    filled = _backfill_trends(http, store, new, date.fromisoformat(store.day) - timedelta(days=SERIES_BACKFILL_DAYS)) if new else 0
+    return f"series_members_new={len(new)} candidates={len(cand)} backfilled_trend_rows={filled}"
 
 
 # ---------------------------------------------------------------- Annict
@@ -753,7 +835,8 @@ DISCOVER_MIN_POPULARITY = 3000  # AniList list entries, the listing gate (game.m
 
 def discover_annict(http: "Http", store: Store) -> int:
     """Annict works the season listing misses: long-runners (ONE PIECE, Conan...), ONAs and anything that
-    started in an older season. For every airing or upcoming AniList show with a MAL id that no tracked
+    started in an older season. For every airing or upcoming AniList show, or series member (`collect_series_members`,
+    finished years ago), with a MAL id that no tracked
     Annict work carries, search Annict by title and keep a hit only when its MAL id matches. Works found
     earlier are re-registered every day so they stay tracked. Returns the number of new works."""
     by_mal = {int(m): i for i, m in store.db.execute(
@@ -762,10 +845,12 @@ def discover_annict(http: "Http", store: Store) -> int:
     for i, d in store.db.execute(
             "SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' ORDER BY day"):
         latest[int(i)] = json.loads(d)
+    tables = {r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    members = {r[0] for r in store.db.execute("SELECT anilist_id FROM series_members")} if "series_members" in tables else set()
     new = 0
-    for m in latest.values():
+    for mid, m in latest.items():
         mal = m.get("idMal")
-        if not mal or m.get("status") not in ("RELEASING", "NOT_YET_RELEASED") \
+        if not mal or (m.get("status") not in ("RELEASING", "NOT_YET_RELEASED") and mid not in members) \
                 or (m.get("popularity") or 0) < DISCOVER_MIN_POPULARITY:
             continue
         if int(mal) in by_mal:
@@ -802,6 +887,75 @@ def discover_annict(http: "Http", store: Store) -> int:
                      mal, m["id"], t.get("native"), "; ".join(seen) or "none")
     store.commit()
     return new
+
+
+MEMBER_RECORDS_BATCH = 20     # episodes a request, each by alias with its own cursor (sim/backfill_annict_records.py)
+
+
+def member_records_query(cursors: dict[int, str | None]) -> str:
+    parts = [f'e{eid}: searchEpisodes(annictIds: [{eid}]) {{ nodes {{ records(first: 100, after: {json.dumps(after)}, '
+             f'orderBy: {{field: CREATED_AT, direction: DESC}}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{ createdAt }} }} }} }}'
+             for eid, after in cursors.items()]
+    return "query { " + " ".join(parts) + " }"
+
+
+def count_member_records(http: Http, store: Store, works: dict[int, dict]) -> int:
+    """Each series member's Annict records per Asia/Shanghai day back SERIES_BACKFILL_DAYS, once (table member_records):
+    the Japan revenue of the appraisal window (docs/design/series.md §13; the same count sim/backfill_annict_records.py
+    makes for the heat index). Newest first, an episode's paging stops at the window's start. `works`: Annict id ->
+    its work (the MAL id). Returns the works counted."""
+    store.db.executescript("""
+        CREATE TABLE IF NOT EXISTS member_records (annict_id INTEGER NOT NULL, day TEXT NOT NULL, records INTEGER NOT NULL,
+            PRIMARY KEY (annict_id, day));
+        CREATE TABLE IF NOT EXISTS member_records_done (annict_id INTEGER PRIMARY KEY, since TEXT NOT NULL, at TEXT NOT NULL);""")
+    tables = {r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "series_members" not in tables:
+        return 0
+    mal_of = {}
+    for i, d in store.db.execute("SELECT external_id, data FROM snapshots WHERE source='anilist' AND kind='media' "
+                                 "AND external_id IN (SELECT anilist_id FROM series_members) ORDER BY day"):
+        mal_of[int(i)] = (json.loads(d).get("idMal"))
+    member_mals = {str(m) for m in mal_of.values() if m}
+    done = {r[0] for r in store.db.execute("SELECT annict_id FROM member_records_done")}
+    todo = [wid for wid, w in works.items() if wid not in done and str(w.get("malAnimeId") or "") in member_mals]
+    since = (date.fromisoformat(store.day) - timedelta(days=SERIES_BACKFILL_DAYS)).isoformat()
+    for wid in todo:
+        per_day: Counter = Counter()
+        eps, after = [], None     # every episode (the daily snapshot keeps the latest 100: BLEACH has 366)
+        while True:
+            r = http.graphql(ANNICT, ANNICT_EPISODES, {"id": wid, "after": after})["searchWorks"]["nodes"]
+            if not r or not r[0]["episodes"]:
+                break
+            eps.extend(r[0]["episodes"]["nodes"])
+            if not r[0]["episodes"]["pageInfo"]["hasNextPage"]:
+                break
+            after = r[0]["episodes"]["pageInfo"]["endCursor"]
+        queue_ = [e["annictId"] for e in eps if (e.get("recordsCount") or 0) > 0]
+        active: dict[int, str | None] = {}
+        while queue_ or active:
+            while queue_ and len(active) < MEMBER_RECORDS_BATCH:
+                active[queue_.pop()] = None
+            data = http.graphql(ANNICT, member_records_query(active))
+            for eid in list(active):
+                nodes = (data.get(f"e{eid}") or {}).get("nodes") or []
+                rec = nodes[0]["records"] if nodes else {"nodes": [], "pageInfo": {"hasNextPage": False}}
+                older = False
+                for r in rec["nodes"]:
+                    d = datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")).astimezone(TZ).date().isoformat()
+                    if d < since:
+                        older = True
+                        break
+                    per_day[d] += 1
+                if rec["pageInfo"]["hasNextPage"] and not older:
+                    active[eid] = rec["pageInfo"]["endCursor"]
+                else:
+                    del active[eid]
+        store.db.execute("DELETE FROM member_records WHERE annict_id=?", (wid,))
+        store.db.executemany("INSERT INTO member_records VALUES (?,?,?)", [(wid, d, n) for d, n in sorted(per_day.items())])
+        store.db.execute("INSERT OR REPLACE INTO member_records_done VALUES (?,?,?)", (wid, since, store.day))
+        store.commit()
+        log.info("annict member records: work %s, %d records since %s", wid, sum(per_day.values()), since)
+    return len(todo)
 
 
 FILMARKS = "https://filmarks.com"
@@ -1006,7 +1160,9 @@ def collect_annict(store: Store, budget: float | None = None) -> str | None:
         extra = {} if pairs is None else {"viewerPairs": pairs}
         store.snapshot("annict", "work", wid, {**w, "episodes": eps, **extra})
         store.commit()
-    return f"works={len(found)} seasons={seasons} discovered={discovered} viewers_pending={pending}"
+        found[wid] = {**w, "episodes": eps}
+    counted = count_member_records(http, store, found)
+    return f"works={len(found)} seasons={seasons} discovered={discovered} viewers_pending={pending} member_records={counted}"
 
 
 def sync_annict_viewers(store: Store) -> str:

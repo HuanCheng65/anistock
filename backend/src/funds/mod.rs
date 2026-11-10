@@ -273,14 +273,15 @@ pub fn labels_from_collector(path: &std::path::Path) -> BTreeMap<i64, (Option<St
 
 /// Whether company `c` belongs to index `key` on trading day `day` (docs/api-v1.md §4.1.4: `all`, `long`; `season`
 /// from `season_start`): listed, with a close before `day` (a new listing joins the day after its first session).
-pub fn member(key: &str, c: &crate::model::Company, day: &str, season_from: &str) -> bool {
+pub fn member(key: &str, c: &crate::model::Company, cur: Option<&crate::model::CompanyCurrent>, day: &str, season_from: &str) -> bool {
     if c.status != "listed" || c.listed_on.as_str() >= day {
         return false;
     }
     let Some(d) = crate::indices::def(key) else { return false };
+    // the current work's labels (docs/design/series.md §13.7), as the published index
     let l = crate::indices::Labels {
-        long: c.long_runner != 0,
-        first_air: &c.first_air,
+        long: cur.map_or(c.long_runner != 0, |x| x.long_runner),
+        first_air: cur.map_or(&c.first_air, |x| &x.first_air),
         source: c.source.as_deref(),
         genres: &c.genres,
     };
@@ -546,7 +547,7 @@ impl Engine {
             .st
             .companies
             .values()
-            .filter(|c| member(key, c, day, &qs))
+            .filter(|c| member(key, c, self.st.company_current.get(&c.id), day, &qs))
             .map(|c| (c.id, price(c) as f64 * self.index_float(c.id)))
             .collect();
         if let crate::indices::Rule::Top(n) = def.rule {

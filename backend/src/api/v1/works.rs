@@ -205,7 +205,8 @@ pub async fn works(State(st): State<Arc<AppState>>, Path(raw_id): Path<String>) 
         let mut works = Vec::new();
         let mut dated: Option<(String, i64)> = None;
         for w in r.works {
-            let title = w.title.clone().or_else(|| work_title(cdb.as_ref(), &ids, w.id)).unwrap_or_default();
+            // the work's own name (a company of several works goes by its series' name, docs/design/series.md §13.7)
+            let title = work_title(cdb.as_ref(), &ids, w.id).or_else(|| w.title.clone()).unwrap_or_default();
             let noticed = |ep: i64| notices.iter().any(|t| t.starts_with(&format!("《{title}》")) && t.contains(&format!("第 {ep} 集延期")));
             let n_aired = w.aired.last().map_or(0, |a| a.0);
             let mut schedule: Vec<ScheduledEpisode> = w

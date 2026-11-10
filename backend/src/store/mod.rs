@@ -226,6 +226,8 @@ pub struct Snapshot {
     pub jstate: std::collections::HashMap<i64, crate::vclose::JState>,
     /// work (AniList id) -> company, for the works a company owns besides its first (table company_works, V9)
     pub company_works: BTreeMap<i64, i64>,
+    /// company -> its current work (table company_current, V27)
+    pub company_current: BTreeMap<i64, crate::model::CompanyCurrent>,
     /// players who have restructured (table player_returns, migration V4)
     pub player_returns: BTreeMap<i64, PlayerReturn>,
     /// 融资融券 (migration V7; empty for older databases)
@@ -539,6 +541,24 @@ fn load_daily(conn: &Connection, s: &mut Snapshot) -> DbResult<()> {
         for row in rows {
             let (w, c) = row?;
             s.company_works.insert(w, c);
+        }
+    }
+    if table_exists(conn, "company_current")? {
+        let mut st = conn.prepare("SELECT company_id, work_id, first_air, episodes, aired, long_runner, since FROM company_current")?;
+        let rows = st.query_map([], |r| {
+            Ok(crate::model::CompanyCurrent {
+                company_id: r.get(0)?,
+                work_id: r.get(1)?,
+                first_air: r.get(2)?,
+                episodes: r.get(3)?,
+                aired: r.get(4)?,
+                long_runner: r.get::<_, i64>(5)? != 0,
+                since: r.get(6)?,
+            })
+        })?;
+        for row in rows {
+            let x = row?;
+            s.company_current.insert(x.company_id, x);
         }
     }
     if table_exists(conn, "valuation_joint")? {

@@ -1,5 +1,60 @@
 {
- "note": "Series grouping exceptions (docs/design/series.md §3.1; engine/series.py). subsidiary: AniList id -> parent id, listed as its own company. merge: groups of AniList ids that are one series although AniList does not link them. Kept by hand each season, like sim/matches.json.",
- "subsidiary": {},
- "merge": []
+ "note": "Series grouping exceptions (docs/design/series.md §3.1; engine/series.py). subsidiary: AniList id -> parent id, listed as its own company. merge: groups of AniList ids that are one series although AniList does not link them. cut: pairs whose SEQUEL/PREQUEL relation is not followed. names: a series' name by any of its works (default: its first TV/ONA work's Chinese title). _why: the reason for each entry. Kept by hand each season, like sim/matches.json.",
+ "subsidiary": {
+  "167404": "21"
+ },
+ "merge": [
+  [
+   "206814",
+   "21175",
+   "14837"
+  ],
+  [
+   "101302",
+   "133898"
+  ]
+ ],
+ "_why": {
+  "167404": "ONE PIECE「MONSTERS」(2024): an adaptation of Oda's one-shot, not the series; AniList links it as a sequel",
+  "206814": "ドラゴンボール超 ビルス (2026): an enhanced re-edit of ドラゴンボール超 by the same Toei team. Its line is the Super story: 神と神 and 復活の「F」 (AniList: ALTERNATIVE to 超, the arcs 超 retells), 超, ブロリー, スーパーヒーロー (AniList links it only through the unaired 銀河パトロール) and what follows; not Dragon Ball, Z, GT, 改 and DAIMA (cut). AniList relates ビルス to 超 as PARENT (its source), not as a sequel",
+  "8687": "ドラえもん (2005): the 1979 series (and the 1973 one before it) are other productions of decades before, not its prequels",
+  "178869": "name: the first season's Chinese title carries its own subtitle (魔兽之王与婴儿与尸之勇者); the series is Clevatess"
+ },
+ "cut": [
+  [
+   "21175",
+   "813"
+  ],
+  [
+   "21175",
+   "20635"
+  ],
+  [
+   "21175",
+   "170083"
+  ],
+  [
+   "206814",
+   "813"
+  ],
+  [
+   "206814",
+   "20635"
+  ],
+  [
+   "206814",
+   "170083"
+  ],
+  [
+   "14837",
+   "170083"
+  ],
+  [
+   "8687",
+   "2471"
+  ]
+ ],
+ "names": {
+  "178869": "Clevatess"
+ }
 }

@@ -9,8 +9,20 @@ import CommentBars from './CommentBars.vue'
 const props = defineProps<{ s: StockDetail; works: WorksResponse | null; failed: boolean; today?: string }>()
 defineEmits<{ retry: [] }>()
 
-const list = computed(() => props.works?.works ?? [])
+// newest first; the current work (on air, else the next season, else the latest) shows its schedule, the other
+// finished works of the series fold to one line each (a 366-episode first series would fill the page)
+const list = computed(() => [...(props.works?.works ?? [])].sort((a, b) => (b.first_air ?? '').localeCompare(a.first_air ?? '')))
 const many = computed(() => list.value.length > 1)
+const current = computed(() => {
+  const l = list.value
+  return (l.find((w) => w.status === 'airing' || w.status === 'halted') ?? [...l].reverse().find((w) => w.status === 'upcoming') ?? l[0])?.id
+})
+const folded = (w: Work) => many.value && w.id !== current.value && w.status === 'finished'
+function span(w: Work): string {
+  const from = w.first_air?.slice(0, 4)
+  const to = [...w.schedule].reverse().find((e) => e.aired && e.date)?.date?.slice(0, 4)
+  return from && to && to !== from ? `${from}–${to}` : from ?? ''
+}
 /** the work whose discussion is shown: the latest with any */
 const talk = computed(() => [...list.value].reverse().find((w) => w.discussion.length > 1) ?? null)
 
@@ -76,7 +88,22 @@ const audience = computed(() => {
   <div class="works">
     <div class="sched">
       <template v-if="works">
-        <section v-for="w in list" :key="w.id" class="work" :aria-label="many ? w.title : '播出排期'">
+        <p v-if="many" class="count">系列共 {{ list.length }} 部</p>
+        <template v-for="w in list" :key="w.id">
+        <details v-if="folded(w)" class="work fold">
+          <summary class="wh">
+            <h3 class="h3 clamp1">{{ w.title }}</h3>
+            <span class="st">{{ span(w) }} · 已完结 {{ w.episodes_aired }} 集</span>
+          </summary>
+          <ol class="eps" :class="{ long: w.is_long_runner }">
+            <li v-for="e in w.schedule" :key="e.episode" class="ep aired">
+              <span class="sr-only">{{ epLabel(e) }}</span>
+              <span class="n num" aria-hidden="true">{{ e.episode }}</span>
+              <span class="d num" aria-hidden="true">{{ e.date ? cellDay(e.date) : '待定' }}</span>
+            </li>
+          </ol>
+        </details>
+        <section v-else class="work" :aria-label="many ? w.title : '播出排期'">
           <header v-if="many || w.status !== 'airing'" class="wh">
             <h3 v-if="many" class="h3 clamp1">{{ w.title }}</h3>
             <span class="st" :class="{ quiet: !many }">{{ status(w) }}</span>
@@ -92,6 +119,7 @@ const audience = computed(() => {
           </ol>
           <p v-if="!w.schedule.length" class="none">暂无排期</p>
         </section>
+        </template>
         <p v-if="!list.length" class="none">暂无排期</p>
       </template>
       <div v-else-if="failed" class="none err">
@@ -131,6 +159,12 @@ const audience = computed(() => {
 .h3 { font-family: var(--font-serif); font-size: 15px; font-weight: 900; min-width: 0; }
 .st { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .st.quiet { color: var(--muted); }
+.count { font-size: 13px; color: var(--muted); }
+.fold { gap: 0; }
+.fold > summary { list-style: none; cursor: pointer; padding: 8px 0; border-top: 1px solid var(--hair); }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary .h3 { font-size: 14px; font-weight: 700; }
+.fold[open] > summary { margin-bottom: 8px; }
 .none { font-size: 13px; color: var(--muted); padding: 8px 0; }
 .err { display: flex; gap: 10px; align-items: baseline; }
 

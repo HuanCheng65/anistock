@@ -56,6 +56,9 @@ struct RawParams {
     r: PerMarket,
     p0: PerMarket,
     prior_bias: PerMarket,
+    /// v0.8.4: the prior bias of a show that is itself a sequel (absent: `prior_bias`)
+    #[serde(default)]
+    prior_bias_sequel: Option<PerMarket>,
     outlier_p: PerMarket,
     outlier_r: PerMarket,
     #[serde(default)]
@@ -198,6 +201,9 @@ pub struct FilterParams {
     pub r: M3,
     pub p0: M3,
     pub prior_bias: M3,
+    /// the prior bias of a show that is itself a sequel (docs/design/series.md §5.3): its pre-air list entries
+    /// include the earlier seasons' audience, so the same estimate means about half the attention
+    pub prior_bias_sequel: M3,
     pub outlier_p: M3,
     pub outlier_r: M3,
     pub flash_curve: Vec<f64>,
@@ -419,6 +425,7 @@ impl FilterParams {
             r: r.r.m3(),
             p0: r.p0.m3(),
             prior_bias: r.prior_bias.m3(),
+            prior_bias_sequel: r.prior_bias_sequel.as_ref().map_or(r.prior_bias.m3(), |b| b.m3()),
             outlier_p: r.outlier_p.m3(),
             outlier_r: r.outlier_r.m3(),
             flash_curve: r.flash_curve,
@@ -1185,8 +1192,10 @@ mod tests {
         let cfg = Config::load_from(&root, |_| None).unwrap();
         let p = Params::from_config(&cfg).unwrap();
         let mut fp = FilterParams::load(&cfg).unwrap();
-        // the sequel option is off by config; the reference covers it
+        // the reference covers the sequel option gross of production costs (whatever the config says; the costs are
+        // checked below)
         fp.sequel = Some(serde_json::from_str(&std::fs::read_to_string(root.join("sim/calibration/sequel.json")).unwrap()).unwrap());
+        fp.sequel_cost = 0.0;
         let today = 740000;
         let s1 = schedule(&[today - 20, today - 13, today - 6], Some(12), false);
         let s2 = schedule(&[], None, true);

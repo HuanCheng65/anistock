@@ -613,7 +613,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 | `market_cap` | Money | | `price × shares` |
 | `week_revenue` | Money | | 截至最近一次日结的 7 日营收 |
 | `week_revenue_change` | number | 是 | 比例，比前 7 日（`revenue_change`） |
-| `episodes_aired` | integer | | 已播集数（`aired`） |
+| `episodes_aired` | integer | | 已播集数（`aired`）。这一行到 `first_air` 都是公司**当前作品**的：名下正在播的那部，没有时是已并入、还没开播的新一季，再没有就是最近播出的一部（`docs/design/series.md` §13.7） |
 | `episodes` | integer | 是 | 总集数，未知或长篇为 null |
 | `is_long_runner` | boolean | | （`long_runner`） |
 | `first_air` | date | | |
@@ -832,7 +832,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 - **成分按当天**（v0.6.0 起）：每天计入当天和前一天都有收盘价的股票。退市的股票保留退市前的涨跌，退市后不再计入；新股从上市第二天起计入。`members` 是今天在市的成分数。
 - **口径** `basis`：默认 `total_return`（全收益，主指数）：分红在当天加回（当天收盘价 + 每股分红），退市当天按返还股东的每股现金计；`basis=price` 返回价格指数（只看价格）。两个口径的基日和基点相同（1000）。
 - **复权**：拆股、配股按复权因子换算（和 K 线前复权一致），除权本身不改变指数。权重用前复权收盘价 × 现在的流通股数（不含制作委员会和公司自己持有的股份，即按流通市值加权）。
-- **本季新番** `season`：首播在 `season_from` 及以后的非长篇。`season_from` 是季度第一天（`season_start`）前 14 天：10 月季的新番常在 9 月最后一周开播，算本季（和估值的季度划分一致）。
+- **本季新番** `season`：首播在 `season_from` 及以后的非长篇（按公司的当前作品：系列的新一季开播后，股票回到本季新番）。`season_from` 是季度第一天（`season_start`）前 14 天：10 月季的新番常在 9 月最后一周开播，算本季（和估值的季度划分一致）。
 - 参数 `series=false` 去掉走势（机器人只要点位时用）。
 - 参数 `set`：`market`（默认）只返回行情页的 3 个；`all` 再加上指数基金跟踪的 6 个（docs/v3-funds.md §3）：`top20` 安易 20（每月第一个交易日按前一天的流通市值取前 20，月中不变，退市即移出）、`manga` 漫改、`light_novel` 轻改（AniList 原作类型）、`isekai` 异世界、`romance` 恋爱、`action` 热血（AniList 类型和标签）。
 - **权重上限**：`long` 和基金跟踪的 6 个指数，单只股票的权重不超过 25%，超出的部分按市值比例分给其他成分股（`all`、`season` 不设上限）。规则在 backend/src/indices.rs，基金调仓用的是同一份。
@@ -856,7 +856,7 @@ CREATE TABLE bindings (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, plat
 }
 ```
 - **行为变化**：现在的 `/api/v2/tonight` 按 06:00–次日 06:00 的“播出日”切分。v1 改为按交易日（04:00–次日 04:00），全站只有一种“天”。（已决定，Q6）
-- 包括认购中的股票（首播前就在认购）。
+- 包括认购中的股票（首播前就在认购）。按公司的当前作品：系列的新一季并入后，列的是新一季的集数。
 
 #### 4.1.6 `GET /api/v1/market/macro`
 

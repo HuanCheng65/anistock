@@ -28,6 +28,18 @@
   "215835": {
    "bgm": 697060,
    "via": "manual: full-width ～／！ on Bangumi"
+  },
+  "131942": {
+   "bgm": 332261,
+   "bgm_confidence": 1.0,
+   "title_cn": "JOJO的奇妙冒险 石之海",
+   "via": "manual: Netflix released it in Dec 2021, Bangumi dates the TV broadcast (2022-01-07); a series member (docs/design/series.md §13)"
+  },
+  "146722": {
+   "bgm": 375913,
+   "bgm_confidence": 1.0,
+   "title_cn": "JOJO的奇妙冒险 石之海 第2部分",
+   "via": "manual: AniList keeps cours 2 and 3 (26 episodes) as one entry, Bangumi as 375913 and 395782; only the first is counted (one subject per show), China under-counted about half"
   }
  },
  "matches": {

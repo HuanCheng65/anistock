@@ -184,6 +184,7 @@ function remember(key: string, label: string, rows: Quote[]) {
               <span class="num time" :class="{ done: a.has_aired }">{{ hm(a.airs_at) }}</span>
             </Cover>
             <span class="clamp1 t">{{ s!.stock.title }}</span>
+            <span class="ep">第 {{ a.episode }} 集</span>
             <span v-flash="s!.change" class="num" :class="dir(s!.change)">{{ pct(s!.change) }}</span>
           </RouterLink>
         </div>
@@ -310,6 +311,7 @@ function remember(key: string, label: string, rows: Quote[]) {
 
 .strip { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none; padding: 14px 0 8px; }
 .air { flex: none; width: 112px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink); min-width: 0; }
+.air .ep { font-size: 12px; color: var(--muted); margin-top: -4px; }
 .time { position: absolute; left: 8px; bottom: 10px; font-size: 11px; color: #fff; background: #17181C; padding: 2px 5px; }
 .time.done { background: rgba(23, 24, 28, 0.6); }
 .more { display: block; text-align: center; padding: 14px 0; font-size: 13px; color: var(--ink-2); }

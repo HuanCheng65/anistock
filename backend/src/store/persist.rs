@@ -29,6 +29,8 @@ pub enum Change {
     ValuationJointDelete { company_id: i64 },
     /// `INSERT INTO company_works` (a new season joins its series' company; V9)
     CompanyWork { work_id: i64, company_id: i64, joined_on: String },
+    /// `INSERT OR REPLACE INTO company_current` (the company's current work; V27)
+    CompanyCurrent(crate::model::CompanyCurrent),
     /// `UPDATE accounts SET kind`
     AccountKind { id: i64, kind: String },
     /// `UPDATE accounts SET name, username, pw_hash` (a closed account loses its identity)
@@ -158,6 +160,13 @@ pub fn apply(conn: &Connection, c: &Change) -> rusqlite::Result<()> {
         Change::CompanyWork { work_id, company_id, joined_on } => {
             conn.prepare_cached("INSERT OR REPLACE INTO company_works(work_id, company_id, joined_on) VALUES (?,?,?)")?
                 .execute(params![work_id, company_id, joined_on])?;
+        }
+        Change::CompanyCurrent(x) => {
+            conn.prepare_cached(
+                "INSERT OR REPLACE INTO company_current(company_id, work_id, first_air, episodes, aired, long_runner, since)
+                 VALUES (?,?,?,?,?,?,?)",
+            )?
+            .execute(params![x.company_id, x.work_id, x.first_air, x.episodes, x.aired, x.long_runner as i64, x.since])?;
         }
         Change::ValuationJointDelete { company_id } => {
             conn.prepare_cached("DELETE FROM valuation_joint WHERE company_id=?")?.execute(params![company_id])?;

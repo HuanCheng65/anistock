@@ -56,6 +56,24 @@ fn date(s: &str) -> Result<NaiveDate, String> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| format!("bad date {s:?}: {e}"))
 }
 
+/// A work's public appraisal (星辉, docs/design/series.md §13): each market's weekly revenue `week` × 52, less the
+/// operating cost and the tax, capitalised at the policy rate plus the equity premium plus the long tail's yearly
+/// decline in that market (1 − the fitted `yearly`; none without a tail fit).
+pub(crate) fn ip_appraisal(p: &Params, fp: &crate::vfilter::FilterParams, week: &V::M3, rate: f64) -> f64 {
+    let keep = (1.0 - p.operating_cost_ratio) * (1.0 - p.corp_tax);
+    (0..3)
+        .map(|m| {
+            let decline = fp.tail[m].as_ref().map_or(0.0, |t| 1.0 - t.yearly);
+            week[m] * 52.0 * keep / (rate + p.equity_premium + decline)
+        })
+        .sum()
+}
+
+/// "2026-04-13" -> "2026 年 4 月 13 日" (news bodies)
+fn short_day(d: &str) -> String {
+    NaiveDate::parse_from_str(d, "%Y-%m-%d").map(|x| format!("{} 年 {} 月 {} 日", x.year(), x.month(), x.day())).unwrap_or_else(|_| d.to_string())
+}
+
 /// The state `platform_rule` / `platform_pending` value: "us,cn,jp,scale_us,scale_cn,scale_jp".
 fn platform_fmt(pl: &V::M3, sc: &V::M3) -> String {
     format!("{},{},{},{},{},{}", repr(pl[0]), repr(pl[1]), repr(pl[2]), repr(sc[0]), repr(sc[1]), repr(sc[2]))
@@ -551,15 +569,6 @@ impl Engine {
             self.futures_after_close(&fp, &p, &day);
         }
 
-        // refresh titles, and the labels the theme indices select on (inputs without them leave them as they are)
-        for (cid, name) in &cx.inp.cn_titles {
-            if let Some(c) = self.st.companies.get_mut(cid) {
-                if &c.title != name {
-                    c.title = name.clone();
-                    self.mark_company(*cid);
-                }
-            }
-        }
         for s in &cx.inp.shows {
             if s.source.is_none() && s.genres.is_empty() {
                 continue;
@@ -603,6 +612,37 @@ impl Engine {
             }
         }
         self.list_new(cx, rate, demand_week)?;
+        // refresh titles (inputs without them leave them as they are), after today's joins:
+        // a company of more than one work goes by its series' name (docs/design/series.md §13.7), announced the day
+        // it changes from the work's own
+        let ids: Vec<i64> = self.st.companies.keys().copied().collect();
+        for cid in ids {
+            let many = !cx.cfg.economy_v1 && self.st.company_works.values().any(|c| *c == cid);
+            let series = cx.inp.show(cid).and_then(|s| s.series).and_then(|k| cx.inp.series_titles.get(&k));
+            let name = match (many, series) {
+                (true, Some(n)) if !n.is_empty() => n.clone(),
+                _ => match cx.inp.cn_titles.get(&cid) {
+                    Some(n) => n.clone(),
+                    None => continue,
+                },
+            };
+            let c = self.st.companies.get_mut(&cid).unwrap();
+            if c.title == name {
+                continue;
+            }
+            let old = std::mem::replace(&mut c.title, name.clone());
+            let listed = c.status == "listed";
+            self.mark_company(cid);
+            if many && listed && cx.inp.cn_titles.get(&cid) == Some(&old) {
+                let works = self.works_of(cid).len();
+                self.push_news(&ts, &day, "system", Some(cid), format!("《{old}》更名为《{name}》"),
+                    format!("公司名下有同一系列的 {works} 部作品，改用系列名。股票代码和持仓不变。"));
+            }
+        }
+        // each company's current work (docs/design/series.md §13.7), after today's joins
+        if !cx.cfg.economy_v1 {
+            self.update_current(cx);
+        }
 
         let m2 = self.m2();
         let old = self.st.macro_days.get(&iso(d - Duration::days(28)));
@@ -1011,7 +1051,7 @@ impl Engine {
         if weeks < cx.g().delist_after_weeks {
             return Ok(());
         }
-        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。")
+        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。", 0)
     }
 
     /// Delisting of a series (docs/design/series.md §9): every work finished, the last week's revenue under
@@ -1041,6 +1081,7 @@ impl Engine {
         // the series' latest work carries the sequel chance
         let latest = works.iter().filter_map(|w| self.valuation_state(*w).map(|j| (j, *w))).max_by_key(|(j, _)| j.meta.as_ref().map_or(0, |m| m.first_air));
         let sequel_p = match (latest, &fp.sequel) {
+            (Some((j, _)), _) if j.sequel_cancelled => 0.0,
             (Some((j, _)), _) if j.sequel.is_some() => 1.0,
             (Some((j, _)), Some(sp)) => {
                 let fin = j.meta.as_ref().and_then(|m| m.air.last().copied()).unwrap_or(today);
@@ -1055,7 +1096,30 @@ impl Engine {
         if weeks < cx.g().delist_after_weeks {
             return Ok(());
         }
-        self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。")
+        match self.rights_buyout(cx, c)? {
+            Some((ip, why)) => self.liquidate(cx, c, format!("《{}》退市", c.title), &format!("{why}，连同公司现金按每股 {{per}} 星辉向股东返还。"), ip),
+            None => self.liquidate(cx, c, format!("《{}》退市", c.title), "按每股净资产 {per} 星辉向股东返还现金。", 0),
+        }
+    }
+
+    /// A delisting buys the works' rights out at their public appraisal (docs/design/series.md §13; v2 with
+    /// `company.asset_injection`): the last 8 weeks' revenue per market, capitalised at the day's rate (`ip_appraisal`).
+    /// The amount (cents) and the news sentence; None when the rule is off.
+    fn rights_buyout(&self, cx: &Ctx, c: &Company) -> Result<Option<(i64, String)>, String> {
+        if cx.cfg.economy_v1 || !cx.p.asset_injection {
+            return Ok(None);
+        }
+        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+        let from = iso(cx.d - Duration::days(56));
+        let mut week = [0.0f64; 3];
+        for (_, r) in self.st.company_days.range((c.id, String::new())..).take_while(|(k, _)| k.0 == c.id).filter(|(k, _)| k.1.as_str() > from.as_str()) {
+            week[0] += r.rev_us as f64 / 100.0 / 8.0;
+            week[1] += r.rev_cn as f64 / 100.0 / 8.0;
+            week[2] += r.rev_jp as f64 / 100.0 / 8.0;
+        }
+        let rate = self.state("rate").and_then(crate::pyfmt::parse_float).unwrap_or(cx.p.r_neutral);
+        let ip = pround(ip_appraisal(&cx.p, &fp, &week, rate) * 100.0).max(0);
+        Ok(Some((ip, format!("作品版权按评估值 {} 星辉收购（最近 8 周的平均营收按当前折现率资本化）", fixed_grouped(ip as f64 / 100.0, 0)))))
     }
 
     /// Take `c` off the market at today's last price (an adult title or a promo entry, step 0): cancel its open orders, the
@@ -1098,7 +1162,7 @@ impl Engine {
 
     /// Delist `c`: cancel its open orders, pay holders the company's cash per share (rights holders' part to
     /// the world account), retire the shares, post the news (`{per}` in the body is the payout per share).
-    fn liquidate(&mut self, cx: &mut Ctx, c: &Company, title: String, body: &str) -> Result<(), String> {
+    fn liquidate(&mut self, cx: &mut Ctx, c: &Company, title: String, body: &str, ip: i64) -> Result<(), String> {
         let (day, ts) = (cx.day.clone(), cx.ts.clone());
         // cancel open orders, return company cash per share, retire the shares
         let mut open: Vec<i64> = self
@@ -1113,6 +1177,11 @@ impl Engine {
             self.close(id, OrderStatus::Cancelled, &ts);
         }
         let acct = self.account_of("company", c.id).ok_or_else(|| format!("no company account for {}", c.id))?;
+        // the works' rights bought out at their appraisal (`ip`, from outside the economy) and paid out with the cash
+        if ip > 0 {
+            self.do_transfer(cx.world, acct, ip, "rights_buyout", &day, &ts, Some(c.id), None);
+            cx.sum.injected += ip;
+        }
         let cash = self.cash_of(acct);
         let holders = self.holders(c.id);
         let per = floordiv(cash, c.shares);
@@ -1155,12 +1224,22 @@ impl Engine {
                     format!("连续 {PENNY_DELIST_DAYS} 个交易日收盘低于 1 星辉将按每股净资产退市。"),
                 );
             } else if n >= PENNY_DELIST_DAYS {
-                self.liquidate(
-                    cx,
-                    &c,
-                    format!("《{}》面值退市", c.title),
-                    "连续 20 个交易日收盘低于 1 星辉，按每股净资产 {per} 星辉向股东返还现金。",
-                )?;
+                match self.rights_buyout(cx, &c)? {
+                    Some((ip, why)) => self.liquidate(
+                        cx,
+                        &c,
+                        format!("《{}》面值退市", c.title),
+                        &format!("连续 20 个交易日收盘低于 1 星辉。{why}，连同公司现金按每股 {{per}} 星辉向股东返还。"),
+                        ip,
+                    )?,
+                    None => self.liquidate(
+                        cx,
+                        &c,
+                        format!("《{}》面值退市", c.title),
+                        "连续 20 个交易日收盘低于 1 星辉，按每股净资产 {per} 星辉向股东返还现金。",
+                        0,
+                    )?,
+                }
                 self.st.penny_days.remove(&id);
             }
         }
@@ -1370,6 +1449,11 @@ impl Engine {
                     continue;
                 }
                 if first_air < tomorrow - Duration::days(60) && !s.long_runner {
+                    // premiered long before: its long tail is an asset of the committee, injected at its public
+                    // appraisal for new shares (docs/design/series.md §13)
+                    if !cx.cfg.economy_v1 && cx.p.asset_injection {
+                        self.inject_work(cx, s, c, rate)?;
+                    }
                     continue;
                 }
                 self.st.company_works.insert(s.id, c);
@@ -1401,6 +1485,116 @@ impl Engine {
         Ok(())
     }
 
+    /// A company's current work (docs/design/series.md §13.7) among its works in today's inputs that are TV, TV_SHORT
+    /// or ONA (films, OVAs and specials only add to the tail): the latest-premiered one on air; else the earliest
+    /// that has joined and not premiered (a new season in its subscription window); else the latest premiered. Saved
+    /// when anything changes.
+    fn update_current(&mut self, cx: &Ctx) {
+        let ids: Vec<i64> = self.st.companies.values().filter(|c| c.status == "listed" || c.status == "subscribing").map(|c| c.id).collect();
+        for cid in ids {
+            let works: Vec<&ShowInputs> = self
+                .works_of(cid)
+                .into_iter()
+                .filter_map(|w| cx.inp.show(w))
+                .filter(|s| s.id == cid || s.format.as_deref().is_none_or(|f| matches!(f, "TV" | "TV_SHORT" | "ONA")))
+                .collect();
+            let key = |s: &&ShowInputs| (s.first_air.clone(), s.id);
+            let pick = works
+                .iter()
+                .copied()
+                .filter(|s| s.aired >= 1 && !V::finished(s.aired, s.episodes, s.long_runner))
+                .max_by_key(key)
+                .or_else(|| works.iter().copied().filter(|s| s.aired == 0).min_by_key(key))
+                .or_else(|| works.iter().copied().max_by_key(key));
+            let Some(s) = pick else { continue };
+            let prev = self.st.company_current.get(&cid).cloned();
+            let since = match &prev {
+                Some(p) if p.work_id == s.id => p.since.clone(),
+                _ => cx.day.clone(),
+            };
+            let x = crate::model::CompanyCurrent {
+                company_id: cid,
+                work_id: s.id,
+                first_air: s.first_air.clone(),
+                episodes: if s.episodes_known { s.episodes } else { None },
+                aired: s.aired,
+                long_runner: s.long_runner,
+                since,
+            };
+            if prev.as_ref() == Some(&x) {
+                continue;
+            }
+            self.out.push(Change::CompanyCurrent(x.clone()));
+            self.st.company_current.insert(cid, x);
+        }
+    }
+
+    /// 资产注入 (docs/design/series.md §13): a finished earlier work of a listed company's series joins it, and the
+    /// production committee, which holds the work, is paid in new shares: its public appraisal (`ip_appraisal` of the
+    /// revenue its `appraisal_att` earns under today's revenue rule) at the average close of the last 20 trading days
+    /// (fewer since a reprice; none: the last close).
+    /// Waits (nothing happens) while the work's appraisal data is not all there or the absolute rule is not in force.
+    fn inject_work(&mut self, cx: &mut Ctx, s: &ShowInputs, c: i64, rate: f64) -> Result<(), String> {
+        let Some(a) = s.appraisal_att.clone() else { return Ok(()) };
+        let Some((pl, sc)) = self.platform_rule() else { return Ok(()) };
+        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+        let day_parts = crate::vfilter::absolute_parts(&[a.us, a.cn, a.jp], &pl, &sc, &cx.p.market_weights, &cx.p);
+        let week: V::M3 = std::array::from_fn(|m| day_parts[m] * 7.0);
+        let value = pround(ip_appraisal(&cx.p, &fp, &week, rate) * 100.0);
+        let co = self.st.companies[&c].clone();
+        // the last 20 closes, or those since a reprice (`Engine::reprice`: the closes before it are at the old prices)
+        let since = self.state("repriced_after").map(str::to_string);
+        let n = match &since {
+            Some(after) => self.st.company_days.range((c, after.clone())..).take_while(|(k, _)| k.0 == c).filter(|(k, _)| k.1.as_str() > after.as_str()).count().min(20),
+            None => 20,
+        };
+        let closes: Vec<i64> = self.st.corp.closes.get(&c).map_or_else(Vec::new, |v| v.iter().rev().take(n).copied().collect());
+        let avg = if closes.is_empty() { co.prev_close } else { (closes.iter().sum::<i64>() as f64 / closes.len() as f64).round() as i64 }.max(1);
+        let issued = value / avg;
+        let (day, ts) = (cx.day.clone(), cx.ts.clone());
+        self.st.company_works.insert(s.id, c);
+        self.out.push(Change::CompanyWork { work_id: s.id, company_id: c, joined_on: day.clone() });
+        if issued > 0 {
+            let holder = self.account_of("committee", c).unwrap_or(cx.world);
+            self.do_add_shares(holder, c, issued, avg, &day);
+            self.st.companies.get_mut(&c).unwrap().shares += issued;
+        }
+        self.mark_company(c);
+        // the work's own valuation state from today, and the company's value with it
+        if let Some(totals) = cx.vtotals.clone() {
+            let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
+            let today = crate::vclose::day_no(&day).ok_or("bad day")?;
+            self.valuation_step(&fp, &cx.p, s, &day, &ts);
+            // every work of the company (the one just joined included), per share of the new count
+            let vc = crate::corporate::ValueCtx { fp: &fp, p: &cx.p, totals: &totals, today, rate, a_ref };
+            if let Some(v) = self.company_value_full(&vc, c) {
+                self.st.companies.get_mut(&c).unwrap().fair_value = v;
+            }
+        }
+        let name = cx.inp.cn_titles.get(&s.id).cloned().unwrap_or_else(|| s.title_ja.clone());
+        let shares = co.shares + issued;
+        let basis = match a.basis.as_str() {
+            "season" => format!(
+                "《{name}》完结不久，按播出期（{} 至 {}）的平均营收乘以完结后 {} 个月左右的长尾比例计算",
+                short_day(&a.from),
+                short_day(&a.to),
+                (a.tail_days.unwrap_or(120) as f64 / 30.0).round() as i64
+            ),
+            _ => format!("按《{name}》{} 至 {} 的平均营收计算（新作宣传开始之前）", short_day(&a.from), short_day(&a.to)),
+        };
+        let body = format!(
+            "同一系列的作品，版权由制作委员会注入公司。评估值 {} 星辉：{basis}，按当前的营收规则折算成每周营收，扣除成本和税后按折现率与长尾的年衰减资本化。\
+             以{} {} 星辉向制作委员会发行 {} 股，占发行后总股本的 {}。热度从下一次日结起计入公司营收和估值。",
+            fixed_grouped(value as f64 / 100.0, 0),
+            if closes.is_empty() { "最新收盘价".to_string() } else { format!("过去 {} 个交易日的平均收盘价", closes.len()) },
+            fixed(avg as f64 / 100.0, 2),
+            int_grouped(issued),
+            pct(issued as f64 / shares.max(1) as f64, 1)
+        );
+        self.push_news(&ts, &day, "sequel", Some(c), format!("《{name}》注入《{}》", co.title), body);
+        Ok(())
+    }
+
     /// A company with its accounts and an open IPO subscription (v1 `create_company` with `subscription`).
     fn create_company(
         &mut self,
@@ -1413,9 +1607,16 @@ impl Engine {
     ) -> Result<i64, String> {
         let (day, ts) = (cx.day.clone(), cx.ts.clone());
         let shares = cx.p.shares;
-        let title = match cx.inp.cn_titles.get(&s.id) {
-            Some(t) if !t.is_empty() => t.clone(),
-            _ => s.title_ja.clone(),
+        // listed as a series (docs/design/series.md §13.8): the earlier works of its series join at the listing, at
+        // their public appraisal in the offer price (no shares issued for them later)
+        let earlier = self.series_at_listing(cx, s, rate)?;
+        let appraised: i64 = earlier.iter().map(|(_, v)| v).sum();
+        let title = match (earlier.is_empty(), s.series.and_then(|k| cx.inp.series_titles.get(&k))) {
+            (false, Some(n)) if !n.is_empty() => n.clone(),
+            _ => match cx.inp.cn_titles.get(&s.id) {
+                Some(t) if !t.is_empty() => t.clone(),
+                _ => s.title_ja.clone(),
+            },
         };
         let share = cx.expected_share(s);
         let ipo_price = match (&cx.vtotals, cx.cfg.economy_v1) {
@@ -1423,7 +1624,7 @@ impl Engine {
                 let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
                 let a_ref: f64 = self.state("a_ref").and_then(crate::pyfmt::parse_float).unwrap_or(1.0);
                 let today = crate::vclose::day_no(&day).ok_or("bad day")?;
-                self.ipo_price_v2(&fp, &cx.p, s, shares, today, totals, rate, a_ref)
+                self.ipo_price_v2(&fp, &cx.p, s, shares, today, totals, rate, a_ref, appraised as f64 / 100.0 / shares as f64)
             }
             _ => {
                 let v = self.fair_value(cx, s, s.id, shares, 0, rate, demand_week, share)?;
@@ -1465,6 +1666,10 @@ impl Engine {
         };
         self.out.push(Change::CompanyInsert(company.clone()));
         self.st.companies.insert(s.id, company);
+        for (w, _) in &earlier {
+            self.st.company_works.insert(*w, s.id);
+            self.out.push(Change::CompanyWork { work_id: *w, company_id: s.id, joined_on: day.clone() });
+        }
         // a show that has already premiered (it reached the listing bar late): priced from what it has shown since,
         // the value the closes will give it, not from the estimate frozen before its premiere
         let mut ipo_price = ipo_price;
@@ -1474,6 +1679,7 @@ impl Engine {
             let today = crate::vclose::day_no(&day).ok_or("bad day")?;
             self.valuation_step(&fp, &cx.p, s, &day, &ts);
             if let Some(v) = self.valuation_value_of(&fp, &cx.p, s.id, today, &totals, rate, a_ref) {
+                let v = v + appraised / shares;
                 if let Some(px) = self.ipo_price_now(&fp, &cx.p, s.id, v) {
                     ipo_price = px;
                     let co = self.st.companies.get_mut(&s.id).unwrap();
@@ -1495,6 +1701,30 @@ impl Engine {
         let float_qty = pround(shares as f64 * cx.p.ipo_float);
         self.do_add_shares(committee, s.id, shares - float_qty, ipo_price, listed_on);
         let base = pround(float_qty as f64 * cx.g().ipo_public_base);
+        // the earlier works' own valuation states from today
+        if !earlier.is_empty() && cx.vtotals.is_some() {
+            let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+            for (w, _) in &earlier {
+                if let Some(x) = cx.inp.show(*w) {
+                    self.valuation_step(&fp, &cx.p, x, &day, &ts);
+                }
+            }
+        }
+        let series_note = if earlier.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<String> = earlier
+                .iter()
+                .filter_map(|(w, _)| cx.inp.show(*w).map(|x| format!("《{}》", cx.inp.cn_titles.get(w).cloned().unwrap_or_else(|| x.title_ja.clone()))))
+                .collect();
+            format!(
+                "公司按系列上市，包括同一系列已播出的 {} 部作品（{}），发行价含它们的评估值合计 {} 星辉（每股 {} 星辉）。",
+                earlier.len(),
+                names.join(""),
+                fixed_grouped(appraised as f64 / 100.0, 0),
+                fixed(appraised as f64 / 100.0 / shares as f64, 2)
+            )
+        };
         self.push_news(
             &ts,
             &day,
@@ -1502,13 +1732,41 @@ impl Engine {
             Some(s.id),
             format!("新股认购：《{title}》（{code}）"),
             format!(
-                "{sub_start} 至 {sub_end} 开放认购，发行价 {} 星辉，公开发售 {} 股（超额认购 15/50/100 倍时回拨到 70%/80%/90% 的流通盘）。{listed_on} 上市，首播日 {}。",
+                "{sub_start} 至 {sub_end} 开放认购，发行价 {} 星辉，公开发售 {} 股（超额认购 15/50/100 倍时回拨到 70%/80%/90% 的流通盘）。{listed_on} 上市，首播日 {}。{}",
                 fixed(ipo_price as f64 / 100.0, 2),
                 int_grouped(base),
-                s.first_air
+                s.first_air,
+                series_note
             ),
         );
         Ok(s.id)
+    }
+
+    /// The earlier works of a new listing's series that list with it (docs/design/series.md §13.8): not listed or
+    /// joined anywhere, premiered before it, with their public appraisal ready (`appraisal_att`, the absolute rule
+    /// in force), each with its appraisal (cents). None in the v1 economy or with `company.asset_injection` off; a
+    /// work whose data is not ready then joins after the listing like any earlier work (`inject_work`).
+    fn series_at_listing(&self, cx: &Ctx, s: &ShowInputs, rate: f64) -> Result<Vec<(i64, i64)>, String> {
+        let Some(k) = s.series else { return Ok(vec![]) };
+        if cx.cfg.economy_v1 || !cx.p.asset_injection {
+            return Ok(vec![]);
+        }
+        let Some((pl, sc)) = self.platform_rule() else { return Ok(vec![]) };
+        let fp = crate::vfilter::FilterParams::load(cx.cfg)?;
+        let mut out = Vec::new();
+        for w in &cx.inp.shows {
+            if w.id == s.id || w.series != Some(k) || w.first_air >= s.first_air || w.excluded().is_some() {
+                continue;
+            }
+            if self.st.companies.contains_key(&w.id) || self.st.company_works.contains_key(&w.id) {
+                continue;
+            }
+            let Some(a) = &w.appraisal_att else { continue };
+            let day_parts = crate::vfilter::absolute_parts(&[a.us, a.cn, a.jp], &pl, &sc, &cx.p.market_weights, &cx.p);
+            let week: V::M3 = std::array::from_fn(|m| day_parts[m] * 7.0);
+            out.push((w.id, pround(ip_appraisal(&cx.p, &fp, &week, rate) * 100.0)));
+        }
+        Ok(out)
     }
 
     /// One `player_days` row per player: assets after this close, chain-linked return index (V6).

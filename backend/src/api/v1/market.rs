@@ -329,6 +329,7 @@ pub fn load_quotes(st: &AppState, c: &Connection, ids: Option<&HashSet<i64>>) ->
         }
     }
     let aired = latest_aired(c)?;
+    let cur = current_works(c)?;
     let mut spark: HashMap<i64, Vec<Money>> = HashMap::new();
     {
         let mut s = c
@@ -370,10 +371,11 @@ pub fn load_quotes(st: &AppState, c: &Connection, ids: Option<&HashSet<i64>>) ->
             market_cap: m(co.last_price * co.shares),
             week_revenue: m(this),
             week_revenue_change: (prev != 0).then(|| r6((this - prev) as f64 / prev as f64)),
-            episodes_aired: aired.get(&co.id).copied().unwrap_or(0),
-            episodes: co.episodes,
-            is_long_runner: co.long_runner != 0,
-            first_air: co.first_air.clone(),
+            // the current work's (a series' new season once it has joined)
+            episodes_aired: cur.get(&co.id).map_or_else(|| aired.get(&co.id).copied().unwrap_or(0), |x| x.aired),
+            episodes: cur.get(&co.id).map_or(co.episodes, |x| x.episodes),
+            is_long_runner: cur.get(&co.id).map_or(co.long_runner != 0, |x| x.long),
+            first_air: cur.get(&co.id).map_or_else(|| co.first_air.clone(), |x| x.first_air.clone()),
             listed_on: co.listed_on.clone(),
             is_new: (t - date(&co.listed_on)?).num_days() < 5,
             ipo_remaining: ipo_left.get(&co.id).copied().unwrap_or(0),
@@ -395,6 +397,35 @@ pub fn load_quotes(st: &AppState, c: &Connection, ids: Option<&HashSet<i64>>) ->
 }
 
 /// The latest `company_days.aired` per company.
+/// A company's current work (table company_current, V27; docs/design/series.md §13.7): the market lists, the
+/// 本季新番 filter and index, 今晚放送 and the cover follow it. None of a company before its first close with it.
+#[derive(Debug, Clone)]
+pub struct Current {
+    pub work: i64,
+    pub first_air: String,
+    pub episodes: Option<i64>,
+    pub aired: i64,
+    pub long: bool,
+}
+
+pub fn current_works(c: &Connection) -> R<HashMap<i64, Current>> {
+    let exists: bool = c
+        .query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name='company_current'", [], |_| Ok(true))
+        .optional()
+        .map_err(sql)?
+        .unwrap_or(false);
+    if !exists {
+        return Ok(HashMap::new());
+    }
+    let mut s = c.prepare_cached("SELECT company_id, work_id, first_air, episodes, aired, long_runner FROM company_current").map_err(sql)?;
+    let rows = s
+        .query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, Current { work: r.get(1)?, first_air: r.get(2)?, episodes: r.get(3)?, aired: r.get(4)?, long: r.get::<_, i64>(5)? != 0 }))
+        })
+        .map_err(sql)?;
+    rows.collect::<Result<_, _>>().map_err(sql)
+}
+
 pub fn latest_aired(c: &Connection) -> R<HashMap<i64, i64>> {
     let mut s = c
         .prepare_cached(
@@ -578,7 +609,16 @@ pub fn compute_index_set(c: &Connection, today: &str, with_series: bool, basis: 
                 })
             })
             .map_err(sql)?;
-        rows.collect::<Result<_, _>>().map_err(sql)?
+        let mut cos: Vec<Co> = rows.collect::<Result<_, _>>().map_err(sql)?;
+        // the labels of the current work (the 本季新番 index follows a series' new season)
+        let cur = current_works(c)?;
+        for co in cos.iter_mut() {
+            if let Some(x) = cur.get(&co.id) {
+                co.long = x.long;
+                co.first_air = x.first_air.clone();
+            }
+        }
+        cos
     };
     let by_id: HashMap<i64, &Co> = cos.iter().map(|co| (co.id, co)).collect();
     let mut days: BTreeMap<String, HashMap<i64, i64>> = BTreeMap::new();
@@ -915,10 +955,14 @@ pub async fn airings(State(st): State<Arc<AppState>>, RawQuery(q): RawQuery) -> 
             let rows = s.query_map([], |r| r.get(0)).map_err(sql)?;
             rows.collect::<Result<_, _>>().map_err(sql)?
         };
-        let next = next_airings(&st2.cfg, &ids);
+        // each company's current work's next episode (a series' new season once it has joined)
+        let cur = current_works(c)?;
+        let work = |id: &i64| cur.get(id).map_or(*id, |x| x.work);
+        let works: Vec<i64> = ids.iter().map(work).collect();
+        let next = next_airings(&st2.cfg, &works);
         let mut items: Vec<(i64, i64, i64)> = ids
             .iter()
-            .filter_map(|id| next.get(id).map(|(ep, at)| (*at, *id, *ep)))
+            .filter_map(|id| next.get(&work(id)).map(|(ep, at)| (*at, *id, *ep)))
             .filter(|(at, _, _)| *at >= start && *at < end)
             .collect();
         items.sort();

@@ -50,7 +50,9 @@ def load(inputs_dir: Path):
                                            "pre": {m: [] for m in MARKETS}, "obs": {m: [] for m in MARKETS},
                                            "prior_us": [], "src": {m: True for m in MARKETS},
                                            "aired": [], "first_air": date.fromisoformat(s["first_air"]).toordinal(),
-                                           "long_runner": s["long_runner"], "episodes": s.get("episodes")})
+                                           "long_runner": s["long_runner"], "episodes": s.get("episodes"),
+                                           "prequel": False})
+            x["prequel"] = x["prequel"] or bool(s.get("prequel"))
             x["days"].append(day)
             x["aired"].append(s["aired"])
             # v0.3.2 inputs: the point-in-time prior (us; cn/jp derive from it) and which markets reported
@@ -1008,7 +1010,8 @@ def close_days(x, cal, partial=None, drift_heat=None):
     bvar = [cal["finale_bump_var"][m] for m in MARKETS]
     cu = cal["curve_us"]
     fp = {"partial_us": partial} if partial else {}
-    mean = [cal["prior_bias"][m] + cal["prior_beta"][m] * lp for m in MARKETS]
+    bias = cal.get("prior_bias_sequel", cal["prior_bias"]) if x.get("prequel") else cal["prior_bias"]
+    mean = [bias[m] + cal["prior_beta"][m] * lp for m in MARKETS]
     cov = V.prior_cov([cal["p0"][m] for m in MARKETS], V.prior_corr(cal))
     fin = finale_day(x)
     day = prem
@@ -1667,6 +1670,45 @@ def stage1_from(cal):
                 if "prior_bias_mle" in cal else cal["prior_bias"][m], 0.0, cal["outlier_r"][m]) for m in MARKETS}
 
 
+def fit_sequel_bias(shows, cal) -> dict:
+    """v0.8.4 (docs/design/series.md §5.3): the prior bias of shows that are themselves sequels apart from the others.
+    A sequel's pre-air list entries include the earlier seasons' audience, so the same estimate means less attention
+    (history backfill 2018-2026: 0.51x in weeks 2-6, 1,388 shows). Both biases are the level-unbiased bias of
+    `level_unbiased_bias` over each group, every other prior parameter fixed from the file. Held out: each half (even,
+    odd ids) scored with the other half's biases, one bias for all against one per group. Writes `prior_bias` (the
+    shows that are not sequels) and `prior_bias_sequel`. Needs inputs with the relations (`prequel`)."""
+    seqs = {sid for sid, x in shows.items() if x["prequel"]}
+    if not seqs:
+        sys.exit("--sequel-bias-only: no show in the inputs is a sequel (inputs without relations: sim/sequel_inputs.py)")
+    st1 = stage1_from(cal)
+    P = {"drift": [st1[m][0] for m in MARKETS], "q": [cal["q"][m] for m in MARKETS], "r": [cal["r"][m] for m in MARKETS],
+         "b": [cal["prior_bias"][m] for m in MARKETS], "p0": [cal["p0"][m] for m in MARKETS],
+         "rho": cal["prior_corr"], "beta": [cal["prior_beta"][m] for m in MARKETS]}
+    cu = cal["curve_us"]
+
+    def bias(keep):
+        return level_unbiased_bias(joint_data(shows, cu, keep), P)
+    first, seq = bias(lambda s_, p_: s_ not in seqs), bias(lambda s_, p_: s_ in seqs)
+    ho = {}
+    for tr in (0, 1):
+        one = bias(lambda s_, p_: s_ % 2 == tr)
+        own = {g: bias(lambda s_, p_, g=g: s_ % 2 == tr and (s_ in seqs) == g) for g in (False, True)}
+        for g in (False, True):
+            t = bias(lambda s_, p_, g=g: s_ % 2 != tr and (s_ in seqs) == g)
+            ho[f"fit{tr}_{'sequel' if g else 'first'}"] = {
+                "one_bias": [round(a - b, 3) for a, b in zip(t, one)], "by_group": [round(a - b, 3) for a, b in zip(t, own[g])]}
+    n = {g: len(joint_data(shows, cu, lambda s_, p_, g=g: (s_ in seqs) == g)) for g in (False, True)}
+    info = {"before": {m: cal["prior_bias"][m] for m in MARKETS}, "shows_first": n[False], "shows_sequel": n[True],
+            "sequel_vs_first": {m: round(math.exp(seq[k] - first[k]), 3) for k, m in enumerate(MARKETS)},
+            "held_out_level_bias": ho,
+            "note": "level bias of the held-out half (log, 0 = unbiased), [us, cn, jp]; the history backfill's us "
+                    "ratio for comparison: 0.509 (se 0.033)"}
+    for k, m in enumerate(MARKETS):
+        cal["prior_bias"][m] = round(first[k], 6)
+        cal.setdefault("prior_bias_sequel", {})[m] = round(seq[k], 6)
+    return info
+
+
 def joint_loglik(data, P):
     return sum(joint_filter(p, o, d, P)[0] for p, o, d in data)
 
@@ -1761,6 +1803,9 @@ def main():
     ap.add_argument("--prior-only", action="store_true",
                     help="refit only the joint prior (bias, p0, the pairwise correlations, cn/jp elasticities) with each "
                          "market's dynamics fixed from --out, and write those keys back (then refit --partial-only)")
+    ap.add_argument("--sequel-bias-only", action="store_true",
+                    help="refit only the prior bias apart for shows that are themselves sequels (`prior_bias`, "
+                         "`prior_bias_sequel`), every other key fixed from --out; inputs with relations")
     a = ap.parse_args()
     global GAUSSIAN, CLIP
     GAUSSIAN, CLIP = a.gaussian, a.clip
@@ -1825,6 +1870,14 @@ def main():
             cal["drift"][m] = new[0]
             cal.setdefault("fit", {}).setdefault("drift_weekly", {})[m] = info
             print(m, json.dumps(info))
+        a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
+        return
+    if a.sequel_bias_only:
+        cal = json.loads(a.out.read_text(encoding="utf-8"))
+        BUMP.update(cal["finale_bump"])
+        info = fit_sequel_bias(shows, cal)
+        cal.setdefault("fit", {})["prior_sequel"] = info
+        print(json.dumps(info, indent=1))
         a.out.write_text(json.dumps(cal, ensure_ascii=False, indent=1), encoding="utf-8")
         return
     if a.prior_only:
